@@ -1,12 +1,15 @@
 //! Community Node の区分別保持と期限削除。
+//!
+//! 期限は行に持たず、起算点の列と保持区分ごとの日数（`cn_admin.retention_days`）で判定する
+//! （ADR 0034 §1）。読取りは「起算点 > 基準時刻 − `cn_admin.retention_interval(区分)`」で期限切れを
+//! 除く。日数は起動時と `cn-cli retention sweep` が書くだけなので、変えると既存の行にもすぐ効き、
+//! 行は書き直さない。
 
 use anyhow::Result;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::postgres::PgPool;
-
-use kukuri_cn_protocol::RightsRequestStatus;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RetentionPolicy {
@@ -45,25 +48,6 @@ impl Default for RetentionPolicy {
     }
 }
 
-impl RetentionPolicy {
-    pub fn expiry(&self, at: DateTime<Utc>, days: u32) -> DateTime<Utc> {
-        at + Duration::days(i64::from(days))
-    }
-
-    pub fn rights_request_days(&self, status: RightsRequestStatus) -> u32 {
-        match status {
-            RightsRequestStatus::Actioned => self.rights_request_resolved_days,
-            RightsRequestStatus::Declined
-            | RightsRequestStatus::OutOfScope
-            | RightsRequestStatus::Withdrawn => self.rights_request_rejected_days,
-            RightsRequestStatus::Received
-            | RightsRequestStatus::NeedsInformation
-            | RightsRequestStatus::Reviewing
-            | RightsRequestStatus::SenderContacting => self.rights_request_active_days,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CleanupCounts {
     pub sensitive_items: u64,
@@ -76,116 +60,91 @@ pub struct CleanupCounts {
     pub risk_signals: u64,
 }
 
-/// 現在の operator 設定を各行の絶対期限へ反映する。
-///
-/// 期限は immutable な作成時刻（rights request だけは最終状態遷移時刻）から再計算し、
-/// 定期実行しても延長されない。append-only table は migration がこの transaction-local
-/// opt-in に限って期限列だけの更新を許可する。
-pub async fn apply_retention_policy(pool: &PgPool, policy: &RetentionPolicy) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    sqlx::query("SELECT set_config('kukuri.retention_reconcile', 'on', true)")
-        .execute(&mut *tx)
-        .await?;
-
+/// operator config の保持日数を、保持区分ごとの日数の行へ書く。書く行の数は区分の数で決まる。
+pub async fn configure_case_retention(pool: &PgPool, policy: &RetentionPolicy) -> Result<()> {
+    let (categories, days): (Vec<&str>, Vec<i32>) = [
+        ("report", policy.report_days),
+        ("report_contact", policy.report_contact_days),
+        ("tester_feedback", policy.tester_feedback_days),
+        ("rights_request_active", policy.rights_request_active_days),
+        (
+            "rights_request_resolved",
+            policy.rights_request_resolved_days,
+        ),
+        (
+            "rights_request_rejected",
+            policy.rights_request_rejected_days,
+        ),
+        ("rights_request_contact", policy.rights_request_contact_days),
+        (
+            "rights_request_identity",
+            policy.rights_request_identity_days,
+        ),
+        (
+            "rights_request_evidence",
+            policy.rights_request_evidence_days,
+        ),
+        ("rights_request_history", policy.rights_request_history_days),
+        ("operator_audit", policy.operator_audit_days),
+        ("moderation_event", policy.moderation_event_days),
+        ("risk_signal", policy.risk_signal_days),
+    ]
+    .into_iter()
+    .map(|(category, days)| (category, days as i32))
+    .unzip();
     sqlx::query(
-        "UPDATE cn_admin.reports
-         SET expires_at = created_at + make_interval(days => $1)",
+        "UPDATE cn_admin.retention_days SET days = given.days
+         FROM UNNEST($1::TEXT[], $2::INTEGER[]) AS given (category, days)
+         WHERE retention_days.category = given.category",
     )
-    .bind(policy.report_days as i32)
-    .execute(&mut *tx)
+    .bind(&categories)
+    .bind(&days)
+    .execute(pool)
     .await?;
-    sqlx::query(
-        "UPDATE cn_admin.tester_feedback
-         SET expires_at = created_at + make_interval(days => $1)",
-    )
-    .bind(policy.tester_feedback_days as i32)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "UPDATE cn_legal.sensitive_items
-         SET expires_at = created_at + make_interval(days => CASE data_category
-           WHEN 'report_contact' THEN $1
-           WHEN 'rights_request_contact' THEN $2
-           WHEN 'rights_request_identity' THEN $3
-           WHEN 'rights_request_evidence' THEN $4
-         END)",
-    )
-    .bind(policy.report_contact_days as i32)
-    .bind(policy.rights_request_contact_days as i32)
-    .bind(policy.rights_request_identity_days as i32)
-    .bind(policy.rights_request_evidence_days as i32)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "UPDATE cn_legal.rights_requests
-         SET expires_at = updated_at + make_interval(days => CASE
-           WHEN status = 'actioned' THEN $1
-           WHEN status IN ('declined', 'out_of_scope', 'withdrawn') THEN $2
-           ELSE $3
-         END)",
-    )
-    .bind(policy.rights_request_resolved_days as i32)
-    .bind(policy.rights_request_rejected_days as i32)
-    .bind(policy.rights_request_active_days as i32)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "UPDATE cn_legal.rights_request_events
-         SET expires_at = occurred_at + make_interval(days => $1)",
-    )
-    .bind(policy.rights_request_history_days as i32)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "UPDATE cn_admin.operator_actions
-         SET expires_at = occurred_at + make_interval(days => $1)",
-    )
-    .bind(policy.operator_audit_days as i32)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "UPDATE cn_safety.signed_moderation_events
-         SET retention_expires_at = persisted_at + make_interval(days => $1)",
-    )
-    .bind(policy.moderation_event_days as i32)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "UPDATE cn_safety.risk_signals
-         SET retention_expires_at = persisted_at + make_interval(days => $1)",
-    )
-    .bind(policy.risk_signal_days as i32)
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
     Ok(())
 }
 
-pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<CleanupCounts> {
-    let mut tx = pool.begin().await?;
-    sqlx::query("SELECT set_config('kukuri.retention_cleanup', 'on', true)")
-        .execute(&mut *tx)
-        .await?;
+const EXPIRED_SENSITIVE_ITEMS: &str = "DELETE FROM cn_legal.sensitive_items item
+     WHERE item.data_category = $2
+       AND item.created_at <= $1 - cn_admin.retention_interval($2)
+       AND NOT EXISTS (
+         SELECT 1 FROM cn_legal.legal_holds hold
+         WHERE hold.released_at IS NULL
+           AND hold.target_kind = item.owner_kind
+           AND hold.target_id = item.owner_id
+           AND item.data_category = ANY(hold.data_categories)
+       )";
 
-    let sensitive_items = sqlx::query(
-        "DELETE FROM cn_legal.sensitive_items item
-         WHERE item.expires_at <= $1
-           AND NOT EXISTS (
-             SELECT 1 FROM cn_legal.legal_holds hold
-             WHERE hold.released_at IS NULL
-               AND hold.target_kind = item.owner_kind
-               AND hold.target_id = item.owner_id
-               AND item.data_category = ANY(hold.data_categories)
-           )",
-    )
-    .bind(now)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    let rights_request_events = sqlx::query(
+const EXPIRED_RIGHTS_REQUESTS: &str = "DELETE FROM cn_legal.rights_requests request
+     WHERE cn_legal.rights_request_retention(request.status) = $2
+       AND request.updated_at <= $1 - cn_admin.retention_interval($2)
+       AND NOT EXISTS (
+         SELECT 1 FROM cn_legal.rights_request_events event
+         WHERE event.request_id = request.id
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM cn_legal.legal_holds hold
+         WHERE hold.released_at IS NULL
+           AND hold.target_kind = 'rights_request'
+           AND hold.target_id = request.id
+       )";
+
+/// 表ごとの期限削除の文と、その表の保持区分（子から親の順）。`$1` は基準時刻、`$2` は保持区分で、
+/// どの文も起算点の索引の範囲から期限切れの行だけを読む。
+pub const EXPIRED_DELETES: [(&[&str], &str); 8] = [
+    (
+        &[
+            "report_contact",
+            "rights_request_contact",
+            "rights_request_identity",
+            "rights_request_evidence",
+        ],
+        EXPIRED_SENSITIVE_ITEMS,
+    ),
+    (
+        &["rights_request_history"],
         "DELETE FROM cn_legal.rights_request_events event
-         WHERE event.expires_at <= $1
+         WHERE event.occurred_at <= $1 - cn_admin.retention_interval($2)
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
              WHERE hold.released_at IS NULL
@@ -193,14 +152,11 @@ pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<Cleanu
                AND hold.target_id = event.request_id
                AND 'rights_request_history' = ANY(hold.data_categories)
            )",
-    )
-    .bind(now)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    let reports = sqlx::query(
+    ),
+    (
+        &["report"],
         "DELETE FROM cn_admin.reports report
-         WHERE report.expires_at <= $1
+         WHERE report.created_at <= $1 - cn_admin.retention_interval($2)
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
              WHERE hold.released_at IS NULL
@@ -208,38 +164,24 @@ pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<Cleanu
                AND hold.target_id = report.id
                AND 'report' = ANY(hold.data_categories)
            )",
-    )
-    .bind(now)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    let tester_feedback =
-        sqlx::query("DELETE FROM cn_admin.tester_feedback WHERE expires_at <= $1")
-            .bind(now)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-    let rights_requests = sqlx::query(
-        "DELETE FROM cn_legal.rights_requests request
-         WHERE request.expires_at <= $1
-           AND NOT EXISTS (
-             SELECT 1 FROM cn_legal.rights_request_events event
-             WHERE event.request_id = request.id
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM cn_legal.legal_holds hold
-             WHERE hold.released_at IS NULL
-               AND hold.target_kind = 'rights_request'
-               AND hold.target_id = request.id
-           )",
-    )
-    .bind(now)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    let operator_actions = sqlx::query(
+    ),
+    (
+        &["tester_feedback"],
+        "DELETE FROM cn_admin.tester_feedback
+         WHERE created_at <= $1 - cn_admin.retention_interval($2)",
+    ),
+    (
+        &[
+            "rights_request_active",
+            "rights_request_resolved",
+            "rights_request_rejected",
+        ],
+        EXPIRED_RIGHTS_REQUESTS,
+    ),
+    (
+        &["operator_audit"],
         "DELETE FROM cn_admin.operator_actions action
-         WHERE action.expires_at <= $1
+         WHERE action.occurred_at <= $1 - cn_admin.retention_interval($2)
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
              WHERE hold.released_at IS NULL
@@ -247,32 +189,50 @@ pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<Cleanu
                AND hold.target_id = action.target_id
                AND 'operator_audit' = ANY(hold.data_categories)
            )",
-    )
-    .bind(now)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    let moderation_events = sqlx::query(
-        "DELETE FROM cn_safety.signed_moderation_events WHERE retention_expires_at <= $1",
-    )
-    .bind(now)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    let risk_signals = sqlx::query(
+    ),
+    (
+        &["moderation_event"],
+        "DELETE FROM cn_safety.signed_moderation_events
+         WHERE persisted_at <= $1 - cn_admin.retention_interval($2)",
+    ),
+    (
+        &["risk_signal"],
         "DELETE FROM cn_safety.risk_signals signal
-         WHERE retention_expires_at <= $1
+         WHERE signal.persisted_at <= $1 - cn_admin.retention_interval($2)
            AND NOT EXISTS (
              SELECT 1 FROM cn_admin.reports report
              WHERE report.appeal_risk_signal_id = signal.id
            )",
-    )
-    .bind(now)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
+    ),
+];
 
+pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<CleanupCounts> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT set_config('kukuri.retention_cleanup', 'on', true)")
+        .execute(&mut *tx)
+        .await?;
+    let mut counts = [0; 8];
+    for (count, (categories, sql)) in counts.iter_mut().zip(EXPIRED_DELETES) {
+        for category in categories {
+            *count += sqlx::query(sql)
+                .bind(now)
+                .bind(category)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+        }
+    }
     tx.commit().await?;
+    let [
+        sensitive_items,
+        rights_request_events,
+        reports,
+        tester_feedback,
+        rights_requests,
+        operator_actions,
+        moderation_events,
+        risk_signals,
+    ] = counts;
     Ok(CleanupCounts {
         sensitive_items,
         rights_request_events,

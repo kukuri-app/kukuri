@@ -376,6 +376,7 @@ async fn trust_read_returns_components_with_basis_and_ignores_reports() -> Resul
                 reporter_contact: None,
                 appeal_risk_signal_id: None,
             },
+            None,
         )
         .await?;
     }

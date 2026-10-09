@@ -9,8 +9,7 @@ use sqlx::postgres::PgPool;
 
 use crate::rights_requests::RightsRequestRecord;
 use crate::{
-    LegalDataCipher, RetentionPolicy, SensitiveDataCategory, load_sensitive_json,
-    upsert_sensitive_json_in_tx,
+    LegalDataCipher, SensitiveDataCategory, load_sensitive_json, upsert_sensitive_json_in_tx,
 };
 
 pub(crate) fn split_sensitive_request(
@@ -103,10 +102,9 @@ fn json_string(value: &Value, key: &str) -> Option<String> {
 pub async fn seal_legacy_rights_request_data(
     pool: &PgPool,
     cipher: &LegalDataCipher,
-    retention: &RetentionPolicy,
 ) -> Result<u64> {
     let rows = sqlx::query(
-        "SELECT id, request_data, created_at FROM cn_legal.rights_requests
+        "SELECT id, request_data FROM cn_legal.rights_requests
          WHERE COALESCE(request_data->>'email', '') <> ''",
     )
     .fetch_all(pool)
@@ -116,7 +114,6 @@ pub async fn seal_legacy_rights_request_data(
         let id: String = row.try_get("id")?;
         let request: RightsRequestCreateRequest =
             serde_json::from_value(row.try_get("request_data")?)?;
-        let created_at: DateTime<Utc> = row.try_get("created_at")?;
         let (stored, contact, identity, evidence) = split_sensitive_request(&request);
         let mut tx = pool.begin().await?;
         upsert_sensitive_json_in_tx(
@@ -126,7 +123,6 @@ pub async fn seal_legacy_rights_request_data(
             &id,
             SensitiveDataCategory::RightsRequestContact,
             &contact,
-            retention.expiry(created_at, retention.rights_request_contact_days),
         )
         .await?;
         if identity != Value::Null {
@@ -137,7 +133,6 @@ pub async fn seal_legacy_rights_request_data(
                 &id,
                 SensitiveDataCategory::RightsRequestIdentity,
                 &identity,
-                retention.expiry(created_at, retention.rights_request_identity_days),
             )
             .await?;
         }
@@ -149,7 +144,6 @@ pub async fn seal_legacy_rights_request_data(
                 &id,
                 SensitiveDataCategory::RightsRequestEvidence,
                 &evidence,
-                retention.expiry(created_at, retention.rights_request_evidence_days),
             )
             .await?;
         }

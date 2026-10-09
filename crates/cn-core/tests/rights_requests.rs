@@ -1,10 +1,10 @@
 use anyhow::Result;
 use kukuri_cn_core::{
     LegalDataCipher, RetentionPolicy, TestDatabase, TransmissionPreventionCapability,
-    action_rights_request, apply_retention_policy, cleanup_expired, connect_postgres,
-    export_legal_hold, get_active_transmission_prevention, get_public_rights_request_status,
-    get_rights_request, initialize_database, insert_rights_request, list_operator_actions,
-    release_legal_hold, start_legal_hold, transition_rights_request, verify_sensitive_items,
+    action_rights_request, cleanup_expired, connect_postgres, export_legal_hold,
+    get_active_transmission_prevention, get_public_rights_request_status, get_rights_request,
+    initialize_database, insert_rights_request, list_operator_actions, release_legal_hold,
+    start_legal_hold, transition_rights_request, verify_sensitive_items,
 };
 use kukuri_cn_protocol::{
     RightsCategory, RightsRequestCreateRequest, RightsRequestScopeStatus, RightsRequestStatus,
@@ -60,13 +60,11 @@ async fn accountless_tracking_and_action_are_durable_and_redacted() -> Result<()
         initialize_database(&pool).await?;
         let cipher =
             LegalDataCipher::from_key_material("unit-test-legal-data-key-0123456789abcdef")?;
-        let retention = RetentionPolicy::default();
         let created = insert_rights_request(
             &pool,
             &request(),
             RightsRequestScopeStatus::UnverifiedScope,
             &cipher,
-            &retention,
             chrono::Utc::now(),
         )
         .await?;
@@ -101,7 +99,6 @@ async fn accountless_tracking_and_action_are_durable_and_redacted() -> Result<()
             RightsRequestStatus::Reviewing,
             Some("審査を開始しました"),
             "status_surface",
-            &retention,
             chrono::Utc::now(),
         )
         .await?;
@@ -112,7 +109,6 @@ async fn accountless_tracking_and_action_are_durable_and_redacted() -> Result<()
             "legal@node.example",
             vec![TransmissionPreventionCapability::Moderation],
             "このノードの moderation 対象から除外しました",
-            &retention,
             chrono::Utc::now(),
         )
         .await?;
@@ -179,7 +175,6 @@ async fn expired_held_case_is_hidden_exportable_and_deleted_after_release() -> R
             &request(),
             RightsRequestScopeStatus::UnverifiedScope,
             &cipher,
-            &retention,
             now - chrono::Duration::days(800),
         )
         .await?;
@@ -199,12 +194,10 @@ async fn expired_held_case_is_hidden_exportable_and_deleted_after_release() -> R
             "court preservation order",
             "final disposition",
             "legal@node.example",
-            &retention,
             now,
         )
         .await?;
 
-        apply_retention_policy(&pool, &retention).await?;
         cleanup_expired(&pool, now).await?;
         assert!(
             get_rights_request(&pool, &created.record.id)
@@ -218,15 +211,16 @@ async fn expired_held_case_is_hidden_exportable_and_deleted_after_release() -> R
                 .await?;
         assert_eq!(physical_count, 1, "hold must prevent physical deletion");
 
-        let export = export_legal_hold(
-            &pool,
-            &cipher,
-            &hold.id,
-            "reviewer@node.example",
-            &retention,
-            now,
-        )
-        .await?;
+        let export =
+            export_legal_hold(&pool, &cipher, &hold.id, "reviewer@node.example", now).await?;
+        // export の期限は、最終の状態遷移の時刻に状態の区分（未解決）の日数を足した値。
+        assert_eq!(
+            serde_json::from_value::<chrono::DateTime<chrono::Utc>>(
+                export.data["rights_request"]["expires_at"].clone()
+            )?,
+            created.record.updated_at
+                + chrono::Duration::days(i64::from(retention.rights_request_active_days))
+        );
         let exported = serde_json::to_string(&export)?;
         assert!(exported.contains("rights@example.com"));
         for forbidden in [
@@ -238,9 +232,9 @@ async fn expired_held_case_is_hidden_exportable_and_deleted_after_release() -> R
             assert!(!exported.contains(forbidden), "export leaked {forbidden}");
         }
 
-        release_legal_hold(&pool, &hold.id, "legal@node.example", &retention, now).await?;
+        release_legal_hold(&pool, &hold.id, "legal@node.example", now).await?;
         assert!(
-            release_legal_hold(&pool, &hold.id, "legal@node.example", &retention, now,)
+            release_legal_hold(&pool, &hold.id, "legal@node.example", now)
                 .await
                 .is_err(),
             "double release must fail"

@@ -160,16 +160,14 @@ pub async fn upsert_sensitive_json_in_tx<T: Serialize>(
     owner_id: &str,
     category: SensitiveDataCategory,
     value: &T,
-    expires_at: DateTime<Utc>,
 ) -> Result<()> {
     let (nonce, ciphertext) = cipher.encrypt_json(owner_kind, owner_id, category, value)?;
     sqlx::query(
         "INSERT INTO cn_legal.sensitive_items
-            (id, owner_kind, owner_id, data_category, nonce, ciphertext, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (id, owner_kind, owner_id, data_category, nonce, ciphertext)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (owner_kind, owner_id, data_category) DO UPDATE
-         SET nonce = EXCLUDED.nonce, ciphertext = EXCLUDED.ciphertext,
-             expires_at = EXCLUDED.expires_at",
+         SET nonce = EXCLUDED.nonce, ciphertext = EXCLUDED.ciphertext",
     )
     .bind(Uuid::new_v4().to_string())
     .bind(owner_kind)
@@ -177,7 +175,6 @@ pub async fn upsert_sensitive_json_in_tx<T: Serialize>(
     .bind(category.as_str())
     .bind(nonce)
     .bind(ciphertext)
-    .bind(expires_at)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -194,7 +191,7 @@ pub async fn load_sensitive_json<T: DeserializeOwned>(
     let row = sqlx::query(
         "SELECT nonce, ciphertext FROM cn_legal.sensitive_items
          WHERE owner_kind = $1 AND owner_id = $2 AND data_category = $3
-           AND expires_at > $4",
+           AND created_at > $4 - cn_admin.retention_interval(data_category)",
     )
     .bind(owner_kind)
     .bind(owner_id)

@@ -301,9 +301,10 @@ server 同意同期・session 継続を許可する。snapshot なしの旧記�
 fail-closed とし、当該 Node への認証・登録を開始しない。snapshot 未対応の旧 Node だけは従来の
 slug/version 判定を維持する。
 
-`cn-user-api`、`cn-cli retention`、`cn-cli rights-requests` の実運用では
-`COMMUNITY_NODE_OPERATOR_CONFIG` を必須とし、法務表示と expiry／cleanup が同じ明示 retention を使う。
-rights-request 操作だけが `RetentionPolicy::default()` へ戻る経路は設けない。
+`cn-user-api` と `cn-cli retention` の実運用では `COMMUNITY_NODE_OPERATOR_CONFIG` を必須とし、
+その保持日数を DB の保持区分ごとの日数（`cn_admin.retention_days`）へ書く。期限の判定と cleanup は
+この日数を使うので、法務表示と同じ明示 retention になる。`cn-cli rights-requests`・`cn-cli legal-hold` は
+期限を計算しないので、operator config を読まない（ADR 0034 §1、#1704）。
 
 ### ブロック・ミュート観測の提供（任意文書、#1061）
 

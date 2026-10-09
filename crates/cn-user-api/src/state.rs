@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use kukuri_cn_core::{
     ChannelSecretCipher, DatabaseInitMode, JwtConfig, LegalDataCipher, PgIndexEntryStore,
-    RetentionPolicy, TopicRendezvousStore, apply_retention_policy, cleanup_expired,
+    RetentionPolicy, TopicRendezvousStore, cleanup_expired, configure_case_retention,
     connect_postgres, initialize_database, initialize_database_for_runtime,
     latest_readiness_activation, readiness_context_fingerprint, seal_legacy_report_contacts,
     seal_legacy_rights_request_data, sync_policies, verify_sensitive_items,
@@ -47,7 +47,6 @@ pub struct UserApiState {
     /// indexing request は受け付けない(secret を平文保存しないため)。
     pub(crate) channel_secret_cipher: Option<Arc<ChannelSecretCipher>>,
     pub(crate) legal_data_cipher: Option<Arc<LegalDataCipher>>,
-    pub(crate) retention: RetentionPolicy,
     /// ユーザー向け search / discovery / recommendation の query 境界(#404)。
     /// fail-closed query gate(`FailClosedIndexQuery`)を通した読み口のみを持つ。
     /// None = 設定無効。readiness activation は起動後も変化するため、各requestで検査する。
@@ -226,10 +225,10 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
         verify_sensitive_items(&pool, cipher)
             .await
             .context("failed to verify stored legal data with configured key")?;
-        seal_legacy_report_contacts(&pool, cipher, &retention)
+        seal_legacy_report_contacts(&pool, cipher)
             .await
             .context("failed to seal legacy report contacts")?;
-        seal_legacy_rights_request_data(&pool, cipher, &retention)
+        seal_legacy_rights_request_data(&pool, cipher)
             .await
             .context("failed to seal legacy rights-request data")?;
     } else {
@@ -249,9 +248,9 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
             );
         }
     }
-    apply_retention_policy(&pool, &retention)
+    configure_case_retention(&pool, &retention)
         .await
-        .context("initial retention reconciliation failed")?;
+        .context("failed to configure case retention days")?;
     cleanup_expired(&pool, chrono::Utc::now())
         .await
         .context("initial retention cleanup failed")?;
@@ -390,7 +389,6 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
         policy_kinds,
         channel_secret_cipher,
         legal_data_cipher,
-        retention,
         index_query,
         trust_read,
         relation_visibility,

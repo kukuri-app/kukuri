@@ -68,7 +68,7 @@ use crate::handlers::trust_relation::{
 };
 use crate::rate_limit::apply_rate_limit;
 use crate::state::{ManifestState, UserApiState, build_runtime_state};
-use kukuri_cn_core::{apply_retention_policy, cleanup_expired, cleanup_trust_observations};
+use kukuri_cn_core::{cleanup_expired, cleanup_trust_observations};
 
 pub fn app_router(state: UserApiState) -> Router {
     let manifest = manifest_routes(
@@ -366,7 +366,6 @@ fn spawn_retention_cleanup(state: UserApiState) {
         loop {
             interval.tick().await;
             let result = async {
-                apply_retention_policy(&state.pool, &state.retention).await?;
                 let now = chrono::Utc::now();
                 let counts = cleanup_expired(&state.pool, now).await?;
                 let trust_observations = cleanup_trust_observations(&state.pool, now).await?;
