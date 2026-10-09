@@ -406,6 +406,7 @@ pub(crate) async fn run_community_node_trust_relation_client(
                         .read_community_node_trust_user(CommunityNodeUserAdvisoryRequest {
                             base_url: base_url.clone(),
                             target_pubkey: target_pubkey.clone(),
+                            cursor: None,
                         })
                         .await?;
                     anyhow::ensure!(
@@ -421,6 +422,7 @@ pub(crate) async fn run_community_node_trust_relation_client(
                         .read_community_node_relation_user(CommunityNodeUserAdvisoryRequest {
                             base_url: base_url.clone(),
                             target_pubkey: target_pubkey.clone(),
+                            cursor: None,
                         })
                         .await?;
                     anyhow::ensure!(
@@ -466,6 +468,7 @@ pub(crate) async fn run_community_node_trust_relation_client(
                     let request = CommunityNodeUserAdvisoryRequest {
                         base_url: base_url.clone(),
                         target_pubkey: target_pubkey.clone(),
+                        cursor: None,
                     };
                     let error = if endpoint == "trust" {
                         runtime
@@ -522,6 +525,7 @@ pub(crate) async fn run_community_node_trust_relation_client(
                         .read_community_node_trust_user(CommunityNodeUserAdvisoryRequest {
                             base_url: base_url.clone(),
                             target_pubkey: target_pubkey.clone(),
+                            cursor: None,
                         })
                         .await?;
                     let entry = value

@@ -14,9 +14,12 @@ use crate::runtime::DesktopRuntime;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
 pub struct CommunityNodeUserAdvisoryRequest {
     pub base_url: String,
     pub target_pubkey: String,
+    /// trust の basis の続き（前の応答の `basis_next_cursor`、#1702）。relation の照会は使わない。
+    pub cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,7 +109,7 @@ impl DesktopRuntime {
                 request.base_url.as_str(),
                 Method::GET,
                 format!("{TRUST_USERS_PATH_PREFIX}{target}").as_str(),
-                None,
+                request.cursor.map(|cursor| ("cursor", cursor)),
                 None,
             )
             .await?;
@@ -142,7 +145,7 @@ impl DesktopRuntime {
             request.base_url.as_str(),
             Method::GET,
             RELATION_NEIGHBORS_PATH,
-            request.limit,
+            request.limit.map(|limit| ("limit", limit.to_string())),
             None,
         )
         .await
@@ -164,13 +167,14 @@ impl DesktopRuntime {
     }
 
     /// 認証済み trust / relation 系 request の共通処理。session が Ready でなければ HTTP を送らず、
-    /// 401 は 1 回だけ再認証して再送する。`body` は JSON 本文（#1061 の観測提供・一括評価）。
+    /// 401 は 1 回だけ再認証して再送する。`query` は 1 つの query 引数（`limit`、#1702 の `cursor`）、
+    /// `body` は JSON 本文（#1061 の観測提供・一括評価）。
     pub(crate) async fn request_community_node_trust_relation<T: DeserializeOwned>(
         &self,
         base_url: &str,
         method: Method,
         path: &str,
-        limit: Option<usize>,
+        query: Option<(&str, String)>,
         body: Option<&serde_json::Value>,
     ) -> Result<T, CommunityNodeTrustRelationError> {
         let base_url = normalize_http_url(base_url).map_err(|error| {
@@ -225,7 +229,7 @@ impl DesktopRuntime {
                 base_url.as_str(),
                 method.clone(),
                 path,
-                limit,
+                query.clone(),
                 body,
                 token.access_token.as_str(),
             )
@@ -245,7 +249,7 @@ impl DesktopRuntime {
                     base_url.as_str(),
                     method,
                     path,
-                    limit,
+                    query,
                     body,
                     refreshed.access_token.as_str(),
                 )
@@ -260,7 +264,7 @@ impl DesktopRuntime {
         base_url: &str,
         method: Method,
         path: &str,
-        limit: Option<usize>,
+        query: Option<(&str, String)>,
         body: Option<&serde_json::Value>,
         access_token: &str,
     ) -> Result<T, CommunityNodeTrustRelationError> {
@@ -273,8 +277,8 @@ impl DesktopRuntime {
         let mut request = client
             .request(method, format!("{base_url}{path}"))
             .bearer_auth(access_token);
-        if let Some(limit) = limit {
-            request = request.query(&[("limit", limit)]);
+        if let Some(query) = query {
+            request = request.query(&[query]);
         }
         if let Some(body) = body {
             request = request.json(body);
