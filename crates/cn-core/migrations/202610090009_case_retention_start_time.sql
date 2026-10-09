@@ -1,6 +1,8 @@
 -- #1704 AC-1: 案件保持の期限を行に持たず、起算点の列と保持区分ごとの日数で判定する（ADR 0034 §1・§4）。
 -- 日数は cn-user-api の起動時と `cn-cli retention sweep` が operator config から書く。日数を変えると
 -- 既存の行にもすぐ効き、行は書き直さない。下の既定値は operator config の既定と同じ。
+-- 旧平文の確認（202610090006）より後に適用する。確認で止まった DB は #1705 より前の版を一度起動して sealing
+-- してから適用し直すので、その版が書く期限の列を、確認を通るまで消さない。
 
 CREATE TABLE cn_admin.retention_days (
     category TEXT PRIMARY KEY,

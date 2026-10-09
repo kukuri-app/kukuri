@@ -70,7 +70,17 @@ async fn legacy_plaintext_stops_migration_and_sealed_database_drops_column() -> 
         .await?;
         assert_eq!(contact.as_deref(), Some("legacy@example.com"));
 
+        // 止まった DB で、#776 以後・#1705 より前の版の sealing と同じ書込み（期限の列を含む）ができる。
         // 通報を sealing 済みの形にしても、旧平文の申出が残っていれば止まる。
+        sqlx::query(
+            "INSERT INTO cn_legal.sensitive_items
+                (id, owner_kind, owner_id, data_category, nonce, ciphertext, expires_at)
+             VALUES ('sealed-report', 'report', 'legacy-report', 'report_contact',
+                     decode(repeat('00', 24), 'hex'), decode(repeat('ab', 32), 'hex'),
+                     NOW() + INTERVAL '90 days')",
+        )
+        .execute(&pool)
+        .await?;
         sqlx::query("UPDATE cn_admin.reports SET reporter_contact = NULL")
             .execute(&pool)
             .await?;
