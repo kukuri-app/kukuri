@@ -9,7 +9,7 @@
 | applicationId・表示名 | `app.kukuri.android`・kukuri | `apps/desktop/src-tauri/tauri.android.conf.json`（D5）。desktop の `app.kukuri.desktop` と保存先は変えない |
 | minSdk・targetSdk・compileSdk | 29・36・36 | 同上と `gen/android/app/build.gradle.kts`（D7、Google Play の target API） |
 | ABI | 配布は arm64-v8a、検証は x86_64（emulator） | D7。32bit は対象外 |
-| Rust | 1.98.1、target `aarch64-linux-android`・`x86_64-linux-android` | `rust-toolchain.toml` |
+| Rust | 1.98.1（`rust-toolchain.toml`）。Android の target `aarch64-linux-android`・`x86_64-linux-android` は `rustup target add` で入れる | `docs/runbooks/dev.md` の「Android 前提」 |
 | Tauri | crate 2.12.0、CLI 2.12.0 | `src-tauri/Cargo.toml`、`apps/desktop/package.json` |
 | Android project | `tauri android init` の出力。Gradle 9.6.1（wrapper）、Android Gradle Plugin 9.3.1、Kotlin Gradle plugin 2.2.10 | `apps/desktop/src-tauri/gen/android` |
 | JDK | 17 以上。手元は Android Studio 付属の JBR 21.0.8 | Gradle 9 の要件 |
@@ -18,7 +18,7 @@
 
 `tauri android init` の出力から直したもの: CLI の呼び方（init を実行した端末の node の絶対 path を埋め込んでいたため、PATH の node で `apps/desktop/scripts/tauri-cli.mjs` を呼ぶ）、compileSdk・targetSdk（雛形の 37 を 36 へ）、Android TV の宣言（D7 の対象外）、未使用の雛形（layout・色・night の theme）と既定のアイコン。ランチャーアイコンは `src-tauri/icons/android` を Gradle の res として直接読み、権利は既存の `docs/ASSET_MANIFEST.json` のまま管理する。
 
-Tauri の Android library と plugin の Gradle project（`:tauri-android` など）は cargo の registry の中にある。雛形のままではその build の出力も registry の中に書かれ、tauri-plugin の build script（`tauri-plugin` 2.7.0 の `copy_folder`。Android では `build/` を除かずに directory を丸ごと写し、全 file を再実行の条件にする）が Gradle の書込み中に写して、clean な状態からの build が `failed to copy tauri-api to the plugin project` で落ちた。root の `build.gradle.kts` で app 以外の project の出力を `gen/android/build/<project>` へ移した。deep-link の plugin が build のたびに manifest へ入れる目印（`DEEP LINK PLUGIN. AUTO-GENERATED`）は、生成と同じ内容で追跡する（内容が同じなら書き換えない）。
+Tauri の Android library と plugin の Gradle project（`:tauri-android` など）は cargo の registry の中にある。雛形のままではその build の出力も registry の中に書かれ、tauri-plugin の build script（`tauri-plugin` 2.7.0 の `copy_folder`。Android では `build/` を除かずに directory を丸ごと写し、全 file を再実行の条件にする）が Gradle の書込み中に写して、clean な状態からの build が `failed to copy tauri-api to the plugin project` で落ちた。root の `build.gradle.kts` で app 以外の project の出力を `gen/android/build/<project>` へ移した。修正前の build が registry に残した `build/` がある環境でも、Gradle はそこへ書かず build は成功する（古い出力を registry に置いて確認した）。deep-link の plugin が build のたびに manifest へ入れる目印（`DEEP LINK PLUGIN. AUTO-GENERATED`）は、生成と同じ内容で追跡する（内容が同じなら書き換えない）。
 
 ## Android 向けの依存の解決
 
@@ -37,7 +37,7 @@ Tauri の Android library と plugin の Gradle project（`:tauri-android` な�
 | 開発版の兄弟 dir（`<identifier>.dev`、#1105） | 使わず、OS の app data dir（`/data/user/0/app.kukuri.android`）をそのまま使う。sandbox の外へは書けず、開発版と配布版は署名が違うため同じ端末に並ばない | `state.rs` の `base_app_data_dir` |
 | 秘密の保存 | 未接続（Keystore の adapter は #1195 AC-1） | — |
 
-frontend は変えていない。Tauri の IPC と既存の dispatch・起動の関門（`invoke_gate.rs`）は Android でも同じ経路を通る。
+frontend の画面と API は変えていない（`vite.config.ts` は `tauri android dev` の開発 server の host だけ。desktop では CLI ラッパーが `KUKURI_TAURI_DEV_HOST` を必ず渡すので変わらない）。Tauri の IPC と既存の dispatch・起動の関門（`invoke_gate.rs`）は Android でも同じ経路を通る。
 
 ## 検証
 
