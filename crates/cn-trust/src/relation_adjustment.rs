@@ -122,10 +122,17 @@ pub fn compose_viewer_trust(trust_absolute: f64, relation: f64) -> f64 {
     clamp_unit(clamp_unit(trust_absolute) + relation.clamp(-1.0, 0.0))
 }
 
+/// 入力の並びによらない digest（blake3 の先頭 16 文字）。
+fn input_digest(mut parts: Vec<String>) -> String {
+    parts.sort();
+    let digest = blake3::hash(parts.join("\n").as_bytes()).to_hex();
+    digest.as_str()[..16].to_string()
+}
+
 /// T の入力の digest（`trust_version`）。寄与する signal の識別と状態だけから決まり、
 /// 時間減衰による値の変化では変わらない。
 pub fn trust_version(view: &TrustReadView) -> String {
-    let mut parts: Vec<String> = view
+    let parts = view
         .basis
         .iter()
         .map(|entry| {
@@ -138,16 +145,35 @@ pub fn trust_version(view: &TrustReadView) -> String {
             )
         })
         .collect();
-    parts.sort();
-    let digest = blake3::hash(parts.join("\n").as_bytes()).to_hex();
-    format!("t-{}", &digest.as_str()[..16])
+    format!("t-{}", input_digest(parts))
 }
 
-/// relation 側の版（`relation_version`）。
-pub fn relation_version(relation_snapshot_id: Option<i64>, observation_revision: i64) -> String {
+/// relation 側の版（`relation_version`）。直近で成功した relation 解析の id と、評価に使った観測の
+/// digest の組（観測が無ければ `0`）。観測の集合が同じなら同じ版で、時間減衰では変わらない（#1699）。
+pub fn relation_version(
+    relation_snapshot_id: Option<i64>,
+    observations: &[RelationObservation],
+) -> String {
+    let observations = if observations.is_empty() {
+        "0".to_string()
+    } else {
+        input_digest(
+            observations
+                .iter()
+                .map(|observation| {
+                    format!(
+                        "{}|{:?}|{}",
+                        observation.observer_pubkey,
+                        observation.kind,
+                        observation.observed_at.timestamp_millis()
+                    )
+                })
+                .collect(),
+        )
+    };
     match relation_snapshot_id {
-        Some(snapshot) => format!("r-{snapshot}-{observation_revision}"),
-        None => format!("r-none-{observation_revision}"),
+        Some(snapshot) => format!("r-{snapshot}-{observations}"),
+        None => format!("r-none-{observations}"),
     }
 }
 

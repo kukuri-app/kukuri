@@ -207,5 +207,5 @@ pub use trust_observations::{
     TRUST_OBSERVATION_MAX_CLOCK_SKEW_SECONDS, TrustObservationSharingStatus,
     cleanup_trust_observations, latest_successful_relation_snapshot_id,
     list_active_relation_observations, revoke_trust_observation_sharing, store_trust_observations,
-    trust_observation_revisions, trust_observation_sharing_status,
+    trust_observation_sharing_status,
 };
