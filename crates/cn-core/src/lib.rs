@@ -163,11 +163,11 @@ pub use retention::{
 };
 pub use rights_request_sensitive::seal_legacy_rights_request_data;
 pub use rights_requests::{
-    CreatedRightsRequest, RightsRequestActionResult, RightsRequestEvent, RightsRequestRecord,
-    action_rights_request, get_public_rights_request_status, get_rights_request,
-    get_rights_request_with_sensitive, insert_rights_request, list_rights_requests,
-    list_rights_requests_with_sensitive, resolve_rights_request_scope, transition_rights_request,
-    withdraw_rights_request,
+    CreatedRightsRequest, INDEXED_POST_EXISTS_SQL, RightsRequestActionResult, RightsRequestEvent,
+    RightsRequestRecord, action_rights_request, get_public_rights_request_status,
+    get_rights_request, get_rights_request_with_sensitive, insert_rights_request,
+    list_rights_requests, list_rights_requests_with_sensitive, resolve_rights_request_scope,
+    transition_rights_request, withdraw_rights_request,
 };
 pub use rollout::{ensure_default_auth_rollout, load_auth_rollout, store_auth_rollout};
 pub use safety_appeals::{
@@ -195,8 +195,8 @@ pub use tester_feedback::{
     list_tester_feedback,
 };
 pub use transmission_preventions::{
-    NewTransmissionPrevention, TransmissionPrevention, TransmissionPreventionBasis,
-    TransmissionPreventionCapability, TransmissionPreventionMutation,
+    NewTransmissionPrevention, REMOVE_PREVENTED_POST_INDEX_SQL, TransmissionPrevention,
+    TransmissionPreventionBasis, TransmissionPreventionCapability, TransmissionPreventionMutation,
     apply_transmission_prevention, get_active_transmission_prevention, is_transmission_prevented,
     is_transmission_prevented_for_any, release_transmission_prevention,
 };
