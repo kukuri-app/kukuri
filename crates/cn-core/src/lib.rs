@@ -199,9 +199,9 @@ pub use transmission_preventions::{
 };
 pub use trust_inputs::{
     TRUST_BASIS_PAGE_SIZE, TRUST_BASIS_PAGE_SQL, TRUST_REBUILD_BATCH, TRUST_SWEEP_BATCH,
-    TRUST_TOTALS_SQL, TrustBasisCursor, TrustBasisPage, list_disclosed_trust_basis_page,
-    list_trust_basis_page, load_trust_totals, rebuild_trust_totals, sweep_expired_trust_signals,
-    sync_trust_half_life, trust_risk_input,
+    TRUST_SWEEP_SQL, TRUST_TOTALS_SQL, TrustBasisCursor, TrustBasisPage,
+    list_disclosed_trust_basis_page, list_trust_basis_page, load_trust_totals,
+    rebuild_trust_totals, sweep_expired_trust_signals, sync_trust_half_life, trust_risk_input,
 };
 pub use trust_observations::{
     ACTIVE_TRUST_OBSERVATION_RETENTION_DAYS, RELATION_OBSERVATIONS_PER_TARGET_LIMIT,
