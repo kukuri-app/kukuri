@@ -373,7 +373,7 @@ test('desktop app blocks startup until app-level legal consent is accepted', asy
   expect(screen.getByDisplayValue(/runtime starts after consent/)).toBeInTheDocument();
 });
 
-test('desktop app requires renewed consent for legal bundle version 10 (#1232)', async () => {
+test('desktop app requires renewed consent for legal bundle version 10 (#1232, #1670)', async () => {
   const user = userEvent.setup();
   invokeMock.mockResolvedValueOnce({
     status: 'consent_required',

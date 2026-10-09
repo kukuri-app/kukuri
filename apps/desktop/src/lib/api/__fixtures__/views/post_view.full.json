@@ -10,6 +10,7 @@
     "bytes": 2048,
     "role": "profile_avatar"
   },
+  "author_nip05": "alice@example.com",
   "following": true,
   "followed_by": true,
   "mutual": true,
@@ -101,6 +102,7 @@
     "source_author_name": "bob",
     "source_author_display_name": null,
     "source_author_picture_asset": null,
+    "source_author_nip05": null,
     "source_object_kind": "post",
     "content": "original",
     "attachments": [],

@@ -10,6 +10,7 @@
     "role": "profile_avatar"
   },
   "updated_at": 1700000500,
+  "nip05": "bob@example.com",
   "following": true,
   "followed_by": false,
   "mutual": false,

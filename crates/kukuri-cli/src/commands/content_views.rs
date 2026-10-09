@@ -121,7 +121,7 @@ fn author() -> Value {
     view(
         json!({"author_pubkey": string(), "name": optional_string(), "display_name": optional_string(),
         "about": optional_string(), "picture_asset": nullable(schema::profile_asset()), "updated_at": optional_integer(),
-        "following": boolean(), "followed_by": boolean(), "mutual": boolean(), "friend_of_friend": boolean(),
+        "nip05": optional_string(), "following": boolean(), "followed_by": boolean(), "mutual": boolean(), "friend_of_friend": boolean(),
         "friend_of_friend_via_pubkeys": array(string()), "provenance": nullable(provenance()),
         "muted": boolean(), "blocking": boolean(), "blocked_by": boolean()}),
     )
@@ -135,7 +135,8 @@ fn post() -> Value {
     view(
         json!({"object_id": string(), "envelope_id": string(), "author_pubkey": string(),
         "author_name": optional_string(), "author_display_name": optional_string(),
-        "author_picture_asset": nullable(schema::profile_asset()), "following": boolean(), "followed_by": boolean(),
+        "author_picture_asset": nullable(schema::profile_asset()), "author_nip05": optional_string(),
+        "following": boolean(), "followed_by": boolean(),
         "mutual": boolean(), "friend_of_friend": boolean(), "provenance": nullable(provenance()),
         "withdrawal": nullable(view(json!({"withdrawn_at": integer(), "replacement_object_id": optional_string(),
             "reason_visibility": string(), "reason": optional_string()}))),
@@ -162,7 +163,8 @@ fn repost_source() -> Value {
     view(
         json!({"source_object_id": string(), "source_topic_id": string(), "source_author_pubkey": string(),
         "source_author_name": optional_string(), "source_author_display_name": optional_string(),
-        "source_author_picture_asset": nullable(schema::profile_asset()), "source_object_kind": string(),
+        "source_author_picture_asset": nullable(schema::profile_asset()), "source_author_nip05": optional_string(),
+        "source_object_kind": string(),
         "content": string(), "attachments": array(schema::attachment()), "content_labels": array(string()),
         "reply_to": optional_string(), "root_id": optional_string()}),
     )

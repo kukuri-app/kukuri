@@ -222,6 +222,7 @@ mod tests {
                 "create_post",
                 "fetch_community_node_policies",
                 "fetch_link_preview",
+                "verify_profile_domain",
                 "get_pending_device_restore_frontend_state",
                 "acknowledge_pending_device_restore_frontend_state",
                 "set_developer_mode_enabled",

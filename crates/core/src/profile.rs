@@ -87,7 +87,7 @@ pub fn normalize_profile_nip05(value: &str) -> Result<String> {
 
 /// 正規化済みの識別子を名前とドメインに分ける。名前は `a-z0-9-_.` の 1〜64 文字、ドメインは `a-z0-9-` の label を
 /// 点でつないだ 253 文字以下のホスト名で、最後の label に英字を含む(IP アドレスを除く)。形に合わなければ `None`。
-fn profile_nip05_parts(value: &str) -> Option<(&str, &str)> {
+pub fn profile_nip05_parts(value: &str) -> Option<(&str, &str)> {
     let (name, domain) = value.split_once('@')?;
     let name_valid = (1..=PROFILE_NIP05_MAX_NAME_CHARS).contains(&name.len())
         && name

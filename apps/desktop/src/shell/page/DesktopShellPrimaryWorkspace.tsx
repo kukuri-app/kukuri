@@ -922,6 +922,8 @@ export function DesktopShellPrimarySurface({
             ) : (
               <ProfileOverviewPanel
                 authorLabel={profileAuthorLabel}
+                pubkey={syncStatus.local_author_pubkey}
+                nip05={localProfile?.nip05}
                 username={localProfile?.name ?? null}
                 about={localProfile?.about ?? null}
                 picture={resolveProfilePictureSrc(localProfile, mediaObjectUrls)}

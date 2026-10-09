@@ -223,7 +223,7 @@ pub use profile::{
     build_follow_edge_envelope, build_follow_edge_envelope_with_docs_author,
     build_profile_envelope, build_profile_envelope_with_docs_author, build_profile_post_envelope,
     build_profile_repost_envelope, normalize_profile_nip05, parse_block_edge, parse_follow_edge,
-    parse_profile, parse_profile_post, parse_profile_repost,
+    parse_profile, parse_profile_post, parse_profile_repost, profile_nip05_parts,
 };
 pub use reactions::{
     CUSTOM_REACTION_SET_MAX_BYTES, CUSTOM_REACTION_SET_MIME, CustomReactionAssetDocV1,

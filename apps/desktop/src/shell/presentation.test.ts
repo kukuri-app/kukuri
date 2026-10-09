@@ -206,6 +206,7 @@ describe('mergeAuthorView', () => {
       name: 'alice',
       display_name: 'Alice',
       about: 'bio',
+      nip05: 'alice@example.com',
       following: true,
       muted: true,
       friend_of_friend_via_pubkeys: ['via-1'],
@@ -220,6 +221,7 @@ describe('mergeAuthorView', () => {
     expect(merged.followed_by).toBe(true);
     expect(merged.name).toBe('alice');
     expect(merged.about).toBe('bio');
+    expect(merged.nip05).toBe('alice@example.com');
     expect(merged.following).toBe(true);
     expect(merged.muted).toBe(true);
     expect(merged.friend_of_friend_via_pubkeys).toEqual(['via-1']);
@@ -233,6 +235,7 @@ describe('mergeAuthorView', () => {
       about: null,
       picture_asset: null,
       updated_at: null,
+      nip05: null,
       following: false,
       followed_by: false,
       mutual: false,

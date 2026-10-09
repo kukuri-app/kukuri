@@ -32,6 +32,7 @@ use crate::state::{CommandError, DesktopState};
 const MAX_REDIRECTS: usize = 3;
 const MAX_HTML_BYTES: usize = 512 * 1024;
 const MAX_IMAGE_BYTES: usize = LINK_PREVIEW_MAX_IMAGE_BYTES as usize;
+const MAX_NIP05_DOCUMENT_BYTES: usize = 512 * 1024;
 const MAX_CONCURRENT_FETCHES: usize = 4;
 const MAX_IN_FLIGHT_ENTRIES: usize = 32;
 const MAX_CACHE_ENTRIES: usize = 128;
@@ -542,9 +543,10 @@ async fn fetch_bounded<T: PreviewTransport>(
     initial: Url,
     accept: &'static str,
     max_bytes: usize,
+    max_redirects: usize,
 ) -> Result<(Url, TransportResponse), LinkPreviewUnavailableReason> {
     let mut current = initial;
-    for redirect_count in 0..=MAX_REDIRECTS {
+    for redirect_count in 0..=max_redirects {
         let resolved = resolve_public(transport, &current).await?;
         let response = transport
             .get(&current, &resolved, accept, max_bytes)
@@ -560,7 +562,7 @@ async fn fetch_bounded<T: PreviewTransport>(
         let status = StatusCode::from_u16(response.status)
             .map_err(|_| LinkPreviewUnavailableReason::HttpStatus)?;
         if status.is_redirection() {
-            if redirect_count == MAX_REDIRECTS {
+            if redirect_count == max_redirects {
                 return Err(LinkPreviewUnavailableReason::TooManyRedirects);
             }
             let location = response
@@ -708,6 +710,7 @@ async fn fetch_preview_result<T: PreviewTransport>(
         initial,
         "text/html,application/xhtml+xml;q=0.9",
         MAX_HTML_BYTES,
+        MAX_REDIRECTS,
     )
     .await?;
     let declared_html = media_type(html.content_type.as_deref());
@@ -767,6 +770,7 @@ async fn fetch_image<T: PreviewTransport>(
         image_url,
         "image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.9",
         MAX_IMAGE_BYTES,
+        MAX_REDIRECTS,
     )
     .await?;
     let declared = media_type(response.content_type.as_deref());
@@ -776,6 +780,40 @@ async fn fetch_image<T: PreviewTransport>(
         "data:{mime};base64,{}",
         BASE64_STANDARD.encode(response.body)
     ))
+}
+
+/// NIP-05 の識別子 `name@domain` のドメインの `nostr.json` が、その名前で `pubkey` を示すか(ADR 0064 §3)。取得は
+/// リンクプレビューと同じ境界を使い、転送(3xx)には従わない。結果の保持と同時実行の上限は画面側が持つ。
+#[tauri::command]
+pub async fn verify_profile_domain(
+    pubkey: String,
+    identifier: String,
+) -> Result<bool, CommandError> {
+    Ok(verify_nip05(&NetworkTransport, &pubkey, &identifier).await)
+}
+
+async fn verify_nip05<T: PreviewTransport>(transport: &T, pubkey: &str, identifier: &str) -> bool {
+    let Some((name, domain)) = kukuri_core::profile_nip05_parts(identifier) else {
+        return false;
+    };
+    let Ok(url) = normalize_url(&format!(
+        "https://{domain}/.well-known/nostr.json?name={name}"
+    )) else {
+        return false;
+    };
+    match fetch_bounded(
+        transport,
+        url,
+        "application/json",
+        MAX_NIP05_DOCUMENT_BYTES,
+        0,
+    )
+    .await
+    {
+        Ok((_, response)) => serde_json::from_slice::<serde_json::Value>(&response.body)
+            .is_ok_and(|document| document["names"][name].as_str() == Some(pubkey)),
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]
