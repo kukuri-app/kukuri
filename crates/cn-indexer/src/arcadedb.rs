@@ -131,10 +131,18 @@ impl ArcadeDbProjection {
             ),
         )
         .await?;
-        // 受入下限による回収（#1221 R5-F）の access path。
+        // 受入下限による回収（#1221 R5-F）と、scope 無しの新着列挙の access path。
         self.command(
             "sql",
             &format!("CREATE INDEX IF NOT EXISTS ON {ENTRY_TYPE} (created_at) NOTUNIQUE"),
+        )
+        .await?;
+        // scope 内の新着列挙の access path（#1719）。
+        self.command(
+            "sql",
+            &format!(
+                "CREATE INDEX IF NOT EXISTS ON {ENTRY_TYPE} (scope_kind, scope_id, created_at) NOTUNIQUE"
+            ),
         )
         .await?;
         // 全文検索 index（Lucene）。ユーザー向け search は #404 が使う。
@@ -354,9 +362,13 @@ impl IndexQuery for ArcadeDbProjection {
     ) -> Result<Vec<IndexedEntry>> {
         let value = match scope {
             Some((scope_kind, scope_id)) => {
+                // 全件を満たす created_at の上限があると、ArcadeDB は (scope_kind, scope_id,
+                // created_at) の index を新しい順にたどり、limit 件で止める。上限が無いと
+                // (scope_kind, scope_id, object_id) の index で scope の全件を読んで並べ替える（#1719）。
                 let command = format!(
                     "SELECT {ENTRY_COLUMNS} FROM {ENTRY_TYPE} \
                      WHERE scope_kind = :scope_kind AND scope_id = :scope_id \
+                     AND created_at <= :max_created_at \
                      ORDER BY created_at DESC LIMIT {limit}"
                 );
                 self.command_with_params(
@@ -365,6 +377,7 @@ impl IndexQuery for ArcadeDbProjection {
                     json!({
                         "scope_kind": Self::scope_kind_str(scope_kind),
                         "scope_id": scope_id,
+                        "max_created_at": i64::MAX,
                     }),
                 )
                 .await?

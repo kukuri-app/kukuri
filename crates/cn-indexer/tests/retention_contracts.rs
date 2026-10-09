@@ -212,11 +212,17 @@ async fn count(pool: &PgPool, table: &str) -> Result<i64> {
     )
 }
 
-/// 計数が 5 表の実際の行数と一致することを確かめて返す。
+/// 計数が 5 表の実際の行数と、索引の行数の計数が索引の行数と一致することを確かめて返す（#1714）。
 async fn units(pool: &PgPool) -> Result<i64> {
-    let units: i64 = sqlx::query_scalar("SELECT units FROM cn_index.retention_state")
-        .fetch_one(pool)
-        .await?;
+    let (units, index_entries): (i64, i64) =
+        sqlx::query_as("SELECT units, index_entries FROM cn_index.retention_state")
+            .fetch_one(pool)
+            .await?;
+    assert_eq!(
+        index_entries,
+        count(pool, "cn_index.index_entries").await?,
+        "the index entry counter must match the rows"
+    );
     let mut actual = 0;
     for table in [
         "cn_index.index_entries",

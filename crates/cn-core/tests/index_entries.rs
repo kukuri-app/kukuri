@@ -3,7 +3,8 @@
 //! `KUKURI_CN_RUN_INTEGRATION_TESTS=1` のときだけ実 DB に接続して実行する。
 //! - `cn_safety.scan_verdicts`: 対象ごとの最新 verdict の upsert（id 据え置き）と取得。
 //! - `cn_index.index_entries`: fail-closed 不変条件の **DB 制約**による保証
-//!   （`index_only_allow_verdict_content` / verdict 無し entry の拒否 / critical 拒否）。
+//!   （`index_only_allow_verdict_content` / verdict 無し entry の拒否 / critical 拒否）と、
+//!   `cn_safety.scan_verdicts` の失敗の理由の allow の拒否（#1714）。
 //! - `filter_surfaceable_objects`: query 境界の fail-closed 突合
 //!   （`search_discovery_recommendation_excludes_non_allow` の真実源側）。
 
@@ -209,7 +210,8 @@ async fn scan_verdict_upsert_keeps_id_and_tracks_latest() -> Result<()> {
 }
 
 /// fail-closed 不変条件の DB 制約: 非 allow / critical / verdict 無しの index entry は
-/// INSERT 自体が拒否される（`index_only_allow_verdict_content` の DB 層）。
+/// INSERT 自体が拒否される（`index_only_allow_verdict_content` の DB 層）。失敗の理由の allow 判定も
+/// 保存できない（#1714）。
 #[tokio::test]
 async fn index_only_allow_verdict_content_enforced_by_db_constraints() -> Result<()> {
     let Some(admin_url) = integration_test_admin_database_url() else {
@@ -281,6 +283,43 @@ async fn index_only_allow_verdict_content_enforced_by_db_constraints() -> Result
             get_index_entry(&pool, IndexScopeKind::PublicTopic, "rust", "post-ghost")
                 .await?
                 .is_none()
+        );
+
+        // 失敗の理由の allow 判定は CHECK 制約違反（失敗が許可へ落ちない。#1714）。新しい判定も既存の判定の
+        // 書き換えも拒否され、同じ理由の hold は保存できる。
+        for reason in [
+            ReasonCode::ScanFailed,
+            ReasonCode::ProviderUnavailable,
+            ReasonCode::Unscanned,
+        ] {
+            let failure = format!("post-failure-{reason:?}");
+            for subject in [failure.as_str(), "post-allow"] {
+                let error = upsert_scan_verdict(
+                    &pool,
+                    SubjectKind::Post,
+                    subject,
+                    &verdict(SafetyAction::Allow, false, reason),
+                    &VerdictPersistMeta::default(),
+                )
+                .await
+                .unwrap_err();
+                assert!(
+                    error.to_string().contains("check"),
+                    "expected CHECK violation for allow `{reason:?}`, got: {error}"
+                );
+            }
+            upsert_scan_verdict(
+                &pool,
+                SubjectKind::Post,
+                &failure,
+                &verdict(SafetyAction::Hold, false, reason),
+                &VerdictPersistMeta::default(),
+            )
+            .await?;
+        }
+        assert_eq!(
+            get_scan_verdict(&pool, SubjectKind::Post, "post-allow").await?,
+            Some(allow)
         );
         anyhow::Ok(())
     }
