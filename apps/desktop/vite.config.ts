@@ -27,8 +27,6 @@ const webRuntimePkg = env?.KUKURI_WEB_RUNTIME_PKG ?? path.resolve(import.meta.di
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // Tauri CLI が渡す build の対象の platform を画面へ渡す（`src/lib/platform.ts`）。
-  envPrefix: ['VITE_', 'TAURI_ENV_PLATFORM'],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
@@ -38,6 +36,7 @@ export default defineConfig({
     },
   },
   // Tauri CLI が frontend の build に渡す対象の platform（Android なら `android`）で配布方式を決める（#1199 AC-3）。
+  // Android だけの経路の判定（`src/lib/platform.ts`）にも使う。
   envPrefix: ['VITE_', 'TAURI_ENV_PLATFORM'],
   // Web の配信の header（`_headers`。ADR 0060 §2）だけを置く。`public` の metaverse の資源は Web では使わない。
   publicDir: webTarget ? 'web-public' : 'public',
