@@ -480,7 +480,8 @@ async fn encrypted_device_backup_restores_one_account_as_one_file() {
 }
 
 /// #1197: Android の保存・選択の画面が返す Content URI は path として開けない。呼出元が開いた file を渡すと、
-/// path の検査を経ずにその file へ書き、その file から確認・復元の準備ができる。
+/// path の検査を経ずにその file へ書き、その file から確認・復元の準備ができる。中身のある file
+/// （既存の file を選んで上書きを確かめた場合）には、desktop と同じく書かない。
 #[tokio::test]
 async fn device_backup_round_trips_through_opened_files() {
     let _resource = lock_test_resource(TestResource::IdentityStorage).await;
@@ -488,14 +489,15 @@ async fn device_backup_round_trips_through_opened_files() {
     let archive_dir = tempdir().expect("archive tempdir");
     let archive_path = archive_dir.path().join("chosen.kukuri-backup");
     let uri = "content://com.android.providers.downloads.documents/document/1".to_string();
+    let request = CreateDeviceBackupRequest {
+        path: uri.clone(),
+        passphrase: PASSPHRASE.to_string(),
+        frontend_state: BTreeMap::new(),
+    };
     let summary = create_device_backup(
         source.path(),
         &source_db,
-        &CreateDeviceBackupRequest {
-            path: uri.clone(),
-            passphrase: PASSPHRASE.to_string(),
-            frontend_state: BTreeMap::new(),
-        },
+        &request,
         Some(fs::File::create(&archive_path).expect("open chosen destination")),
         &DeviceBackupCancellation::default(),
         |_| {},
@@ -508,6 +510,24 @@ async fn device_backup_round_trips_through_opened_files() {
     );
     let leftovers = fs::read_dir(archive_dir.path()).expect("list").count();
     assert_eq!(leftovers, 1, "no temporary file next to the opened file");
+
+    let existing_path = archive_dir.path().join("existing.kukuri-backup");
+    fs::write(&existing_path, b"keep").expect("existing file");
+    let existing = fs::OpenOptions::new()
+        .write(true)
+        .open(&existing_path)
+        .expect("open existing destination");
+    let error = create_device_backup(
+        source.path(),
+        &source_db,
+        &request,
+        Some(existing),
+        &DeviceBackupCancellation::default(),
+        |_| {},
+    )
+    .expect_err("a chosen file with content is not overwritten");
+    assert!(error.to_string().contains("already exists"), "{error:#}");
+    assert_eq!(fs::read(&existing_path).expect("existing file"), b"keep");
 
     let (target, _target_db) = initialized_app_data().await;
     let open_chosen = || Some(fs::File::open(&archive_path).expect("open chosen source"));

@@ -7,6 +7,7 @@ use crate::state::CommandError;
 
 /// `path` が Android の Content URI なら fs plugin で開く。desktop の path は `None` を返し、呼出元が path として扱う。
 /// `content://` 以外の URL（`file://` 等）は app の中の file を指しうるので開かない。
+/// 書込みは切り詰めずに開く（backup は中身のある file に書かない。text は呼出元が切り詰める）。
 pub(crate) fn open_user_document<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     path: &str,
@@ -22,7 +23,7 @@ pub(crate) fn open_user_document<R: tauri::Runtime>(
             );
             let mut options = OpenOptions::new();
             if write {
-                options.write(true).truncate(true);
+                options.write(true);
             } else {
                 options.read(true);
             }
@@ -38,7 +39,8 @@ pub(crate) fn open_user_document<R: tauri::Runtime>(
     Ok(None)
 }
 
-/// 診断・アプリ内 log の text を、Android の保存の画面で選んだ場所へ書く。WebView は `<a download>` を扱わない。
+/// 診断・アプリ内 log の text を、Android の保存の画面で選んだ場所へ書く（既存の file なら中身を置き換える）。
+/// WebView は `<a download>` を扱わない。
 #[tauri::command]
 pub async fn write_text_document(
     app_handle: tauri::AppHandle,
@@ -49,6 +51,7 @@ pub async fn write_text_document(
         let mut file = open_user_document(&app_handle, &path, true)?.ok_or_else(|| {
             anyhow::anyhow!("text is written only to a location chosen on Android")
         })?;
+        file.set_len(0)?;
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         Ok(())

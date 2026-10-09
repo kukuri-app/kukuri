@@ -17,7 +17,7 @@ Accepted
 - `kukuri-device-backup.v1` は、1アカウントの管理情報と全entryをまとめた単一ファイルとする。
 - ファイルは固定header、暗号化manifest、連番の暗号化chunkからなる。大容量Blobをfrontend IPCやメモリへ一括展開しない。
 - 作成先と同じdirectoryの一時ファイルへ書き、完了時だけrenameする。失敗またはcancel時は一時ファイルを削除する。
-- Android（#1197 AC-1、2026-10-10）: 作成先・読込み元は Storage Access Framework の画面が返す Content URI で、Tauri の command が fs plugin で開いた file を本体へ渡す。作成先は利用者が場所を決めた時点で作られ rename できないため、一時ファイルを経ずに直接書く。失敗・cancel の後もその file は残るが成功とは表示せず、途中までの file からの復元は §2 の検証が拒む。`content://` 以外の URL は app の中の file を指しうるので開かない。
+- Android（#1197 AC-1、2026-10-10）: 作成先・読込み元は Storage Access Framework の画面が返す Content URI で、Tauri の command が fs plugin で開いた file を本体へ渡す。作成先は利用者が場所を決めた時点で作られ rename できないため、一時ファイルを経ずに直接書く。既存の file を選んで上書きを確かめた場合も、desktop と同じく中身のある file には書かない（2026-10-10 ユーザー判断）。失敗・cancel の後もその file は残るが成功とは表示せず、途中までの file からの復元は §2 の検証が拒む。`content://` 以外の URL は app の中の file を指しうるので開かない。
 
 ### 2. 暗号化と検証
 
@@ -80,7 +80,7 @@ Accepted
 
 ### 8. 他の方法との対象の差（#1211 AC-5、2026-10-04）
 
-- backup は、端末のデータ全体を運ぶ唯一の方法で、desktop だけで使える。別の端末へ移す（ADR 0062）とアカウント鍵の export（ADR 0047）は、運ぶものが少ない。差の表は ADR 0047 §6 にあり、設定の「アカウント」で示す。
+- backup は、端末のデータ全体を運ぶ唯一の方法で、native の app（desktop と Android）だけで使える（Web では使えない。ADR 0060 §3）。別の端末へ移す（ADR 0062）とアカウント鍵の export（ADR 0047）は、運ぶものが少ない。差の表は ADR 0047 §6 にあり、設定の「アカウント」で示す。
 
 ## Consequences
 

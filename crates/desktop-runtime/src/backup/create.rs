@@ -29,7 +29,8 @@ struct SourceEntry {
 }
 
 /// `opened_destination` は、呼出元が開いた保存先（Android の保存の画面が返した Content URI）。
-/// 利用者が場所を決めた時点で作られていて rename できないので、一時 file を経ずに直接書く（#1197）。
+/// 利用者が場所を決めた時点で作られていて rename できないので、一時 file を経ずに直接書く。
+/// 既存の file を選んで上書きを確かめた場合も、desktop と同じく中身のある file には書かない（#1197）。
 pub fn create_device_backup<F>(
     app_data_dir: &Path,
     db_path: &Path,
@@ -44,7 +45,14 @@ where
     cancellation.check()?;
     validate_frontend_state(&request.frontend_state)?;
     let destination = PathBuf::from(request.path.trim());
-    if opened_destination.is_none() {
+    if let Some(file) = &opened_destination {
+        let existing = file
+            .metadata()
+            .context("failed to inspect device backup destination")?;
+        if existing.len() > 0 {
+            bail!("device backup destination already exists");
+        }
+    } else {
         if destination.as_os_str().is_empty() {
             bail!("device backup destination is required");
         }

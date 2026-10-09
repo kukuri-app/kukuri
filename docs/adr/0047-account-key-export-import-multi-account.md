@@ -48,8 +48,8 @@ Accepted
 | 方法 | 運ぶもの | 運ばないもの | 使える所 |
 | --- | --- | --- | --- |
 | 別の端末へ移す（QR・専用リンク。ADR 0062） | アカウント鍵、profile、フォローとブロック、「この作者を常に表示する」の指定、参加中の private channel とその鍵。選んだときは、移行元で書いた自分の投稿の履歴（本文と添付） | ミュート、DM と通知の履歴、Community Node の設定・同意・token、アプリの同意と年齢の申告、成人向けの表示の設定、endpoint の秘密鍵と端末 ID、OS の permission | desktop と Web |
-| アカウント鍵の export・import（本 ADR） | アカウント鍵だけ | それ以外のすべて。import の後は、本人の別の端末との同期（ADR 0061）が、同期の対象の item だけを運ぶ | desktop と Web |
-| 端末の backup・restore（ADR 0048） | 鍵と、端末のデータ全体（ADR 0048 §3） | ADR 0048 §3 の除外（endpoint の秘密鍵、token、session、OS の権限など） | desktop だけ |
+| アカウント鍵の export・import（本 ADR） | アカウント鍵だけ | それ以外のすべて。import の後は、本人の別の端末との同期（ADR 0061）が、同期の対象の item だけを運ぶ | desktop・Android・Web |
+| 端末の backup・restore（ADR 0048） | 鍵と、端末のデータ全体（ADR 0048 §3） | ADR 0048 §3 の除外（endpoint の秘密鍵、token、session、OS の権限など） | desktop と Android |
 
 ## Consequences
 
