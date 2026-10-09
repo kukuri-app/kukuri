@@ -30,6 +30,7 @@ pub mod relation_worker;
 pub mod replica_plan;
 pub mod runtime;
 pub mod scheduler;
+pub mod search;
 pub mod state;
 pub mod status;
 pub mod worker;
