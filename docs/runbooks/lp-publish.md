@@ -11,7 +11,8 @@ LP は依存もビルドも無い静的ファイルで、`apps/lp/public` をそ
 | `/privacy/` | クライアント用プライバシーポリシー全文（日本語正文） |
 | `/terms/` | クライアント用利用規約全文（日本語正文） |
 | `/assets/` | CSS・JS・画像（画面の静止画と OGP は `assets/screens/`） |
-| `_headers` | Cloudflare Pages のセキュリティヘッダーとキャッシュ |
+| `/.well-known/nostr.json` | `@kukuri.app` の NIP-05 の名前と公開鍵の対応（ADR 0064）。名前を足すときはこの file に追記する |
+| `_headers` | Cloudflare Pages のセキュリティヘッダーとキャッシュ。`nostr.json` には Web 版から読めるよう `Access-Control-Allow-Origin: *` を付ける |
 
 ## 画像を作り直す
 

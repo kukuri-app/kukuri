@@ -7,3 +7,6 @@
 
 /assets/*
   Cache-Control: public, max-age=3600
+
+/.well-known/nostr.json
+  Access-Control-Allow-Origin: *
