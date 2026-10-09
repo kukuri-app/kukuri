@@ -11,8 +11,8 @@ use kukuri_cn_protocol::TRUST_OBSERVATION_SHARING_POLICY_SLUG;
 use sqlx::PgPool;
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
-/// 廃止の migration の直前の版（`202610090004_rights_request_events_independent_retention.sql`）。
-const PREVIOUS_MIGRATION_VERSION: i64 = 202610090004;
+/// 廃止の migration の直前の版（`202610090005_index_entries_object.sql`）。
+const PREVIOUS_MIGRATION_VERSION: i64 = 202610090005;
 const SNAPSHOT: &str = "snapshot-sharing-1";
 
 fn integration_test_admin_database_url() -> Option<String> {
