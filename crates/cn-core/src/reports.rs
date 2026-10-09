@@ -83,10 +83,10 @@ pub async fn insert_community_node_report_with_retention(
     let mut tx = pool.begin().await?;
     let row = sqlx::query(
         "INSERT INTO cn_admin.reports
-            (id, subject_kind, subject_id, capability, reason, details, reporter_contact,
+            (id, subject_kind, subject_id, capability, reason, details,
              appeal_risk_signal_id, status, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9, $10)
-         RETURNING id, subject_kind, subject_id, capability, reason, details, reporter_contact,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, subject_kind, subject_id, capability, reason, details,
                    appeal_risk_signal_id, status, created_at, expires_at",
     )
     .bind(&id)
@@ -193,10 +193,10 @@ pub async fn insert_community_node_appeal_with_retention(
     let id = Uuid::new_v4().to_string();
     let row = sqlx::query(
         "INSERT INTO cn_admin.reports
-            (id, subject_kind, subject_id, capability, reason, details, reporter_contact,
+            (id, subject_kind, subject_id, capability, reason, details,
              appeal_risk_signal_id, status, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9, $10)
-         RETURNING id, subject_kind, subject_id, capability, reason, details, reporter_contact,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, subject_kind, subject_id, capability, reason, details,
                    appeal_risk_signal_id, status, created_at",
     )
     .bind(&id)
@@ -233,7 +233,7 @@ pub async fn list_community_node_reports(
     offset: i64,
 ) -> Result<Vec<CommunityNodeReport>> {
     let rows = sqlx::query(
-        "SELECT id, subject_kind, subject_id, capability, reason, details, reporter_contact,
+        "SELECT id, subject_kind, subject_id, capability, reason, details,
                 appeal_risk_signal_id, status, created_at, expires_at
          FROM cn_admin.reports
          WHERE expires_at > NOW()
@@ -253,7 +253,7 @@ pub async fn get_community_node_report(
     id: &str,
 ) -> Result<Option<CommunityNodeReport>> {
     let row = sqlx::query(
-        "SELECT id, subject_kind, subject_id, capability, reason, details, reporter_contact,
+        "SELECT id, subject_kind, subject_id, capability, reason, details,
                 appeal_risk_signal_id, status, created_at, expires_at
          FROM cn_admin.reports
          WHERE id = $1 AND expires_at > NOW()",
@@ -285,43 +285,6 @@ pub async fn get_community_node_report_with_contact(
     Ok(Some(report))
 }
 
-pub async fn seal_legacy_report_contacts(
-    pool: &PgPool,
-    cipher: &LegalDataCipher,
-    retention: &RetentionPolicy,
-) -> Result<u64> {
-    let rows = sqlx::query(
-        "SELECT id, reporter_contact, created_at FROM cn_admin.reports
-         WHERE reporter_contact IS NOT NULL",
-    )
-    .fetch_all(pool)
-    .await?;
-    let mut sealed = 0;
-    for row in rows {
-        let id: String = row.try_get("id")?;
-        let contact: String = row.try_get("reporter_contact")?;
-        let created_at: DateTime<Utc> = row.try_get("created_at")?;
-        let mut tx = pool.begin().await?;
-        upsert_sensitive_json_in_tx(
-            &mut tx,
-            cipher,
-            "report",
-            &id,
-            SensitiveDataCategory::ReportContact,
-            &contact,
-            retention.expiry(created_at, retention.report_contact_days),
-        )
-        .await?;
-        sqlx::query("UPDATE cn_admin.reports SET reporter_contact = NULL WHERE id = $1")
-            .bind(&id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        sealed += 1;
-    }
-    Ok(sealed)
-}
-
 fn report_from_row(row: &PgRow) -> Result<CommunityNodeReport> {
     Ok(CommunityNodeReport {
         id: row.try_get("id")?,
@@ -330,7 +293,8 @@ fn report_from_row(row: &PgRow) -> Result<CommunityNodeReport> {
         capability: row.try_get("capability")?,
         reason: row.try_get("reason")?,
         details: row.try_get("details")?,
-        reporter_contact: row.try_get("reporter_contact")?,
+        // 連絡先は暗号化した機微区分にだけ置く（`get_community_node_report_with_contact` が読む）。
+        reporter_contact: None,
         appeal_risk_signal_id: row.try_get("appeal_risk_signal_id")?,
         status: row.try_get("status")?,
         created_at: row.try_get("created_at")?,

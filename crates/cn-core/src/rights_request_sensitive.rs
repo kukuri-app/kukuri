@@ -1,17 +1,13 @@
-//! 権利侵害申出の機微区分分離と既存平文行のsealing。
+//! 権利侵害申出の機微区分の分離と、読取り時の復元。
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use kukuri_cn_protocol::{EvidenceReference, RightsRequestCreateRequest};
 use serde_json::{Value, json};
-use sqlx::Row;
 use sqlx::postgres::PgPool;
 
 use crate::rights_requests::RightsRequestRecord;
-use crate::{
-    LegalDataCipher, RetentionPolicy, SensitiveDataCategory, load_sensitive_json,
-    upsert_sensitive_json_in_tx,
-};
+use crate::{LegalDataCipher, SensitiveDataCategory, load_sensitive_json};
 
 pub(crate) fn split_sensitive_request(
     request: &RightsRequestCreateRequest,
@@ -98,68 +94,4 @@ pub(crate) async fn hydrate_sensitive_request(
 
 fn json_string(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_string)
-}
-
-pub async fn seal_legacy_rights_request_data(
-    pool: &PgPool,
-    cipher: &LegalDataCipher,
-    retention: &RetentionPolicy,
-) -> Result<u64> {
-    let rows = sqlx::query(
-        "SELECT id, request_data, created_at FROM cn_legal.rights_requests
-         WHERE COALESCE(request_data->>'email', '') <> ''",
-    )
-    .fetch_all(pool)
-    .await?;
-    let mut sealed = 0;
-    for row in rows {
-        let id: String = row.try_get("id")?;
-        let request: RightsRequestCreateRequest =
-            serde_json::from_value(row.try_get("request_data")?)?;
-        let created_at: DateTime<Utc> = row.try_get("created_at")?;
-        let (stored, contact, identity, evidence) = split_sensitive_request(&request);
-        let mut tx = pool.begin().await?;
-        upsert_sensitive_json_in_tx(
-            &mut tx,
-            cipher,
-            "rights_request",
-            &id,
-            SensitiveDataCategory::RightsRequestContact,
-            &contact,
-            retention.expiry(created_at, retention.rights_request_contact_days),
-        )
-        .await?;
-        if identity != Value::Null {
-            upsert_sensitive_json_in_tx(
-                &mut tx,
-                cipher,
-                "rights_request",
-                &id,
-                SensitiveDataCategory::RightsRequestIdentity,
-                &identity,
-                retention.expiry(created_at, retention.rights_request_identity_days),
-            )
-            .await?;
-        }
-        if !evidence.is_empty() {
-            upsert_sensitive_json_in_tx(
-                &mut tx,
-                cipher,
-                "rights_request",
-                &id,
-                SensitiveDataCategory::RightsRequestEvidence,
-                &evidence,
-                retention.expiry(created_at, retention.rights_request_evidence_days),
-            )
-            .await?;
-        }
-        sqlx::query("UPDATE cn_legal.rights_requests SET request_data = $2 WHERE id = $1")
-            .bind(&id)
-            .bind(serde_json::to_value(stored)?)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        sealed += 1;
-    }
-    Ok(sealed)
 }
