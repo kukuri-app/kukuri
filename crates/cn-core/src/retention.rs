@@ -173,8 +173,7 @@ pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<Cleanu
          WHERE item.expires_at <= $1
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
-             WHERE hold.released_at IS NULL
-               AND hold.target_kind = item.owner_kind
+             WHERE hold.target_kind = item.owner_kind
                AND hold.target_id = item.owner_id
                AND item.data_category = ANY(hold.data_categories)
            )",
@@ -188,8 +187,7 @@ pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<Cleanu
          WHERE event.expires_at <= $1
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
-             WHERE hold.released_at IS NULL
-               AND hold.target_kind = 'rights_request'
+             WHERE hold.target_kind = 'rights_request'
                AND hold.target_id = event.request_id
                AND 'rights_request_history' = ANY(hold.data_categories)
            )",
@@ -203,8 +201,7 @@ pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<Cleanu
          WHERE report.expires_at <= $1
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
-             WHERE hold.released_at IS NULL
-               AND hold.target_kind = 'report'
+             WHERE hold.target_kind = 'report'
                AND hold.target_id = report.id
                AND 'report' = ANY(hold.data_categories)
            )",
@@ -224,8 +221,7 @@ pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<Cleanu
          WHERE request.expires_at <= $1
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
-             WHERE hold.released_at IS NULL
-               AND hold.target_kind = 'rights_request'
+             WHERE hold.target_kind = 'rights_request'
                AND hold.target_id = request.id
            )",
     )
@@ -238,8 +234,7 @@ pub async fn cleanup_expired(pool: &PgPool, now: DateTime<Utc>) -> Result<Cleanu
          WHERE action.expires_at <= $1
            AND NOT EXISTS (
              SELECT 1 FROM cn_legal.legal_holds hold
-             WHERE hold.released_at IS NULL
-               AND hold.target_kind = action.target_kind
+             WHERE hold.target_kind = action.target_kind
                AND hold.target_id = action.target_id
                AND 'operator_audit' = ANY(hold.data_categories)
            )",
