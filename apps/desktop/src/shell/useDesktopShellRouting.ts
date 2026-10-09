@@ -52,7 +52,7 @@ import {
   type ColumnKind,
   type ColumnScope,
 } from '@/shell/slices/workspace';
-import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
+import { EXTENDED_FEATURES_AVAILABLE } from '@/lib/platform';
 
 // Issue #765: window レベルの Escape cascade が Composer などの入力を巻き込まない
 // ようにするための editable 判定(MetaverseScene の isEditableTarget を基準に、
@@ -163,7 +163,7 @@ export function useDesktopShellRouting({
     const candidate =
       parsePrimarySectionPath(resolvedRouteLocation.pathname) ??
       primarySectionForColumn(activeWorkspaceColumn(storeApi.getState().workspaceState));
-    if ((!developerModeEnabled || IS_WEB_RUNTIME) && (candidate === 'live' || candidate === 'game')) {
+    if ((!developerModeEnabled || !EXTENDED_FEATURES_AVAILABLE) && (candidate === 'live' || candidate === 'game')) {
       return 'timeline';
     }
     return candidate;
