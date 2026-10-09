@@ -50,7 +50,7 @@ community node は、operator の設定に応じて以下の capability を**提
 
 投稿者は、自分の署名鍵で対象投稿を指定した撤回 envelope を発行できる。client は検証済みの最新世代を canonical state とし、timeline、bookmark、通知、返信・引用 preview、添付を placeholder へ置き換える。これは署名済みの撤回意思を後から同期する仕組みであり、既に他 peer や別 node が保持した暗号化済み object / blob を network 全体から消去する機能ではない。
 
-community node operator は、権利侵害等への対応として、自 node の capability ごとに送信防止を決定できる。決定は Postgres の node-local ledger と immutable operator audit に記録し、対象が `community_index` / `search` / `discovery` / `recommendation` に含まれる場合は Postgres の index truth と ArcadeDB projection から除外する。`moderation` と `blob_cache` も個別 scope として指定できるが、他 node、Direct P2P、既に他者が保持する copy には効力を持たない。
+community node operator は、権利侵害等への対応として、自 node の capability ごとに送信防止を決定できる。決定は Postgres の node-local ledger と immutable operator audit に記録し、対象が `community_index` / `search` / `discovery` / `recommendation` に含まれる場合は Postgres の index truth と ArcadeDB projection から除外する（ArcadeDB からは indexer の次の巡回で消す）。`moderation` と `blob_cache` も個別 scope として指定できるが、他 node、Direct P2P、既に他者が保持する copy には効力を持たない。
 
 投稿者撤回、法的送信防止、safety verdict、operator policy は独立した gate であり、最終表示・送信は**全 gate が許可した場合だけ**許可する。競合時の説明理由は `投稿者撤回 > 法的送信防止 > critical safety > operator policy` の順で決定論的に選ぶ。解除しても過去の index を自動復活させず、fresh ingest とその時点の全 gate の再評価を要求する。
 
