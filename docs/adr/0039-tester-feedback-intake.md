@@ -50,7 +50,7 @@ kukuri は仕様・機能の変更頻度が高く、詳細なチェックリス�
 
 ### 4. 本文は plain TEXT で保存し、reports の retention をミラーする
 
-3 つの自由記述・client version・OS は連絡先 PII ではないため `LegalDataCipher` を使わず plain TEXT で保存する。保存期間は `RetentionPolicy.tester_feedback_days`(既定 180 日)とし、`expires_at` を持たせて既存の retention 再適用・期限切れ削除(`apply_retention_policy` / `cleanup_expired`)に組み込む。
+3 つの自由記述・client version・OS は連絡先 PII ではないため `LegalDataCipher` を使わず plain TEXT で保存する。保存期間は `RetentionPolicy.tester_feedback_days`(既定 180 日)とし、作成時刻を起算点として既存の期限の判定・期限切れ削除(`cleanup_expired`)に組み込む(期限は行に持たない。ADR 0034 §1、#1704)。
 
 ### 5. 閲覧は admin dashboard の一覧と cn-cli で行う
 

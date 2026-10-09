@@ -154,6 +154,7 @@ async fn trust_user(
             w_abs_applied: 0.5,
             computed_at: "2026-08-14T00:00:00Z".to_string(),
             evaluation: None,
+            basis_next_cursor: None,
             basis: vec![TrustBasisEntry {
                 signal_id: APPEAL_SIGNAL_ID.to_string(),
                 issuer_node_id: "harness-issuer-node".to_string(),
@@ -405,6 +406,7 @@ pub(crate) async fn run_community_node_trust_relation_client(
                         .read_community_node_trust_user(CommunityNodeUserAdvisoryRequest {
                             base_url: base_url.clone(),
                             target_pubkey: target_pubkey.clone(),
+                            cursor: None,
                         })
                         .await?;
                     anyhow::ensure!(
@@ -420,6 +422,7 @@ pub(crate) async fn run_community_node_trust_relation_client(
                         .read_community_node_relation_user(CommunityNodeUserAdvisoryRequest {
                             base_url: base_url.clone(),
                             target_pubkey: target_pubkey.clone(),
+                            cursor: None,
                         })
                         .await?;
                     anyhow::ensure!(
@@ -465,6 +468,7 @@ pub(crate) async fn run_community_node_trust_relation_client(
                     let request = CommunityNodeUserAdvisoryRequest {
                         base_url: base_url.clone(),
                         target_pubkey: target_pubkey.clone(),
+                        cursor: None,
                     };
                     let error = if endpoint == "trust" {
                         runtime
@@ -521,6 +525,7 @@ pub(crate) async fn run_community_node_trust_relation_client(
                         .read_community_node_trust_user(CommunityNodeUserAdvisoryRequest {
                             base_url: base_url.clone(),
                             target_pubkey: target_pubkey.clone(),
+                            cursor: None,
                         })
                         .await?;
                     let entry = value

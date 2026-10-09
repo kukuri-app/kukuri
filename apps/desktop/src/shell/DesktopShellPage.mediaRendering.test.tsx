@@ -362,6 +362,45 @@ test('scrolling an image card back into view shows it without fetching it again'
   await waitFor(() => expect(releaseBlobMediaFile).toHaveBeenCalledOnce());
 });
 
+// #1690: 複数枚の画像は先頭 4 枚を並べて取得し、5 枚目以降は拡大表示で表示したときだけ取得する。
+test('a multi-image post shows its first four images and fetches the rest in the viewer', async () => {
+  installObjectUrlMocks();
+  const user = userEvent.setup();
+  const hashes = ['1', '2', '3', '4', '5'].map((digit) => digit.repeat(64));
+  const post = buildImagePost({
+    content: 'five images',
+    content_status: 'Available',
+    attachments: hashes.map((hash) => ({
+      hash, mime: 'image/png', bytes: 2048, role: 'image_original', status: 'Available',
+    })),
+  });
+  const api = createDesktopMockApi({ seedPosts: { 'kukuri:topic:general': [post] } });
+  const requested: string[] = [];
+  api.getBlobMediaPayload = async (hash, mime) => {
+    requested.push(hash);
+    return { bytes_base64: 'ZmFrZS1pbWFnZQ==', mime };
+  };
+
+  render(<App api={api} />);
+
+  const timeline = getActiveColumn('Timeline');
+  await waitFor(
+    () => expect(within(timeline).getAllByTestId('media-preview-image-post')).toHaveLength(4),
+    BOOT_WAIT
+  );
+  expect(within(timeline).getByText('+1')).toBeInTheDocument();
+  expect([...new Set(requested)].sort()).toEqual(hashes.slice(0, 4));
+
+  await user.click(within(timeline).getByRole('button', { name: 'image attachment 4 / 5' }));
+  const viewer = await screen.findByRole('dialog');
+  await user.click(within(viewer).getByRole('button', { name: 'Next image' }));
+  expect(await within(viewer).findByAltText('image attachment')).toHaveAttribute(
+    'src',
+    expect.stringContaining('blob:mock-')
+  );
+  expect(requested).toContain(hashes[4]);
+});
+
 // #1419 AC-3: 手元にある画像の要求を、他の画像の取得待ち(remote は最大 30 秒)の後ろに並べない。
 test('native display requests are not held back by other pending requests', async () => {
   installNativeMediaRuntime();

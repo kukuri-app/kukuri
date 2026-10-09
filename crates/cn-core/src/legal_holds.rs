@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use crate::legal_data::decrypt_row;
-use crate::{LegalDataCipher, RetentionPolicy, SensitiveDataCategory};
+use crate::{LegalDataCipher, SensitiveDataCategory};
 
 const REPORT_CATEGORIES: &[&str] = &["report", "report_contact", "operator_audit"];
 const RIGHTS_REQUEST_CATEGORIES: &[&str] = &[
@@ -32,8 +32,6 @@ pub struct LegalHold {
     pub release_condition: String,
     pub started_by: String,
     pub started_at: DateTime<Utc>,
-    pub released_by: Option<String>,
-    pub released_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -55,7 +53,6 @@ pub async fn start_legal_hold(
     basis: &str,
     release_condition: &str,
     actor: &str,
-    retention: &RetentionPolicy,
     now: DateTime<Utc>,
 ) -> Result<LegalHold> {
     validate_hold_input(
@@ -95,7 +92,6 @@ pub async fn start_legal_hold(
         json!({}),
         json!({"hold_id": id, "data_categories": data_categories}),
         now,
-        retention.expiry(now, retention.operator_audit_days),
     )
     .await?;
     let hold = hold_from_row(&row)?;
@@ -107,43 +103,29 @@ pub async fn release_legal_hold(
     pool: &PgPool,
     hold_id: &str,
     actor: &str,
-    retention: &RetentionPolicy,
     now: DateTime<Utc>,
 ) -> Result<LegalHold> {
     validate_text("hold id", hold_id, 128)?;
     validate_text("actor", actor, 320)?;
+    // 解除で行を消す。解除の時刻・actor・区分は operator audit に残す（#1706）。
     let mut tx = pool.begin().await?;
-    let current = sqlx::query("SELECT * FROM cn_legal.legal_holds WHERE id = $1 FOR UPDATE")
+    let row = sqlx::query("DELETE FROM cn_legal.legal_holds WHERE id = $1 RETURNING *")
         .bind(hold_id.trim())
         .fetch_optional(&mut *tx)
         .await?
         .context("legal hold was not found")?;
-    let current = hold_from_row(&current)?;
-    if current.released_at.is_some() {
-        bail!("legal hold is already released");
-    }
-    let row = sqlx::query(
-        "UPDATE cn_legal.legal_holds SET released_by = $2, released_at = $3
-         WHERE id = $1 RETURNING *",
-    )
-    .bind(hold_id.trim())
-    .bind(actor.trim())
-    .bind(now)
-    .fetch_one(&mut *tx)
-    .await?;
+    let hold = hold_from_row(&row)?;
     append_hold_audit(
         &mut tx,
         "legal_hold.release",
-        &current.target_kind,
-        &current.target_id,
+        &hold.target_kind,
+        &hold.target_id,
         actor,
-        json!({"hold_id": current.id, "active": true}),
-        json!({"hold_id": current.id, "active": false}),
+        json!({"hold_id": hold.id, "active": true}),
+        json!({"hold_id": hold.id, "active": false, "data_categories": hold.data_categories}),
         now,
-        retention.expiry(now, retention.operator_audit_days),
     )
     .await?;
-    let hold = hold_from_row(&row)?;
     tx.commit().await?;
     Ok(hold)
 }
@@ -153,7 +135,6 @@ pub async fn export_legal_hold(
     cipher: &LegalDataCipher,
     hold_id: &str,
     actor: &str,
-    retention: &RetentionPolicy,
     now: DateTime<Utc>,
 ) -> Result<LegalHoldExport> {
     validate_text("actor", actor, 320)?;
@@ -163,9 +144,6 @@ pub async fn export_legal_hold(
         .await?
         .context("legal hold was not found")?;
     let hold = hold_from_row(&row)?;
-    if hold.released_at.is_some() {
-        bail!("released legal hold cannot be exported");
-    }
     let mut data = Map::new();
     for category in &hold.data_categories {
         if let Some(value) = export_category(pool, cipher, &hold, category).await? {
@@ -182,7 +160,6 @@ pub async fn export_legal_hold(
         json!({}),
         json!({"hold_id": hold.id, "data_categories": hold.data_categories}),
         now,
-        retention.expiry(now, retention.operator_audit_days),
     )
     .await?;
     tx.commit().await?;
@@ -205,7 +182,8 @@ async fn export_category(
     match category {
         "report" => Ok(sqlx::query(
             "SELECT id, subject_kind, subject_id, capability, reason, details, status,
-                    appeal_risk_signal_id, created_at, expires_at
+                    appeal_risk_signal_id, created_at,
+                    created_at + cn_admin.retention_interval('report') AS expires_at
              FROM cn_admin.reports WHERE id = $1",
         )
         .bind(&hold.target_id)
@@ -228,7 +206,9 @@ async fn export_category(
         "rights_request" => Ok(sqlx::query(
             "SELECT id, scope_revision, scope_status, status, subject_kind, subject_id,
                     requested_capabilities, request_data, version, public_message,
-                    created_at, updated_at, expires_at
+                    created_at, updated_at,
+                    updated_at + cn_admin.retention_interval(
+                        cn_legal.rights_request_retention(status)) AS expires_at
              FROM cn_legal.rights_requests WHERE id = $1",
         )
         .bind(&hold.target_id)
@@ -431,13 +411,11 @@ async fn append_hold_audit(
     before: Value,
     after: Value,
     occurred_at: DateTime<Utc>,
-    expires_at: DateTime<Utc>,
 ) -> Result<()> {
     sqlx::query(
         "INSERT INTO cn_admin.operator_actions
-            (id, actor, action, target_kind, target_id, before_json, after_json,
-             occurred_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            (id, actor, action, target_kind, target_id, before_json, after_json, occurred_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(Uuid::new_v4().to_string())
     .bind(actor.trim())
@@ -447,7 +425,6 @@ async fn append_hold_audit(
     .bind(before)
     .bind(after)
     .bind(occurred_at)
-    .bind(expires_at)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -463,7 +440,5 @@ fn hold_from_row(row: &PgRow) -> Result<LegalHold> {
         release_condition: row.try_get("release_condition")?,
         started_by: row.try_get("started_by")?,
         started_at: row.try_get("started_at")?,
-        released_by: row.try_get("released_by")?,
-        released_at: row.try_get("released_at")?,
     })
 }

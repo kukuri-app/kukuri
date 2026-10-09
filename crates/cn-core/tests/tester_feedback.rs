@@ -3,9 +3,8 @@
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use kukuri_cn_core::{
-    NewTesterFeedback, RetentionPolicy, TestDatabase, apply_retention_policy, cleanup_expired,
-    connect_postgres, get_tester_feedback, initialize_database,
-    insert_tester_feedback_with_retention, list_tester_feedback,
+    NewTesterFeedback, RetentionPolicy, TestDatabase, cleanup_expired, connect_postgres,
+    get_tester_feedback, initialize_database, insert_tester_feedback, list_tester_feedback,
 };
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
@@ -38,17 +37,8 @@ async fn tester_feedback_inserts_lists_newest_first_and_gets_by_id() -> Result<(
     let pool = connect_postgres(database.database_url.as_str()).await?;
     initialize_database(&pool).await?;
 
-    let retention = RetentionPolicy::default();
-    let now = Utc::now();
-    let older =
-        insert_tester_feedback_with_retention(&pool, &feedback("older"), &retention, now).await?;
-    let newer = insert_tester_feedback_with_retention(
-        &pool,
-        &feedback("newer"),
-        &retention,
-        now + Duration::seconds(1),
-    )
-    .await?;
+    let older = insert_tester_feedback(&pool, &feedback("older")).await?;
+    let newer = insert_tester_feedback(&pool, &feedback("newer")).await?;
     assert_ne!(older.id, newer.id);
     assert_eq!(older.client_version, "0.1.7");
     assert_eq!(older.os, "linux");
@@ -91,12 +81,9 @@ async fn tester_feedback_expires_via_retention_policy_and_cleanup() -> Result<()
 
     let retention = RetentionPolicy::default();
     let now = Utc::now();
-    let stored =
-        insert_tester_feedback_with_retention(&pool, &feedback("expiring"), &retention, now)
-            .await?;
+    let stored = insert_tester_feedback(&pool, &feedback("expiring")).await?;
 
     // 期限内の sweep では消えない。
-    apply_retention_policy(&pool, &retention).await?;
     let counts = cleanup_expired(&pool, now).await?;
     assert_eq!(counts.tester_feedback, 0);
     assert!(get_tester_feedback(&pool, &stored.id).await?.is_some());

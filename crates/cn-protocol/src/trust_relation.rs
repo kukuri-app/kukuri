@@ -60,6 +60,9 @@ pub struct TrustReadView {
     /// 評価の版・期限・表示 policy（#1061）。旧 node の応答では欠落し、クライアントは未評価として扱う。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluation: Option<TrustEvaluation>,
+    /// basis の続きを取る cursor（`?cursor=`）。最後のページと旧 node の応答では欠落する。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basis_next_cursor: Option<String>,
 }
 
 /// 信頼値が負になった理由の種類（ADR 0026 §8.4）。数値・observer は含めない。
@@ -81,7 +84,7 @@ pub struct TrustEvaluation {
     pub policy_version: String,
     /// T に寄与する入力の digest。
     pub trust_version: String,
-    /// relation snapshot と対象への観測 revision の組。
+    /// relation snapshot と、評価に使った対象への観測の digest の組（観測が無ければ `0`）。
     pub relation_version: String,
     pub computed_at: String,
     /// クライアントが結果を再利用してよい期限（RFC3339）。

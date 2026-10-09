@@ -257,6 +257,20 @@ async fn explicit_node_consent_enables_requests_and_policy_change_blocks_them_ag
         2,
         "共有runtimeの401再認証を維持する"
     );
+    // #1702: 信頼値の basis の続きは入力の `cursor` を CN へ渡し、次の `basis_next_cursor` を出力する。
+    let trust = call(
+        &dispatcher,
+        &host,
+        "read_community_node_trust_user",
+        json!({"base_url": base_url, "target_pubkey": "a".repeat(64), "cursor": "1.1760000000000000.signal-50"}),
+        None,
+    )
+    .await;
+    assert!(trust.ok, "{:?}", trust.error);
+    assert_eq!(
+        trust.data.expect("trust")["basis_next_cursor"],
+        "1.1760000000000000.signal-50-next"
+    );
     node.policy_version.store(2, Ordering::SeqCst);
     let verifies = node.verify_hits.load(Ordering::SeqCst);
     let rejected = call(

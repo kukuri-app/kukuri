@@ -23,6 +23,9 @@ export type ColumnScope = {
 // Timeline Column の表示 view。正本は Column 単位で持つ。
 export type ColumnTimelineView = 'feed' | 'bookmarks';
 
+// フィードの絞り込み(#1689)。著者との関係で読み込み済みの投稿を絞る。
+export type ColumnTimelineFilter = 'mutual' | 'following';
+
 export type ColumnState = {
   id: string;
   kind: ColumnKind;
@@ -35,6 +38,8 @@ export type ColumnState = {
   timelineView?: ColumnTimelineView;
   // kind === 'timeline' の Column のみ意味を持つ。新着を保留せず常に反映する(Flow モード、#1647)。
   timelineFlow?: boolean;
+  // kind === 'timeline' の Column のみ意味を持つ。未設定はフィルターなし(#1689)。
+  timelineFilter?: ColumnTimelineFilter;
 };
 
 export type ColumnStateInput = Omit<ColumnState, 'preferredDesktopSpan'> & {
@@ -405,6 +410,22 @@ export function toggleColumnTimelineFlow(state: WorkspaceState, columnId: string
     changed = true;
     const { timelineFlow, ...rest } = column;
     return timelineFlow ? rest : { ...rest, timelineFlow: true };
+  });
+  return changed ? { ...state, columns } : state;
+}
+
+export function setColumnTimelineFilter(
+  state: WorkspaceState,
+  columnId: string,
+  filter: ColumnTimelineFilter | undefined
+): WorkspaceState {
+  let changed = false;
+  const columns = state.columns.map((column) => {
+    if (column.id !== columnId || column.kind !== 'timeline' || column.timelineFilter === filter) {
+      return column;
+    }
+    changed = true;
+    return { ...column, timelineFilter: filter };
   });
   return changed ? { ...state, columns } : state;
 }

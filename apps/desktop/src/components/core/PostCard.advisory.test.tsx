@@ -35,7 +35,6 @@ function gatedMedia(kind: 'image' | 'video'): PostMediaView {
     gatedBy: 'advisory',
     metaMime: kind === 'image' ? 'image/png' : 'video/mp4',
     metaBytesLabel: '2.0 KB',
-    imagePreviewSrc: null,
     imageGalleryItems: [],
     videoPosterPreviewSrc: null,
     videoPlaybackSrc: null,

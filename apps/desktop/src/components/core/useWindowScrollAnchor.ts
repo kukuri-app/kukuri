@@ -2,7 +2,11 @@ import { useCallback, useLayoutEffect, useRef } from 'react';
 
 type PostIdentity = { post: { object_id: string } };
 
-export function useWindowScrollAnchor(posts: readonly PostIdentity[], onLoadMore?: () => void) {
+export function useWindowScrollAnchor(
+  posts: readonly PostIdentity[],
+  onLoadMore: (() => void) | undefined,
+  loadingMore: boolean
+) {
   const listRef = useRef<HTMLUListElement | null>(null);
   const anchorRef = useRef<{
     id: string;
@@ -37,8 +41,14 @@ export function useWindowScrollAnchor(posts: readonly PostIdentity[], onLoadMore
 
   useLayoutEffect(() => {
     const anchor = anchorRef.current;
-    if (!anchor || (anchor.first === posts[0]?.post.object_id &&
-      anchor.last === posts.at(-1)?.post.object_id && anchor.length === posts.length)) return;
+    if (!anchor) return;
+    if (anchor.first === posts[0]?.post.object_id &&
+      anchor.last === posts.at(-1)?.post.object_id && anchor.length === posts.length) {
+      // 読み込みが終わっても表示する行が変わらなかった(フィルター中など)ときは、位置を捨てる。
+      // 残すと、後で行が変わったときに読み込み前の位置へ戻してしまう(#1689)。
+      if (!loadingMore) anchorRef.current = null;
+      return;
+    }
     anchorRef.current = null;
     const list = listRef.current;
     const scroll = list?.closest<HTMLElement>('.shell-column-body');
@@ -49,7 +59,7 @@ export function useWindowScrollAnchor(posts: readonly PostIdentity[], onLoadMore
       scroll.scrollTop += item.getBoundingClientRect().top -
         scroll.getBoundingClientRect().top - anchor.offset;
     }
-  }, [posts]);
+  }, [loadingMore, posts]);
 
   return { listRef, loadMore };
 }

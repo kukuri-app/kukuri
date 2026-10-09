@@ -20,6 +20,7 @@ fn trust_read_wire_contract_keeps_flattened_view_and_explainable_basis() {
             w_abs_applied: 0.5,
             computed_at: "2026-08-13T00:00:00Z".to_string(),
             evaluation: None,
+            basis_next_cursor: Some("1.1786000000000000.signal-1".to_string()),
             basis: vec![TrustBasisEntry {
                 signal_id: "signal-1".to_string(),
                 issuer_node_id: "node-1".to_string(),
@@ -53,6 +54,8 @@ fn trust_read_wire_contract_keeps_flattened_view_and_explainable_basis() {
         json["basis"][0]["operator_adjusted_at"],
         "2026-08-12T00:00:00Z"
     );
+    // #1702: basis は 1 ページで、続きの cursor を同じ階層に載せる。
+    assert_eq!(json["basis_next_cursor"], "1.1786000000000000.signal-1");
     assert_eq!(
         serde_json::from_value::<TrustUserReadResponse>(json.clone()).unwrap(),
         response
@@ -136,6 +139,7 @@ fn trust_evaluation_wire_contract_is_optional_and_carries_no_observer() {
         computed_at: "2026-09-18T00:00:00Z".to_string(),
         basis: Vec::new(),
         evaluation: Some(evaluation.clone()),
+        basis_next_cursor: None,
     };
     let json = serde_json::to_value(&view).unwrap();
     assert_eq!(json["evaluation"]["hide_recommended"], true);
@@ -161,6 +165,9 @@ fn trust_evaluation_wire_contract_is_optional_and_carries_no_observer() {
             "trust_version",
         ]
     );
+
+    // 最後のページでは cursor の欄を出さない。
+    assert!(json.get("basis_next_cursor").is_none());
 
     // 評価の無い旧応答は evaluation = None として読め、書き出し時も欄を出さない。
     let mut legacy = json.clone();

@@ -87,7 +87,9 @@
       "absolute": "Risk assessment (absolute)",
       "relative": "Risk assessment (relative)",
       "weight": "Absolute weight",
-      "noBasis": "This advisory contains no basis entries."
+      "noBasis": "This advisory contains no basis entries.",
+      "showMore": "Show more",
+      "loadingMore": "Loading…"
     },
     "relation": {
       "title": "Relation proximity",

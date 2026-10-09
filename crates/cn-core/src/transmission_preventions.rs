@@ -112,6 +112,17 @@ pub struct TransmissionPreventionMutation {
     pub removed_index_scopes: Vec<(IndexScopeKind, String)>,
 }
 
+/// 投稿の索引の行を全 scope から消し、ArcadeDB の写しは消し待ちに入れて indexer の巡回が消す（#1698）。
+/// 読む行が他の投稿の数によらないことを試験と共有する（#1708）。
+pub const REMOVE_PREVENTED_POST_INDEX_SQL: &str = "WITH removed AS (
+         DELETE FROM cn_index.index_entries WHERE object_id = $1
+         RETURNING scope_kind, scope_id, object_id
+     ), queued AS (
+         INSERT INTO cn_index.projection_evictions (scope_kind, scope_id, object_id)
+         SELECT scope_kind, scope_id, object_id FROM removed ON CONFLICT DO NOTHING
+     )
+     SELECT scope_kind, scope_id FROM removed";
+
 pub async fn apply_transmission_prevention(
     pool: &PgPool,
     actor: &str,
@@ -185,13 +196,10 @@ pub(crate) async fn apply_transmission_prevention_in_tx(
     let decision = from_row(&row)?;
     let mut removed_index_scopes = Vec::new();
     if input.subject_kind == "post" && controls_index_surfaces(&input.capabilities) {
-        for row in sqlx::query(
-            "DELETE FROM cn_index.index_entries WHERE object_id = $1
-             RETURNING scope_kind, scope_id",
-        )
-        .bind(input.subject_id.trim())
-        .fetch_all(&mut **tx)
-        .await?
+        for row in sqlx::query(REMOVE_PREVENTED_POST_INDEX_SQL)
+            .bind(input.subject_id.trim())
+            .fetch_all(&mut **tx)
+            .await?
         {
             removed_index_scopes.push((
                 IndexScopeKind::parse(&row.try_get::<String, _>("scope_kind")?)?,

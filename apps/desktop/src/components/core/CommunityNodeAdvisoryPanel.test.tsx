@@ -720,4 +720,39 @@ describe('CommunityNodeAdvisoryPanel', () => {
     ).toBeInTheDocument();
     expect(client.submitCommunityNodeReport).not.toHaveBeenCalled();
   });
+
+  // #1702: basis は 1 ページずつ届き、続きは「さらに表示」で追記する。失敗しても表示中の basis は残り、読み直せる。
+  test('appends further basis pages with load more until the last page', async () => {
+    const client = api();
+    const page = (issuerNodeId: string, cursor: string | null, trust = 0.5) =>
+      ({ ...trustResponse(targetPubkey, issuerNodeId), trust, basis_next_cursor: cursor }) as Awaited<
+        ReturnType<typeof client.readCommunityNodeTrustUser>
+      >;
+    client.readCommunityNodeTrustUser
+      .mockResolvedValueOnce(page('node-a', 'cursor-1'))
+      .mockRejectedValueOnce(new InvokeError('AUTH_REQUIRED', 'community node authentication is required', 401))
+      .mockResolvedValueOnce(page('node-b', null, -0.9));
+    render(<CommunityNodeAdvisoryPanel api={client} targetPubkey={targetPubkey} nodeBaseUrls={[nodeA]} />);
+    await userEvent.click(screen.getByRole('button', { name: /Load relationship and trust|取得/ }));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Show more' }));
+    expect(await screen.findByText('Authenticate with the selected Community Node first.')).toBeInTheDocument();
+    expect(screen.getByText(/node-a · spam · low/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(await screen.findByText(/node-b · spam · low/)).toBeInTheDocument();
+    expect(client.readCommunityNodeTrustUser).toHaveBeenLastCalledWith({
+      base_url: nodeA,
+      target_pubkey: targetPubkey,
+      cursor: 'cursor-1',
+    });
+    expect(screen.getAllByText(/ · spam · low$/).map((summary) => summary.textContent)).toEqual([
+      'node-a · spam · low',
+      'node-b · spam · low',
+    ]);
+    expect(screen.queryByText('Authenticate with the selected Community Node first.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
+    // 信頼度は最初のページの値のまま。
+    expect(screen.getByText('Trust for you').nextElementSibling).toHaveTextContent('0.500');
+  });
 });

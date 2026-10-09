@@ -1,5 +1,5 @@
-//! 索引の保守（#1221 R5-F / R5-H）。bucket の読取りと同じ巡回で、support・秘密鍵を失った scope の索引と、
-//! 受入下限より古い保存物を上限つきで回収する。
+//! 索引の保守（#1221 R5-F / R5-H）。bucket の読取りと同じ巡回で、support・秘密鍵を失った scope の索引、
+//! 送信防止の適用で消し待ちになった写し（#1698）、受入下限より古い保存物を上限つきで回収する。
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -56,7 +56,7 @@ impl IndexMaintenance {
     }
 
     /// 1 回の巡回: 索引済みの scope を永続 cursor で最大 32 件照合し、support・秘密鍵を失ったものを合わせて
-    /// 128 件まで回収する。続けて受入下限を進め、下限未満の保存物を回収する。
+    /// 128 件まで回収する。続けて送信防止の消し待ちを 128 件まで消し、受入下限を進め、下限未満の保存物を回収する。
     pub async fn run_pass(&self, now: i64, state: &IndexerRuntimeState) {
         let mut budget = RECLAIM_BUDGET;
         match self.indexed_scope_page().await {
@@ -87,6 +87,11 @@ impl IndexMaintenance {
                 warn!(error = %format!("{error:#}"), "failed to page indexed scopes; will retry");
                 state.record_error(None, &format!("{error:#}"));
             }
+        }
+        if let Err(error) = self.evict_prevented_projections(RECLAIM_BUDGET).await {
+            warn!(error = %format!("{error:#}"),
+                "failed to evict transmission-prevented projections; will retry");
+            state.record_error(None, &format!("{error:#}"));
         }
         if let Err(error) = self
             .reclaim_retention_pass(now, RECLAIM_BUDGET, RECLAIM_STEPS_PER_PASS)
@@ -184,6 +189,39 @@ impl IndexMaintenance {
             .remove_scope_page(kind, id, budget.saturating_sub(projected))
             .await?;
         Ok(projected + entries)
+    }
+
+    /// 送信防止の適用で消し待ちになった写しを最大 `budget` 件消し、消し待ちから外した件数を返す（#1698）。
+    ///
+    /// 消せなかった行は残し、次の巡回で消し直す。解除・失効した対象は、解除の後の新しい取込で戻った写しを
+    /// 消さないよう、投影に触れずに外す。
+    pub async fn evict_prevented_projections(&self, budget: usize) -> Result<usize> {
+        let rows = sqlx::query(
+            "SELECT scope_kind, scope_id, object_id FROM cn_index.projection_evictions LIMIT $1",
+        )
+        .bind(i64::try_from(budget)?)
+        .fetch_all(&self.pool)
+        .await?;
+        for row in &rows {
+            let kind: String = row.try_get("scope_kind")?;
+            let scope_id: String = row.try_get("scope_id")?;
+            let object_id: String = row.try_get("object_id")?;
+            if self.entries.is_transmission_prevented(&object_id).await? {
+                self.projection
+                    .remove_object(IndexScopeKind::parse(&kind)?, &scope_id, &object_id)
+                    .await?;
+            }
+            sqlx::query(
+                "DELETE FROM cn_index.projection_evictions
+                 WHERE scope_kind = $1 AND scope_id = $2 AND object_id = $3",
+            )
+            .bind(&kind)
+            .bind(&scope_id)
+            .bind(&object_id)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(rows.len())
     }
 
     /// 受入下限を進め、下限未満の保存物を最大 `budget` 件回収して消した件数を返す（#1221 R5-F）。

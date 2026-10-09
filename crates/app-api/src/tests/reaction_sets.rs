@@ -37,15 +37,73 @@ fn foreign_asset(owner_pubkey: &str, seed: char, search_key: &str) -> CustomReac
     }
 }
 
+/// 自分で作ったセット・投稿の自分のリアクションは、同じアカウントの別の端末ではその端末の自作に無いので保存済みへ
+/// 置ける。作った端末では、自作にあるものは保存しない。
+#[tokio::test]
+async fn own_reactions_are_saved_on_another_device_of_the_same_account() {
+    let blobs = Arc::new(MemoryBlobService::default());
+    let keys = generate_keys();
+    let (made_on, _) = app_on(
+        Arc::new(MemoryDocsSync::default()),
+        blobs.clone(),
+        keys.clone(),
+    );
+    let (other_device, _) = app_on(Arc::new(MemoryDocsSync::default()), blobs, keys);
+    let own = made_on
+        .create_custom_reaction_asset(CreateCustomReactionAssetInput {
+            search_key: "party".into(),
+            mime: "image/png".into(),
+            bytes: tiny_png_bytes(),
+            width: 128,
+            height: 128,
+        })
+        .await
+        .expect("own asset");
+    let set = made_on
+        .create_custom_reaction_set("mine", vec![own.clone()])
+        .await
+        .expect("create set");
+
+    let imported = other_device
+        .import_custom_reaction_set(&set.set_hash)
+        .await
+        .expect("import on the other device");
+    let same_device = made_on
+        .import_custom_reaction_set(&set.set_hash)
+        .await
+        .expect("import on the same device");
+
+    assert_eq!(
+        (imported.saved, imported.skipped_own),
+        (vec![own.clone()], 0)
+    );
+    assert_eq!(
+        other_device
+            .list_bookmarked_custom_reactions()
+            .await
+            .expect("list bookmarks")
+            .len(),
+        1
+    );
+    assert_eq!((same_device.saved.len(), same_device.skipped_own), (0, 1));
+    let from_post = reaction_snapshot_from_view(&own);
+    assert!(
+        other_device
+            .bookmark_custom_reaction(from_post.clone())
+            .await
+            .is_ok()
+    );
+    assert!(made_on.bookmark_custom_reaction(from_post).await.is_err());
+}
+
 /// セットを作った人の自作・保存済みのリアクションを、別のアカウントが同じ ID・最初の作者のまま、セットの並びで
-/// 保存済みへ取り込める。取り込む人が作ったリアクションは保存しない。
+/// 保存済みへ取り込める。取り込む端末の自作にあるリアクションは保存しない。
 #[tokio::test]
 async fn a_shared_reaction_set_is_saved_with_the_same_reaction_ids() {
     let blobs = Arc::new(MemoryBlobService::default());
     let docs: Arc<dyn DocsSync> = Arc::new(MemoryDocsSync::default());
     let (creator, _) = app_on(docs.clone(), blobs.clone(), generate_keys());
-    let importer_keys = generate_keys();
-    let (importer, _) = app_on(docs, blobs, importer_keys.clone());
+    let (importer, _) = app_on(docs, blobs, generate_keys());
     let own = creator
         .create_custom_reaction_asset(CreateCustomReactionAssetInput {
             search_key: "party".into(),
@@ -63,7 +121,16 @@ async fn a_shared_reaction_set_is_saved_with_the_same_reaction_ids() {
         )))
         .await
         .expect("saved asset");
-    let importers_own = foreign_asset(&importer_keys.public_key_hex(), 'd', "mine");
+    let importers_own = importer
+        .create_custom_reaction_asset(CreateCustomReactionAssetInput {
+            search_key: "mine".into(),
+            mime: "image/png".into(),
+            bytes: tiny_png_bytes(),
+            width: 128,
+            height: 128,
+        })
+        .await
+        .expect("importer's own asset");
 
     let set = creator
         .create_custom_reaction_set(" ねこ ", vec![own.clone(), saved.clone(), importers_own])

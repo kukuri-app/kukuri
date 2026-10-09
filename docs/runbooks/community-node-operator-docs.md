@@ -45,7 +45,7 @@ cn-cli transmission-prevention release \
   --reason "claim resolved"
 ```
 
-適用は Postgres index truth の削除と ArcadeDB projection の除外を同じ運用操作として行う。再起動・再 ingest 時も active decision を本文・media fetch より先に確認する。公開 status は `GET /v1/transmission-preventions/{subject_kind}/{subject_id}` で確認でき、異議申立先として当該 node の `POST /v1/report` を案内する。
+適用は Postgres index truth の削除と ArcadeDB projection の除外を同じ運用操作として行う。検索からは適用の直後に外れ、ArcadeDB の写しは indexer の全体の巡回（`COMMUNITY_NODE_INDEXER_POLL_INTERVAL_SECS`、既定 300 秒ごと）で 1 回 128 件まで消える。消せなかった分は次の巡回で消し直す。再起動・再 ingest 時も active decision を本文・media fetch より先に確認する。公開 status は `GET /v1/transmission-preventions/{subject_kind}/{subject_id}` で確認でき、異議申立先として当該 node の `POST /v1/report` を案内する。
 
 これは network-wide deletion ではない。別 node、Direct P2P、既に他 peer が保持する copy は対象外であり、利用者向け説明でも「ネットワーク全体から削除」と表現してはならない。`features.blob_cache=true` は対象 blob の eviction と再 cache 拒否 backend が必要であり、現配布物では未接続のため `cn-cli readiness` が fail-closed で停止する。backend が接続されるまでは blob cache を無効にする。
 
@@ -301,9 +301,10 @@ server 同意同期・session 継続を許可する。snapshot なしの旧記�
 fail-closed とし、当該 Node への認証・登録を開始しない。snapshot 未対応の旧 Node だけは従来の
 slug/version 判定を維持する。
 
-`cn-user-api`、`cn-cli retention`、`cn-cli rights-requests` の実運用では
-`COMMUNITY_NODE_OPERATOR_CONFIG` を必須とし、法務表示と expiry／cleanup が同じ明示 retention を使う。
-rights-request 操作だけが `RetentionPolicy::default()` へ戻る経路は設けない。
+`cn-user-api` と `cn-cli retention` の実運用では `COMMUNITY_NODE_OPERATOR_CONFIG` を必須とし、
+その保持日数を DB の保持区分ごとの日数（`cn_admin.retention_days`）へ書く。期限の判定と cleanup は
+この日数を使うので、法務表示と同じ明示 retention になる。`cn-cli rights-requests`・`cn-cli legal-hold` は
+期限を計算しないので、operator config を読まない（ADR 0034 §1、#1704）。
 
 ### ブロック・ミュート観測の提供（任意文書、#1061）
 

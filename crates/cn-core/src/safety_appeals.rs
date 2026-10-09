@@ -7,7 +7,7 @@
 //!   `Disputed → None`（operator 棄却）。それ以外の遷移は拒否する。
 //! - **Cleared の伝播**: `Cleared` の signal は失効させず配布クエリ
 //!   （`list_distributable_risk_signals`）に**残す**。受け手は appeal_status を見て
-//!   trust 寄与から除外する（`trust_risk_inputs_from` が既に `Cleared` を除外する）。
+//!   trust 寄与から除外する（対象ごとの集計は `Cleared` を寄与 0 として数える。ADR 0026 §10）。
 //! - **operator レビュー**: 検知メタデータ（severity / confidence / category / expires_at）の
 //!   直接編集。node-local advisory の是正であり、user の canonical state は変更しない。
 //!   operator config（`safety.moderation.operator_review`）で明示的に有効化された場合のみ
@@ -101,8 +101,8 @@ pub fn validate_optional_confidence(confidence: Option<u8>) -> Result<()> {
 
 /// operator レビュー入力の共通検証: expires_at は RFC 3339 のみ受理する（#700）。
 ///
-/// 過去時刻は単独失効の正規手段なので受理する。不正な形式を保存すると trust 入力の
-/// 組み立て（`trust_risk_inputs_from`）や配布クエリの時刻変換が失敗するため、
+/// 過去時刻は単独失効の正規手段なので受理する。不正な形式を保存すると対象ごとの集計
+/// （読めない失効時刻は期限切れとして扱う）や配布クエリの時刻変換と食い違うため、
 /// 保存前にここで拒否する。
 pub fn validate_optional_expires_at(expires_at: Option<&str>) -> Result<()> {
     if let Some(expires_at) = expires_at {
