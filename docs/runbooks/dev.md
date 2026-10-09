@@ -424,11 +424,13 @@ cargo xtask android-check
 npx pnpm@10.16.1 --dir apps/desktop tauri android dev
 npx pnpm@10.16.1 --dir apps/desktop tauri android build --debug --apk --target x86_64
 npx pnpm@10.16.1 --dir apps/desktop tauri android build --debug --apk --target aarch64
+npx pnpm@10.16.1 --dir apps/desktop tauri android build --apk --aab --target aarch64
 ```
 
 - `cargo xtask android-check` は src-tauri を `aarch64-linux-android` 向けに `cargo check` する。NDK の clang と llvm-ar を C を含む依存の build に使う。CI では `Kukuri Fast` の `android-check` job が runner の NDK で実行する。
 - `tauri android dev` は接続中の emulator か端末へ入れて起動する。Windows では Tauri CLI が端末の LAN の address を devUrl に使い、`TAURI_DEV_HOST` に入れる。Android の設定（`tauri.android.conf.json`）の開発 server は host を固定せず、`vite.config.ts` がその値で待ち受ける（同じ LAN から届く）。port は 5173 で固定。
 - `tauri android build --debug --apk --target <x86_64|aarch64>` は debug 署名の APK を `apps/desktop/src-tauri/gen/android/app/build/outputs/apk/universal/debug/` に出す。既定の debug 情報では Rust の共有 library だけで 1.3 GB を超え、差分の再 packaging で 2 GB を超えると `adb install` が失敗するので、CI と同じ `CARGO_PROFILE_DEV_DEBUG=line-tables-only` を付ける（x86_64 で約 480 MB）。upload 鍵で署名した AAB・versionCode・配布は #1199 が所有する。
+- `tauri android build --apk --aab --target aarch64`（release）は R8 で最適化した未署名の APK と AAB を `apps/desktop/src-tauri/gen/android/app/build/outputs/{apk/universal/release,bundle/universalRelease}/` に出す（手元で約 17 分）。端末で動かすときは、APK に Android SDK の debug 鍵（`~/.android/debug.keystore`）で `apksigner` の署名をする（確認用。配布には使わない）。
 - Android の開発版は配布版と同じ applicationId で、署名が違うため同じ端末に並ばない。desktop の開発版の兄弟 dir（`<identifier>.dev`、#1105）は使わず、OS の app data dir（`/data/user/0/app.kukuri.android`）をそのまま使う。
 
 ## Windows packaging
