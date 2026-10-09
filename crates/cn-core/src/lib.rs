@@ -138,7 +138,7 @@ pub use readiness_activation::{
 };
 pub use readiness_probe::{ReadinessProbeRecord, list_readiness_probes, upsert_readiness_probe};
 pub use readiness_runtime::{
-    IndexIntegrityFindings, RelationAnalyzeRun, inspect_index_integrity,
+    INDEX_INTEGRITY_SQL, IndexIntegrityFindings, RelationAnalyzeRun, inspect_index_integrity,
     latest_relation_analyze_run, record_relation_analyze_run,
 };
 pub use relation_actions::{

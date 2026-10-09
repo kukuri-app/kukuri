@@ -299,7 +299,7 @@ sudo systemctl list-timers kukuri-readiness.timer --all
 - `permanent_blob_storage_disabled` がpass
 - worker running、supported public scopes opened、sync / ingest fresh
 - `post_scheduler` の processing / retry_wait / oldest_pending_at が実進捗と整合し、同じ値のまま停止していない
-- 固定した無害な検証投稿が期待どおり処理され、失敗をallowへ変えるfallbackが0。過去の累積エラーや対象外peerの取得不能だけを今回の失敗としない
+- 固定した無害な検証投稿が期待どおり処理され、失敗をallowへ変えるfallbackが0（失敗の理由のallow判定はDBのCHECK制約が保存しないので、readinessは数えない。#1714）。過去の累積エラーや対象外peerの取得不能だけを今回の失敗としない
 - 固定した対象objectのPostgres truthとArcadeDB projectionが一致。全履歴の走査・再構築を待たない
 - relation analysis recent
 

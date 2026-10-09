@@ -121,31 +121,14 @@ pub(crate) fn evaluate(findings: &RuntimeFindings) -> Vec<ReadinessCheck> {
                     snapshot.last_sync_at, snapshot.last_ingest_at, findings.ingest_max_age_secs
                 ),
             ));
-        }
-        Err(error) => {
-            for id in [
-                "indexer_worker_running",
-                "indexer_scopes_opened",
-                "indexer_ingest_fresh",
-            ] {
-                checks.push(check(id, false, error.clone()));
-            }
-        }
-    }
-
-    // 走査網羅（計数の取得可否 + 安全側不変条件の実測）。
-    match (&findings.snapshot, &findings.integrity) {
-        (Ok(snapshot), Ok(integrity)) => {
-            let invariants_hold = integrity.entries_without_verdict == 0
-                && integrity.non_allow_or_critical_surfaced == 0
-                && integrity.provider_failure_allowed == 0;
+            // 走査網羅の計数の取得可否。索引の安全側不変条件は、判定の無い行を FK が、失敗が許可へ落ちた
+            // 判定を CHECK が保存の時点で拒否し、許可以外・重大へ変わった行を読み口が落とすので数えない（#1714）。
             checks.push(check(
                 "scan_coverage_metrics_available",
-                invariants_hold,
+                true,
                 format!(
                     "scanned={} indexed={} skipped_non_allow={} scan_errors={} \
-                     provider_unavailable={} media_fetch(success/unavailable/timeout/oversize)={}/{}/{}/{}; \
-                     判定無し索引={} 非許可・重大の表出={} 失敗→許可={}",
+                     provider_unavailable={} media_fetch(success/unavailable/timeout/oversize)={}/{}/{}/{}",
                     snapshot.scanned,
                     snapshot.indexed,
                     snapshot.skipped_non_allow,
@@ -155,18 +138,18 @@ pub(crate) fn evaluate(findings: &RuntimeFindings) -> Vec<ReadinessCheck> {
                     snapshot.media_fetch_unavailable,
                     snapshot.media_fetch_timeout,
                     snapshot.media_fetch_oversize,
-                    integrity.entries_without_verdict,
-                    integrity.non_allow_or_critical_surfaced,
-                    integrity.provider_failure_allowed,
                 ),
             ));
         }
-        (Err(error), _) | (_, Err(error)) => {
-            checks.push(check(
+        Err(error) => {
+            for id in [
+                "indexer_worker_running",
+                "indexer_scopes_opened",
+                "indexer_ingest_fresh",
                 "scan_coverage_metrics_available",
-                false,
-                error.clone(),
-            ));
+            ] {
+                checks.push(check(id, false, error.clone()));
+            }
         }
     }
 
@@ -344,19 +327,6 @@ mod tests {
         let checks = evaluate(&findings);
         assert_eq!(
             status_of(&checks, "indexer_ingest_fresh").status,
-            ReadinessStatus::Fail
-        );
-    }
-
-    #[test]
-    fn integrity_violations_fail_scan_coverage() {
-        let mut findings = healthy_findings();
-        if let Ok(integrity) = &mut findings.integrity {
-            integrity.provider_failure_allowed = 1;
-        }
-        let checks = evaluate(&findings);
-        assert_eq!(
-            status_of(&checks, "scan_coverage_metrics_available").status,
             ReadinessStatus::Fail
         );
     }
