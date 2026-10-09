@@ -27,13 +27,15 @@ serde_json = "1.0.151"
 tauri = { version = "2.12.0", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-deep-link = "2.6.0"
 tauri-plugin-dialog = "2.8.0"
-tauri-plugin-single-instance = { version = "2.5.1", features = ["deep-link"] }
 tauri-plugin-updater = "2.13.1"
 tokio = { version = "1", features = ["time", "signal", "sync", "net", "macros", "rt"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.26.1", features = ["v4"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+tauri-plugin-single-instance = { version = "2.5.1", features = ["deep-link"] }
 
 [target.'cfg(windows)'.dependencies]
 open = { version = "5.4.4", features = ["shellexecute-on-windows"] }

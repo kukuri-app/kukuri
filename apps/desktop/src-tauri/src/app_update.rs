@@ -6,9 +6,13 @@ use tokio::sync::Mutex;
 
 const DEB_TARGET: &str = "linux-x86_64-deb";
 const STORE_MANAGED_UPDATE: &str = "update_managed_by_microsoft_store";
+const PLAY_MANAGED_UPDATE: &str = "update_managed_by_google_play";
 
+/// AndroidはGoogle Playだけで配る（#1193 D3）。updater pluginを登録しないため、その状態へ触れる前に拒否する。
 fn require_self_managed_updates() -> Result<(), String> {
-    if cfg!(feature = "microsoft-store") {
+    if cfg!(target_os = "android") {
+        Err(PLAY_MANAGED_UPDATE.into())
+    } else if cfg!(feature = "microsoft-store") {
         Err(STORE_MANAGED_UPDATE.into())
     } else {
         Ok(())
@@ -219,7 +223,9 @@ mod tests {
     #[test]
     fn distribution_feature_owns_the_update_boundary() {
         let result = require_self_managed_updates();
-        if cfg!(feature = "microsoft-store") {
+        if cfg!(target_os = "android") {
+            assert_eq!(result.unwrap_err(), PLAY_MANAGED_UPDATE);
+        } else if cfg!(feature = "microsoft-store") {
             assert_eq!(result.unwrap_err(), STORE_MANAGED_UPDATE);
         } else {
             result.expect("direct distributions keep the self-managed updater");

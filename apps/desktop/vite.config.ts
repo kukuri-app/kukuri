@@ -12,7 +12,8 @@ const env = (
   }
 ).process?.env;
 
-const tauriDevHost = env?.KUKURI_TAURI_DEV_HOST ?? '127.0.0.1';
+// `tauri android dev` は Windows では端末の LAN の address を devUrl に使い、`TAURI_DEV_HOST` に入れる（#1194）。
+const tauriDevHost = env?.KUKURI_TAURI_DEV_HOST ?? env?.TAURI_DEV_HOST ?? '127.0.0.1';
 const rawTauriDevPort = Number.parseInt(env?.KUKURI_TAURI_DEV_PORT ?? '5173', 10);
 const tauriDevPort =
   Number.isInteger(rawTauriDevPort) && rawTauriDevPort > 0 && rawTauriDevPort <= 65535

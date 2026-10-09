@@ -110,6 +110,32 @@ jobs:
       - name: Tauri compile check
         run: cargo xtask-lite tauri-check
 
+  # #1194: src-tauri を Android の配布 ABI（arm64-v8a）向けに compile し、desktop だけの処理の混入を止める。
+  # NDK は runner の image にあるもの（ANDROID_NDK_HOME）を使う。
+  android-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-linux-android
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+          workspaces: |
+            .
+            apps/desktop/src-tauri
+
+      - name: Android compile check
+        run: cargo xtask-lite android-check
+
   linux-rust-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 60

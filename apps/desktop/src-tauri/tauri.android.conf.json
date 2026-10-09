@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "app.kukuri.android",
+  "build": {
+    "beforeDevCommand": "npx pnpm@10.16.1 vite"
+  },
+  "bundle": {
+    "android": {
+      "minSdkVersion": 29
+    }
+  }
+}

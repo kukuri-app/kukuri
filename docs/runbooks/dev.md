@@ -37,6 +37,7 @@ cargo xtask rust-test
 cargo xtask app-api-slow-test
 cargo xtask tauri-check
 cargo xtask tauri-test
+cargo xtask android-check
 cargo xtask desktop-lint
 cargo xtask desktop-test
 cargo xtask desktop-storybook
@@ -411,6 +412,24 @@ iroh-docs は fork せず、root `Cargo.toml` の `[patch.crates-io]` で上流�
 - 初回 Windows cut の対象は `x86_64-pc-windows-msvc` のみ
 - installer build は current-user NSIS + WebView2 download bootstrapper を前提にする
 - Windows の bin は `apps/desktop/src-tauri/build.rs` で main thread の stack reserve を 8 MiB にする（exe 既定の 1 MiB では、Tauri が main thread で値渡しする command の future が約 33 KiB を超えると stack overflow で終了する。#1526）。command の future の上限は `crates/desktop-runtime/tests/command_future_sizes.rs` で固定する
+
+## Android 前提（#1193・#1194）
+- 前提は Tauri 公式手順を使う: <https://v2.tauri.app/start/prerequisites/#android>。JDK 17 以上（Android Studio 付属の JBR 21 で確認）、Android SDK の platform 36、NDK r29（`NDK_HOME` か `ANDROID_NDK_HOME`）、Rust の target `aarch64-linux-android`（配布）と `x86_64-linux-android`（emulator）を入れる。
+- 対象は #1193 の D5・D7 に従う。applicationId は `app.kukuri.android`（`apps/desktop/src-tauri/tauri.android.conf.json`。desktop の identifier と保存先は変えない）、minSdk 29、compileSdk・targetSdk 36、配布の ABI は arm64-v8a だけで、x86_64 は emulator での検証に使う。
+- Android project は `apps/desktop/src-tauri/gen/android` に置き、git で追跡する。Tauri CLI 2.12.0 の `tauri android init` の出力から、CLI の呼び方（PATH の node で `apps/desktop/scripts/tauri-cli.mjs` を呼ぶ）、SDK の版（雛形は 37）、Android TV の宣言を直し、未使用の雛形（layout・色・night の theme）と既定のアイコンを除いた。ランチャーアイコンは `src-tauri/icons/android`（`docs/ASSET_MANIFEST.json` で管理）を Gradle の res として直接読む。`gen/android` の build の生成物は同 directory の `.gitignore` が除く。
+- desktop だけの処理（tray、終了の横取りと signal、多重起動の制御、updater）は `cfg(desktop)` で Android の build から外す。Android の OS 通知は #1197 AC-4 まで `unavailable` を返し、更新は Google Play が管理する（`update_managed_by_google_play`）。
+
+```bash
+cargo xtask android-check
+npx pnpm@10.16.1 --dir apps/desktop tauri android dev
+npx pnpm@10.16.1 --dir apps/desktop tauri android build --debug --apk --target x86_64
+npx pnpm@10.16.1 --dir apps/desktop tauri android build --debug --apk --target aarch64
+```
+
+- `cargo xtask android-check` は src-tauri を `aarch64-linux-android` 向けに `cargo check` する。NDK の clang と llvm-ar を C を含む依存の build に使う。CI では `Kukuri Fast` の `android-check` job が runner の NDK で実行する。
+- `tauri android dev` は接続中の emulator か端末へ入れて起動する。Windows では Tauri CLI が端末の LAN の address を devUrl に使い、`TAURI_DEV_HOST` に入れる。Android の設定（`tauri.android.conf.json`）の開発 server は host を固定せず、`vite.config.ts` がその値で待ち受ける（同じ LAN から届く）。port は 5173 で固定。
+- `tauri android build --debug --apk --target <x86_64|aarch64>` は debug 署名の APK を `apps/desktop/src-tauri/gen/android/app/build/outputs/apk/universal/debug/` に出す。既定の debug 情報では Rust の共有 library だけで 1.3 GB を超え、差分の再 packaging で 2 GB を超えると `adb install` が失敗するので、CI と同じ `CARGO_PROFILE_DEV_DEBUG=line-tables-only` を付ける（x86_64 で約 480 MB）。upload 鍵で署名した AAB・versionCode・配布は #1199 が所有する。
+- Android の開発版は配布版と同じ applicationId で、署名が違うため同じ端末に並ばない。desktop の開発版の兄弟 dir（`<identifier>.dev`、#1105）は使わず、OS の app data dir（`/data/user/0/app.kukuri.android`）をそのまま使う。
 
 ## Windows packaging
 ```powershell

@@ -194,6 +194,7 @@ impl DesktopLifecycle {
         }
     }
 
+    #[cfg(desktop)]
     pub(crate) fn set_tray_created(&self, created: bool) {
         self.tray_created.store(created, Ordering::SeqCst);
     }
@@ -496,7 +497,7 @@ pub(crate) fn restart_after_update(app_handle: AppHandle) -> Result<(), CommandE
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, desktop))]
 pub(crate) fn watch_signals(app: AppHandle) -> std::io::Result<()> {
     use tokio::signal::unix::{SignalKind, signal};
     // handler登録をsetup中に済ませ、runtimeの起動待ちも終了経路へ含める。

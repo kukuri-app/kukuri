@@ -7,3 +7,6 @@
 
 # Tauri CLI rewrites this manifest with LF; keep Windows checkouts byte-stable.
 apps/desktop/src-tauri/Cargo.toml text eol=lf
+# Gradle wrapper の起動 script は OS ごとの改行で取り出す。
+apps/desktop/src-tauri/gen/android/gradlew text eol=lf
+apps/desktop/src-tauri/gen/android/gradlew.bat text eol=crlf

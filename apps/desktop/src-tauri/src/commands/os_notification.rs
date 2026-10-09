@@ -1,5 +1,5 @@
 use tauri::AppHandle;
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 use tauri::{Emitter, Manager};
 
 #[cfg(windows)]
@@ -10,7 +10,7 @@ use crate::state::CommandError;
 
 /// Event payload emitted to the frontend when an OS toast is clicked.
 #[derive(Clone, serde::Serialize)]
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 struct ActivationPayload {
     notification_id: String,
 }
@@ -18,7 +18,7 @@ struct ActivationPayload {
 /// Bring the main window forward and tell the frontend which notification was
 /// activated. The frontend resolves the id back to a notification and opens the
 /// target post via the existing in-app handler.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn activate_main_window(app: &AppHandle, notification_id: String) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -43,10 +43,16 @@ pub async fn request_os_notification_permission() -> &'static str {
     platform_notification_permission().await
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 async fn platform_notification_permission() -> &'static str {
     // 既存Windows desktop backendの結果は維持する。
     "granted"
+}
+
+/// AndroidのOS通知は #1197 AC-4 で接続する。それまでは許可済みと表示しない。
+#[cfg(target_os = "android")]
+async fn platform_notification_permission() -> &'static str {
+    "unavailable"
 }
 
 #[cfg(target_os = "linux")]
@@ -168,13 +174,24 @@ pub(crate) fn show_platform_notification(
     Ok(())
 }
 
+#[cfg(target_os = "android")]
+pub(crate) fn show_platform_notification(
+    _app: AppHandle,
+    _id: String,
+    _title: String,
+    _body: Option<String>,
+    _silent: bool,
+) -> Result<(), String> {
+    Err("os_notification_unavailable".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     // Pins the permission contract inherited from tauri-plugin-notification's
     // always-granted desktop backend; ReleasePanel branches on this string.
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     #[tokio::test]
     async fn permission_commands_report_granted() {
         assert_eq!(get_os_notification_permission().await, "granted");
