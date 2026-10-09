@@ -60,6 +60,9 @@ pub struct TrustReadView {
     /// 評価の版・期限・表示 policy（#1061）。旧 node の応答では欠落し、クライアントは未評価として扱う。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluation: Option<TrustEvaluation>,
+    /// basis の続きを取る cursor（`?cursor=`）。最後のページと旧 node の応答では欠落する。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basis_next_cursor: Option<String>,
 }
 
 /// 信頼値が負になった理由の種類（ADR 0026 §8.4）。数値・observer は含めない。

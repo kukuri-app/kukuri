@@ -1,12 +1,16 @@
-//! cross-node pull 開示境界（ADR 0026 §6.3, Issue #415）の contract テスト。DB 不要。
+//! cross-node pull 開示の組み立て（ADR 0026 §6.3 / §10, Issue #415 / #1702）の contract テスト。DB 不要。
+//!
+//! 開示できる signal の判定（confirmed の絶対成分で `Local` でなく cleared でない）は集計の trigger が
+//! 行ごとに持ち、`cn-core` の結合試験（`trust_totals.rs`）が同じ contract 名で固定する。ここでは
+//! 開示分の集計と 1 ページから応答を組み立てる部分を固定する。
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 use kukuri_cn_safety::{
     AppealStatus, Basis, RiskSignalTarget, SafetyCategory, Severity, Visibility,
 };
 use kukuri_cn_trust::{
-    PullAudience, TrustComponentKind, TrustRiskInput, TrustRiskInputs, cross_node_trust_disclosure,
+    PullAudience, TrustComponentKind, TrustRiskInput, TrustTotals, cross_node_trust_disclosure,
 };
 
 #[allow(clippy::unwrap_used)] // test fixture helper
@@ -16,144 +20,84 @@ fn now() -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
-fn input(
-    id: &str,
-    component: TrustComponentKind,
-    category: SafetyCategory,
-    basis: Basis,
-    visibility: Visibility,
-) -> TrustRiskInput {
+fn confirmed(id: &str, visibility: Visibility) -> TrustRiskInput {
     TrustRiskInput {
         signal_id: id.to_string(),
         issuer_node_id: "issuer-node".to_string(),
         target: RiskSignalTarget::UserPubkey,
         target_id: "pubkey-1".to_string(),
-        component,
-        category,
+        component: TrustComponentKind::Absolute,
+        category: SafetyCategory::Csam,
         severity: Severity::Critical,
-        basis,
+        basis: Basis::KnownHashMatch,
         confidence: Some(100),
         visibility,
         appeal_status: AppealStatus::None,
         expires_at: Some("2026-12-31T00:00:00Z".to_string()),
-        persisted_at: now(),
+        persisted_at: now() - Duration::days(400),
         operator_adjusted_at: None,
     }
 }
 
-fn disclosed_ids(inputs: &TrustRiskInputs, audience: PullAudience) -> Vec<String> {
-    cross_node_trust_disclosure("pubkey-1", inputs, audience, now())
-        .basis
-        .iter()
-        .map(|e| e.signal_id.clone())
-        .collect()
+#[test]
+fn disclosure_uses_only_the_audience_share_of_the_totals() {
+    // 開示値は開示分の集計だけから求める（Local・suspected・相対成分の存在が値から漏れない）。
+    let totals = TrustTotals {
+        absolute_units: 2_000,
+        relative_units: 5_000.0,
+        relative_at: now(),
+        half_life_days: 30.0,
+        disclosed_public_units: 400,
+        disclosed_subscribed_units: 300,
+        digest: 7,
+    };
+    let page = vec![confirmed("abs-public", Visibility::Public)];
+    let public =
+        cross_node_trust_disclosure("pubkey-1", &totals, &page, PullAudience::Public, now());
+    assert!((public.absolute - -0.4).abs() < 1e-12);
+    let subscribed = cross_node_trust_disclosure(
+        "pubkey-1",
+        &totals,
+        &page,
+        PullAudience::SubscribedNodes,
+        now(),
+    );
+    assert!((subscribed.absolute - -0.7).abs() < 1e-12);
+
+    // 開示する行が無ければ 0（相対成分は開示口を持たない）。
+    let none = cross_node_trust_disclosure(
+        "pubkey-1",
+        &TrustTotals {
+            disclosed_public_units: 0,
+            disclosed_subscribed_units: 0,
+            ..totals
+        },
+        &[],
+        PullAudience::SubscribedNodes,
+        now(),
+    );
+    assert_eq!(none.absolute, 0.0);
+    assert!(none.basis.is_empty());
 }
 
 #[test]
-fn cross_node_pull_discloses_only_confirmed_absolute_component() {
-    let inputs = TrustRiskInputs {
-        absolute: vec![
-            // confirmed（known-hash）+ Public → 開示される唯一の signal。
-            input(
-                "abs-confirmed-public",
-                TrustComponentKind::Absolute,
-                SafetyCategory::Csam,
-                Basis::KnownHashMatch,
-                Visibility::Public,
-            ),
-            // suspected（classifier 由来）は visibility が Public でも返さない（誤検知を拡散しない）。
-            input(
-                "abs-suspected-public",
-                TrustComponentKind::Absolute,
-                SafetyCategory::Csam,
-                Basis::ClassifierScore,
-                Visibility::Public,
-            ),
-            // confirmed でも Local は返さない（既定 = 最も安全側）。
-            input(
-                "abs-confirmed-local",
-                TrustComponentKind::Absolute,
-                SafetyCategory::Csam,
-                Basis::KnownHashMatch,
-                Visibility::Local,
-            ),
-        ],
-        relative: vec![
-            // 相対成分は confirmed / Public でも決して返さない（文化依存指標を拡散しない）。
-            input(
-                "rel-confirmed-public",
-                TrustComponentKind::Relative,
-                SafetyCategory::Nsfw,
-                Basis::ProviderVerdict,
-                Visibility::Public,
-            ),
-        ],
-    };
-
-    let ids = disclosed_ids(&inputs, PullAudience::Public);
-    assert_eq!(ids, vec!["abs-confirmed-public".to_string()]);
-
-    // 開示値は開示分のみから計算する（Local signal の存在が absolute 値から漏れない）。
-    let all_public = TrustRiskInputs {
-        absolute: vec![input(
-            "abs-confirmed-public",
-            TrustComponentKind::Absolute,
-            SafetyCategory::Csam,
-            Basis::KnownHashMatch,
-            Visibility::Public,
-        )],
-        relative: Vec::new(),
-    };
-    let full = cross_node_trust_disclosure("pubkey-1", &inputs, PullAudience::Public, now());
-    let only = cross_node_trust_disclosure("pubkey-1", &all_public, PullAudience::Public, now());
-    assert_eq!(full.absolute, only.absolute);
-
-    // 根拠（issuer / basis / confidence / expiry）を同伴する。
-    let entry = &full.basis[0];
+fn disclosure_basis_explains_each_confirmed_signal_without_decay() {
+    let page = vec![confirmed("abs-public", Visibility::Public)];
+    let disclosure = cross_node_trust_disclosure(
+        "pubkey-1",
+        &TrustTotals::default(),
+        &page,
+        PullAudience::Public,
+        now(),
+    );
+    // 根拠（issuer / basis / confidence / expiry）を同伴し、絶対成分なので時間で薄めない。
+    let entry = &disclosure.basis[0];
+    assert_eq!(entry.signal_id, "abs-public");
     assert_eq!(entry.issuer_node_id, "issuer-node");
     assert_eq!(entry.basis, Basis::KnownHashMatch);
     assert_eq!(entry.confidence, Some(100));
     assert_eq!(entry.expires_at, Some("2026-12-31T00:00:00Z".to_string()));
-}
-
-#[test]
-fn subscribed_nodes_visibility_requires_subscriber_audience() {
-    let inputs = TrustRiskInputs {
-        absolute: vec![input(
-            "abs-confirmed-subscribed",
-            TrustComponentKind::Absolute,
-            SafetyCategory::Csam,
-            Basis::ProviderVerdict,
-            Visibility::SubscribedNodes,
-        )],
-        relative: Vec::new(),
-    };
-    // 匿名 pull には返らない。
-    assert!(disclosed_ids(&inputs, PullAudience::Public).is_empty());
-    // subscriber 認証済み pull には返る。
-    assert_eq!(
-        disclosed_ids(&inputs, PullAudience::SubscribedNodes),
-        vec!["abs-confirmed-subscribed".to_string()]
-    );
-}
-
-#[test]
-fn relative_component_never_crosses_node_boundary() {
-    // relation そのものに開示口が無いこと（`Local` 固定）は型レベルで保証される
-    // （`cross_node_trust_disclosure` は relation を受け取らず、relative は常に落とす）。
-    let inputs = TrustRiskInputs {
-        absolute: Vec::new(),
-        relative: vec![input(
-            "rel-any",
-            TrustComponentKind::Relative,
-            SafetyCategory::Spam,
-            Basis::KnownHashMatch,
-            Visibility::Public,
-        )],
-    };
-    for audience in [PullAudience::Public, PullAudience::SubscribedNodes] {
-        let disclosure = cross_node_trust_disclosure("pubkey-1", &inputs, audience, now());
-        assert!(disclosure.basis.is_empty());
-        assert_eq!(disclosure.absolute, 0.0);
-    }
+    assert_eq!(entry.decay_factor, 1.0);
+    assert_eq!(entry.contribution, -1.0);
+    assert_eq!(disclosure.basis_next_cursor, None);
 }

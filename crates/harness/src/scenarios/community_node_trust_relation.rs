@@ -154,6 +154,7 @@ async fn trust_user(
             w_abs_applied: 0.5,
             computed_at: "2026-08-14T00:00:00Z".to_string(),
             evaluation: None,
+            basis_next_cursor: None,
             basis: vec![TrustBasisEntry {
                 signal_id: APPEAL_SIGNAL_ID.to_string(),
                 issuer_node_id: "harness-issuer-node".to_string(),

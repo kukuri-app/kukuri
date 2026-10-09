@@ -6,10 +6,11 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use kukuri_cn_core::{
-    ApiError, ApiResult, clear_relation_optout, filter_relation_visible, get_relation_optout,
-    latest_successful_relation_snapshot_id, list_active_relation_observations,
-    list_trust_risk_inputs, relation_pair_is_suppressed, require_bearer_identity, require_consents,
-    set_relation_optout, trust_observation_revisions,
+    ApiError, ApiResult, TrustBasisCursor, clear_relation_optout, filter_relation_visible,
+    get_relation_optout, latest_successful_relation_snapshot_id, list_active_relation_observations,
+    list_disclosed_trust_basis_page, list_trust_basis_page, load_trust_totals,
+    relation_pair_is_suppressed, require_bearer_identity, require_consents, set_relation_optout,
+    trust_observation_revisions,
 };
 use kukuri_cn_protocol::{
     RELATION_NOT_FOUND_CODE, RELATION_VISIBILITY_NOT_ACTIVATED_CODE,
@@ -18,10 +19,9 @@ use kukuri_cn_protocol::{
     TRUST_READ_NOT_CONFIGURED_CODE, TrustEvaluationItem, TrustEvaluationsRequest,
     TrustEvaluationsResponse, TrustReadView, TrustUserReadResponse, normalize_pubkey,
 };
-use kukuri_cn_safety::RiskSignalTarget;
 use kukuri_cn_trust::{
-    PullAudience, RelationAdjustment, UniformRelationWeight, apply_viewer_relation,
-    build_trust_read, compose_relation_adjustment, cross_node_trust_disclosure, relation_version,
+    PullAudience, RelationAdjustment, TrustRiskInput, apply_viewer_relation, build_trust_read,
+    compose_relation_adjustment, cross_node_trust_disclosure, relation_version,
 };
 use serde::Deserialize;
 
@@ -92,41 +92,51 @@ pub(crate) fn parse_target_pubkey(raw: &str) -> Result<String, ApiError> {
     })
 }
 
+/// `?cursor=` で basis の続きを取る照会の引数(ADR 0026 §10)。
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct TrustBasisParams {
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+impl TrustBasisParams {
+    fn cursor(&self) -> Result<Option<TrustBasisCursor>, ApiError> {
+        self.cursor
+            .as_deref()
+            .map(|raw| {
+                TrustBasisCursor::parse(raw).ok_or_else(|| {
+                    ApiError::new(
+                        StatusCode::BAD_REQUEST,
+                        "INVALID_TRUST_QUERY",
+                        "invalid basis cursor",
+                    )
+                })
+            })
+            .transpose()
+    }
+}
+
+fn load_trust_error(operation: TrustRelationOperation) -> impl Fn(anyhow::Error) -> ApiError {
+    move |source| trust_relation_error(TrustRelationError::trust_read(operation, source))
+}
+
 /// 閲覧者 viewer から見た各 target の利用者向け view(`trust` = 合算済みの S)を作る
 /// (ADR 0026 §8)。
 ///
-/// T は target ごとの risk signal から閲覧者によらず求め、R は target への active な観測と
-/// viewer → observer の proximity から求める。observer の一覧は戻り値に含めない。
+/// T は target ごとの集計から閲覧者によらず求め(§10)、R は target への active な観測と
+/// viewer → observer の proximity から求める。observer の一覧は戻り値に含めない。`basis` は
+/// 単体照会の 1 ページ(一括評価では空)。
 async fn evaluate_viewer_trust(
     state: &UserApiState,
     trust_read: &TrustReadState,
     viewer_pubkey: &str,
     targets: &[String],
+    basis: &[TrustRiskInput],
     now: chrono::DateTime<chrono::Utc>,
 ) -> ApiResult<Vec<(String, TrustReadView)>> {
-    let now_rfc3339 = now.to_rfc3339();
-    let mut trust_views = Vec::with_capacity(targets.len());
-    for target in targets {
-        let inputs = list_trust_risk_inputs(
-            &state.pool,
-            RiskSignalTarget::UserPubkey,
-            target.as_str(),
-            now_rfc3339.as_str(),
-        )
+    let mut totals = load_trust_totals(&state.pool, targets)
         .await
-        .map_err(|source| {
-            TrustRelationError::trust_read(TrustRelationOperation::LoadTrustInputs, source)
-        })
-        .map_err(trust_relation_error)?;
-        // T は相対成分も一様重みで集計する(閲覧者に依存させない。ADR 0026 §8.1)。
-        trust_views.push(build_trust_read(
-            target.as_str(),
-            &inputs,
-            now,
-            &trust_read.params,
-            &UniformRelationWeight::default(),
-        ));
-    }
+        .map_err(load_trust_error(TrustRelationOperation::LoadTrustInputs))?;
 
     let observation_error = |source| {
         trust_relation_error(TrustRelationError::trust_read(
@@ -170,8 +180,15 @@ async fn evaluate_viewer_trust(
     Ok(targets
         .iter()
         .cloned()
-        .zip(trust_views)
-        .map(|(target, trust_view)| {
+        .map(|target| {
+            let target_totals = totals.remove(target.as_str()).unwrap_or_default();
+            let trust_view = build_trust_read(
+                target.as_str(),
+                &target_totals,
+                basis,
+                now,
+                &trust_read.params,
+            );
             let adjustment = observations
                 .get(target.as_str())
                 .map(|items| {
@@ -188,37 +205,51 @@ async fn evaluate_viewer_trust(
                 snapshot_id,
                 revisions.get(target.as_str()).copied().unwrap_or(0),
             );
-            let view =
-                apply_viewer_relation(trust_view, adjustment, version, now, &trust_read.params);
+            let view = apply_viewer_relation(
+                trust_view,
+                target_totals.version(),
+                adjustment,
+                version,
+                now,
+                &trust_read.params,
+            );
             (target, view)
         })
         .collect())
 }
 
-/// per-user trust read(ADR 0026 §2.3 / §6.2 / §8)。
+/// per-user trust read(ADR 0026 §2.3 / §6.2 / §8 / §10)。
 ///
 /// `trust` は trust 絶対値 T と閲覧者別 relation 値 R を CN 側で合算した S。`absolute` /
 /// `relative` / `basis` は T の内訳(寄与 signal の根拠つき)で、`evaluation` に版・期限・
-/// 表示 policy を付ける。viewer は bearer identity に固定する。
+/// 表示 policy を付ける。basis は 50 件ずつで、続きは `basis_next_cursor` を `?cursor=` に渡す。
+/// viewer は bearer identity に固定する。
 pub(crate) async fn trust_user_read(
     State(state): State<UserApiState>,
     headers: HeaderMap,
     Path(pubkey): Path<String>,
+    Query(params): Query<TrustBasisParams>,
 ) -> ApiResult<Json<TrustUserReadResponse>> {
     let (trust_read, viewer_pubkey) = require_trust_read(&state, &headers).await?;
     let target = parse_target_pubkey(pubkey.as_str())?;
+    let cursor = params.cursor()?;
     let now = chrono::Utc::now();
-    let (_, view) = evaluate_viewer_trust(
+    let page = list_trust_basis_page(&state.pool, target.as_str(), cursor.as_ref())
+        .await
+        .map_err(load_trust_error(TrustRelationOperation::LoadTrustInputs))?;
+    let (_, mut view) = evaluate_viewer_trust(
         &state,
         &trust_read,
         viewer_pubkey.as_str(),
         std::slice::from_ref(&target),
+        &page.inputs,
         now,
     )
     .await?
     .into_iter()
     .next()
     .expect("one evaluation per requested target");
+    view.basis_next_cursor = page.next_cursor;
     Ok(Json(TrustUserReadResponse {
         viewer_pubkey,
         view,
@@ -252,6 +283,7 @@ pub(crate) async fn trust_evaluations(
         &trust_read,
         viewer_pubkey.as_str(),
         targets.as_slice(),
+        &[],
         now,
     )
     .await?
@@ -270,17 +302,19 @@ pub(crate) async fn trust_evaluations(
     }))
 }
 
-/// cross-node pull(ADR 0026 §6.3)。
+/// cross-node pull(ADR 0026 §6.3 / §10)。
 ///
 /// **confirmed(known-hash / provider-verdict)な絶対成分のみ**を根拠つきで返す。
 /// 相対成分・relation・suspected は visibility に依らず返さない。`visibility` は
 /// アクセス範囲: `Local` は返さず(既定)、`SubscribedNodes` は bearer で subscriber と
 /// 認証できた要求者のみ、`Public` は匿名でも返す。絶対成分は viewer 非依存のため
-/// viewer 証明は要さない(bearer は audience 判定のみに使う)。
+/// viewer 証明は要さない(bearer は audience 判定のみに使う)。basis は 50 件ずつで、続きは
+/// `basis_next_cursor` を `?cursor=` に渡す。
 pub(crate) async fn trust_pull(
     State(state): State<UserApiState>,
     headers: HeaderMap,
     Path(pubkey): Path<String>,
+    Query(params): Query<TrustBasisParams>,
 ) -> ApiResult<Json<kukuri_cn_trust::CrossNodeTrustDisclosure>> {
     let Some(_) = state.trust_read.clone() else {
         return Err(ApiError::new(
@@ -306,24 +340,22 @@ pub(crate) async fn trust_pull(
         Err(_) => PullAudience::Public,
     };
     let target = parse_target_pubkey(pubkey.as_str())?;
+    let cursor = params.cursor()?;
     let now = chrono::Utc::now();
-    let inputs = list_trust_risk_inputs(
-        &state.pool,
-        RiskSignalTarget::UserPubkey,
-        target.as_str(),
-        now.to_rfc3339().as_str(),
-    )
-    .await
-    .map_err(|source| {
-        TrustRelationError::trust_read(TrustRelationOperation::LoadTrustPullInputs, source)
-    })
-    .map_err(trust_relation_error)?;
-    Ok(Json(cross_node_trust_disclosure(
-        target.as_str(),
-        &inputs,
-        audience,
-        now,
-    )))
+    let load_error = load_trust_error(TrustRelationOperation::LoadTrustPullInputs);
+    let totals = load_trust_totals(&state.pool, std::slice::from_ref(&target))
+        .await
+        .map_err(&load_error)?
+        .remove(target.as_str())
+        .unwrap_or_default();
+    let page =
+        list_disclosed_trust_basis_page(&state.pool, target.as_str(), audience, cursor.as_ref())
+            .await
+            .map_err(&load_error)?;
+    let mut disclosure =
+        cross_node_trust_disclosure(target.as_str(), &totals, &page.inputs, audience, now);
+    disclosure.basis_next_cursor = page.next_cursor;
+    Ok(Json(disclosure))
 }
 
 /// relation read の応答(pairwise cluster proximity。根拠つき)。

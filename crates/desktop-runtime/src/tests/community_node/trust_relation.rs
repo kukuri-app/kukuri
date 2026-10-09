@@ -71,6 +71,7 @@ async fn mock_trust_user(
             w_abs_applied: 0.5,
             computed_at: "2026-08-13T00:00:00Z".to_string(),
             basis: Vec::new(),
+            basis_next_cursor: None,
             evaluation: Some(TrustEvaluation {
                 policy_version: "v1-policy".to_string(),
                 trust_version: "t-version".to_string(),

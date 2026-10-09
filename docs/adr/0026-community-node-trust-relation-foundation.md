@@ -13,6 +13,11 @@ advisory-only（0）」の 3 分岐になる。詳細は「§7 改訂追補」�
 relation 値 R（関係の深いユーザー群のブロック / ミュート観測から求める）の CN 側合算値にする。T の算出と cross-node
 開示は変更しない。詳細は「§8 改訂追補」を正本とする。
 
+**2026-10-09 改訂**（#1702）: T の算出式は変えず、照会を対象ごとの集計と basis のページに置き換える。risk signal と
+著者の対応の変更を DB の trigger が集計へ差分で反映し、照会は対象の行数にも総件数にもよらず集計の 1 行と basis の
+1 ページ（50 件）だけを読む。期限を過ぎた行は 1 分以内の掃除で外し、半減期の変更は背景で作り直す。詳細は「§10 改訂
+追補」を正本とする。
+
 ## Date
 2026-06-30
 
@@ -55,6 +60,8 @@ trust と relation は **node-local かつ advisory** な derived signal であ�
   - `trust_absolute_indicators_not_relation_weighted`
   - `trust_relative_indicators_are_relation_weighted`
   - `trust_resists_mass_report_bombing`
+    （上の 3 件は 2026-10-09 superseded: T は一様重みで集計し（§8.1）、relation 重みの seam は廃止した（§10.3）。
+    閲覧者別の調整は §8 の R、大量通報への耐性は通報を入力にしない構造が担う）
   - `trust_absolute_negative_is_weighted_double`
   - `trust_composition_weights_are_operator_tunable`
   - `trust_reflects_risk_signals_split_by_category`
@@ -70,9 +77,15 @@ trust と relation は **node-local かつ advisory** な derived signal であ�
   - 2026-09-15 追加（#1051、§7）:
     - `general_advisory_contributes_zero_to_trust`（nsfw / objectionable の signal は評価に寄与 0。ADR 0028 §8.5 と共有）
     - `trust_read_lists_advisory_only_basis_with_zero_contribution`（利用者向け read の basis に寄与 0 で残る）
+  - 2026-10-09 追加（#1702、§10）:
+    - `aggregates_follow_random_writes_like_full_recomputation`（集計とページが全行からの計算と一致する）
+    - `sql_units_match_signal_contribution`（集計の寄与の式が `signal_contribution` と一致する）
+    - `trust_reads_do_not_scale_with_row_counts`（照会 1 回の読取りが行数によらない）
+    - `sweep_removes_expired_rows_in_bounded_batches` / `half_life_change_is_rebuilt_in_bounded_batches`
+    - `trust_read_and_pull_page_basis_with_cursor`（basis を 50 件ずつ cursor で辿れる）
 - 必須 scenario:
   - CSAM 系 risk がある pubkey は絶対成分が下がり、relation や通報数で揺れない
-  - 特定 cluster からの大量通報は相対成分に raw count として効かず、relation で重み付けされる（report-bombing 耐性）
+  - 特定 cluster からの大量通報は相対成分に raw count として効かず、relation で重み付けされる（report-bombing 耐性）（2026-10-09 superseded: 通報は T の入力にならず、閲覧者別の調整は §8 の R が担う。§10.3）
   - hate / アダルトなど相対指標は viewer の cluster によって評価が変わる / risk・観測が無ければ不当に下げない（2026-09-15 superseded: アダルト（nsfw）と hate 等（objectionable）は評価を動かさず basis にのみ残る。§7）
   - 2026-09-15 追加（#1051）: nsfw / objectionable の advisory だけを持つ pubkey は、相対成分・最終 `trust` とも 0 のままで、basis に寄与 0 の行として現れる
   - 絶対成分と相対成分がともに最悪でも最終 `trust` は `-1` を下回らない（clamp）
@@ -234,6 +247,8 @@ foundation（#409 / PR #414）が残した §6 の未決事項を #416 で決定
 - **重みは operator が変更できる**（`w_abs` の係数等）。
 - **閾値（Decision）**: read は**連続値の advisory** を維持し、「このユーザーは troll」等の**断定閾値は置かない**（trust-semantics §4）。client 表示のバケット化（例 low / mid / high）が要るなら **operator 可変パラメータ**とし、ADR では固定しない。
 - **decay（Decision）**: **相対成分・node-local 観測**には **半減期方式の時間減衰**を導入する（半減期は operator 可変）。**絶対成分は evidence / 検知ベースのため減衰させない**（known-hash / provider-verdict は時間で薄めない）。
+  > **2026-10-09 改訂**（#1702、§10.2）: 半減期は集計に焼き込まれる。operator が変えた後の起動で集計を背景で作り直し、
+  > 作り直すまでの対象は前の半減期で求めた値を返す。
 - **appeal（Decision）**: `AppealStatus` を trust 寄与へ次のとおり反映する。
   - `pending`: 該当 signal の寄与を**据え置き**（申し立て中に勝手に緩めない）。
   - `accepted`: 該当 signal の寄与を**除外**して再計算する。
@@ -277,6 +292,7 @@ foundation（#409 / PR #414）が残した §6 の未決事項を #416 で決定
   `contribution = 0`** の行として残す（§6.2 の `Cleared` と同じ「実効寄与 0 の説明用 basis」）。利用者は判定・
   confidence・appeal 状態を確認し、ADR 0028 §2.8 の申し立てへ進める。
 - `TrustBasisEntry` の既存欄（`component` は `Relative` のまま）で表現し、wire に破壊的変更を加えない。
+- 2026-10-09（#1702、§10.3）: basis は 50 件ずつのページで返る。寄与 0 の行も他の行と同じ並びでページに入る。
 - 評価値（`relative` / `trust`）には入れない。別ノード向け pull（§6.3、confirmed 絶対成分のみ）にも入れない。
 
 ### 7.3 appeal / 失効との関係
@@ -290,7 +306,7 @@ foundation（#409 / PR #414）が残した §6 の未決事項を #416 で決定
 - 追加: `general_advisory_contributes_zero_to_trust`（ADR 0028 §8.11 と共有）、
   `trust_read_lists_advisory_only_basis_with_zero_contribution`。
 - 維持: `trust_separates_absolute_and_relative_indicators`、`trust_relative_indicators_are_relation_weighted`
-  （対象は spam / malware / phishing と node-local 観測）、`trust_reflects_risk_signals_split_by_category`
+  （対象は spam / malware / phishing と node-local 観測。2026-10-09 superseded、§10.3）、`trust_reflects_risk_signals_split_by_category`
   （3 分岐）、`cross_node_pull_discloses_only_confirmed_absolute_component`。
 - superseded: 必須 scenario「hate / アダルトなど相対指標は viewer の cluster によって評価が変わる」。
 
@@ -365,7 +381,8 @@ R = clamp(-1, 0, R_base - penalty_scale × penalty)                # penalty_sca
 ### 8.4 評価の版・期限と表示 policy
 - read 応答は `evaluation` を同伴する（旧 node の応答では欠落し、クライアントは未評価として扱う）。
   - `policy_version`: 合算・表示 policy の parameter から決まる識別子。
-  - `trust_version`: T に寄与する入力（signal id・appeal 状態・operator 調整・失効）の digest。
+  - `trust_version`: T に寄与する入力（signal id・appeal 状態・operator 調整・失効）の digest。2026-10-09（#1702、§10.3）
+    から、対象ごとの集計が持つ signal ごとの hash の XOR（`t-<16 桁の 16 進>`）。
   - `relation_version`: 直近で成功した relation 解析の id と、B に対する観測の最新 revision の組。
   - `computed_at` / `expires_at`: 評価時刻と、クライアントが結果を再利用してよい期限（既定 600 秒）。
   - `hide_recommended`: `S <= hide_threshold`（既定 -0.5）。
@@ -428,3 +445,50 @@ R = clamp(-1, 0, R_base - penalty_scale × penalty)                # penalty_sca
 - 移行: 既存 index からの参加数だけを移行時に 1 回作り、全 author の cluster を印の対象にする。過去の投稿のアクションは
   遡って作らない（取込みの窓から先の観測で増える）。旧定義の graph（`TrustUser` / `RelatesTo`）は意味が違うため読まず、
   `ensure_schema` が型ごと削除し、新しい型（`RelationUser` / `InteractsWith`）へ作り直す。
+
+## 10. 改訂追補（#1702、2026-10-09）: 対象ごとの集計と basis のページ
+
+本節は Issue #1702（Scope revision 1）の決定を記録する。T の算出式（§6.2・§7・§8.1）は変えず、その読取りを、対象ごとの
+集計と basis のページに置き換える。旧来の読取り（照会のたびに対象の全行を読み、basis に全行を返す）は失効する。
+
+### 10.1 集計
+- `cn_safety.trust_target_signals` に、対象（利用者の pubkey）ごとの生きている risk signal（利用者が対象の行と、著者の
+  対応（`risk_signal_subject_authors`）を通した内容の行）を 1 行ずつ置く。行は寄与の大きさ（1/1000 単位の整数。
+  `cleared` と nsfw / objectionable は 0）、絶対成分か、pull で開示できる範囲、期限（保持期間と失効時刻の早い方）、
+  `trust_version` の元になる hash を持つ。
+- `cn_safety.trust_target_totals` は対象ごとの集計（絶対成分の寄与の和、相対成分の寄与を基準時刻まで半減期で減衰させた
+  和、pull の開示範囲ごとの和、hash の XOR）。行が 0 になった対象の集計の行は消す。
+- `risk_signals` と `risk_signal_subject_authors` の変更は DB の trigger が `trust_target_signals` へ写し、その追加・削除を
+  集計へ差分で足し引きする。内容の行は、著者の対応を読む前に対応の回収（ADR 0034 §1、#1699）と同じ advisory lock を
+  共有で取り、集計の行の lock は取引の最後に取る。書込みの経路（scan、異議の審査、通報の dispute、
+  運営者の編集・再発行、再 scan の失効、期限削除、保持期間の書き直し、著者の対応の追加・削除）を問わず追従する。
+- 照会: 一括評価は対象の集計の行だけ、単体照会は集計の行と basis の 1 ページ、pull は開示分の集計と開示分の 1 ページを
+  読む。照会 1 回の読取りは、対象の行数にも総件数にもよらない。
+- 寄与の式は cn-trust の `signal_contribution` と同じで、SQL の式との一致は contract
+  （`sql_units_match_signal_contribution`）で固定する。
+- 相対成分の減衰は照会の時刻まで秒未満も含めて計算する。signal ごとに経過秒を切り捨てていた以前の計算とは、1 秒分の
+  減衰（半減期 30 日で相対 3e-7）未満の差が出る。
+
+### 10.2 期限と半減期
+- 書込みの時点で期限を過ぎた行は集計に入れない。読めない失効時刻の行も入れない（#700 の「無視」と同じ）。
+- 後から期限（保持期間・運営者が付けた失効時刻）を過ぎた行は、cn-user-api の掃除（1 分ごと、1 回 1,000 行、止まっても
+  次の回に残りから）が集計から外す。外れるまでの最大 1 分、その行は T と basis に残る。
+- 半減期（`COMMUNITY_NODE_TRUST_RELATIVE_HALF_LIFE_DAYS`）は operator が変えられる（§6.2）。cn-user-api は起動時に
+  集計の半減期の設定（`cn_safety.trust_settings`）を揃え、違う半減期で作った集計を背景で 1 回 100 対象ずつ作り直す。
+  作り直すまでの対象は、前の半減期で求めた値を返す。
+
+### 10.3 basis のページ・trust_version・relation 重み
+- 単体照会（`GET /v1/trust/users/{pubkey}`）と pull（`GET /v1/trust/pull/{pubkey}`）の basis は 50 件ずつ返し、続きがあれば
+  `basis_next_cursor` を返す。クライアントはこれを `?cursor=` に渡して続きを取る。並びは以前と同じ（絶対成分が先、
+  各成分は新しい順）。読めない cursor は `INVALID_TRUST_QUERY`（400）。更新前のクライアントは最初の 50 件だけを表示する。
+- `trust_version`（§8.4）は集計が持つ hash の XOR から作る（`t-<16 桁の 16 進>`。寄与する signal の集合と状態が同じなら
+  同じ値）。時間減衰では変わらない。
+- T では閲覧者別の relation 重みを使わない（§8.1 のとおり一様重み）。§2.3 の relation 重みの seam（`RelationWeighting`）と、
+  それを固定していた contract（`trust_absolute_indicators_not_relation_weighted`・`trust_relative_indicators_are_relation_weighted`・
+  `trust_resists_mass_report_bombing`）は廃止する。閲覧者別の調整は §8 の R（上位 K 件の noisy-OR。
+  `many_low_weight_observers_do_not_dominate`）が担い、大量通報は通報を T の入力にしない構造
+  （`trust_read_returns_components_with_basis_and_ignores_reports`）で効かない。
+
+### 10.4 移行
+- migration は既存の生きている行から `trust_target_signals` と集計を 1 回作る（§9 の移行と同じく、移行時の 1 回だけ全行を
+  読む）。以後は差分だけで保つ。

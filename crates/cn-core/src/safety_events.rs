@@ -643,32 +643,6 @@ pub async fn list_risk_signals_for_target(
     rows.iter().map(risk_signal_from_row).collect()
 }
 
-/// Return both user-scoped signals and content-scoped signals attributed to
-/// the user. The original content signal row is returned so expiry and appeal
-/// state remain connected to the moderation artifact that produced it.
-pub async fn list_risk_signals_for_user(
-    pool: &PgPool,
-    user_pubkey: &str,
-) -> Result<Vec<StoredRiskSignal>> {
-    let rows = sqlx::query(
-        "SELECT DISTINCT rs.id, rs.issuer_node_id, rs.target, rs.target_id, rs.category,
-                rs.severity, rs.basis, rs.visibility, rs.confidence, rs.expires_at,
-                rs.appeal_status, rs.persisted_at, rs.operator_adjusted_at,
-                rs.operator_origin_category
-         FROM cn_safety.risk_signals rs
-         LEFT JOIN cn_safety.risk_signal_subject_authors rsa
-           ON rsa.target = rs.target AND rsa.target_id = rs.target_id
-         WHERE ((rs.target = 'user_pubkey' AND rs.target_id = $1)
-            OR rsa.author_pubkey = $1)
-           AND rs.retention_expires_at > NOW()
-         ORDER BY rs.persisted_at DESC",
-    )
-    .bind(user_pubkey)
-    .fetch_all(pool)
-    .await?;
-    rows.iter().map(risk_signal_from_row).collect()
-}
-
 /// 配布境界に従って配布可能な risk signal を返す。
 ///
 /// `local` は返さず、audience に応じて `subscribed_nodes` / `public` を返す。さらに `now_rfc3339`

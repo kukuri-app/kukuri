@@ -180,9 +180,8 @@ pub use safety_events::{
     attribute_risk_signal_subject_author, expire_superseded_advisory_signals, get_risk_signal,
     get_signed_moderation_event, list_distributable_moderation_events,
     list_distributable_risk_signals, list_risk_signals, list_risk_signals_for_target,
-    list_risk_signals_for_user, list_signed_moderation_events, persist_risk_signal,
-    persist_risk_signal_deduplicated, persist_risk_signal_with_author,
-    persist_signed_moderation_event,
+    list_signed_moderation_events, persist_risk_signal, persist_risk_signal_deduplicated,
+    persist_risk_signal_with_author, persist_signed_moderation_event,
 };
 pub use safety_runtime::{
     PgSafetyArtifactStore, resolve_safety_providers, resolve_safety_providers_with_pool,
@@ -200,7 +199,12 @@ pub use transmission_preventions::{
     apply_transmission_prevention, get_active_transmission_prevention, is_transmission_prevented,
     is_transmission_prevented_for_any, release_transmission_prevention,
 };
-pub use trust_inputs::{list_trust_risk_inputs, trust_risk_inputs_from};
+pub use trust_inputs::{
+    TRUST_BASIS_PAGE_SIZE, TRUST_BASIS_PAGE_SQL, TRUST_REBUILD_BATCH, TRUST_SWEEP_BATCH,
+    TRUST_TOTALS_SQL, TrustBasisCursor, TrustBasisPage, list_disclosed_trust_basis_page,
+    list_trust_basis_page, load_trust_totals, rebuild_trust_totals, sweep_expired_trust_signals,
+    sync_trust_half_life, trust_risk_input,
+};
 pub use trust_observations::{
     ACTIVE_TRUST_OBSERVATION_RETENTION_DAYS, RELATION_OBSERVATIONS_PER_TARGET_LIMIT,
     REVOKED_TRUST_OBSERVATION_RETENTION_DAYS, StoreTrustObservationsOutcome,

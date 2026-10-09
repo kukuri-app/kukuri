@@ -15,7 +15,7 @@ use anyhow::{Result, bail};
 use chrono::Utc;
 use kukuri_cn_core::{
     TestDatabase, attribute_risk_signal_subject_author, cleanup_expired, connect_postgres,
-    initialize_database, list_trust_risk_inputs, migrate_postgres, migrate_postgres_up_to,
+    initialize_database, list_trust_basis_page, migrate_postgres, migrate_postgres_up_to,
     persist_risk_signal_deduplicated,
 };
 use kukuri_cn_safety::{
@@ -93,16 +93,11 @@ async fn expire(pool: &PgPool, signal_id: &str) -> Result<()> {
 }
 
 async fn relative_signal_ids(pool: &PgPool, author: &str) -> Result<Vec<String>> {
-    let inputs = list_trust_risk_inputs(
-        pool,
-        RiskSignalTarget::UserPubkey,
-        author,
-        Utc::now().to_rfc3339().as_str(),
-    )
-    .await?;
-    Ok(inputs
-        .relative
+    let page = list_trust_basis_page(pool, author, None).await?;
+    Ok(page
+        .inputs
         .into_iter()
+        .filter(|input| input.component == kukuri_cn_trust::TrustComponentKind::Relative)
         .map(|input| input.signal_id)
         .collect())
 }

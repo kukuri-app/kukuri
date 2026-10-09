@@ -123,9 +123,10 @@ pub(super) fn trust() -> Value {
         "hide_recommended": boolean(), "reasons": array(json!({"type": "string", "enum": ["risk_signals", "related_users_block_or_mute"]}))}),
         &[],
     );
+    // #1702: basis は 1 ページで、続きがあれば `basis_next_cursor` を同伴する（旧 node と最後のページは欠落）。
     view(
         json!({"viewer_pubkey": string(), "target_id": string(), "absolute": number(), "relative": number(), "trust": number(), "w_abs_applied": number(), "computed_at": string(), "basis": array(basis),
-        "evaluation": evaluation}),
-        &["evaluation"],
+        "evaluation": evaluation, "basis_next_cursor": string()}),
+        &["evaluation", "basis_next_cursor"],
     )
 }
