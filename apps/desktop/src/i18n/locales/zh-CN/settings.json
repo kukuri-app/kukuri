@@ -502,6 +502,7 @@
       "copied": "已复制日志。",
       "copyUnavailable": "无法复制到剪贴板，请改用导出。",
       "exported": "已导出日志。",
+      "exportFailed": "无法导出日志。",
       "loading": "正在加载日志…",
       "empty": "还没有日志。",
       "error": "无法读取日志，请再次点击“刷新日志”。",
@@ -662,6 +663,7 @@
       "copied": "诊断报告已复制。",
       "copyUnavailable": "剪贴板不可用，请使用导出。",
       "exported": "诊断报告已导出。",
+      "exportFailed": "无法导出诊断报告。",
       "previewLabel": "诊断报告预览"
     },
     "resources": {

@@ -4057,6 +4057,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-deep-link",
  "tauri-plugin-dialog",
+ "tauri-plugin-fs",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tempfile",

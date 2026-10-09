@@ -128,10 +128,15 @@ export function ReleasePanel({
     );
   }, [diagnosticReportText, t]);
 
-  const exportDiagnosticReport = useCallback(() => {
-    downloadTextFile('kukuri-diagnostics.txt', diagnosticReportText);
+  const exportDiagnosticReport = useCallback(async () => {
     setDiagnosticReport(diagnosticReportText);
-    setDiagnosticMessage(t('settings:release.diagnostics.exported'));
+    setDiagnosticMessage(null);
+    try {
+      if (!(await downloadTextFile('kukuri-diagnostics.txt', diagnosticReportText))) return;
+      setDiagnosticMessage(t('settings:release.diagnostics.exported'));
+    } catch {
+      setDiagnosticMessage(t('settings:release.diagnostics.exportFailed'));
+    }
   }, [diagnosticReportText, t]);
 
   const updateDiagnostics = [
@@ -470,7 +475,7 @@ export function ReleasePanel({
             <FileText className='size-4' aria-hidden='true' />
             {t('settings:release.diagnostics.copy')}
           </Button>
-          <Button variant='secondary' type='button' onClick={exportDiagnosticReport}>
+          <Button variant='secondary' type='button' onClick={() => void exportDiagnosticReport()}>
             <Download className='size-4' aria-hidden='true' />
             {t('settings:release.diagnostics.export')}
           </Button>

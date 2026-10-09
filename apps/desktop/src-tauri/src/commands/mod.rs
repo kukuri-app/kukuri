@@ -8,3 +8,4 @@ pub mod link_preview;
 pub mod os_notification;
 pub mod posts;
 pub mod system_locale;
+pub mod user_document;

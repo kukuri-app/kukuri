@@ -502,6 +502,7 @@
       "copied": "Logs copied.",
       "copyUnavailable": "Clipboard copy is unavailable. Use export instead.",
       "exported": "Logs exported.",
+      "exportFailed": "Could not export the logs.",
       "loading": "Loading logs…",
       "empty": "No logs yet.",
       "error": "Logs could not be read. Try “Refresh logs” again.",
@@ -662,6 +663,7 @@
       "copied": "Diagnostic report copied.",
       "copyUnavailable": "Clipboard copy is unavailable. Use export instead.",
       "exported": "Diagnostic report exported.",
+      "exportFailed": "Could not export the diagnostic report.",
       "previewLabel": "Diagnostic report preview"
     },
     "resources": {

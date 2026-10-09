@@ -55,10 +55,15 @@ export function DeveloperLogViewer({ status, view, errorMessage, onRefresh }: De
     setMessage(t(copied ? 'settings:developer.logs.copied' : 'settings:developer.logs.copyUnavailable'));
   }, [t, view]);
 
-  const exportLogs = useCallback(() => {
+  const exportLogs = useCallback(async () => {
     if (!view) return;
-    downloadTextFile(DESKTOP_LOGS_EXPORT_FILE_NAME, buildDesktopLogsExport(view));
-    setMessage(t('settings:developer.logs.exported'));
+    setMessage(null);
+    try {
+      if (!(await downloadTextFile(DESKTOP_LOGS_EXPORT_FILE_NAME, buildDesktopLogsExport(view)))) return;
+      setMessage(t('settings:developer.logs.exported'));
+    } catch {
+      setMessage(t('settings:developer.logs.exportFailed'));
+    }
   }, [t, view]);
 
   return (
@@ -83,7 +88,7 @@ export function DeveloperLogViewer({ status, view, errorMessage, onRefresh }: De
           <FileText className='size-4' aria-hidden='true' />
           {t('settings:developer.logs.copy')}
         </Button>
-        <Button variant='secondary' type='button' onClick={exportLogs} disabled={!view}>
+        <Button variant='secondary' type='button' onClick={() => void exportLogs()} disabled={!view}>
           <Download className='size-4' aria-hidden='true' />
           {t('settings:developer.logs.export')}
         </Button>

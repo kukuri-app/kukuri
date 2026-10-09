@@ -221,6 +221,10 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_updater::Builder::new().build());
 
+    // Android の保存・選択の画面が返す Content URI を開く（#1197）。
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_fs::init());
+
     builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
@@ -386,6 +390,7 @@ pub fn run() {
             commands::device_backup::cancel_device_backup,
             commands::device_backup::get_pending_device_restore_frontend_state,
             commands::device_backup::acknowledge_pending_device_restore_frontend_state,
+            commands::user_document::write_text_document,
             commands::posts::get_blob_media_file,
             commands::posts::release_blob_media_file,
             commands::os_notification::show_os_notification,

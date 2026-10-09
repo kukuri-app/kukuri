@@ -42,6 +42,8 @@ tauri-plugin-single-instance = { version = "2.5.1", features = ["deep-link"] }
 jni = "0.22.4"
 ndk-context = "0.1.1"
 rustls-platform-verifier = "0.7.1"
+# 保存・選択の画面が返す Content URI を開く（#1197）。
+tauri-plugin-fs = "2.6.0"
 
 [target.'cfg(windows)'.dependencies]
 open = { version = "5.4.4", features = ["shellexecute-on-windows"] }

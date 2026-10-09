@@ -52,8 +52,16 @@ impl DeviceBackupOutputFile {
         Ok(Self { file })
     }
 
+    fn from_file(file: File) -> Self {
+        Self { file }
+    }
+
     fn sync_all(&self) -> std::io::Result<()> {
         self.file.sync_all()
+    }
+
+    fn len(&self) -> std::io::Result<u64> {
+        Ok(self.file.metadata()?.len())
     }
 }
 
@@ -323,13 +331,22 @@ impl Drop for PreparedDeviceRestore {
     }
 }
 
+/// 読込み元を開く。`opened` は呼出元が開いた読込み元（Android の選択の画面が返した Content URI、#1197）。
+fn open_backup_source(app_data_dir: &Path, path: &str, opened: Option<File>) -> Result<File> {
+    if let Some(file) = opened {
+        return Ok(file);
+    }
+    let source = PathBuf::from(path.trim());
+    ensure_backup_path_outside_app_data(app_data_dir, &source)?;
+    File::open(&source).context("failed to open device backup")
+}
+
 pub fn preview_device_backup(
     app_data_dir: &Path,
     request: &PreviewDeviceBackupRequest,
+    opened_source: Option<File>,
 ) -> Result<DeviceBackupPreview> {
-    let source = PathBuf::from(request.path.trim());
-    ensure_backup_path_outside_app_data(app_data_dir, &source)?;
-    let file = File::open(&source).context("failed to open device backup")?;
+    let file = open_backup_source(app_data_dir, &request.path, opened_source)?;
     let archive = DeviceBackupReader::open(file, &request.passphrase)?;
     let manifest = archive.manifest();
     let content_bytes = manifest.entries.iter().try_fold(0u64, |total, entry| {
@@ -357,6 +374,7 @@ pub fn preview_device_backup(
 pub fn prepare_device_restore<F>(
     app_data_dir: &Path,
     request: &RestoreDeviceBackupRequest,
+    opened_source: Option<File>,
     cancellation: &DeviceBackupCancellation,
     mut progress: F,
 ) -> Result<PreparedDeviceRestore>
@@ -371,9 +389,7 @@ where
         bail!("restored frontend state must be acknowledged before another restore");
     }
     cancellation.check()?;
-    let source = PathBuf::from(request.path.trim());
-    ensure_backup_path_outside_app_data(app_data_dir, &source)?;
-    let file = File::open(&source).context("failed to open device backup")?;
+    let file = open_backup_source(app_data_dir, &request.path, opened_source)?;
     let mut archive = DeviceBackupReader::open(file, &request.passphrase)?;
     let manifest = archive.manifest().clone();
     let total_bytes = manifest.entries.iter().try_fold(0u64, |total, entry| {

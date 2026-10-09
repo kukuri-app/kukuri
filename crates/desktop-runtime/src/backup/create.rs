@@ -28,10 +28,13 @@ struct SourceEntry {
     source: EntrySource,
 }
 
+/// `opened_destination` は、呼出元が開いた保存先（Android の保存の画面が返した Content URI）。
+/// 利用者が場所を決めた時点で作られていて rename できないので、一時 file を経ずに直接書く（#1197）。
 pub fn create_device_backup<F>(
     app_data_dir: &Path,
     db_path: &Path,
     request: &CreateDeviceBackupRequest,
+    opened_destination: Option<File>,
     cancellation: &DeviceBackupCancellation,
     mut progress: F,
 ) -> Result<DeviceBackupSummary>
@@ -41,20 +44,22 @@ where
     cancellation.check()?;
     validate_frontend_state(&request.frontend_state)?;
     let destination = PathBuf::from(request.path.trim());
-    if destination.as_os_str().is_empty() {
-        bail!("device backup destination is required");
+    if opened_destination.is_none() {
+        if destination.as_os_str().is_empty() {
+            bail!("device backup destination is required");
+        }
+        if destination.exists() {
+            bail!("device backup destination already exists");
+        }
+        let parent = destination
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .ok_or_else(|| anyhow!("device backup destination must have a parent directory"))?;
+        if !parent.exists() {
+            bail!("device backup destination directory does not exist");
+        }
+        ensure_backup_path_outside_app_data(app_data_dir, &destination)?;
     }
-    if destination.exists() {
-        bail!("device backup destination already exists");
-    }
-    let parent = destination
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .ok_or_else(|| anyhow!("device backup destination must have a parent directory"))?;
-    if !parent.exists() {
-        bail!("device backup destination directory does not exist");
-    }
-    ensure_backup_path_outside_app_data(app_data_dir, &destination)?;
 
     let account = active_account_for_db(app_data_dir, db_path)?;
     let secret_bytes = serde_json::to_vec(&collect_secret_bundle(db_path)?)
@@ -126,10 +131,8 @@ where
         entries: sources.iter().map(|entry| entry.manifest.clone()).collect(),
     };
 
-    let temp_path = partial_path(&destination)?;
-    let result = (|| -> Result<()> {
-        let file = DeviceBackupOutputFile::create_new(&temp_path)
-            .with_context(|| format!("failed to create `{}`", temp_path.display()))?;
+    // 暗号化して書き、sync した出力を返す。
+    let write_archive = |file: DeviceBackupOutputFile| -> Result<DeviceBackupOutputFile> {
         let mut archive = DeviceBackupWriter::new(file, &request.passphrase, manifest)?;
         let mut written = 0u64;
         for source in &sources {
@@ -165,23 +168,35 @@ where
         }
         let file = archive.finish()?;
         file.sync_all().context("failed to sync device backup")?;
-        drop(file);
-        fs::rename(&temp_path, &destination).with_context(|| {
-            format!(
-                "failed to finalize device backup `{}`",
-                destination.display()
-            )
-        })?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
-    }
-    result?;
-
-    let bytes = fs::metadata(&destination)
-        .context("failed to inspect completed device backup")?
-        .len();
+        Ok(file)
+    };
+    let bytes = match opened_destination {
+        Some(file) => write_archive(DeviceBackupOutputFile::from_file(file))?
+            .len()
+            .context("failed to inspect completed device backup")?,
+        None => {
+            let temp_path = partial_path(&destination)?;
+            let result = DeviceBackupOutputFile::create_new(&temp_path)
+                .with_context(|| format!("failed to create `{}`", temp_path.display()))
+                .and_then(write_archive)
+                .and_then(|file| {
+                    drop(file);
+                    fs::rename(&temp_path, &destination).with_context(|| {
+                        format!(
+                            "failed to finalize device backup `{}`",
+                            destination.display()
+                        )
+                    })
+                });
+            if result.is_err() {
+                let _ = fs::remove_file(&temp_path);
+            }
+            result?;
+            fs::metadata(&destination)
+                .context("failed to inspect completed device backup")?
+                .len()
+        }
+    };
     Ok(DeviceBackupSummary {
         path: destination.display().to_string(),
         public_key: account.pubkey,

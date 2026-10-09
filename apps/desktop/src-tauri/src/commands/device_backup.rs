@@ -14,6 +14,7 @@ use kukuri_desktop_runtime::{
 use tauri::{Emitter, Manager};
 
 use crate::commands::background_notifications::OsNotificationBackground;
+use crate::commands::user_document::open_user_document;
 use crate::restore_lifecycle::{DesktopOperationState, require_runtime_operation_ready};
 use crate::state::{
     CommandError, DesktopStartupState, DesktopStartupStatus, DesktopState, StartupError,
@@ -158,10 +159,12 @@ pub async fn create_device_backup_command(
     let cancellation = operation.device_backup_cancellation();
     let progress_app = app_handle.clone();
     let operation = tauri::async_runtime::spawn_blocking(move || {
+        let destination = open_user_document(&progress_app, &request.path, true)?;
         create_device_backup(
             &app_data_dir,
             &db_path,
             &request,
+            destination,
             &cancellation,
             |progress| {
                 let _ = progress_app.emit(PROGRESS_EVENT, progress);
@@ -207,14 +210,18 @@ pub async fn create_device_backup_command(
 
 #[tauri::command]
 pub async fn preview_device_backup_command(
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
     request: PreviewDeviceBackupRequest,
 ) -> Result<DeviceBackupPreview, CommandError> {
     let app_data_dir = state.app_data_dir.clone();
-    tauri::async_runtime::spawn_blocking(move || preview_device_backup(&app_data_dir, &request))
-        .await
-        .map_err(|error| CommandError::from(format!("device backup preview task failed: {error}")))?
-        .map_err(map_error)
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = open_user_document(&app_handle, &request.path, false)?;
+        preview_device_backup(&app_data_dir, &request, source)
+    })
+    .await
+    .map_err(|error| CommandError::from(format!("device backup preview task failed: {error}")))?
+    .map_err(map_error)
 }
 
 #[tauri::command]
@@ -251,7 +258,8 @@ pub async fn restore_device_backup_command(
     let cancellation = operation.device_backup_cancellation();
     let progress_app = app_handle.clone();
     let prepared = tauri::async_runtime::spawn_blocking(move || {
-        prepare_device_restore(&app_data_dir, &request, &cancellation, |progress| {
+        let source = open_user_document(&progress_app, &request.path, false)?;
+        prepare_device_restore(&app_data_dir, &request, source, &cancellation, |progress| {
             let _ = progress_app.emit(PROGRESS_EVENT, progress);
         })
     })
