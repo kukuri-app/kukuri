@@ -163,9 +163,8 @@ export function createReactionsMock(runtime: MockRuntime): ReactionsMock {
       if (!set) {
         throw new Error('the custom reaction set could not be fetched');
       }
-      const saved = set.items.filter(
-        (item) => item.owner_pubkey !== syncStatus.local_author_pubkey
-      );
+      const owned = new Set(ownedCustomReactionAssets.map((asset) => asset.asset_id));
+      const saved = set.items.filter((item) => !owned.has(item.asset_id));
       for (const item of [...saved].reverse()) {
         const index = bookmarkedCustomReactionAssets.findIndex(
           (asset) => asset.asset_id === item.asset_id
