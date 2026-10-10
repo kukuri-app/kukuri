@@ -2,6 +2,7 @@ package app.kukuri.android
 
 import android.os.Bundle
 import android.content.Intent
+import android.content.res.Configuration
 import android.provider.OpenableColumns
 import android.view.View
 import android.webkit.JavascriptInterface
@@ -12,6 +13,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.roundToInt
 
 class MainActivity : TauriActivity() {
   private var webView: WebView? = null
@@ -19,7 +21,13 @@ class MainActivity : TauriActivity() {
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
     this.webView = webView
+    webView.settings.textZoom = (resources.configuration.fontScale * 100).roundToInt()
     webView.addJavascriptInterface(BackBridge(), "kukuriAndroid")
+  }
+
+  override fun onConfigurationChanged(newConfig: Configuration) {
+    super.onConfigurationChanged(newConfig)
+    webView?.settings?.textZoom = (newConfig.fontScale * 100).roundToInt()
   }
 
   override fun onNewIntent(intent: Intent) {
@@ -52,9 +60,11 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
-    // edge-to-edge では OS がキーボードの分だけ画面を縮めないので、キーボードの上までに縮めて入力欄と送信を見せる（#1198 AC-2）。
+    // system bars・cutout・IME の外側へ主要内容と操作を収める（#1198 AC-2/3）。
     ViewCompat.setOnApplyWindowInsetsListener(findViewById<View>(android.R.id.content)) { view, insets ->
-      view.updatePadding(bottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom)
+      val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or
+        WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime())
+      view.updatePadding(left = safe.left, top = safe.top, right = safe.right, bottom = safe.bottom)
       insets
     }
   }
