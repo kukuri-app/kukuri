@@ -11,6 +11,7 @@ import {
   startAccountUnionSync,
 } from '@/lib/api/identity';
 import { isTauriRuntime } from '@/lib/releaseReadiness';
+import { IS_ANDROID } from '@/lib/platform';
 import { copyTextToClipboard } from '@/lib/utils';
 import { TRANSFER_LINK_PREFIX } from '@/shell/page/useAccountTransferLink';
 import { Button } from '@/components/ui/button';
@@ -40,7 +41,7 @@ function remainingTime(expiresAt: number, now: number) {
 // AC-3: 移行先は接続の前に投稿の履歴の範囲を選ぶ（既定は移さない）。履歴は必須の移行の後に受け、受けている間は
 // 完了にしない（切替は履歴が終わってから）。止めても必須の移行は完了のまま。移行先は履歴を受けている間を
 // `onReceivingHistory` で知らせる（呼び出し側はその間は閉じさせない。終えるのは「やめる」だけ）。
-// #1628: Web 版の移行先は、移行元の QR をカメラで読んで入力欄へ入れる（desktop は貼り付けと OS のリンク起動だけ）。
+// Web と Android の移行先は、移行元の QR をカメラで読んで入力欄へ入れる（desktop は貼り付けと OS のリンク起動だけ）。
 // #1650: `sync` は同じアカウントの別の端末との同期。開いたら待ち受け、両端末がつながったら互いのものを送り合って受け、
 // 受けた数を示す。閉じたら止める。
 export function AccountTransferPanel({ role, initialLink = '', onCompleted, onReceivingHistory }: {
@@ -252,7 +253,7 @@ export function AccountTransferPanel({ role, initialLink = '', onCompleted, onRe
       tone={error ? 'danger' : 'default'} message={error ? t('accountTransfer.failure.invalid') : undefined}>
       <Input value={link} onChange={(event) => { setLink(event.target.value); setError(null); }} autoComplete='off' spellCheck={false} />
     </Field>
-    {isTauriRuntime() ? null : scan === 'on'
+    {isTauriRuntime() && !IS_ANDROID ? null : scan === 'on'
       ? <div className='space-y-2'>
         <TransferQrScanner onRead={(read) => { setLink(read); setError(null); setScan('off'); }} onFailed={() => setScan('failed')} />
         <Button variant='secondary' onClick={() => setScan('off')}>{t('accountTransfer.target.stopScan')}</Button>
