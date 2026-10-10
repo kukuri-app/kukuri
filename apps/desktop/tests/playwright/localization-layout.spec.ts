@@ -231,6 +231,38 @@ for (const copy of LOCALES) {
     expect(canReachGridEnd).toBe(true);
   });
 
+  test(`${copy.locale} keeps settings action labels inside their buttons at minimum width`, async ({
+    page,
+  }) => {
+    await seedLocale(page, copy.locale);
+    for (const [width, theme] of [[320, 'dark'], [320, 'light'], [900, 'dark']] as const) {
+      await page.addInitScript(
+        ({ key, value }) => window.localStorage.setItem(key, value),
+        { key: DESKTOP_THEME_STORAGE_KEY, value: theme }
+      );
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto('/#/timeline?topic=kukuri%3Atopic%3Ageneral&settings=community-node');
+      const settings = page.getByRole('dialog', { name: copy.settings, exact: true });
+      await expect(settings).toBeVisible();
+      const overflow = await settings.locator('.shell-settings-content button').evaluateAll((buttons) =>
+        buttons.flatMap((button) => {
+          const bounds = button.getBoundingClientRect();
+          if (!bounds.width || !bounds.height) return [];
+          const range = document.createRange();
+          range.selectNodeContents(button);
+          const text = range.getBoundingClientRect();
+          return text.left < bounds.left - 1 || text.right > bounds.right + 1
+            ? [button.textContent?.trim()]
+            : [];
+        })
+      );
+      expect(overflow, `${copy.locale} ${width}px ${theme} settings labels`).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+        width
+      );
+    }
+  });
+
   test(`${copy.locale} keeps narrow settings navigation compact and content scrollable`, async ({
     page,
   }) => {
