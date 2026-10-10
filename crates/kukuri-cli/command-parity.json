@@ -11,6 +11,7 @@
     {"tauri":"commands::developer_logs::set_developer_mode_enabled","excluded":"gui_diagnostics","reason":"#978: GUIの開発者モード(localStorage)をGUI processへ写すin-memoryミラー。CLI／daemonに開発者モードの表示状態はない。"},
     {"tauri":"commands::developer_logs::read_desktop_logs","excluded":"gui_diagnostics","reason":"#978: GUI process内のin-memory tracing ring bufferの読み取り。CLI／daemonは標準出力で同じログを得るため業務commandには追加しない。"},
     {"tauri":"commands::user_document::write_text_document","excluded":"gui_diagnostics","reason":"#1197: GUIの診断・アプリ内ログの書出しを、Androidの保存の画面で利用者が選んだ場所へ書く。CLI／daemonは標準出力・ファイルへ直接書くため対象外。"},
+    {"tauri":"commands::attachment_documents::create_post_from_documents","excluded":"os","reason":"#1197 AC-2b: Android GUIのOS選択済みContent URIを投稿時だけ開く入力adapter。CLI／daemonはGUIのURI権限を持たず、既存create_postのbytes入力と同じ投稿責務を使う。CLIの入力・出力は変更しない。"},
     {"tauri":"desktop_lifecycle::restart_after_update","excluded":"os","reason":"署名付きGUI更新後にruntimeを停止してアプリを再起動するOS連携。CLI／daemonの更新や再起動は行わない。"},
     {"tauri":"app_update::check_app_update","excluded":"os","reason":"GUI配布形式に対応するTauri updater確認。CLIはpackageの自動更新対象外。"},
     {"tauri":"app_update::download_app_update","excluded":"os","reason":"GUI更新packageの取得・署名検証。CLIはpackageの自動更新対象外。"},
