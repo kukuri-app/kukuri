@@ -208,9 +208,9 @@ fn baseline_inventory_is_classified_once() {
     );
     assert_eq!(
         manifest.scope_revision,
-        "2026-09-27-1221-r2-d-connectivity-peers-v1"
+        "2026-10-11-1197-ac4a-notification-id"
     );
-    assert_eq!(manifest.entries.len(), 189);
+    assert_eq!(manifest.entries.len(), 190);
     check_inventory(&gui_commands(), &manifest.entries).expect("全入口の分類");
 }
 
