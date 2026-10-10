@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-import type { NotificationView } from '@/lib/api';
+import type { DesktopApi, NotificationView } from '@/lib/api';
 import { isTauriRuntime } from '@/lib/releaseReadiness';
 import { parseOsNotificationActivationLink } from '@/lib/osNotificationActivationLink';
 
@@ -24,51 +24,36 @@ type ActivationPayload = {
 };
 
 /**
- * Resolves native notification events and Windows protocol activations through
- * the current account's notification list and the existing in-app handler.
+ * Resolves native events and protocol activations by ID in the current account,
+ * independently of the displayed inbox page, through the existing handler.
  *
  * Rust or the single-instance plugin already focuses the window; resolve the
- * id back to a notification and reuse `handleOpenNotification`.
+ * id through the runtime's recipient/access checks and reuse `handleOpenNotification`.
  */
 export function useOsNotificationActivation(
-  notifications: NotificationView[],
+  api: Pick<DesktopApi, 'getNotification'>,
+  account: string | null,
   onActivate: (notification: NotificationView) => void
 ): void {
-  const notificationsRef = useRef<NotificationView[]>(notifications);
   const onActivateRef = useRef(onActivate);
-  const pendingIdRef = useRef<string | null>(null);
-
-  const activatePending = useCallback(() => {
-    const notification = notificationsRef.current.find(
-      (candidate) => candidate.notification_id === pendingIdRef.current
-    );
-    if (!notification) return;
-    // Clear before navigation can trigger another render.
-    pendingIdRef.current = null;
-    onActivateRef.current(notification);
-  }, []);
+  useEffect(() => { onActivateRef.current = onActivate; }, [onActivate]);
 
   useEffect(() => {
-    notificationsRef.current = notifications;
-    onActivateRef.current = onActivate;
-    // Hidden windows pause list refreshes. A native click may arrive before the
-    // focus-triggered refresh, so resolve the latest pending click after it.
-    activatePending();
-  }, [notifications, onActivate, activatePending]);
-
-  useEffect(() => {
-    if (!isTauriRuntime()) {
+    if (!isTauriRuntime() || !account) {
       return;
     }
 
     let unlisten: UnlistenFn | undefined;
     let unlistenUrl: UnlistenFn | undefined;
     let cancelled = false;
+    let generation = 0;
 
     const activate = (notificationId: string | null) => {
       if (cancelled || !notificationId) return;
-      pendingIdRef.current = notificationId;
-      activatePending();
+      const current = ++generation;
+      void api.getNotification(notificationId).then((notification) => {
+        if (!cancelled && current === generation && notification) onActivateRef.current(notification);
+      }).catch(() => undefined);
     };
     const activateUrl = (urls: string[], initial: boolean) => {
       if (cancelled) return;
@@ -112,9 +97,8 @@ export function useOsNotificationActivation(
 
     return () => {
       cancelled = true;
-      pendingIdRef.current = null;
       unlisten?.();
       unlistenUrl?.();
     };
-  }, [activatePending]);
+  }, [api, account]);
 }
