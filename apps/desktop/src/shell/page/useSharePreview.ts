@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ChannelAccessTokenPreview, DesktopApi } from '@/lib/api';
 import { parseChannelAccessPreviewDeepLink } from '@/lib/internalLinks';
@@ -22,18 +22,22 @@ export function useSharePreview({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [importPending, setImportPending] = useState(false);
+  const previewGeneration = useRef(0);
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
     setOpen(nextOpen);
     if (!nextOpen) {
+      previewGeneration.current++;
       setError(null);
       setData(null);
       setToken(null);
+      setLoading(false);
     }
   }, []);
 
   const openPreview = useCallback(
     async (nextToken: string) => {
+      const generation = ++previewGeneration.current;
       setOpen(true);
       setToken(nextToken);
       setData(null);
@@ -41,13 +45,13 @@ export function useSharePreview({
       setLoading(true);
       try {
         const preview = await api.previewChannelAccessToken(nextToken);
-        setData(preview);
+        if (generation === previewGeneration.current) setData(preview);
       } catch (previewError) {
-        setError(
+        if (generation === previewGeneration.current) setError(
           messageFromError(previewError, translate('channels:errors.failedPreviewToken'))
         );
       } finally {
-        setLoading(false);
+        if (generation === previewGeneration.current) setLoading(false);
       }
     },
     [api, translate]
@@ -64,6 +68,8 @@ export function useSharePreview({
   );
 
   useEffect(() => {
+    const generation = previewGeneration;
+    const initialGeneration = generation.current;
     const handleBrowserEvent = (event: Event) => {
       const url =
         event instanceof CustomEvent && typeof event.detail?.url === 'string'
@@ -82,22 +88,27 @@ export function useSharePreview({
         if (disposed) {
           return;
         }
-        const currentUrls = await getCurrent();
-        if (!disposed) {
-          for (const url of currentUrls ?? []) {
-            await openPreviewFromUrl(url);
-          }
-        }
-        unlisten = await onOpenUrl((urls) => {
+        const dispose = await onOpenUrl((urls) => {
+          if (disposed) return;
           for (const url of urls) {
             void openPreviewFromUrl(url);
           }
         });
+        if (disposed) { dispose(); return; }
+        unlisten = dispose;
+        const currentUrls = await getCurrent();
+        if (!disposed && generation.current === initialGeneration) {
+          for (const url of currentUrls ?? []) {
+            if (disposed) break;
+            await openPreviewFromUrl(url);
+          }
+        }
       })
       .catch(() => undefined);
 
     return () => {
       disposed = true;
+      generation.current++;
       window.removeEventListener('kukuri:open-url', handleBrowserEvent);
       unlisten?.();
     };
