@@ -220,6 +220,7 @@ mod tests {
             let _: Vec<String> = result.deserialize().expect("locale list");
             for command in [
                 "create_post",
+                "create_post_from_documents",
                 "fetch_community_node_policies",
                 "fetch_link_preview",
                 "verify_profile_domain",

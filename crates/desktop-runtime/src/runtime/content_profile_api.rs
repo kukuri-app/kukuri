@@ -21,14 +21,28 @@ impl DesktopRuntime {
             .await
     }
 
-    pub async fn create_post(&self, request: CreatePostRequest) -> Result<String> {
-        let attachments = request
-            .attachments
+    pub async fn create_post(&self, mut request: CreatePostRequest) -> Result<String> {
+        let attachments = std::mem::take(&mut request.attachments)
             .into_iter()
             .map(pending_attachment_from_request)
             .collect::<Result<Vec<_>>>()?;
+        self.create_post_with_attachment_sources(
+            request,
+            attachments
+                .into_iter()
+                .map(kukuri_app_api::PostAttachmentSource::Bytes)
+                .collect(),
+        )
+        .await
+    }
+
+    pub async fn create_post_with_attachment_sources(
+        &self,
+        request: CreatePostRequest,
+        attachments: Vec<kukuri_app_api::PostAttachmentSource>,
+    ) -> Result<String> {
         self.app_service
-            .create_post_with_attachments_in_channel(
+            .create_post_with_attachment_sources_in_channel(
                 request.topic.as_str(),
                 request.channel_ref,
                 request.content.as_str(),
@@ -36,6 +50,31 @@ impl DesktopRuntime {
                 attachments,
                 request.content_labels,
             )
+            .await
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn create_post_from_files(
+        &self,
+        mut request: CreatePostRequest,
+        files: std::collections::BTreeMap<usize, std::path::PathBuf>,
+    ) -> Result<String> {
+        let attachments = std::mem::take(&mut request.attachments)
+            .into_iter()
+            .enumerate()
+            .map(|(index, attachment)| {
+                let pending = pending_attachment_from_request(attachment)?;
+                Ok(match files.get(&index) {
+                    Some(path) => kukuri_app_api::PostAttachmentSource::File {
+                        path: path.clone(),
+                        mime: pending.mime,
+                        role: pending.role,
+                    },
+                    None => kukuri_app_api::PostAttachmentSource::Bytes(pending),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.create_post_with_attachment_sources(request, attachments)
             .await
     }
 

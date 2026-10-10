@@ -515,6 +515,30 @@ impl AppService {
         attachments: Vec<PendingAttachment>,
         content_labels: Vec<String>,
     ) -> Result<String> {
+        self.create_post_with_attachment_sources_in_channel(
+            topic_id,
+            channel_ref,
+            content,
+            reply_to,
+            attachments
+                .into_iter()
+                .map(crate::PostAttachmentSource::Bytes)
+                .collect(),
+            content_labels,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_post_with_attachment_sources_in_channel(
+        &self,
+        topic_id: &str,
+        channel_ref: ChannelRef,
+        content: &str,
+        reply_to: Option<&str>,
+        attachments: Vec<crate::PostAttachmentSource>,
+        content_labels: Vec<String>,
+    ) -> Result<String> {
         ensure_text_within_limit("post content", content, MAX_POST_CONTENT_CHARS)?;
         // #858: self-label は既知値だけを受け付ける(現状 `adult` のみ)。
         for label in &content_labels {
@@ -586,12 +610,18 @@ impl AppService {
             .await?;
         let stored_attachments = futures_util::future::try_join_all(attachments.into_iter().map(
             |attachment| async move {
-                let stored = self
-                    .services
-                    .blob_service
-                    .put_blob(attachment.bytes, attachment.mime.as_str())
-                    .await?;
-                Ok::<_, anyhow::Error>((attachment.role, stored))
+                use crate::PostAttachmentSource;
+                let blobs = &self.services.blob_service;
+                Ok::<_, anyhow::Error>(match attachment {
+                    PostAttachmentSource::Bytes(attachment) => (
+                        attachment.role,
+                        blobs.put_blob(attachment.bytes, &attachment.mime).await?,
+                    ),
+                    #[cfg(not(target_family = "wasm"))]
+                    PostAttachmentSource::File { path, mime, role } => {
+                        (role, blobs.put_blob_file(&path, &mime).await?)
+                    }
+                })
             },
         ))
         .await?;

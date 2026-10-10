@@ -32,6 +32,7 @@ tokio = { version = "1", features = ["time", "signal", "sync", "net", "macros", 
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1.26.1", features = ["v4"] }
+tempfile = "3.27.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]

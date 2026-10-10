@@ -362,6 +362,17 @@ pub struct PendingAttachment {
     pub role: AssetRole,
 }
 
+/// Native の明示投稿だけで使う入力。保存・wire の添付形式には含めない。
+pub enum PostAttachmentSource {
+    Bytes(PendingAttachment),
+    #[cfg(not(target_family = "wasm"))]
+    File {
+        path: std::path::PathBuf,
+        mime: String,
+        role: AssetRole,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]

@@ -121,6 +121,7 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
                 | "app_update::download_app_update"
                 | "app_update::install_app_update"
                 | "commands::external_url::open_external_url"
+                | "commands::attachment_documents::create_post_from_documents"
                 | "commands::system_locale::get_system_locales"
                 | "desktop_lifecycle::get_window_close_preference"
                 | "desktop_lifecycle::set_window_close_preference"
@@ -208,7 +209,7 @@ fn baseline_inventory_is_classified_once() {
         manifest.scope_revision,
         "2026-09-27-1221-r2-d-connectivity-peers-v1"
     );
-    assert_eq!(manifest.entries.len(), 188);
+    assert_eq!(manifest.entries.len(), 189);
     check_inventory(&gui_commands(), &manifest.entries).expect("全入口の分類");
 }
 

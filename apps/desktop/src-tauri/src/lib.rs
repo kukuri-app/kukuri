@@ -409,6 +409,7 @@ pub fn run() {
             commands::device_backup::acknowledge_pending_device_restore_frontend_state,
             commands::user_document::write_text_document,
             commands::posts::get_blob_media_file,
+            commands::attachment_documents::create_post_from_documents,
             commands::posts::release_blob_media_file,
             commands::os_notification::show_os_notification,
             commands::os_notification::get_os_notification_permission,

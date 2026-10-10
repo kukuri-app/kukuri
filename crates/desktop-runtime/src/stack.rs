@@ -245,6 +245,8 @@ reloadable_service! {
     #[async_trait]
     impl BlobService {
         async fn put_blob(data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
+        #[cfg(not(target_family = "wasm"))]
+        async fn put_blob_file(path: &std::path::Path, mime: &str) -> Result<StoredBlob>;
         async fn put_owned_blob(data: Vec<u8>, mime: &str, reference: &str) -> Result<StoredBlob>;
         async fn put_remote_blob(data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
         #[cfg(not(target_family = "wasm"))]

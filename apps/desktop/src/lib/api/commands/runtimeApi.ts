@@ -156,13 +156,16 @@ import type {
 } from '../types.generated';
 
 import { invokeDesktop } from '../invoke/desktop';
+import { materializeMessageAttachments, postAttachmentDocuments } from '../../androidPostAttachments';
 import { command } from '../invoke/dispatch';
 import { commitDomeLayoutRequest, resyncDomeSnapshotsRequest } from './domeHostingRequests';
 import { developerLogsApi, displayDemandApi, domeTransitionApi, postReloadApi, socialBlockApi } from './apiModules';
 
 export const runtimeApi: DesktopApi = {
   createPost: command('createPost', async (topic, content, replyTo, attachments = [], channelRef = { kind: 'public' }, contentLabels = []) => {
-    return invokeDesktop<string>('create_post', {
+    const documents = postAttachmentDocuments(attachments);
+    return invokeDesktop<string>(documents.length ? 'create_post_from_documents' : 'create_post', {
+      ...(documents.length ? { documents } : {}),
       request: {
         topic,
         content,
@@ -411,6 +414,7 @@ export const runtimeApi: DesktopApi = {
     });
   }),
   sendDirectMessage: command('sendDirectMessage', async (pubkey, text, attachments = [], replyToMessageId) => {
+    attachments = await materializeMessageAttachments(attachments);
     return invokeDesktop<string>('send_direct_message', {
       request: {
         pubkey,

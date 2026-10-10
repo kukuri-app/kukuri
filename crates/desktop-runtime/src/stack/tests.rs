@@ -10,6 +10,27 @@ use tokio::time::{Duration, timeout};
 
 mod account_docs_author;
 
+#[tokio::test]
+async fn reloadable_blob_service_imports_selected_post_file() {
+    let dir = tempdir().unwrap();
+    let node = IrohDocsNode::persistent_with_config(dir.path(), TransportNetworkConfig::loopback())
+        .await
+        .unwrap();
+    let blobs = ReloadableBlobService::new(Arc::new(IrohBlobService::new(node.clone())));
+    let file = tempfile::NamedTempFile::new().unwrap();
+    tokio::fs::write(file.path(), b"selected Android post")
+        .await
+        .unwrap();
+    let stored = blobs.put_blob_file(file.path(), "video/mp4").await.unwrap();
+    drop(file);
+    assert_eq!(stored.bytes, 21);
+    assert_eq!(
+        blobs.fetch_local_blob(&stored.hash).await.unwrap(),
+        Some(b"selected Android post".to_vec())
+    );
+    node.shutdown().await.unwrap();
+}
+
 // #1152 / ADR 0046 §6.2: desktop が実際に使う `ReloadableBlobService` 越しでも、
 // ephemeral 取得は remote の bytes をローカルへ保存せず、状態確認は remote から取得しない。
 // 既定実装へ落ちる method があると、黙って永続化する `fetch_blob` に戻る。

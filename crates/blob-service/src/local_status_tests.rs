@@ -11,6 +11,59 @@ use crate::tests::loopback_ticket;
 use crate::{BlobService, BlobStatus, IrohBlobService};
 
 #[tokio::test]
+async fn selected_file_is_an_owned_blob_after_source_is_removed() {
+    let dir = tempdir().unwrap();
+    let node = IrohDocsNode::persistent_with_config(
+        dir.path().join("iroh"),
+        TransportNetworkConfig::loopback(),
+    )
+    .await
+    .unwrap();
+    let cache = std::sync::Arc::new(
+        kukuri_store::SqliteStore::connect_file(dir.path().join("account.db"))
+            .await
+            .unwrap(),
+    );
+    let service = IrohBlobService::with_account_store(node.clone(), cache.clone(), cache.clone());
+    let file = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+    let bytes = vec![7u8; 2 * 1024 * 1024];
+    tokio::fs::write(file.path(), &bytes).await.unwrap();
+    let stored = service
+        .put_blob_file(file.path(), "video/mp4")
+        .await
+        .unwrap();
+    assert_eq!(stored.hash.as_str(), blake3::hash(&bytes).to_hex().as_str());
+    assert_eq!(stored.bytes, bytes.len() as u64);
+    drop(file);
+    let output = dir.path().join("backup-copy");
+    assert_eq!(
+        cache
+            .copy_remote_content_to_file("blob", stored.hash.as_str(), &output)
+            .await
+            .unwrap(),
+        Some(stored.bytes)
+    );
+    assert_eq!(tokio::fs::read(output).await.unwrap(), bytes);
+    assert_eq!(
+        service.fetch_local_blob(&stored.hash).await.unwrap(),
+        Some(bytes)
+    );
+    // 本人の保護参照にあるため成人表示 OFF の cache 回収でも原本は消えない。
+    cache
+        .mark_remote_blob_adult(stored.hash.as_str())
+        .await
+        .unwrap();
+    assert_eq!(cache.forget_adult_remote_blobs_step().await.unwrap(), 0);
+    assert!(
+        cache
+            .has_remote_content("blob", stored.hash.as_str())
+            .await
+            .unwrap()
+    );
+    node.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn remote_display_file_larger_than_cache_budget_remains_displayable() {
     let dir = tempdir().unwrap();
     let node = IrohDocsNode::persistent_with_config(dir.path(), TransportNetworkConfig::loopback())
