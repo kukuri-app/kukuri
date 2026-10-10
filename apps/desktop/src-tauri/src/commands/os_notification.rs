@@ -8,6 +8,10 @@ mod windows;
 
 use crate::state::CommandError;
 
+#[cfg(target_os = "android")]
+#[path = "os_notification_android.rs"]
+pub(crate) mod android;
+
 /// Event payload emitted to the frontend when an OS toast is clicked.
 #[derive(Clone, serde::Serialize)]
 #[cfg(target_os = "linux")]
@@ -33,12 +37,14 @@ fn activate_main_window(app: &AppHandle, notification_id: String) {
 
 /// Linuxでは通知サービスへの接続だけを確認する。OS側の表示許可は保証しない。
 #[tauri::command]
+#[cfg(not(target_os = "android"))]
 pub async fn get_os_notification_permission() -> &'static str {
     platform_notification_permission().await
 }
 
 /// Linuxにはこのprotocolの権限要求がないため、設定変更や通知送信なしで再確認する。
 #[tauri::command]
+#[cfg(not(target_os = "android"))]
 pub async fn request_os_notification_permission() -> &'static str {
     platform_notification_permission().await
 }
@@ -49,10 +55,16 @@ async fn platform_notification_permission() -> &'static str {
     "granted"
 }
 
-/// AndroidのOS通知は #1197 AC-4 で接続する。それまでは許可済みと表示しない。
 #[cfg(target_os = "android")]
-async fn platform_notification_permission() -> &'static str {
-    "unavailable"
+#[tauri::command]
+pub async fn get_os_notification_permission(app: AppHandle) -> String {
+    android::permission(app, false).await
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn request_os_notification_permission(app: AppHandle) -> String {
+    android::permission(app, true).await
 }
 
 #[cfg(target_os = "linux")]
@@ -84,6 +96,7 @@ async fn platform_notification_permission() -> &'static str {
 /// `tauri-plugin-notification` desktop backend never reports click/activation
 /// events back to the app (those are mobile-only).
 #[tauri::command]
+#[cfg(not(target_os = "android"))]
 pub fn show_os_notification(
     app: AppHandle,
     id: String,
@@ -93,6 +106,18 @@ pub fn show_os_notification(
 ) -> Result<(), CommandError> {
     // cfg 付きのプラットフォーム別ヘルパは String のまま(From<String> で封筒化)。
     Ok(show_platform_notification(app, id, title, body, silent)?)
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn show_os_notification(
+    app: AppHandle,
+    id: String,
+    title: String,
+    body: Option<String>,
+    silent: bool,
+) -> Result<(), CommandError> {
+    Ok(show_platform_notification(app, id, title, body, silent).await?)
 }
 
 #[cfg(windows)]
@@ -175,14 +200,14 @@ pub(crate) fn show_platform_notification(
 }
 
 #[cfg(target_os = "android")]
-pub(crate) fn show_platform_notification(
-    _app: AppHandle,
-    _id: String,
-    _title: String,
-    _body: Option<String>,
-    _silent: bool,
+pub(crate) async fn show_platform_notification(
+    app: AppHandle,
+    id: String,
+    title: String,
+    body: Option<String>,
+    silent: bool,
 ) -> Result<(), String> {
-    Err("os_notification_unavailable".into())
+    android::show(app, id, title, body, silent).await
 }
 
 #[cfg(test)]

@@ -284,13 +284,16 @@ async fn poll_once(app: &AppHandle) -> anyhow::Result<bool> {
         }
         let title = notification_title(&notification.kind).to_string();
         let body = notification_body(notification, settings.preview_body, adult_content_enabled);
-        if let Err(error) = show_platform_notification(
+        let sent = show_platform_notification(
             app.clone(),
             notification.notification_id.clone(),
             title,
             body,
             settings.quiet_mode,
-        ) {
+        );
+        #[cfg(target_os = "android")]
+        let sent = sent.await;
+        if let Err(error) = sent {
             warn!(%error, "failed to show background OS notification");
         }
     }

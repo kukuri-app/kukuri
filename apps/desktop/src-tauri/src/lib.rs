@@ -229,7 +229,8 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_fs::init())
         .manage(android_lifecycle::AndroidLifecycle::default())
-        .plugin(android_lifecycle::network_plugin());
+        .plugin(android_lifecycle::network_plugin())
+        .plugin(commands::os_notification::android::plugin());
 
     builder
         .plugin(tauri_plugin_deep_link::init())
