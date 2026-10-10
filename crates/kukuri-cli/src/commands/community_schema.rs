@@ -85,7 +85,12 @@ pub(super) fn input(name: &str) -> Value {
             json!({"post_ids": strings(), "blob_hashes": strings()}),
             &["post_ids", "blob_hashes"],
         ),
-        "read_community_node_trust_user" | "read_community_node_relation_user" => object(
+        // #1702: `cursor` は前の応答の `basis_next_cursor`（basis の続き）。
+        "read_community_node_trust_user" => object(
+            json!({"base_url": string(), "target_pubkey": string(), "cursor": nullable(string())}),
+            &["base_url", "target_pubkey"],
+        ),
+        "read_community_node_relation_user" => object(
             json!({"base_url": string(), "target_pubkey": string()}),
             &["base_url", "target_pubkey"],
         ),

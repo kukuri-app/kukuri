@@ -12,7 +12,7 @@ use kukuri_cn_core::{
     DistributionAudience, PgSafetyArtifactStore, TestDatabase, connect_postgres,
     dispute_risk_signal, get_risk_signal, get_scan_verdict, get_signed_moderation_event,
     initialize_database, list_distributable_moderation_events, list_distributable_risk_signals,
-    list_risk_signals_for_target, list_trust_risk_inputs, persist_risk_signal,
+    list_risk_signals_for_target, list_trust_basis_page, persist_risk_signal,
     persist_risk_signal_deduplicated, persist_signed_moderation_event,
     reissue_corrected_risk_signal, update_risk_signal_appeal_status,
 };
@@ -27,6 +27,7 @@ use kukuri_cn_safety_runtime::{
     SafetyOrchestrator, SafetyScanService, ScanDisposition, Secp256k1ModerationEventSigner,
     SystemScanClock, UuidEventIdGenerator, verify_signed_event,
 };
+use kukuri_cn_trust::TrustComponentKind;
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
 const TEST_SECRET: &str = "0000000000000000000000000000000000000000000000000000000000000001";
@@ -339,27 +340,20 @@ async fn content_scan_is_attributed_to_author_and_appeal_updates_trust_input() -
             .persisted_signal_id
             .expect("known match persists a risk signal");
 
-        let attributed = list_trust_risk_inputs(
-            &pool,
-            RiskSignalTarget::UserPubkey,
-            "author-pubkey",
-            "2026-08-06T00:00:00Z",
-        )
-        .await?;
-        assert_eq!(attributed.absolute.len(), 1);
-        assert_eq!(attributed.absolute[0].signal_id, signal_id);
+        let attributed = list_trust_basis_page(&pool, "author-pubkey", None)
+            .await?
+            .inputs;
+        assert_eq!(attributed.len(), 1);
+        assert_eq!(attributed[0].component, TrustComponentKind::Absolute);
+        assert_eq!(attributed[0].signal_id, signal_id);
 
         dispute_risk_signal(&pool, &signal_id).await?;
         update_risk_signal_appeal_status(&pool, &signal_id, AppealStatus::Cleared).await?;
-        let cleared = list_trust_risk_inputs(
-            &pool,
-            RiskSignalTarget::UserPubkey,
-            "author-pubkey",
-            "2026-08-06T00:00:00Z",
-        )
-        .await?;
-        assert_eq!(cleared.absolute.len(), 1);
-        assert_eq!(cleared.absolute[0].appeal_status, AppealStatus::Cleared);
+        let cleared = list_trust_basis_page(&pool, "author-pubkey", None)
+            .await?
+            .inputs;
+        assert_eq!(cleared.len(), 1);
+        assert_eq!(cleared[0].appeal_status, AppealStatus::Cleared);
 
         Ok::<(), anyhow::Error>(())
     }
@@ -479,7 +473,7 @@ async fn scan_and_record_persists_artifacts_via_postgres_store() -> Result<()> {
 }
 
 #[tokio::test]
-async fn list_trust_risk_inputs_partitions_absolute_and_relative_from_postgres() -> Result<()> {
+async fn trust_basis_partitions_absolute_and_relative_from_postgres() -> Result<()> {
     let Some(admin_url) = integration_test_admin_database_url() else {
         eprintln!(
             "skipping cn-core safety integration test; set KUKURI_CN_RUN_INTEGRATION_TESTS=1"
@@ -502,19 +496,16 @@ async fn list_trust_risk_inputs_partitions_absolute_and_relative_from_postgres()
         persist_risk_signal(&pool, &issuer, &csam).await?;
         persist_risk_signal(&pool, &issuer, &nsfw).await?;
 
-        // trust 入力 read は category で絶対 / 相対成分へ振り分けて返す（ADR 0026 §2.7）。
-        let inputs = list_trust_risk_inputs(
-            &pool,
-            RiskSignalTarget::UserPubkey,
-            "pubkey-406",
-            "2026-07-02T09:00:00Z",
-        )
-        .await?;
-        assert_eq!(inputs.absolute.len(), 1);
-        assert_eq!(inputs.absolute[0].category, SafetyCategory::Csam);
-        assert_eq!(inputs.relative.len(), 1);
-        assert_eq!(inputs.relative[0].category, SafetyCategory::Nsfw);
-        assert_eq!(inputs.absolute[0].issuer_node_id, issuer);
+        // basis は category で絶対 / 相対成分へ振り分け、絶対成分を先に並べる（ADR 0026 §2.7 / §10）。
+        let inputs = list_trust_basis_page(&pool, "pubkey-406", None)
+            .await?
+            .inputs;
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(inputs[0].component, TrustComponentKind::Absolute);
+        assert_eq!(inputs[0].category, SafetyCategory::Csam);
+        assert_eq!(inputs[0].issuer_node_id, issuer);
+        assert_eq!(inputs[1].component, TrustComponentKind::Relative);
+        assert_eq!(inputs[1].category, SafetyCategory::Nsfw);
 
         Ok::<(), anyhow::Error>(())
     }
@@ -590,16 +581,10 @@ async fn rescan_with_same_key_updates_signal_instead_of_inserting() -> Result<()
         );
         assert_eq!(count_signals(&pool, "post-dup").await?, 1);
 
-        // trust 入力も 1 件（同一投稿の寄与は signal 1 件分を超えない）。
-        let inputs = list_trust_risk_inputs(
-            &pool,
-            RiskSignalTarget::UserPubkey,
-            "author-a",
-            "2026-09-15T12:00:00Z",
-        )
-        .await?;
-        assert_eq!(inputs.relative.len(), 1);
-        assert!(inputs.absolute.is_empty());
+        // basis も 1 件（同一投稿の寄与は signal 1 件分を超えない）。
+        let inputs = list_trust_basis_page(&pool, "author-a", None).await?.inputs;
+        assert_eq!(inputs.len(), 1);
+        assert_eq!(inputs[0].component, TrustComponentKind::Relative);
 
         // 別 category（別鍵）は別行になる。
         let mut spam = nsfw_signal("post-dup", 70);
@@ -765,14 +750,8 @@ async fn postgres_store_reuses_verdict_and_does_not_duplicate_artifacts() -> Res
         assert_eq!(count_signals(&pool, "post-reuse").await?, 1);
         // 再利用でも 2 人目の著者は関連付けられる（共有 subject の trust 入力を落とさない）。
         for author in ["author-a", "author-b"] {
-            let inputs = list_trust_risk_inputs(
-                &pool,
-                RiskSignalTarget::UserPubkey,
-                author,
-                "2026-09-15T12:00:00Z",
-            )
-            .await?;
-            assert_eq!(inputs.relative.len(), 1, "{author}");
+            let inputs = list_trust_basis_page(&pool, author, None).await?.inputs;
+            assert_eq!(inputs.len(), 1, "{author}");
         }
         Ok::<(), anyhow::Error>(())
     }

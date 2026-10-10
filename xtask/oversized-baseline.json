@@ -21,7 +21,7 @@
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
-      "lines": 1139,
+      "lines": 1226,
       "path": "docs/THIRD_PARTY_NOTICES.md"
     },
     {
@@ -43,6 +43,10 @@
     {
       "lines": 1051,
       "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
+    },
+    {
+      "lines": 1045,
+      "path": "crates/cn-user-api/tests/trust_relation.rs"
     },
     {
       "lines": 1044,
@@ -69,7 +73,7 @@
       "path": "crates/store/src/parity/lists.rs"
     },
     {
-      "lines": 1008,
+      "lines": 1020,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {

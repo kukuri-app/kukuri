@@ -269,10 +269,26 @@ impl AppService {
         asset: CustomReactionAssetSnapshotV1,
     ) -> Result<BookmarkedCustomReactionView> {
         if asset.owner_pubkey.as_str() == self.current_author_pubkey() {
-            anyhow::bail!("bookmarking your own custom reaction is not supported");
+            let search_key =
+                search_key_or_asset_id(asset.search_key.as_str(), asset.asset_id.as_str());
+            let asset_id = kukuri_core::custom_reaction_id(asset.blob_hash.as_str(), &search_key);
+            if self.own_custom_reaction_ids().await?.contains(&asset_id) {
+                anyhow::bail!("this custom reaction is already one of your own on this device");
+            }
         }
         self.put_custom_reaction_bookmark(asset, Utc::now().timestamp_millis())
             .await
+    }
+
+    /// この端末の自作の ID（自作の上限つきの窓）。自作は同じアカウントの別の端末に届いていないことがあるので、同じアカウントの別の端末で作ったものは
+    /// 含まない。
+    pub(crate) async fn own_custom_reaction_ids(&self) -> Result<BTreeSet<String>> {
+        Ok(self
+            .list_my_custom_reaction_assets()
+            .await?
+            .into_iter()
+            .map(|asset| asset.asset_id)
+            .collect())
     }
 
     /// 保存の行を置く。投稿のリアクションの写しが旧い ID でも、画像＋検索名の ID で置く（#1232 D1）。

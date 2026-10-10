@@ -6,10 +6,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use kukuri_cn_core::{
     ChannelSecretCipher, DatabaseInitMode, JwtConfig, LegalDataCipher, PgIndexEntryStore,
-    RetentionPolicy, TopicRendezvousStore, apply_retention_policy, cleanup_expired,
-    connect_postgres, initialize_database, initialize_database_for_runtime,
-    latest_readiness_activation, readiness_context_fingerprint, seal_legacy_report_contacts,
-    seal_legacy_rights_request_data, sync_policies, verify_sensitive_items,
+    RetentionPolicy, TopicRendezvousStore, configure_case_retention, connect_postgres,
+    initialize_database, initialize_database_for_runtime, latest_readiness_activation,
+    readiness_context_fingerprint, sync_policies, sync_trust_half_life, verify_legal_data_key,
 };
 use kukuri_cn_indexer::{
     ArcadeDbConfig, ArcadeDbProjection, ArcadeDbRelationGraph, FailClosedIndexQuery, IndexQuery,
@@ -47,7 +46,6 @@ pub struct UserApiState {
     /// indexing request は受け付けない(secret を平文保存しないため)。
     pub(crate) channel_secret_cipher: Option<Arc<ChannelSecretCipher>>,
     pub(crate) legal_data_cipher: Option<Arc<LegalDataCipher>>,
-    pub(crate) retention: RetentionPolicy,
     /// ユーザー向け search / discovery / recommendation の query 境界(#404)。
     /// fail-closed query gate(`FailClosedIndexQuery`)を通した読み口のみを持つ。
     /// None = 設定無効。readiness activation は起動後も変化するため、各requestで検査する。
@@ -222,39 +220,24 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
             "COMMUNITY_NODE_LEGAL_DATA_KEY is required when report or rights-request intake is enabled"
         );
     }
+    // 鍵の照合も鍵なしの検査も暗号文の 1 行だけを見る（#1705）。旧平文の検査は migration が 1 回だけ行う。
     if let Some(cipher) = legal_data_cipher.as_deref() {
-        verify_sensitive_items(&pool, cipher)
+        verify_legal_data_key(&pool, cipher)
             .await
             .context("failed to verify stored legal data with configured key")?;
-        seal_legacy_report_contacts(&pool, cipher, &retention)
-            .await
-            .context("failed to seal legacy report contacts")?;
-        seal_legacy_rights_request_data(&pool, cipher, &retention)
-            .await
-            .context("failed to seal legacy rights-request data")?;
     } else {
-        let sensitive_exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS (SELECT 1 FROM cn_legal.sensitive_items)
-                 OR EXISTS (SELECT 1 FROM cn_admin.reports WHERE reporter_contact IS NOT NULL)
-                 OR EXISTS (
-                    SELECT 1 FROM cn_legal.rights_requests
-                    WHERE COALESCE(request_data->>'email', '') <> ''
-                 )",
-        )
-        .fetch_one(&pool)
-        .await?;
+        let sensitive_exists =
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM cn_legal.sensitive_items)")
+                .fetch_one(&pool)
+                .await?;
         if sensitive_exists {
-            anyhow::bail!(
-                "COMMUNITY_NODE_LEGAL_DATA_KEY is required to read or migrate stored legal data"
-            );
+            anyhow::bail!("COMMUNITY_NODE_LEGAL_DATA_KEY is required to read stored legal data");
         }
     }
-    apply_retention_policy(&pool, &retention)
+    // 期限削除は待たない（背景の処理が起動直後から小分けに消す。読取りは日数で期限切れを返さない）。
+    configure_case_retention(&pool, &retention)
         .await
-        .context("initial retention reconciliation failed")?;
-    cleanup_expired(&pool, chrono::Utc::now())
-        .await
-        .context("initial retention cleanup failed")?;
+        .context("failed to configure case retention days")?;
     // 有効化の関門（#616）。activation は起動後にtimerが作成・更新・失効するため、
     // backendの構成有無とは分離し、各requestで現在値を検査する。ここでは起動時点の状態を
     // 運用logへ残すだけにする。
@@ -337,6 +320,10 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
     // 検証つきで読み、relation graph(ArcadeDB。`cn-cli relation analyze` が構築する)へ接続する。
     let trust_read: Option<Arc<TrustReadState>> = if config.trust_read_enabled {
         let params = TrustParams::from_env().context("invalid COMMUNITY_NODE_TRUST_* params")?;
+        // 集計の半減期を設定と揃える。違う半減期で作った集計は背景で作り直す（ADR 0026 §10）。
+        sync_trust_half_life(&pool, params.relative_half_life_days)
+            .await
+            .context("failed to sync the trust half-life")?;
         let relation = relation_visibility
             .as_ref()
             .context("relation visibility must be configured for trust reads")?
@@ -390,7 +377,6 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
         policy_kinds,
         channel_secret_cipher,
         legal_data_cipher,
-        retention,
         index_query,
         trust_read,
         relation_visibility,

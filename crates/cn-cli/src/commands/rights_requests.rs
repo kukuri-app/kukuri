@@ -6,7 +6,6 @@ use kukuri_cn_core::{
 use kukuri_cn_protocol::RightsRequestStatus;
 use sqlx::PgPool;
 
-use super::retention::retention_policy;
 use crate::{RightsRequestStatusArg, RightsRequestsAction};
 
 pub(super) async fn run(pool: &PgPool, action: RightsRequestsAction) -> Result<()> {
@@ -14,9 +13,6 @@ pub(super) async fn run(pool: &PgPool, action: RightsRequestsAction) -> Result<(
     let cipher = LegalDataCipher::from_key_material(
         &std::env::var("COMMUNITY_NODE_LEGAL_DATA_KEY")
             .context("COMMUNITY_NODE_LEGAL_DATA_KEY is required")?,
-    )?;
-    let retention = retention_policy().context(
-        "rights-request operations require explicit retention from COMMUNITY_NODE_OPERATOR_CONFIG",
     )?;
     match action {
         RightsRequestsAction::List { limit, offset } => {
@@ -66,7 +62,6 @@ pub(super) async fn run(pool: &PgPool, action: RightsRequestsAction) -> Result<(
                 status.into(),
                 public_message.as_deref(),
                 &delivery_status,
-                &retention,
                 chrono::Utc::now(),
             )
             .await?;
@@ -89,7 +84,6 @@ pub(super) async fn run(pool: &PgPool, action: RightsRequestsAction) -> Result<(
                 &actor,
                 capabilities.into_iter().map(Into::into).collect(),
                 &public_message,
-                &retention,
                 chrono::Utc::now(),
             )
             .await?;

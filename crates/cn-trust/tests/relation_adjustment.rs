@@ -4,14 +4,10 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Duration, Utc};
 use kukuri_cn_protocol::TrustEvaluationReason;
-use kukuri_cn_safety::{
-    AppealStatus, Basis, RiskSignalTarget, SafetyCategory, Severity, Visibility,
-};
 use kukuri_cn_trust::{
-    RelationAdjustment, RelationObservation, RelationObservationKind, TrustComponentKind,
-    TrustParams, TrustRiskInput, TrustRiskInputs, UniformRelationWeight, apply_viewer_relation,
-    build_trust_read, compose_relation_adjustment, compose_viewer_trust, relation_version,
-    trust_version,
+    RelationAdjustment, RelationObservation, RelationObservationKind, TrustParams, TrustTotals,
+    apply_viewer_relation, build_trust_read, compose_relation_adjustment, compose_viewer_trust,
+    relation_version,
 };
 
 const VIEWER_A: &str = "viewer-a";
@@ -41,36 +37,19 @@ fn weights(entries: &[(&str, f64)]) -> BTreeMap<String, f64> {
         .collect()
 }
 
-fn spam_inputs() -> TrustRiskInputs {
-    TrustRiskInputs {
-        absolute: Vec::new(),
-        relative: vec![TrustRiskInput {
-            signal_id: "spam-1".to_string(),
-            issuer_node_id: "node".to_string(),
-            target: RiskSignalTarget::UserPubkey,
-            target_id: "target-b".to_string(),
-            component: TrustComponentKind::Relative,
-            category: SafetyCategory::Spam,
-            severity: Severity::Medium,
-            basis: Basis::ClassifierScore,
-            confidence: Some(100),
-            visibility: Visibility::Local,
-            appeal_status: AppealStatus::None,
-            expires_at: None,
-            persisted_at: now(),
-            operator_adjusted_at: None,
-        }],
+/// 対象 B の集計（spam・severity Medium・confidence 100 が今の時刻に 1 件）。
+fn spam_totals() -> TrustTotals {
+    TrustTotals {
+        relative_units: 400.0,
+        relative_at: now(),
+        half_life_days: 30.0,
+        digest: 0x5ba3,
+        ..TrustTotals::default()
     }
 }
 
-fn trust_view(inputs: &TrustRiskInputs) -> kukuri_cn_protocol::TrustReadView {
-    build_trust_read(
-        "target-b",
-        inputs,
-        now(),
-        &TrustParams::default(),
-        &UniformRelationWeight::default(),
-    )
+fn trust_view(totals: &TrustTotals) -> kukuri_cn_protocol::TrustReadView {
+    build_trust_read("target-b", totals, &[], now(), &TrustParams::default())
 }
 
 #[test]
@@ -293,10 +272,12 @@ fn adjustment_is_order_independent() {
 fn trust_component_is_unchanged_by_observations() {
     // T は閲覧者・観測に依存しない。A と C で R は異なるが T（内訳）は共通。
     let params = TrustParams::default();
-    let t_view = trust_view(&spam_inputs());
+    let totals = spam_totals();
+    let t_view = trust_view(&totals);
     let observations = [observation(OBSERVER_U1, RelationObservationKind::Block)];
     let for_a = apply_viewer_relation(
         t_view.clone(),
+        totals.version(),
         compose_relation_adjustment(
             VIEWER_A,
             &observations,
@@ -304,12 +285,13 @@ fn trust_component_is_unchanged_by_observations() {
             now(),
             &params,
         ),
-        relation_version(Some(7), 3),
+        relation_version(Some(7), &observations),
         now(),
         &params,
     );
     let for_c = apply_viewer_relation(
         t_view.clone(),
+        totals.version(),
         compose_relation_adjustment(
             VIEWER_C,
             &observations,
@@ -317,7 +299,7 @@ fn trust_component_is_unchanged_by_observations() {
             now(),
             &params,
         ),
-        relation_version(Some(7), 3),
+        relation_version(Some(7), &observations),
         now(),
         &params,
     );
@@ -328,7 +310,7 @@ fn trust_component_is_unchanged_by_observations() {
         assert_eq!(view.basis, t_view.basis);
         assert_eq!(
             view.evaluation.as_ref().unwrap().trust_version,
-            trust_version(&t_view)
+            totals.version()
         );
     }
     assert!(for_a.trust < for_c.trust);
@@ -340,16 +322,19 @@ fn relation_update_does_not_touch_trust_component() {
     // R のみの更新（観測の追加）で T の版・内訳は変わらず、S だけが再合算される。
     // T のみの更新（signal の追加）で relation の版は変わらず、S は新しい T で再合算される。
     let params = TrustParams::default();
-    let empty = trust_view(&TrustRiskInputs::default());
+    let empty_totals = TrustTotals::default();
+    let empty = trust_view(&empty_totals);
     let no_relation = apply_viewer_relation(
         empty.clone(),
+        empty_totals.version(),
         RelationAdjustment::NONE,
-        relation_version(Some(7), 0),
+        relation_version(Some(7), &[]),
         now(),
         &params,
     );
     let with_relation = apply_viewer_relation(
         empty.clone(),
+        empty_totals.version(),
         compose_relation_adjustment(
             VIEWER_A,
             &[observation(OBSERVER_U1, RelationObservationKind::Block)],
@@ -357,7 +342,10 @@ fn relation_update_does_not_touch_trust_component() {
             now(),
             &params,
         ),
-        relation_version(Some(7), 1),
+        relation_version(
+            Some(7),
+            &[observation(OBSERVER_U1, RelationObservationKind::Block)],
+        ),
         now(),
         &params,
     );
@@ -368,11 +356,13 @@ fn relation_update_does_not_touch_trust_component() {
     assert_eq!(no_relation.trust, 0.0);
     assert!(with_relation.trust < 0.0);
 
-    let with_signal = trust_view(&spam_inputs());
+    let with_signal_totals = spam_totals();
+    let with_signal = trust_view(&with_signal_totals);
     let t_updated = apply_viewer_relation(
         with_signal.clone(),
+        with_signal_totals.version(),
         RelationAdjustment::NONE,
-        relation_version(Some(7), 0),
+        relation_version(Some(7), &[]),
         now(),
         &params,
     );
@@ -383,14 +373,56 @@ fn relation_update_does_not_touch_trust_component() {
 }
 
 #[test]
+fn relation_version_digests_the_observations_used_for_the_evaluation() {
+    // 観測が無ければ 0。版は解析の id と観測の集合だけで決まり、並びによらない（#1699）。
+    assert_eq!(relation_version(Some(7), &[]), "r-7-0");
+    assert_eq!(relation_version(None, &[]), "r-none-0");
+    let u1 = observation(OBSERVER_U1, RelationObservationKind::Block);
+    let u2 = observation(OBSERVER_U2, RelationObservationKind::Mute);
+    let base = relation_version(Some(7), &[u1.clone(), u2.clone()]);
+    assert_eq!(base, relation_version(Some(7), &[u2.clone(), u1.clone()]));
+    assert_ne!(base, relation_version(Some(8), &[u1.clone(), u2.clone()]));
+    // 観測の追加・評価からの外れ（解除・同意の無効化）・種別や観測時刻の更新で版が変わる。
+    let changed = [
+        vec![
+            u1.clone(),
+            u2.clone(),
+            observation(VIEWER_C, RelationObservationKind::Block),
+        ],
+        vec![u1.clone()],
+        vec![
+            u1.clone(),
+            RelationObservation {
+                kind: RelationObservationKind::Block,
+                ..u2.clone()
+            },
+        ],
+        vec![
+            u1.clone(),
+            RelationObservation {
+                observed_at: now() + Duration::seconds(1),
+                ..u2.clone()
+            },
+        ],
+    ];
+    for observations in changed {
+        assert_ne!(base, relation_version(Some(7), &observations));
+    }
+    // 元の集合に戻れば元の版に戻る。
+    assert_eq!(base, relation_version(Some(7), &[u1, u2]));
+}
+
+#[test]
 fn hide_recommendation_follows_node_local_threshold_and_reasons() {
     let params = TrustParams::default();
-    let empty = trust_view(&TrustRiskInputs::default());
+    let empty_totals = TrustTotals::default();
+    let empty = trust_view(&empty_totals);
     // 根拠が無ければ非表示を推奨しない（欠落を悪質扱いしない）。
     let neutral = apply_viewer_relation(
         empty.clone(),
+        empty_totals.version(),
         RelationAdjustment::NONE,
-        relation_version(None, 0),
+        relation_version(None, &[]),
         now(),
         &params,
     );
@@ -400,6 +432,7 @@ fn hide_recommendation_follows_node_local_threshold_and_reasons() {
 
     let adjusted = apply_viewer_relation(
         empty,
+        empty_totals.version(),
         compose_relation_adjustment(
             VIEWER_A,
             &[observation(OBSERVER_U1, RelationObservationKind::Block)],
@@ -407,7 +440,10 @@ fn hide_recommendation_follows_node_local_threshold_and_reasons() {
             now(),
             &params,
         ),
-        relation_version(Some(1), 1),
+        relation_version(
+            Some(1),
+            &[observation(OBSERVER_U1, RelationObservationKind::Block)],
+        ),
         now(),
         &params,
     );
@@ -427,7 +463,8 @@ fn hide_recommendation_follows_node_local_threshold_and_reasons() {
         ..TrustParams::default()
     };
     let not_hidden = apply_viewer_relation(
-        trust_view(&TrustRiskInputs::default()),
+        trust_view(&empty_totals),
+        empty_totals.version(),
         compose_relation_adjustment(
             VIEWER_A,
             &[observation(OBSERVER_U1, RelationObservationKind::Block)],
@@ -435,7 +472,10 @@ fn hide_recommendation_follows_node_local_threshold_and_reasons() {
             now(),
             &lenient,
         ),
-        relation_version(Some(1), 1),
+        relation_version(
+            Some(1),
+            &[observation(OBSERVER_U1, RelationObservationKind::Block)],
+        ),
         now(),
         &lenient,
     );

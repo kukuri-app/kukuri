@@ -11,8 +11,9 @@ use anyhow::Result;
 use kukuri_cn_core::{
     DistributionAudience, PersistedRiskSignal, RiskSignalCorrection, RiskSignalMetadataEdit,
     TestDatabase, connect_postgres, dispute_risk_signal, edit_risk_signal_detection_metadata,
-    get_risk_signal, initialize_database, list_distributable_risk_signals, list_trust_risk_inputs,
-    persist_risk_signal, persist_risk_signal_deduplicated, reissue_corrected_risk_signal,
+    get_risk_signal, initialize_database, list_distributable_risk_signals, list_trust_basis_page,
+    load_trust_totals, persist_risk_signal, persist_risk_signal_deduplicated,
+    persist_risk_signal_with_author, reissue_corrected_risk_signal,
     update_risk_signal_appeal_status,
 };
 use kukuri_cn_safety::{
@@ -118,17 +119,17 @@ async fn appeal_cleared_propagates_and_reverts_trust_contribution() -> Result<()
     let result = async {
         initialize_database(&pool).await?;
 
-        let stored = persist_risk_signal(
+        let stored = persist_risk_signal_with_author(
             &pool,
             ISSUER,
-            &suspected_signal("pubkey-target", SafetyCategory::Csam),
+            &suspected_signal("blob-target", SafetyCategory::Csam),
+            Some("pubkey-author"),
         )
         .await?;
+        let author = ["pubkey-author".to_string()];
 
-        // Cleared 前は trust 入力に寄与している。
-        let inputs =
-            list_trust_risk_inputs(&pool, RiskSignalTarget::BlobCid, "pubkey-target", NOW).await?;
-        assert_eq!(inputs.absolute.len(), 1);
+        // Cleared 前は著者の信頼値に寄与している。
+        assert!(load_trust_totals(&pool, &author).await?["pubkey-author"].absolute() < 0.0);
 
         // Disputed → Cleared（operator 認容）。
         dispute_risk_signal(&pool, &stored.id).await?;
@@ -152,12 +153,17 @@ async fn appeal_cleared_propagates_and_reverts_trust_contribution() -> Result<()
             .expect("cleared advisory keeps distributing the correction");
         assert_eq!(found.signal.appeal_status, Some(AppealStatus::Cleared));
 
-        // trust 寄与の戻し: Cleared を説明用に残し、評価層が負の寄与をゼロにする。
-        let inputs =
-            list_trust_risk_inputs(&pool, RiskSignalTarget::BlobCid, "pubkey-target", NOW).await?;
-        assert_eq!(inputs.absolute.len(), 1);
-        assert_eq!(inputs.absolute[0].appeal_status, AppealStatus::Cleared);
-        assert!(inputs.relative.is_empty());
+        // trust 寄与の戻し: Cleared を説明用に basis へ残し、集計は負の寄与をゼロにする。
+        assert_eq!(
+            load_trust_totals(&pool, &author).await?["pubkey-author"].absolute(),
+            0.0
+        );
+        let basis = list_trust_basis_page(&pool, "pubkey-author", None)
+            .await?
+            .inputs;
+        assert_eq!(basis.len(), 1);
+        assert_eq!(basis[0].signal_id, stored.id);
+        assert_eq!(basis[0].appeal_status, AppealStatus::Cleared);
 
         Ok::<(), anyhow::Error>(())
     }

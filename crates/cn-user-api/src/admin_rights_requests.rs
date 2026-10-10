@@ -234,7 +234,6 @@ pub(crate) async fn apply_rights_request_action(
                     status,
                     nonempty(&form.public_message),
                     &form.delivery_status,
-                    &state.runtime.retention,
                     chrono::Utc::now(),
                 )
                 .await
@@ -249,7 +248,6 @@ pub(crate) async fn apply_rights_request_action(
                 actor,
                 capabilities,
                 &form.public_message,
-                &state.runtime.retention,
                 chrono::Utc::now(),
             )
             .await

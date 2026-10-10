@@ -54,12 +54,16 @@ services:
   # host / internet へ port を公開しない（デバッグは `docker compose exec cn-arcadedb` を使う）。
   cn-arcadedb:
     logging: *cn-logging
-    image: ${CN_ARCADEDB_IMAGE:-arcadedata/arcadedb:26.8.1}
+    image: ${CN_ARCADEDB_IMAGE:-arcadedata/arcadedb:26.10.1}
     restart: unless-stopped
     environment:
       JAVA_OPTS: >-
         -Darcadedb.server.rootPassword=${CN_ARCADEDB_ROOT_PASSWORD:?set CN_ARCADEDB_ROOT_PASSWORD}
         -Darcadedb.server.defaultDatabases=${CN_ARCADEDB_DATABASE:-kukuri_index}[]
+      # 26.9.1 以降の image は heap を見えるメモリの 75%、GC を ZGC にし、JAVA_OPTS の上書きでは消えない。
+      # 26.8.1 までと同じ heap 2GB 固定と JVM 既定の G1（空の指定）に保つ（#1726）。
+      ARCADEDB_OPTS_MEMORY: -Xms2G -Xmx2G
+      ARCADEDB_OPTS_GC: ""
     healthcheck:
       # image は Alpine ベースで curl が無いため busybox wget を使う。
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2480/api/v1/ready || exit 1"]

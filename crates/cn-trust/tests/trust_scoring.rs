@@ -1,6 +1,9 @@
-//! trust scoring の contract テスト（ADR 0026 §2.3 / §6.2, Issue #415）。DB 不要。
+//! trust scoring の contract テスト（ADR 0026 §2.3 / §6.2 / §10, Issue #415 / #1702）。DB 不要。
 //!
-//! テスト名は ADR 0026 の必須 contract 名に対応する。
+//! テスト名は ADR 0026 の必須 contract 名に対応する。成分は対象ごとの集計（`TrustTotals`）から求め、
+//! basis は 1 ページ分の signal を説明する。集計が signal 1 行ごとの寄与（`signal_contribution`）と
+//! 振り分け（`trust_component_for`）の和になることは、`cn-core` の結合試験（`trust_totals.rs`）が SQL の
+//! 集計と突き合わせて固定する。
 
 use chrono::{DateTime, Duration, Utc};
 
@@ -8,8 +11,8 @@ use kukuri_cn_safety::{
     AppealStatus, Basis, RiskSignalTarget, SafetyCategory, Severity, Visibility,
 };
 use kukuri_cn_trust::{
-    TrustComponentKind, TrustParams, TrustRiskInput, TrustRiskInputs, UniformRelationWeight,
-    build_trust_read, compose_trust, signal_contribution, trust_component_for,
+    TrustComponentKind, TrustParams, TrustReadView, TrustRiskInput, TrustTotals, build_trust_read,
+    compose_trust, signal_contribution, trust_component_for,
 };
 
 #[allow(clippy::unwrap_used)] // test fixture helper
@@ -88,6 +91,21 @@ fn advisory_input(
     input
 }
 
+/// 今の時刻を基準時刻にした集計（寄与は 1/1000 単位）。
+fn totals(absolute_units: i64, relative_units: f64) -> TrustTotals {
+    TrustTotals {
+        absolute_units,
+        relative_units,
+        relative_at: now(),
+        half_life_days: 30.0,
+        ..TrustTotals::default()
+    }
+}
+
+fn view(totals: &TrustTotals, page: &[TrustRiskInput]) -> TrustReadView {
+    build_trust_read("pubkey-1", totals, page, now(), &TrustParams::default())
+}
+
 // --- 合成式（§6.2） ---
 
 #[test]
@@ -99,6 +117,11 @@ fn trust_is_clamped_to_unit_interval() {
     // 成分に範囲外の値が渡っても ±1 に丸めてから合成する。
     let composed = compose_trust(&params, -5.0, 3.0);
     assert!((-1.0..=1.0).contains(&composed.trust));
+    // 集計の和が ±1 を超えても成分は ±1 に収まる。
+    let read = view(&totals(5_000, 9_000.0), &[]);
+    assert_eq!(read.absolute, -1.0);
+    assert_eq!(read.relative, -1.0);
+    assert_eq!(read.trust, -1.0);
 }
 
 #[test]
@@ -157,60 +180,41 @@ fn trust_composition_weights_are_operator_tunable() {
 
 #[test]
 fn trust_is_not_single_absolute_scalar() {
-    let inputs = TrustRiskInputs {
-        absolute: vec![csam_input("sig-abs", now())],
-        relative: vec![spam_input("sig-rel", now())],
-    };
-    let view = build_trust_read(
-        "pubkey-1",
-        &inputs,
-        now(),
-        &TrustParams::default(),
-        &UniformRelationWeight::default(),
+    let read = view(
+        &totals(1_000, 700.0),
+        &[csam_input("sig-abs", now()), spam_input("sig-rel", now())],
     );
     // read は絶対 / 相対成分を分離して返し、合成値だけの単一スカラーにしない。
-    assert_ne!(view.absolute, view.relative);
-    assert!(view.absolute < 0.0);
-    assert!(view.relative < 0.0);
+    assert_ne!(read.absolute, read.relative);
+    assert!(read.absolute < 0.0);
+    assert!(read.relative < 0.0);
     // 断定ラベルは存在しない（連続値 + 根拠のみ）。
-    assert!(!view.basis.is_empty());
+    assert!(!read.basis.is_empty());
 }
 
 #[test]
 fn trust_separates_absolute_and_relative_indicators() {
     // CSAM（critical）は絶対成分のみ、spam は相対成分のみに効く。
-    let absolute_only = TrustRiskInputs {
-        absolute: vec![csam_input("sig-abs", now())],
-        relative: vec![],
-    };
-    let view = build_trust_read(
-        "pubkey-1",
-        &absolute_only,
-        now(),
-        &TrustParams::default(),
-        &UniformRelationWeight::default(),
+    let absolute_only = view(&totals(1_000, 0.0), &[csam_input("sig-abs", now())]);
+    assert!(absolute_only.absolute < 0.0);
+    assert_eq!(absolute_only.relative, 0.0);
+    assert_eq!(
+        absolute_only.basis[0].component,
+        TrustComponentKind::Absolute
     );
-    assert!(view.absolute < 0.0);
-    assert_eq!(view.relative, 0.0);
 
-    let relative_only = TrustRiskInputs {
-        absolute: vec![],
-        relative: vec![spam_input("sig-rel", now())],
-    };
-    let view = build_trust_read(
-        "pubkey-1",
-        &relative_only,
-        now(),
-        &TrustParams::default(),
-        &UniformRelationWeight::default(),
+    let relative_only = view(&totals(0, 700.0), &[spam_input("sig-rel", now())]);
+    assert_eq!(relative_only.absolute, 0.0);
+    assert!(relative_only.relative < 0.0);
+    assert_eq!(
+        relative_only.basis[0].component,
+        TrustComponentKind::Relative
     );
-    assert_eq!(view.absolute, 0.0);
-    assert!(view.relative < 0.0);
 }
 
 #[test]
 fn trust_reflects_risk_signals_split_by_category() {
-    // category → 成分の振り分け規則（#406 の供給契約と同じ規則を scoring 側でも公開する）。
+    // category → 成分の振り分け規則（集計の trigger と同じ規則を scoring 側でも公開する）。
     for category in [
         SafetyCategory::Csam,
         SafetyCategory::Cse,
@@ -233,153 +237,46 @@ fn trust_reflects_risk_signals_split_by_category() {
     }
 }
 
-// --- relation 重み付け（§2.3: 絶対は非依存、相対は依存） ---
-
-#[test]
-fn trust_absolute_indicators_not_relation_weighted() {
-    let inputs = TrustRiskInputs {
-        absolute: vec![csam_input("sig-abs", now())],
-        relative: vec![],
-    };
-    let params = TrustParams::default();
-    // relation 重みを 0 にしても絶対成分は 1 ミリも動かない（report-bomb 不動・relation 非依存）。
-    let unweighted = build_trust_read("pk", &inputs, now(), &params, &UniformRelationWeight(0.0));
-    let weighted = build_trust_read("pk", &inputs, now(), &params, &UniformRelationWeight(1.0));
-    assert_eq!(unweighted.absolute, weighted.absolute);
-    assert_eq!(unweighted.trust, weighted.trust);
-    assert_eq!(unweighted.basis[0].relation_weight, 1.0);
-}
-
-#[test]
-fn trust_relative_indicators_are_relation_weighted() {
-    let inputs = TrustRiskInputs {
-        absolute: vec![],
-        relative: vec![spam_input("sig-rel", now())],
-    };
-    let params = TrustParams::default();
-    let full = build_trust_read("pk", &inputs, now(), &params, &UniformRelationWeight(1.0));
-    let half = build_trust_read("pk", &inputs, now(), &params, &UniformRelationWeight(0.5));
-    let none = build_trust_read("pk", &inputs, now(), &params, &UniformRelationWeight(0.0));
-    // relation 重みが相対成分の実効寄与を変える（viewer / cluster 相対）。
-    assert!(full.relative < half.relative);
-    assert_eq!(none.relative, 0.0);
-    assert_eq!(half.basis[0].relation_weight, 0.5);
-}
-
-#[test]
-fn trust_resists_mass_report_bombing() {
-    // 特定 cluster からの大量シグナルは raw count として効かず、relation 重みで相対化される。
-    // （通報そのもの（cn_admin.reports）は reporter identity を持たず trust の入力に一切
-    //  ならない — raw count が構造的に入り得ないことが第一の防壁。本テストは第二の防壁 =
-    //  相対成分の relation 重み付けを固定する。）
-    let bombed: Vec<TrustRiskInput> = (0..100)
-        .map(|i| spam_input(&format!("bomb-{i}"), now()))
-        .collect();
-    let inputs = TrustRiskInputs {
-        absolute: vec![],
-        relative: bombed,
-    };
-    let params = TrustParams::default();
-
-    // 遠い cluster（重み 0.001）からの 100 件は、近い cluster の 1 件より小さい寄与に留まる。
-    let bombed_far = build_trust_read("pk", &inputs, now(), &params, &UniformRelationWeight(0.001));
-    let single_near = build_trust_read(
-        "pk",
-        &TrustRiskInputs {
-            absolute: vec![],
-            relative: vec![spam_input("single", now())],
-        },
-        now(),
-        &params,
-        &UniformRelationWeight(1.0),
-    );
-    assert!(
-        bombed_far.relative > single_near.relative,
-        "100 件 × 重み 0.001 ({}) は 1 件 × 重み 1.0 ({}) より寄与が小さい（マイナス幅が浅い）こと",
-        bombed_far.relative,
-        single_near.relative
-    );
-
-    // そして絶対成分は件数に関わらず不動。
-    assert_eq!(bombed_far.absolute, 0.0);
-}
-
 // --- decay（§6.2: 絶対は減衰しない / 相対は半減期） ---
 
 #[test]
 fn trust_absolute_component_does_not_decay() {
     let old = now() - Duration::days(365);
-    let fresh_view = build_trust_read(
-        "pk",
-        &TrustRiskInputs {
-            absolute: vec![csam_input("sig", now())],
-            relative: vec![],
-        },
-        now(),
-        &TrustParams::default(),
-        &UniformRelationWeight::default(),
-    );
-    let old_view = build_trust_read(
-        "pk",
-        &TrustRiskInputs {
-            absolute: vec![csam_input("sig", old)],
-            relative: vec![],
-        },
-        now(),
-        &TrustParams::default(),
-        &UniformRelationWeight::default(),
-    );
+    let mut aged = totals(1_000, 0.0);
+    aged.relative_at = old;
     // known-hash 由来の絶対成分は 1 年経っても同じ寄与（時間で薄めない）。
-    assert_eq!(fresh_view.absolute, old_view.absolute);
-    assert_eq!(old_view.basis[0].decay_factor, 1.0);
+    let read = build_trust_read(
+        "pk",
+        &aged,
+        &[csam_input("sig", old)],
+        now(),
+        &TrustParams::default(),
+    );
+    assert_eq!(read.absolute, view(&totals(1_000, 0.0), &[]).absolute);
+    assert_eq!(read.basis[0].decay_factor, 1.0);
+    assert_eq!(read.basis[0].contribution, read.basis[0].raw_contribution);
 }
 
 #[test]
 fn trust_relative_component_decays_over_time() {
-    let params = TrustParams::default(); // 半減期 30 日
-    let fresh = build_trust_read(
-        "pk",
-        &TrustRiskInputs {
-            absolute: vec![],
-            relative: vec![spam_input("sig", now())],
-        },
-        now(),
-        &params,
-        &UniformRelationWeight::default(),
-    );
-    let aged = build_trust_read(
-        "pk",
-        &TrustRiskInputs {
-            absolute: vec![],
-            relative: vec![spam_input("sig", now() - Duration::days(30))],
-        },
-        now(),
-        &params,
-        &UniformRelationWeight::default(),
-    );
-    // 1 半減期でちょうど寄与が半分になる。
+    // 1 半減期（30 日）前を基準時刻にした和は、今の時刻でちょうど半分の寄与になる。
+    let fresh = view(&totals(0, 700.0), &[]);
+    let mut month_old = totals(0, 700.0);
+    month_old.relative_at = now() - Duration::days(30);
+    let aged = view(&month_old, &[spam_input("sig", now() - Duration::days(30))]);
     let ratio = aged.relative / fresh.relative;
     assert!(
         (ratio - 0.5).abs() < 1e-9,
         "30 日（1 半減期）で寄与が半分になること: ratio={ratio}"
     );
-    // 半減期は operator 可変: 短くすればより速く減衰する。
-    let short = TrustParams {
-        relative_half_life_days: 7.0,
-        ..TrustParams::default()
+    assert!((aged.basis[0].decay_factor - 0.5).abs() < 1e-9);
+    // 半減期は operator 可変: 短い半減期で作った集計はより速く減衰する。
+    let short = TrustTotals {
+        half_life_days: 7.0,
+        ..month_old.clone()
     };
-    let aged_short = build_trust_read(
-        "pk",
-        &TrustRiskInputs {
-            absolute: vec![],
-            relative: vec![spam_input("sig", now() - Duration::days(30))],
-        },
-        now(),
-        &short,
-        &UniformRelationWeight::default(),
-    );
     assert!(
-        aged_short.relative > aged.relative,
+        view(&short, &[]).relative > aged.relative,
         "短半減期はより浅い寄与（減衰が速い）"
     );
 }
@@ -391,18 +288,9 @@ fn trust_appeal_pending_holds_contribution() {
     // pending（Disputed）は寄与据え置き: 申し立て中に勝手に緩めない。
     let mut disputed = csam_input("sig-disputed", now());
     disputed.appeal_status = AppealStatus::Disputed;
-    let view = build_trust_read(
-        "pk",
-        &TrustRiskInputs {
-            absolute: vec![disputed],
-            relative: vec![],
-        },
-        now(),
-        &TrustParams::default(),
-        &UniformRelationWeight::default(),
-    );
-    assert!(view.absolute < 0.0, "pending は寄与したまま");
-    assert_eq!(view.basis[0].appeal_status, AppealStatus::Disputed);
+    let read = view(&totals(1_000, 0.0), &[disputed]);
+    assert_eq!(read.basis[0].appeal_status, AppealStatus::Disputed);
+    assert!(read.basis[0].contribution < 0.0, "pending は寄与したまま");
 }
 
 #[test]
@@ -410,41 +298,28 @@ fn trust_appeal_accepted_excludes_contribution() {
     // accepted（Cleared）は説明用根拠に残すが、評価値へは寄与させない。
     let mut cleared = csam_input("sig-cleared", now());
     cleared.appeal_status = AppealStatus::Cleared;
-    let view = build_trust_read(
-        "pk",
-        &TrustRiskInputs {
-            absolute: vec![cleared],
-            relative: vec![],
-        },
-        now(),
-        &TrustParams::default(),
-        &UniformRelationWeight::default(),
-    );
-    assert_eq!(view.absolute, 0.0);
-    assert_eq!(view.basis.len(), 1);
-    assert_eq!(view.basis[0].appeal_status, AppealStatus::Cleared);
-    assert_eq!(view.basis[0].contribution, 0.0);
+    let read = view(&totals(0, 0.0), &[cleared]);
+    assert_eq!(read.absolute, 0.0);
+    assert_eq!(read.basis.len(), 1);
+    assert_eq!(read.basis[0].appeal_status, AppealStatus::Cleared);
+    assert_eq!(read.basis[0].contribution, 0.0);
 }
 
 // --- 根拠つき read（trust-semantics §4） ---
 
 #[test]
 fn trust_read_is_explainable_with_basis() {
-    let inputs = TrustRiskInputs {
-        absolute: vec![csam_input("sig-abs", now())],
-        relative: vec![spam_input("sig-rel", now() - Duration::days(30))],
-    };
-    let view = build_trust_read(
-        "pubkey-1",
-        &inputs,
-        now(),
-        &TrustParams::default(),
-        &UniformRelationWeight(0.8),
+    let read = view(
+        &totals(1_000, 350.0),
+        &[
+            csam_input("sig-abs", now()),
+            spam_input("sig-rel", now() - Duration::days(30)),
+        ],
     );
-    assert_eq!(view.target_id, "pubkey-1");
-    assert_eq!(view.basis.len(), 2);
+    assert_eq!(read.target_id, "pubkey-1");
+    assert_eq!(read.basis.len(), 2);
 
-    let abs = view
+    let abs = read
         .basis
         .iter()
         .find(|e| e.signal_id == "sig-abs")
@@ -460,21 +335,21 @@ fn trust_read_is_explainable_with_basis() {
     assert_eq!(abs.decay_factor, 1.0);
     assert_eq!(abs.relation_weight, 1.0);
 
-    let rel = view
+    let rel = read
         .basis
         .iter()
         .find(|e| e.signal_id == "sig-rel")
         .unwrap();
-    // 実効寄与の内訳（decay / relation 重み）まで説明できる。
+    // 実効寄与の内訳（decay）まで説明できる。閲覧者別の relation は T に入れない（§8 の R）。
     assert!((rel.decay_factor - 0.5).abs() < 1e-9);
-    assert_eq!(rel.relation_weight, 0.8);
-    assert!((rel.contribution - rel.raw_contribution * rel.decay_factor * 0.8).abs() < 1e-12);
+    assert_eq!(rel.relation_weight, 1.0);
+    assert!((rel.contribution - rel.raw_contribution * rel.decay_factor).abs() < 1e-12);
     assert_eq!(rel.operator_adjusted_at, None, "未訂正の判定は印を持たない");
 
     // 合成値と成分・適用重みが view から再構成できる（説明可能性）。
-    let recomposed = compose_trust(&TrustParams::default(), view.absolute, view.relative);
-    assert_eq!(view.trust, recomposed.trust);
-    assert_eq!(view.w_abs_applied, recomposed.w_abs_applied);
+    let recomposed = compose_trust(&TrustParams::default(), read.absolute, read.relative);
+    assert_eq!(read.trust, recomposed.trust);
+    assert_eq!(read.w_abs_applied, recomposed.w_abs_applied);
 }
 
 /// #1058 AC-3: operator が値を確定した判定は、根拠一覧で確定時刻（RFC3339）として判別できる。
@@ -485,18 +360,8 @@ fn trust_read_basis_marks_operator_adjusted_signals() {
     let mut adjusted = spam_input("sig-adjusted", now());
     adjusted.operator_adjusted_at = Some(adjusted_at);
     let plain = spam_input("sig-plain", now());
-    let inputs = TrustRiskInputs {
-        absolute: Vec::new(),
-        relative: vec![adjusted, plain],
-    };
-    let view = build_trust_read(
-        "pubkey-1",
-        &inputs,
-        now(),
-        &TrustParams::default(),
-        &UniformRelationWeight(1.0),
-    );
-    let entry = |id: &str| view.basis.iter().find(|e| e.signal_id == id).unwrap();
+    let read = view(&totals(0, 1_400.0), &[adjusted, plain]);
+    let entry = |id: &str| read.basis.iter().find(|e| e.signal_id == id).unwrap();
     assert_eq!(
         entry("sig-adjusted").operator_adjusted_at.as_deref(),
         Some("2026-09-16T01:02:03Z")
@@ -508,60 +373,33 @@ fn trust_read_basis_marks_operator_adjusted_signals() {
     );
 }
 
-// --- scenario: CSAM 系 risk は relation / 通報数で揺れない ---
+// --- scenario: CSAM 系 risk は相対成分の量で揺れない ---
 
 #[test]
 fn csam_absolute_component_is_immune_to_relation_and_mass_signals() {
-    let params = TrustParams::default();
-    let base = TrustRiskInputs {
-        absolute: vec![csam_input("sig-csam", now() - Duration::days(180))],
-        relative: vec![],
-    };
-    let view_alone = build_trust_read("pk", &base, now(), &params, &UniformRelationWeight(0.0));
-
-    // 大量の相対シグナルを足しても、relation 重みを変えても、絶対成分は同じ。
-    let mut with_noise = base.clone();
-    with_noise.relative = (0..50)
-        .map(|i| spam_input(&format!("noise-{i}"), now()))
-        .collect();
-    let view_noisy = build_trust_read(
-        "pk",
-        &with_noise,
-        now(),
-        &params,
-        &UniformRelationWeight(1.0),
-    );
-
-    assert_eq!(view_alone.absolute, view_noisy.absolute);
-    assert!(view_alone.absolute <= -1.0 + 1e-12);
+    let alone = view(&totals(1_000, 0.0), &[]);
+    // 大量の相対シグナル（spam 50 件）を足しても、絶対成分は同じ。
+    let noisy = view(&totals(1_000, 50.0 * 700.0), &[]);
+    assert_eq!(alone.absolute, noisy.absolute);
+    assert!(alone.absolute <= -1.0 + 1e-12);
     // 絶対成分マイナスなので合成でも distrust が支配的（相対が最悪でも -1 未満に落ちない）。
-    assert!(view_noisy.trust <= -0.5);
-    assert!(view_noisy.trust >= -1.0);
+    assert!(noisy.trust <= -0.5);
+    assert!(noisy.trust >= -1.0);
 }
 
 // --- ADR 0026 §7: advisory-only category（nsfw / objectionable）は寄与 0 ---
 
 #[test]
 fn general_advisory_contributes_zero_to_trust() {
-    // nsfw / objectionable は basis に残るが raw_contribution / contribution とも 0 で、
-    // relative / trust は動かない。spam は従来どおり相対成分に効く。
-    let params = TrustParams::default();
+    // nsfw / objectionable は basis に残るが raw_contribution / contribution とも 0。集計にも 0 として
+    // 入る（`cn-core` の結合試験）ので relative / trust は動かない。
     for category in [SafetyCategory::Nsfw, SafetyCategory::Objectionable] {
-        let only_advisory = TrustRiskInputs {
-            absolute: vec![],
-            relative: vec![advisory_input("sig-adv", category, now())],
-        };
-        let view = build_trust_read(
-            "pk",
-            &only_advisory,
-            now(),
-            &params,
-            &UniformRelationWeight(1.0),
-        );
-        assert_eq!(view.relative, 0.0, "{category:?}");
-        assert_eq!(view.trust, 0.0, "{category:?}");
-        assert_eq!(view.basis.len(), 1);
-        let entry = &view.basis[0];
+        let advisory = advisory_input("sig-adv", category, now());
+        assert_eq!(signal_contribution(&advisory), 0.0);
+        let read = view(&totals(0, 0.0), &[advisory]);
+        assert_eq!(read.relative, 0.0, "{category:?}");
+        assert_eq!(read.trust, 0.0, "{category:?}");
+        let entry = &read.basis[0];
         assert_eq!(entry.component, TrustComponentKind::Relative);
         assert_eq!(entry.category, category);
         assert_eq!(entry.severity, Severity::Low);
@@ -569,64 +407,39 @@ fn general_advisory_contributes_zero_to_trust() {
         assert_eq!(entry.raw_contribution, 0.0);
         assert_eq!(entry.contribution, 0.0);
         assert_eq!(entry.appeal_status, AppealStatus::None);
-        assert_eq!(signal_contribution(&only_advisory.relative[0]), 0.0);
     }
 
-    // 件数・severity・relation 重みに依らず 0（#1050 の集約後も契約は同じ）。
-    let mut many = advisory_input("sig-high", SafetyCategory::Nsfw, now());
-    many.severity = Severity::High;
-    let inputs = TrustRiskInputs {
-        absolute: vec![],
-        relative: (0..20)
-            .map(|i| {
-                let mut input = many.clone();
-                input.signal_id = format!("sig-{i}");
-                input
-            })
-            .collect(),
-    };
-    let view = build_trust_read("pk", &inputs, now(), &params, &UniformRelationWeight(1.0));
-    assert_eq!(view.relative, 0.0);
-    assert_eq!(view.basis.len(), 20);
-
-    // spam と並んでも spam の寄与だけが効く。
-    let mixed = TrustRiskInputs {
-        absolute: vec![],
-        relative: vec![
-            spam_input("sig-spam", now()),
-            advisory_input("sig-nsfw", SafetyCategory::Nsfw, now()),
-        ],
-    };
-    let spam_only = TrustRiskInputs {
-        absolute: vec![],
-        relative: vec![spam_input("sig-spam", now())],
-    };
-    let with_advisory = build_trust_read("pk", &mixed, now(), &params, &UniformRelationWeight(1.0));
-    let without = build_trust_read(
-        "pk",
-        &spam_only,
-        now(),
-        &params,
-        &UniformRelationWeight(1.0),
-    );
-    assert_eq!(with_advisory.relative, without.relative);
-    assert_eq!(with_advisory.trust, without.trust);
-    assert!(with_advisory.relative < 0.0);
+    // severity に依らず 0（#1050 の集約後も契約は同じ）。
+    let mut high = advisory_input("sig-high", SafetyCategory::Nsfw, now());
+    high.severity = Severity::High;
+    assert_eq!(signal_contribution(&high), 0.0);
 
     // Cleared になっても値は動かず、basis の状態表示だけが変わる（ADR 0026 §7.3）。
     let mut cleared = advisory_input("sig-cleared", SafetyCategory::Objectionable, now());
     cleared.appeal_status = AppealStatus::Cleared;
-    let view = build_trust_read(
-        "pk",
-        &TrustRiskInputs {
-            absolute: vec![],
-            relative: vec![cleared],
-        },
-        now(),
-        &params,
-        &UniformRelationWeight(1.0),
-    );
-    assert_eq!(view.relative, 0.0);
-    assert_eq!(view.basis[0].appeal_status, AppealStatus::Cleared);
-    assert_eq!(view.basis[0].contribution, 0.0);
+    let read = view(&totals(0, 0.0), &[cleared]);
+    assert_eq!(read.relative, 0.0);
+    assert_eq!(read.basis[0].appeal_status, AppealStatus::Cleared);
+    assert_eq!(read.basis[0].contribution, 0.0);
+}
+
+// --- §10: trust_version は集計の digest から決まる ---
+
+#[test]
+fn trust_version_follows_totals_digest() {
+    assert_eq!(TrustTotals::default().version(), "t-0000000000000000");
+    let one = TrustTotals {
+        digest: 1,
+        ..TrustTotals::default()
+    };
+    let negative = TrustTotals {
+        digest: -1,
+        ..TrustTotals::default()
+    };
+    assert_eq!(one.version(), "t-0000000000000001");
+    assert_eq!(negative.version(), "t-ffffffffffffffff");
+    // 時間減衰では変わらない（digest は signal の識別と状態だけから決まる）。
+    let mut later = one.clone();
+    later.relative_at = now() - Duration::days(10);
+    assert_eq!(later.version(), one.version());
 }

@@ -279,7 +279,7 @@ variable "cn_indexer_image" {
 variable "arcadedb_image" {
   description = "ArcadeDB container image（stable tag を使う。latest は SNAPSHOT）。"
   type        = string
-  default     = "arcadedata/arcadedb:26.8.1"
+  default     = "arcadedata/arcadedb:26.10.1"
 }
 
 variable "indexer_data_disk_gb" {

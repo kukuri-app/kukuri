@@ -15,8 +15,8 @@ use kukuri_cn_core::{
     RiskSignalMetadataEdit, TestDatabase, connect_postgres, dispute_risk_signal,
     edit_risk_signal_detection_metadata, filter_surfaceable_objects, get_risk_signal,
     initialize_database, insert_community_node_appeal, list_content_advisories_for_subjects,
-    list_risk_signals_for_target, list_trust_risk_inputs, update_risk_signal_appeal_status,
-    upsert_index_entry,
+    list_risk_signals_for_target, list_trust_basis_page, sweep_expired_trust_signals,
+    update_risk_signal_appeal_status, upsert_index_entry,
 };
 use kukuri_cn_safety::event::ModerationEventSigner;
 use kukuri_cn_safety::{
@@ -203,15 +203,10 @@ async fn count(pool: &PgPool, table: &str) -> Result<i64> {
     .await?)
 }
 
-/// 著者の trust read が消費する入力（nsfw は basis に寄与 0 で並ぶ）。
-async fn trust_inputs(pool: &PgPool) -> Result<kukuri_cn_trust::TrustRiskInputs> {
-    list_trust_risk_inputs(
-        pool,
-        RiskSignalTarget::UserPubkey,
-        "author",
-        &chrono::Utc::now().to_rfc3339(),
-    )
-    .await
+/// 著者の trust read の basis（nsfw は寄与 0 で並ぶ）。期限を過ぎた行は掃除の後に外れる（ADR 0026 §10）。
+async fn trust_basis(pool: &PgPool) -> Result<Vec<kukuri_cn_trust::TrustRiskInput>> {
+    sweep_expired_trust_signals(pool, chrono::Utc::now()).await?;
+    Ok(list_trust_basis_page(pool, "author", None).await?.inputs)
 }
 
 async fn post_signals(
@@ -256,7 +251,7 @@ async fn rescan_allow_without_labels_expires_stale_advisory_signal() -> Result<(
         assert_eq!(old[0].signal.severity, Severity::High);
         assert_eq!(lookup(&pool, post).await?.len(), 1, "precondition");
         let events_before = count(&pool, "signed_moderation_events").await?;
-        assert_eq!(trust_inputs(&pool).await?.relative.len(), 1);
+        assert_eq!(trust_basis(&pool).await?.len(), 1);
 
         scan(&new_service(&pool, Vec::new()), post).await?;
 
@@ -276,7 +271,7 @@ async fn rescan_allow_without_labels_expires_stale_advisory_signal() -> Result<(
             "expiry must not issue a signed moderation event"
         );
         assert!(
-            trust_inputs(&pool).await?.is_empty(),
+            trust_basis(&pool).await?.is_empty(),
             "the expired advisory leaves the author's trust basis"
         );
 

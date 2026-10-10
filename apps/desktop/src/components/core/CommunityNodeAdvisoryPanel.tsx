@@ -44,6 +44,8 @@ type AdvisoryState = {
   trust: ReadState<TrustUserReadResponse>;
   relation: ReadState<RelationReadResponse>;
   neighbors: ReadState<RelationNeighborsResponse>;
+  /// basis の続きの読み込み(#1702)。読めた続きは `trust` の basis へ追記する。
+  more: ReadState<null>;
 };
 
 type AppealSelection = {
@@ -56,6 +58,7 @@ const IDLE_ADVISORY_STATE: AdvisoryState = {
   trust: IDLE_STATE,
   relation: IDLE_STATE,
   neighbors: IDLE_STATE,
+  more: IDLE_STATE,
 };
 
 function advisoryContextKey(targetPubkey: string, baseUrl: string): string {
@@ -141,7 +144,8 @@ export function CommunityNodeAdvisoryPanel({
     appealSelection.context.generation === visibleAdvisoryState.context?.generation
       ? appealSelection
       : null;
-  const { trust, relation, neighbors } = visibleAdvisoryState;
+  const { trust, relation, neighbors, more } = visibleAdvisoryState;
+  const basisNextCursor = trust.status === 'ready' ? trust.value.basis_next_cursor : null;
   const appealBasis = activeAppealSelection?.basis ?? null;
 
   const invalidateAdvisory = useCallback(() => {
@@ -221,6 +225,7 @@ export function CommunityNodeAdvisoryPanel({
         trust: LOADING_STATE,
         relation: LOADING_STATE,
         neighbors: LOADING_STATE,
+        more: IDLE_STATE,
       });
     }
     const request = { base_url: context.baseUrl, target_pubkey: context.targetPubkey };
@@ -245,6 +250,39 @@ export function CommunityNodeAdvisoryPanel({
       trust: resultState(trustResult),
       relation: resultState(relationResult),
       neighbors: resultState(neighborsResult),
+      more: IDLE_STATE,
+    });
+  }
+
+  async function loadMoreBasis(cursor: string) {
+    const context = visibleAdvisoryState.context;
+    if (!context) return;
+    setAdvisoryState((state) => (state.context === context ? { ...state, more: LOADING_STATE } : state));
+    const [result] = await Promise.allSettled([
+      api.readCommunityNodeTrustUser({
+        base_url: context.baseUrl,
+        target_pubkey: context.targetPubkey,
+        cursor,
+      }),
+    ]);
+    // 読込み中に取得し直す・ノードを切り替えた場合は捨てる。信頼度と理由は最初のページのまま、basis だけを追記する。
+    setAdvisoryState((state) => {
+      if (state.context !== context || state.trust.status !== 'ready') return state;
+      const page = resultState(result);
+      if (page.status !== 'ready') return { ...state, more: page };
+      const { value } = state.trust;
+      return {
+        ...state,
+        trust: {
+          ...state.trust,
+          value: {
+            ...value,
+            basis: [...value.basis, ...page.value.basis],
+            basis_next_cursor: page.value.basis_next_cursor,
+          },
+        },
+        more: IDLE_STATE,
+      };
     });
   }
 
@@ -425,6 +463,19 @@ export function CommunityNodeAdvisoryPanel({
                   </div>
                 </details>
               ))}
+              {basisNextCursor ? (
+                <Button
+                  type='button'
+                  variant='secondary'
+                  disabled={more.status === 'loading'}
+                  onClick={() => void loadMoreBasis(basisNextCursor)}
+                >
+                  {more.status === 'loading'
+                    ? t('profile:communityNodeAdvisory.trust.loadingMore')
+                    : t('profile:communityNodeAdvisory.trust.showMore')}
+                </Button>
+              ) : null}
+              {more.status === 'unavailable' ? <Notice>{unavailableCopy(more)}</Notice> : null}
             </div>
           )}
         </section>

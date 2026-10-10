@@ -285,7 +285,6 @@ test('reply banner keeps the target summary and a compact clear icon action', ()
           state: 'ready',
           metaMime: null,
           metaBytesLabel: null,
-          imagePreviewSrc: null,
           videoPosterPreviewSrc: null,
           videoPlaybackSrc: null,
           videoUnsupportedOnClient: false,

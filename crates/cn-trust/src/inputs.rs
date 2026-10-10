@@ -1,10 +1,9 @@
 //! trust read への入力型（#406 の供給契約が生成し、本 crate の scoring が消費する）。
 //!
-//! 型はここ（pure domain）に置き、永続化 risk signal からの組み立て
-//! （`trust_risk_inputs_from` / `list_trust_risk_inputs`）は `cn-core` が担う。
+//! 型はここ（pure domain）に置き、永続化 risk signal からの組み立て（`trust_risk_input`）と
+//! 対象ごとの集計・basis のページの読取りは `cn-core` が担う。
 //! ADR 0026 §2.7 に従い、signal の category で trust の **絶対成分**（CSAM 等 critical safety。
-//! relation 非依存・report-bomb 不動）と **相対成分**（nsfw / spam 等。relation 重み付け・
-//! viewer 相対）へ振り分ける。
+//! relation 非依存・report-bomb 不動）と **相対成分**（spam 等）へ振り分ける。
 //!
 //! 断定ラベルにしない（ADR 0026 §2.5 / trust-semantics）: 入力は必ず basis / confidence /
 //! visibility / expiry / appeal を同伴し、read surface が説明可能性を落とせない形にする。
@@ -57,22 +56,6 @@ pub struct TrustRiskInput {
     pub persisted_at: DateTime<Utc>,
     /// operator が値を確定した時刻（#1058）。`None` は scanner 由来の未訂正判定。
     pub operator_adjusted_at: Option<DateTime<Utc>>,
-}
-
-/// 対象 1 つ分の trust 入力（絶対 / 相対に振り分け済み）。
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct TrustRiskInputs {
-    /// 絶対成分への入力（critical safety）。
-    pub absolute: Vec<TrustRiskInput>,
-    /// 相対成分への入力（relation 重み付けの対象）。
-    pub relative: Vec<TrustRiskInput>,
-}
-
-impl TrustRiskInputs {
-    /// 入力が 1 件も無いか。
-    pub fn is_empty(&self) -> bool {
-        self.absolute.is_empty() && self.relative.is_empty()
-    }
 }
 
 /// 観測者つき node-local 観測の seam（ADR 0026 §2.3 相対成分の将来入力）。

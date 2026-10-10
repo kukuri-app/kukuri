@@ -8,11 +8,9 @@ use kukuri_cn_core::{
 use sqlx::PgPool;
 
 use crate::LegalHoldAction;
-use crate::commands::retention::retention_policy;
 
 pub(super) async fn run(pool: &PgPool, action: LegalHoldAction) -> Result<()> {
     initialize_database(pool).await?;
-    let retention = retention_policy()?;
     match action {
         LegalHoldAction::Start {
             target_kind,
@@ -30,14 +28,13 @@ pub(super) async fn run(pool: &PgPool, action: LegalHoldAction) -> Result<()> {
                 &basis,
                 &release_condition,
                 &actor,
-                &retention,
                 chrono::Utc::now(),
             )
             .await?;
             println!("legal hold started: {}", hold.id);
         }
         LegalHoldAction::Release { id, actor } => {
-            release_legal_hold(pool, &id, &actor, &retention, chrono::Utc::now()).await?;
+            release_legal_hold(pool, &id, &actor, chrono::Utc::now()).await?;
             println!("legal hold released: {id}");
         }
         LegalHoldAction::Export { id, actor, output } => {
@@ -48,9 +45,7 @@ pub(super) async fn run(pool: &PgPool, action: LegalHoldAction) -> Result<()> {
                 &std::env::var("COMMUNITY_NODE_LEGAL_DATA_KEY")
                     .context("COMMUNITY_NODE_LEGAL_DATA_KEY is required")?,
             )?;
-            let export =
-                export_legal_hold(pool, &cipher, &id, &actor, &retention, chrono::Utc::now())
-                    .await?;
+            let export = export_legal_hold(pool, &cipher, &id, &actor, chrono::Utc::now()).await?;
             let bytes = serde_json::to_vec_pretty(&export)?;
             let mut file = OpenOptions::new()
                 .write(true)
