@@ -122,6 +122,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
   - Web の adapter は `crates/web-runtime/src/lifecycle.rs`。`start` で次の event を登録し、`shutdown` で外す。止めた後の event は反映しない。
     - 中断: window の `pagehide`・`offline`、document の `freeze`
     - 復帰: window の `online`・`pageshow`、document の `resume`、可視になった `visibilitychange`
+  - Android（#1196 AC-1）: Tauri の `WindowEvent::Suspended/Resumed`（Activity の onPause/onResume）を `src-tauri/src/android_lifecycle.rs` の単一 worker に渡す。最新1状態だけを保持し、同意・初期化・復元・切替の operation guard を待ってから Ready の現在 host に適用する。callback ごとの task・独自の復旧・全 topic の再購読を追加せず、Exit で worker を破棄する。process kill 後は既存の startup gate と永続状態の起動経路を使う。
   - WebRTC の session の開閉と復帰後の経路は、W10 の試験（`Signaling::reset`・`resume`）と、W8（#1220）の実ブラウザの復帰の E2E で照合する（ADR 0060 §4 の W8 AC-4 の実装）。
 
 ### 6. データの喪失と復旧
