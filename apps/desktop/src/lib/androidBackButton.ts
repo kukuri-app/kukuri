@@ -35,4 +35,7 @@ export function handleBackButton(canGoBack: boolean) {
   }
 }
 
-export const listenBackButton = () => onBackButtonPress(({ canGoBack }) => handleBackButton(canGoBack));
+export async function listenBackButton() {
+  const listener = await onBackButtonPress(({ canGoBack }) => handleBackButton(canGoBack));
+  window.addEventListener('pagehide', () => { void listener.unregister(); }, { once: true });
+}

@@ -28,3 +28,5 @@ S1〜S12の操作・期待結果の正本は #1198 の固定表。今回候補�
 ## targeted test
 
 現行mainを含むcandidateで shellChrome19test、Android8test（既存feature gateと戻る/履歴/背景化、focusの無いcomposer追加）を合わせ27test PASS。追加composer contractは修正前831e6468の同helperでFAIL（textareaが残る）→既存f382の修正後PASS。実機/OS試験の成功とは区別する。
+
+- WebView document再読込の登録回収: lockedTauriのPlugin.ktはeventごとにlistenerを追加し、removeListenerで解除する。新しい戻るlistenerの所有をdocumentに揃え、pagehideでSDKunregisterを1回呼ぶ。2documentの登録/終了のcontractは修正前に残数1でFAIL、修正後は各終了0でPASS（1test）。副作用や戻る操作は増やさない。既存shell27testは同じ戻るhandlerの証拠として再利用する。
