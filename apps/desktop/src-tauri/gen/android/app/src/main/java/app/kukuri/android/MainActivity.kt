@@ -16,6 +16,11 @@ class MainActivity : TauriActivity() {
     this.webView = webView
   }
 
+  override fun onNewIntent(intent: Intent) {
+    setIntent(intent)
+    super.onNewIntent(intent)
+  }
+
   // Wry の既存 picker と File callback はそのまま使う。本文を JavaBridge へ渡さず、
   // 選択結果の URI だけを File が届く前に接続する（#1197 AC-2b）。
   @Suppress("DEPRECATION")

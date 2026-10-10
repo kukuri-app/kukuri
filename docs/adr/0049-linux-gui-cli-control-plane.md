@@ -160,6 +160,12 @@ DebにCLIは同梱しない。Deb payloadはfirst-party ELF、desktop／iconとn
 - 照会結果はprocess内のTransient／Local Only状態。新しい永続保存・peer送信は追加せず、既存診断への状態表示だけを許す。サービス情報の生の値やD-Busエラー本文を診断へ追加しない。
 - Linuxの通知表示には既存の本文保護・失敗通知を維持し、`silent` は標準の `suppress-sound` hintへ反映する。実表示・音・クリック動作は実desktopで別に確認する。
 
+## Android OS通知
+
+- Android（#1197 AC-4b）は既存inboxのsequence dispatch・quiet/read/self/種類/成人preview gateを再利用し、NotificationManagerへ渡す。停止中pushは含めない。SDK33以降はPOST_NOTIFICATIONSの実許可を明示要求し、未要求/拒否/取消とアプリ・channelのOS設定を照合する。未許可で通知本文をOSへ渡さない。OS表示・権限応答は既存Tauri mobileの非同期呼出しを使い、UI threadやruntime workerを待機で止めない。
+- Android通知tapは通知IDだけを既存 `kukuri://notification/?id=...` とimmutable PendingIntentで同じActivityへ渡す。cold/warmともReady後に現在accountのID1行を照合して既存の対象操作へ進み、private所属と本文の保護を再利用する。URIへ本文・秘密・account selectorを含めず、自動account切替をしない。
+- Activity再生成中の `onNewIntent` は、既存pluginへ渡す前に最新IntentをActivityへ保持する。pluginの初期化より前に届いたcold通知も、その後の既存deep-link読取りで受け取る。別parserや独自の保留queueを作らない。
+
 ## Windows OS通知からの復帰
 
 - #889の2026-09-06追加承認により、NSIS版の通知はWindowsのprotocol activationを使い、既存の `kukuri:` とsingle-instance／deep-link経路へ戻す。バナーと通知センターで同じ通知対象を開き、メモリ内のToast Activated callbackだけに依存しない。
