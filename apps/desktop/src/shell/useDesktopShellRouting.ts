@@ -52,6 +52,7 @@ import {
   type ColumnKind,
   type ColumnScope,
 } from '@/shell/slices/workspace';
+import { isBackButtonEscape } from '@/lib/androidBackButton';
 import { EXTENDED_FEATURES_AVAILABLE } from '@/lib/platform';
 
 // Issue #765: window レベルの Escape cascade が Composer などの入力を巻き込まない
@@ -889,8 +890,9 @@ export function useDesktopShellRouting({
       if (event.defaultPrevented) {
         return;
       }
-      // Composer の textarea など editable 要素での Escape は selection を閉じない。
-      if (isEditableTarget(event.target)) {
+      // Composer の textarea など editable 要素での Escape は selection を閉じない。Android の戻るが送る
+      // Escape では、履歴に積んだ設定・スレッド・著者を閉じず、履歴を戻って閉じる（#1198）。
+      if (isEditableTarget(event.target) || isBackButtonEscape(event)) {
         return;
       }
       if (shellChromeState.settingsOpen) {
