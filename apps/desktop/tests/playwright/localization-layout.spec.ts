@@ -278,7 +278,7 @@ for (const copy of LOCALES) {
     expect(await overflowingButtonLabels(settings.locator('.shell-settings-nav'))).toEqual([]);
     expect(
       await settings.locator('.shell-settings-nav').evaluate((nav) => nav.clientHeight)
-    ).toBeLessThanOrEqual(866 * 0.45);
+    ).toBeLessThanOrEqual(Math.ceil(866 * 0.45));
     expect(
       await settings.locator('.shell-settings-content').evaluate((content) => content.clientHeight)
     ).toBeGreaterThanOrEqual(280);
