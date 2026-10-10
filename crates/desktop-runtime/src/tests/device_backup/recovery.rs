@@ -650,6 +650,14 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
         .join("stale-keyring-replace.kukuri-backup");
     create_restore_fixture(app_data.path(), &db_path, &archive_path);
 
+    crate::identity::delete_optional_secret(
+        &db_path,
+        IdentityStorageMode::FileOnly,
+        GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
+        GOSSIP_SUBSCRIPTION_STATE_KEY,
+    )
+    .await
+    .expect("original account has no gossip override");
     save_single_node_config(&db_path, existing_node).await;
     let keyring = FakeDeviceBackupKeyring::default();
     for (purpose, key, value) in [
@@ -657,11 +665,6 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
             PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
             PRIVATE_CHANNEL_CAPABILITIES_KEY,
             "existing-private-capabilities",
-        ),
-        (
-            GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
-            GOSSIP_SUBSCRIPTION_STATE_KEY,
-            "existing-gossip-state",
         ),
         (
             COMMUNITY_NODE_INVITE_CODE_PURPOSE,
@@ -748,72 +751,65 @@ async fn replacement_restore_scrubs_stale_keyring_union_and_preserves_rollback_v
     .expect("install replacement without stale keyring shadow");
     let restored_db = installed.db_path();
 
-    assert_eq!(
-        load_fake_keyring_secret(
-            &restored_db,
-            IdentityStorageMode::Auto,
-            COMMUNITY_NODE_TOKEN_PURPOSE,
-            restored_node,
-            &keyring,
-        )
-        .await,
-        None
-    );
-    assert_eq!(
-        load_fake_keyring_secret(
-            &restored_db,
-            IdentityStorageMode::Auto,
-            COMMUNITY_NODE_CONSENT_PURPOSE,
-            restored_node,
-            &keyring,
-        )
-        .await,
-        None
-    );
-    assert_eq!(
-        load_fake_keyring_secret(
-            &restored_db,
-            IdentityStorageMode::Auto,
-            COMMUNITY_NODE_TOKEN_PURPOSE,
-            existing_node,
-            &keyring,
-        )
-        .await,
-        None
-    );
-    assert_eq!(
-        load_fake_keyring_secret(
-            &restored_db,
-            IdentityStorageMode::Auto,
+    for (purpose, key, expected) in [
+        (COMMUNITY_NODE_TOKEN_PURPOSE, restored_node, None),
+        (COMMUNITY_NODE_CONSENT_PURPOSE, restored_node, None),
+        (COMMUNITY_NODE_TOKEN_PURPOSE, existing_node, None),
+        (
             COMMUNITY_NODE_INVITE_CODE_PURPOSE,
             restored_node,
-            &keyring,
-        )
-        .await,
-        Some("restored-invite".to_string())
-    );
-    assert_eq!(
-        load_fake_keyring_secret(
-            &restored_db,
-            IdentityStorageMode::Auto,
+            Some("restored-invite"),
+        ),
+        (
             PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
             PRIVATE_CHANNEL_CAPABILITIES_KEY,
-            &keyring,
-        )
-        .await,
-        Some("restored-private-capabilities".to_string())
-    );
-    assert_eq!(
-        load_fake_keyring_secret(
-            &restored_db,
-            IdentityStorageMode::Auto,
+            Some("restored-private-capabilities"),
+        ),
+        (
             GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
             GOSSIP_SUBSCRIPTION_STATE_KEY,
-            &keyring,
-        )
-        .await,
-        Some("restored-gossip-state".to_string())
-    );
+            Some("restored-gossip-state"),
+        ),
+    ] {
+        assert_eq!(
+            load_fake_keyring_secret(
+                &restored_db,
+                IdentityStorageMode::KeyringOnly,
+                purpose,
+                key,
+                &keyring
+            )
+            .await,
+            expected.map(str::to_string),
+        );
+    }
+    // activation 前に値を keyring へ移した後でも、rollback は元の設定と「未保存」を戻す。
+    crate::backup::rollback_pending_device_restore_with_storage(app_data.path(), &keyring)
+        .expect("rollback activation");
+    for (purpose, key, expected) in [
+        (
+            PRIVATE_CHANNEL_CAPABILITIES_PURPOSE,
+            PRIVATE_CHANNEL_CAPABILITIES_KEY,
+            Some("existing-private-capabilities"),
+        ),
+        (
+            GOSSIP_SUBSCRIPTION_STATE_PURPOSE,
+            GOSSIP_SUBSCRIPTION_STATE_KEY,
+            None,
+        ),
+    ] {
+        assert_eq!(
+            load_fake_keyring_secret(
+                &db_path,
+                IdentityStorageMode::KeyringOnly,
+                purpose,
+                key,
+                &keyring
+            )
+            .await,
+            expected.map(str::to_string),
+        );
+    }
 }
 
 #[tokio::test]
