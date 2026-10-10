@@ -141,6 +141,14 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         ),
         ("create_post", size1(DesktopRuntime::create_post)),
         (
+            "create_post_from_files",
+            size2(DesktopRuntime::create_post_from_files),
+        ),
+        (
+            "create_post_with_attachment_sources",
+            size2(DesktopRuntime::create_post_with_attachment_sources),
+        ),
+        (
             "create_private_channel",
             size1(DesktopRuntime::create_private_channel),
         ),
