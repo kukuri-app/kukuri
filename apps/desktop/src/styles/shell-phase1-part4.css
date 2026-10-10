@@ -255,12 +255,16 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .shell-settings-nav {
+    max-height: 45dvh;
+  }
+
   .shell-settings-nav-item {
     min-height: 3rem;
     padding: var(--space-sm);
     font-size: var(--text-body);
     line-break: strict;
-    overflow-wrap: normal;
+    overflow-wrap: anywhere;
     word-break: keep-all;
   }
 

@@ -123,6 +123,21 @@ async function wrappedButtonLabels(root: Page | Locator): Promise<string[]> {
   });
 }
 
+async function overflowingButtonLabels(root: Locator): Promise<string[]> {
+  return root.locator('button').evaluateAll((buttons) =>
+    buttons.flatMap((button) => {
+      const bounds = button.getBoundingClientRect();
+      if (!bounds.width || !bounds.height) return [];
+      const range = document.createRange();
+      range.selectNodeContents(button);
+      const text = range.getBoundingClientRect();
+      return text.left < bounds.left - 1 || text.right > bounds.right + 1
+        ? [button.textContent?.trim() ?? '']
+        : [];
+    })
+  );
+}
+
 for (const copy of LOCALES) {
   test(`${copy.locale} keeps major routes contained without wrapped controls`, async ({ page }) => {
     await seedLocale(page, copy.locale);
@@ -229,6 +244,44 @@ for (const copy of LOCALES) {
       return element.scrollTop > 0;
     });
     expect(canReachGridEnd).toBe(true);
+  });
+
+  test(`${copy.locale} keeps settings action labels inside their buttons at minimum width`, async ({
+    page,
+  }) => {
+    await seedLocale(page, copy.locale);
+    for (const [width, theme] of [[320, 'dark'], [320, 'light'], [900, 'dark']] as const) {
+      await page.addInitScript(
+        ({ key, value }) => window.localStorage.setItem(key, value),
+        { key: DESKTOP_THEME_STORAGE_KEY, value: theme }
+      );
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto('/#/timeline?topic=kukuri%3Atopic%3Ageneral&settings=community-node');
+      const settings = page.getByRole('dialog', { name: copy.settings, exact: true });
+      await expect(settings).toBeVisible();
+      const overflow = await overflowingButtonLabels(settings.locator('.shell-settings-content'));
+      expect(overflow, `${copy.locale} ${width}px ${theme} settings labels`).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+        width
+      );
+    }
+  });
+
+  test(`${copy.locale} keeps enlarged settings navigation from hiding the content`, async ({ page }) => {
+    await seedLocale(page, copy.locale);
+    await page.setViewportSize({ width: 411, height: 866 });
+    await page.goto('/#/timeline?topic=kukuri%3Atopic%3Ageneral&settings=community-node');
+    const settings = page.getByRole('dialog', { name: copy.settings, exact: true });
+    await expect(settings).toBeVisible();
+    // Match the 28px navigation text observed with Android font_scale=2.0.
+    await page.addStyleTag({ content: '.shell-settings-nav-item { font-size: 1.75rem; }' });
+    expect(await overflowingButtonLabels(settings.locator('.shell-settings-nav'))).toEqual([]);
+    expect(
+      await settings.locator('.shell-settings-nav').evaluate((nav) => nav.clientHeight)
+    ).toBeLessThanOrEqual(Math.ceil(866 * 0.45));
+    expect(
+      await settings.locator('.shell-settings-content').evaluate((content) => content.clientHeight)
+    ).toBeGreaterThanOrEqual(280);
   });
 
   test(`${copy.locale} keeps narrow settings navigation compact and content scrollable`, async ({
