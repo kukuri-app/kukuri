@@ -4044,6 +4044,7 @@ dependencies = [
  "kukuri-app-api",
  "kukuri-core",
  "kukuri-desktop-runtime",
+ "kukuri-iroh-node",
  "minisign-verify 0.3.0",
  "ndk-context",
  "notify-rust",

@@ -1,6 +1,7 @@
 #[cfg(any(target_os = "android", test))]
 mod android_lifecycle;
 mod app_update;
+mod attachment_staging;
 mod commands;
 #[cfg(target_os = "linux")]
 mod deb_update;
@@ -355,6 +356,14 @@ pub fn run() {
             app.manage(startup_state);
             #[cfg(target_os = "android")]
             android_lifecycle::start(app.handle().clone());
+            #[cfg(target_os = "android")]
+            {
+                app.manage(attachment_staging::AttachmentStaging::default());
+                if let Err(error) = app.path().app_cache_dir().map_err(anyhow::Error::from).and_then(|root|
+                    app.state::<attachment_staging::AttachmentStaging>().session(&root)) {
+                    ::tracing::warn!(%error, "attachment staging initialization deferred");
+                }
+            }
             app.manage(OsNotificationBackground::new(app.handle()));
             // #978: 開発者向けログ閲覧。buffer は init_tracing が組んだ process 全体の1つ。
             app.manage(DeveloperLogState::new(desktop_log_buffer()));

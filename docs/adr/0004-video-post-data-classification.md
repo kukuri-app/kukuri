@@ -30,6 +30,7 @@ Accepted
 - `VideoPoster` の client-side 生成に失敗した video は publish を許可しない。
 - 画像・動画の添付容量に製品上の上限を設けない（#1197、2026-10-10 ユーザー判断で現行の上限なしを維持）。
 - Android の明示投稿では OS picker の選択済み Content URI だけを既存 File に対応させ、原本の base64 を JavaBridge へ渡さない（#1197 AC-2b）。URI はローカル下書きの間だけ保持し、保存・wire・CLI の DTO に含めない。投稿時のコピーは 64 KiB の buffer と操作所有の一時 file を使い、成功・失敗で一時 file を回収する。
+- 強制終了で Drop が実行されない未完了コピーは、app cache 内の専用 namespace の process 別 directory に残る（#1196 AC-3b）。次の起動は新しい directory を所有し、旧 directory だけを既存の32件単位の削除処理で背景回収する。起動・投稿は回収完了を待たず、再度中断しても次の起動から残りを回収する。選択元の URI、保存済み blob、稼働中の directory は回収しない。
 - file から保存する原本も通常の `own_blob:<hash>` 保護参照と同じ blob 保存へ入り、既存の backup 対象・hash・manifest・role・private audience を維持する。選択や poster 生成だけでは blob を保存・公開しない。
 - poster 生成は `preload=auto` で読み込んだ frame を元の解像度・JPEG quality 0.85 で保存する。WebView の idle JPEG callback を待たず、`toDataURL` の一時的な結果を直ちに File の bytes へ戻す。表示用の canonical は引き続き object URL。生成成功・失敗・既存の5秒timeoutのいずれでも video と生成元URLを回収する。
 - `gossip` は video bytes や poster bytes を運ばず、`TopicIndexUpdated` hint のみを publish する。
