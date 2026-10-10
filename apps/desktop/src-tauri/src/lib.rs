@@ -227,7 +227,8 @@ pub fn run() {
     #[cfg(target_os = "android")]
     let builder = builder
         .plugin(tauri_plugin_fs::init())
-        .manage(android_lifecycle::AndroidLifecycle::default());
+        .manage(android_lifecycle::AndroidLifecycle::default())
+        .plugin(android_lifecycle::network_plugin());
 
     builder
         .plugin(tauri_plugin_deep_link::init())
