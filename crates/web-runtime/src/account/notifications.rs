@@ -89,6 +89,28 @@ fn dedupe(row: &NotificationRow) -> Result<[(&'static str, JsValue); 2]> {
 
 #[async_trait]
 impl NotificationStore for IndexedDbCache {
+    async fn get_notification(&self, notification_id: &str) -> Result<Option<NotificationRow>> {
+        let id = notification_id.to_owned();
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[NOTIFICATIONS, META], Mode::Read)?;
+            let value = idb::done(
+                &rows::store(&tx, NOTIFICATIONS)?
+                    .get(&text(&id))
+                    .map_err(js_error)?,
+            )
+            .await?;
+            if value.is_undefined() {
+                return Ok(None);
+            }
+            Ok(Some(effective(
+                rows::decode(&value)?,
+                seq_of(&value)?,
+                &inbox(&tx).await?,
+            )))
+        })
+        .await
+    }
+
     async fn put_notification_if_absent(&self, row: NotificationRow) -> Result<bool> {
         self.run(move |db| async move {
             let tx = Txn::begin(&db.idb, &[NOTIFICATIONS, META], Mode::Write)?;
