@@ -57,6 +57,7 @@ import type {
   MetaverseRoomEventView,
   SpatialContextV1,
   NotificationStatusView,
+  NotificationView,
   NotificationPageView,
   NotificationCursor,
   PrivateChannelControllerTake,
@@ -390,6 +391,10 @@ export const runtimeApi: DesktopApi = {
       request: { notification_id: notificationId } satisfies NotificationIdRequest,
     });
   }),
+  getNotification: command('getNotification', async (notificationId) =>
+    invokeDesktop<NotificationView | null>('get_notification', {
+      request: { notification_id: notificationId } satisfies NotificationIdRequest,
+    })),
   markAllNotificationsRead: command('markAllNotificationsRead', async () => {
     return invokeDesktop<NotificationStatusView>('mark_all_notifications_read');
   }),

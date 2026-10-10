@@ -1,6 +1,15 @@
 use super::*;
 
 impl DesktopRuntime {
+    pub async fn get_notification(
+        &self,
+        request: NotificationIdRequest,
+    ) -> Result<Option<NotificationView>> {
+        self.app_service
+            .get_notification(&request.notification_id)
+            .await
+    }
+
     pub async fn list_notifications_page(
         &self,
         request: ListNotificationsPageRequest,

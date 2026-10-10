@@ -575,6 +575,7 @@ pub const NOTIFICATION_PAGE_SIZE: usize = 20;
 #[async_trait]
 pub trait NotificationStore: Send + Sync {
     async fn put_notification_if_absent(&self, row: NotificationRow) -> Result<bool>;
+    async fn get_notification(&self, notification_id: &str) -> Result<Option<NotificationRow>>;
     async fn list_notifications_page(
         &self,
         cursor: Option<&NotificationCursor>,

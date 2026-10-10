@@ -73,6 +73,7 @@ import type {
   CommunityNodeObservationSharingStatus,
   EnableCommunityNodeObservationSharingRequest,
   NotificationStatusView,
+  NotificationView,
   NotificationPageView,
   NotificationCursor,
   PostView as WirePostView,
@@ -357,6 +358,7 @@ export interface DesktopApi {
   unblockAuthor(pubkey: string): Promise<AuthorSocialView>;
   listSocialConnections(kind: SocialConnectionKind): Promise<AuthorSocialView[]>;
   listNotificationsPage(cursor?: NotificationCursor | null, before?: boolean): Promise<NotificationPageView>;
+  getNotification(notificationId: string): Promise<NotificationView | null>;
   markNotificationRead(notificationId: string): Promise<NotificationStatusView>;
   markAllNotificationsRead(): Promise<NotificationStatusView>;
   getNotificationStatus(): Promise<NotificationStatusView>;

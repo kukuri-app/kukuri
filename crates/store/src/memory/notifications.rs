@@ -12,6 +12,14 @@ fn visible_notification(state: &MemoryNotificationRows, row: &NotificationRow) -
 
 #[async_trait]
 impl NotificationStore for MemoryStore {
+    async fn get_notification(&self, notification_id: &str) -> Result<Option<NotificationRow>> {
+        let state = self.notification_rows.read().await;
+        Ok(state
+            .rows
+            .get(notification_id)
+            .map(|row| visible_notification(&state, row)))
+    }
+
     async fn put_notification_if_absent(&self, row: NotificationRow) -> Result<bool> {
         let mut notifications = self.notification_rows.write().await;
         if notifications

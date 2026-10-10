@@ -1,4 +1,91 @@
 use super::*;
+use kukuri_store::NotificationStore;
+
+#[tokio::test]
+async fn notification_id_lookup_checks_recipient_private_access_and_preview() {
+    let (app, store, _, _) = local_app_with_memory_services();
+    let mut row = kukuri_store::NotificationRow {
+        notification_id: "target".into(),
+        recipient_pubkey: app.current_author_pubkey().as_str().into(),
+        kind: NotificationKind::Mention,
+        actor_pubkey: generate_keys().public_key_hex(),
+        source_envelope_id: None,
+        source_replica_id: None,
+        topic_id: Some("notification-access".into()),
+        channel_id: None,
+        object_id: None,
+        dm_id: None,
+        message_id: None,
+        preview_text: Some("private preview".into()),
+        content_labels: None,
+        created_at: 0,
+        received_at: 0,
+        read_at: None,
+    };
+    store.put_notification_if_absent(row.clone()).await.unwrap();
+    assert!(app.get_notification("absent").await.unwrap().is_none());
+    assert_eq!(
+        app.get_notification("target")
+            .await
+            .unwrap()
+            .unwrap()
+            .preview_text
+            .as_deref(),
+        Some("private preview")
+    );
+
+    row.notification_id = "other-account".into();
+    row.recipient_pubkey = generate_keys().public_key_hex();
+    store.put_notification_if_absent(row.clone()).await.unwrap();
+    assert!(
+        app.get_notification("other-account")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    row.notification_id = "adult".into();
+    row.recipient_pubkey = app.current_author_pubkey().as_str().into();
+    row.object_id = Some(EnvelopeId::from("adult-object"));
+    row.content_labels = Some(vec![kukuri_core::ADULT_CONTENT_LABEL.into()]);
+    store.put_notification_if_absent(row.clone()).await.unwrap();
+    assert!(
+        app.get_notification("adult")
+            .await
+            .unwrap()
+            .unwrap()
+            .preview_text
+            .is_none()
+    );
+
+    let channel = app
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new("notification-access"),
+            label: "notifications".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .unwrap();
+    row.notification_id = "private-channel".into();
+    row.channel_id = Some(channel.channel_id.clone());
+    store.put_notification_if_absent(row).await.unwrap();
+    assert!(
+        app.get_notification("private-channel")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    app.leave_private_channel("notification-access", &channel.channel_id)
+        .await
+        .unwrap();
+    assert!(
+        app.get_notification("private-channel")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
 #[tokio::test]
 async fn remote_reply_to_local_post_creates_single_unread_reply_notification() {
     let (app, store, docs_sync, blob_service) = local_app_with_memory_services();
