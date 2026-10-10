@@ -103,7 +103,7 @@ export function selectVideoManifestAttachment(
   );
 }
 
-export function base64ToBytes(base64: string): Uint8Array {
+export function base64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
   const binary = window.atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
@@ -329,6 +329,7 @@ export async function generateVideoPoster(file: File): Promise<File> {
           video_height: video.videoHeight || null,
           video_width: video.videoWidth || null,
         });
+        cleanup();
         reject(new Error('failed to generate video poster'));
       };
 
@@ -351,7 +352,7 @@ export async function generateVideoPoster(file: File): Promise<File> {
         video.remove();
       };
 
-      video.preload = 'metadata';
+      video.preload = 'auto';
       video.muted = true;
       video.playsInline = true;
       attachHiddenVideo(video);
@@ -368,7 +369,6 @@ export async function generateVideoPoster(file: File): Promise<File> {
           const width = video.videoWidth;
           const height = video.videoHeight;
           if (!width || !height) {
-            cleanup();
             fail();
             return;
           }
@@ -386,39 +386,26 @@ export async function generateVideoPoster(file: File): Promise<File> {
           canvas.height = height;
           const context = canvas.getContext('2d');
           if (!context) {
-            cleanup();
             fail();
             return;
           }
 
           context.drawImage(video, 0, 0, width, height);
-          canvas.toBlob(
-            (blob) => {
-              if (finished) {
-                return;
-              }
-              cleanup();
-              if (!blob) {
-                fail();
-                return;
-              }
-              finished = true;
-              logMediaDebug('info', 'poster generation complete', {
-                blob_size: blob.size,
-                file_name: file.name,
-                mime: file.type || null,
-                poster_file_name: posterFileName(file.name),
-                size: file.size,
-              });
-              resolve(
-                new File([blob], posterFileName(file.name), {
-                  type: 'image/jpeg',
-                })
-              );
-            },
-            'image/jpeg',
-            0.85
-          );
+          // WebView の idle JPEG callback を待たず、読み込めた frame を同じ品質で保存する。
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          const poster = new File([base64ToBytes(dataUrl.split(',')[1])], posterFileName(file.name), {
+            type: 'image/jpeg',
+          });
+          finished = true;
+          cleanup();
+          logMediaDebug('info', 'poster generation complete', {
+            blob_size: poster.size,
+            file_name: file.name,
+            mime: file.type || null,
+            poster_file_name: poster.name,
+            size: file.size,
+          });
+          resolve(poster);
         })
         .catch((error: unknown) => {
           logMediaDebug('warn', 'poster generation exception', {
@@ -427,7 +414,6 @@ export async function generateVideoPoster(file: File): Promise<File> {
             mime: file.type || null,
             size: file.size,
           });
-          cleanup();
           fail();
         });
     });
