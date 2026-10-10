@@ -482,7 +482,6 @@ export function DesktopShellPage({
   );
   const handleOpenSettingsSection = useCallback((section: SettingsSection) => {
     if (section === 'community-node') setIndexingTarget(null);
-    setSettingsOpen(true, false);
     setShellChromeState((current) => ({
       ...current,
       settingsOpen: true,
@@ -492,7 +491,7 @@ export function DesktopShellPage({
       settingsOpen: true,
       settingsSection: section,
     });
-  }, [setSettingsOpen, setShellChromeState, syncRoute]);
+  }, [setShellChromeState, syncRoute]);
   const handleOpenCommunityNodeSettings = useCallback(() => handleOpenSettingsSection('community-node'), [handleOpenSettingsSection]);
   const handleOpenConnectivitySettings = useCallback(() => handleOpenSettingsSection('connectivity'), [handleOpenSettingsSection]);
   const handleOpenTimelineSection = useCallback(() => focusPrimarySection('timeline'), [focusPrimarySection]);
