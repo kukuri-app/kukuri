@@ -5,6 +5,8 @@ import { initializeDesktopLocale } from '@/i18n/bootstrap';
 import { browserDesktopMockSeed } from '@/mocks/browserSeed';
 import { type DesktopMockApiOptions } from '@/mocks/desktopApiMock';
 import { installWindowDesktopMock } from '@/mocks/installWindowDesktopMock';
+import { listenBackButton } from '@/lib/androidBackButton';
+import { IS_ANDROID } from '@/lib/platform';
 import { IS_WEB_RUNTIME, startWebRuntime } from '@/lib/webRuntime';
 import { App } from './App';
 import '@/styles/index.css';
@@ -19,6 +21,11 @@ if (import.meta.env.VITE_KUKURI_DESKTOP_MOCK === '1') {
 
 if (import.meta.env.DEV) {
   console.info('[kukuri.desktop] frontend boot');
+}
+
+// Android の戻るは、重なった層・画面の履歴の順に閉じ、最初の画面では背景へ移す（#1198 AC-2）。
+if (IS_ANDROID) {
+  void listenBackButton();
 }
 
 // Web の build は、描画の前に WASM を読み込んで runtime の起動を始める（起動の終わりは待たず、起動の状態の画面で待つ）。
