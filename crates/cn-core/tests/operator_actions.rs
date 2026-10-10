@@ -3,9 +3,9 @@
 use anyhow::Result;
 use kukuri_cn_core::{
     AdminOperation, AdmissionMode, LegalDataCipher, NewCommunityNodeReport, OperatorReportStatus,
-    RetentionPolicy, TestDatabase, apply_operator_action, connect_postgres,
-    get_community_node_report, initialize_database, insert_community_node_report_with_retention,
-    is_topic_supported, list_operator_actions, load_admission_config,
+    TestDatabase, apply_operator_action, connect_postgres, get_community_node_report,
+    initialize_database, insert_community_node_report, is_topic_supported, list_operator_actions,
+    load_admission_config,
 };
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
@@ -29,8 +29,7 @@ async fn admin_operations_commit_state_and_append_only_audit_together() -> Resul
     initialize_database(&pool).await?;
 
     let cipher = LegalDataCipher::from_key_material("test-legal-data-key-0123456789abcdef")?;
-    let retention = RetentionPolicy::default();
-    let report = insert_community_node_report_with_retention(
+    let report = insert_community_node_report(
         &pool,
         &NewCommunityNodeReport {
             subject_kind: "post".to_string(),
@@ -42,8 +41,6 @@ async fn admin_operations_commit_state_and_append_only_audit_together() -> Resul
             appeal_risk_signal_id: None,
         },
         Some(&cipher),
-        &retention,
-        chrono::Utc::now(),
     )
     .await?;
 

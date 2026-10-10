@@ -6,7 +6,7 @@ import { AuthorAvatar } from '@/components/core/AuthorAvatar';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
 import { Notice } from '@/components/ui/notice';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverMenuContent, PopoverTrigger } from '@/components/ui/popover';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogBody, DialogFooter } from '@/components/ui/dialog';
 import { AccountKeyImportForm } from '@/components/settings/AccountKeyImportForm';
 import { AccountTransferPanel } from '@/components/settings/AccountTransferPanel';
@@ -42,7 +42,6 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
   const [pending, setPending] = useState(false);
   const [receivingHistory, setReceivingHistory] = useState(false);
   const [loading, setLoading] = useState(false);
-  const menu = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const moveFocus = useRef(false);
   const { localProfile, mediaObjectUrls, pubkey } = useDesktopShellStore(useShallow((s) => ({ localProfile: s.localProfile, mediaObjectUrls: s.mediaObjectUrls, pubkey: s.syncStatus.local_author_pubkey })));
@@ -79,17 +78,8 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
           <AuthorAvatar label={label} picture={resolveProfilePictureSrc(localProfile, mediaObjectUrls)} />
         </IconButton>
       </PopoverTrigger>
-      <PopoverContent ref={menu} role='menu' aria-label={t('accountMenu.open')} align='start' className='shell-account-menu w-[min(22rem,calc(100vw-1rem))] max-h-[min(80vh,36rem)] overflow-y-auto space-y-1'
-        onOpenAutoFocus={(event) => { event.preventDefault(); menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus(); }}
-        onCloseAutoFocus={(event) => { if (moveFocus.current) event.preventDefault(); }}
-        onKeyDown={(event) => {
-          if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-          event.preventDefault();
-          const items = [...(menu.current?.querySelectorAll<HTMLButtonElement>('button[role^="menuitem"]:not(:disabled)') ?? [])];
-          const index = items.indexOf(document.activeElement as HTMLButtonElement);
-          const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
-          items[next]?.focus();
-        }}>
+      <PopoverMenuContent aria-label={t('accountMenu.open')} align='start' className='shell-account-menu w-[min(22rem,calc(100vw-1rem))] max-h-[min(80vh,36rem)] overflow-y-auto space-y-1'
+        onCloseAutoFocus={(event) => { if (moveFocus.current) event.preventDefault(); }}>
         <Button role='menuitem' variant='ghost' className='w-full justify-start' onClick={() => { moveFocus.current = true; setOpen(false); onProfile(); }}>{t('accountMenu.profile')}</Button>
         <div role='separator' className='border-t border-[var(--border-subtle)]' />
         {loading ? <p role='status'>{t('accountMenu.loading')}</p> : null}
@@ -115,7 +105,7 @@ export function AccountMenu({ onProfile, onManage, onOpen }: {
         <Button role='menuitem' variant='ghost' className='w-full justify-start' disabled={pending} onClick={() => openDialog('import')}>{t('accountMenu.add')}</Button>
         <Button role='menuitem' variant='ghost' className='w-full justify-start' onClick={() => { moveFocus.current = true; setOpen(false); onManage(); }}>{t('accountMenu.manage')}</Button>
         <Button role='menuitem' variant='ghost' className='w-full justify-start text-destructive' disabled={pending || !active} onClick={() => openDialog('logout')}>{t('accountMenu.logout')}</Button>
-      </PopoverContent>
+      </PopoverMenuContent>
     </Popover>
     <Dialog open={dialog !== null} onOpenChange={(next) => { if (!next) closeDialog(); }}>
       <DialogContent hideClose={receivingHistory} className='w-[min(34rem,94vw)] max-h-[90vh] overflow-y-auto' onCloseAutoFocus={(event) => { event.preventDefault(); trigger.current?.focus(); }}

@@ -22,8 +22,8 @@ pub struct CustomReactionSetView {
     pub created_at: i64,
 }
 
-/// セットの取り込みの結果。`saved` は保存済みへ加えた（置き直した）リアクション、`skipped_own` は自分が作ったので
-/// 保存しなかった件数。
+/// セットの取り込みの結果。`saved` は保存済みへ加えた（置き直した）リアクション、`skipped_own` はこの端末の自作に
+/// あるので保存しなかった件数。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
@@ -130,8 +130,8 @@ impl AppService {
         .collect())
     }
 
-    /// セットを取り、各リアクションを画像＋検索名の ID のまま保存済みへ置く（自分が作ったものは除く）。取れない・形式が
-    /// 違うときは何も保存しない。読むのはセットの blob 1 件だけ。
+    /// セットを取り、各リアクションを画像＋検索名の ID のまま保存済みへ置く（この端末の自作にあるものは除く）。取れない・
+    /// 形式が違うときは何も保存しない。読むのはセットの blob 1 件と、自分の作ったものを含むときの自作の窓だけ。
     pub async fn import_custom_reaction_set(
         &self,
         set_hash: &str,
@@ -152,17 +152,28 @@ impl AppService {
                 .put_remote_blob(bytes, CUSTOM_REACTION_SET_MIME)
                 .await?;
         }
+        // 自作は同じアカウントの別の端末に届いていないことがあるので、除くのはこの端末の自作にあるものだけ。同じアカウントの別の端末で作ったものは
+        // 保存済みへ置く。自分の作ったものを含むセットのときだけ、自作の上限つきの窓を読む。
         let me = self.current_author_pubkey();
+        let own = if set
+            .items
+            .iter()
+            .any(|item| item.owner_pubkey.as_str() == me)
+        {
+            self.own_custom_reaction_ids().await?
+        } else {
+            BTreeSet::new()
+        };
         let now = Utc::now().timestamp_millis();
         let mut saved = Vec::new();
         let mut skipped_own = 0;
         for (index, item) in set.items.into_iter().enumerate() {
-            if item.owner_pubkey.as_str() == me {
+            let asset_id =
+                kukuri_core::custom_reaction_id(item.blob_hash.as_str(), &item.search_key);
+            if own.contains(&asset_id) {
                 skipped_own += 1;
                 continue;
             }
-            let asset_id =
-                kukuri_core::custom_reaction_id(item.blob_hash.as_str(), &item.search_key);
             // 新しい順の一覧でセットの並びになるよう、先頭ほど新しい時刻で置く。
             let bookmarked_at = now - index as i64;
             saved.push(

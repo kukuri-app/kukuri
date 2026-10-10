@@ -100,6 +100,15 @@ describe('usePreviewableMediaAttachments', () => {
     expect(renderAttachments({ activeTimeline: [imagePost('image-post', INDEX_IMAGE_HASH)], demandedMediaHashes: new Set() }))
       .toEqual([]);
   });
+  // #1690: 2 枚目以降の画像も需要があれば取得し、成人向けの gate は 1 枚目と同じく効く。
+  test('fetches every demanded image of a multi-image post under the same gate', () => {
+    const post = imagePost('multi-image-post', INDEX_IMAGE_HASH);
+    post.attachments = [INDEX_IMAGE_HASH, TIMELINE_IMAGE_HASH].map((hash) => ({ ...post.attachments[0], hash }));
+    expect(renderAttachments({ activeTimeline: [post] })).toEqual([INDEX_IMAGE_HASH, TIMELINE_IMAGE_HASH]);
+    expect(renderAttachments({ activeTimeline: [post], demandedMediaHashes: new Set([TIMELINE_IMAGE_HASH]) }))
+      .toEqual([TIMELINE_IMAGE_HASH]);
+    expect(renderAttachments({ activeTimeline: [{ ...post, content_labels: ['adult'] }] })).toEqual([]);
+  });
   // #1052: 「見つける」の解決済み投稿もタイムラインと同じプリフェッチ対象にする。
   test('includes attachments from resolved community index posts', () => {
     expect(

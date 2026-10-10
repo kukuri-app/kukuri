@@ -13,6 +13,7 @@ on:
       - 'apps/**'
       - 'harness/**'
       - 'tools/check_iroh_resource_contract.py'
+      - '.github/actions/cn-test-images/**'
       - '.github/workflows/kukuri-fast.yml'
       - '.github/workflows/kukuri-nightly.yml'
       - '.github/workflows/kukuri-web-e2e.yml'
@@ -30,6 +31,7 @@ on:
       - 'apps/**'
       - 'harness/**'
       - 'tools/check_iroh_resource_contract.py'
+      - '.github/actions/cn-test-images/**'
       - '.github/workflows/kukuri-fast.yml'
       - '.github/workflows/kukuri-nightly.yml'
       - '.github/workflows/kukuri-web-e2e.yml'
@@ -44,6 +46,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  LINDERA_BUILD_DICTIONARY_CACHE_DIR: ${{ github.workspace }}/.cache/lindera
   # #1120: CI の dev / test build は行番号だけの debuginfo にし、link 時間と cache の容量を減らす。
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
@@ -84,6 +87,9 @@ jobs:
           node-version: 22
 
       # tauri-check は root workspace の外にある src-tauri を、その target へ build する。
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
@@ -161,6 +167,9 @@ jobs:
           librsvg2-dev
           patchelf
 
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
@@ -197,6 +206,9 @@ jobs:
 
       - name: Install LLVM tools for the wasm C build
         run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -285,6 +297,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
@@ -342,6 +357,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
@@ -398,6 +416,9 @@ jobs:
           librsvg2-dev
           patchelf
 
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
@@ -405,6 +426,10 @@ jobs:
 
       - name: Community-node checks
         run: cargo xtask-lite cn-check
+
+      - name: Prepare community-node test images
+        # #1742: fixture の参照名・版を保ち、Docker Hub の取得制限に依存せず同じテストを実行する。
+        uses: ./.github/actions/cn-test-images
 
       - name: Community-node integration tests
         run: cargo xtask-lite cn-test
@@ -440,10 +465,16 @@ jobs:
           librsvg2-dev
           patchelf
 
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
+
+      - name: Prepare community-node test images
+        uses: ./.github/actions/cn-test-images
 
       - name: Community-node connectivity scenario
         env:
@@ -494,6 +525,9 @@ jobs:
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
       # root の target は harness 入りの xtask、src-tauri の target は tauri-check と配布物の build。
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:

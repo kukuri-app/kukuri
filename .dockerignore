@@ -87,3 +87,8 @@ workers/
 .claude/
 
 build.err
+
+!docs/
+docs/**
+!docs/licenses/
+!docs/licenses/**

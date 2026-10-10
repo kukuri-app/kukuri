@@ -2,14 +2,14 @@
 //!
 //! `KUKURI_CN_RUN_INTEGRATION_TESTS=1` のときだけ実 DB に接続して実行する。
 //! - `relation_visibility_choice_is_user_controlled_and_reversible`: set → clear の往復・冪等性。
-//! - opt-out は trust 入力（`list_trust_risk_inputs`）へ影響しない（troll 判定回避の手段にしない）。
+//! - opt-out は信頼値の集計と basis へ影響しない（troll 判定回避の手段にしない）。
 
 use anyhow::Result;
 
 use kukuri_cn_core::{
     TestDatabase, clear_relation_optout, connect_postgres, filter_relation_visible,
-    get_relation_optout, initialize_database, is_relation_opted_out, list_trust_risk_inputs,
-    persist_risk_signal, set_relation_optout,
+    get_relation_optout, initialize_database, is_relation_opted_out, list_trust_basis_page,
+    load_trust_totals, persist_risk_signal, set_relation_optout,
 };
 use kukuri_cn_safety::{
     Basis, RiskSignalTarget, SafetyCategory, SafetyRiskSignal, Severity, Visibility,
@@ -124,24 +124,20 @@ async fn relation_optout_does_not_affect_trust_inputs() -> Result<()> {
         )
         .await?;
 
-        let before = list_trust_risk_inputs(
-            &pool,
-            RiskSignalTarget::UserPubkey,
-            PUBKEY_A,
-            "2026-07-02T09:00:00Z",
-        )
-        .await?;
-        assert_eq!(before.relative.len(), 1);
+        let targets = [PUBKEY_A.to_string()];
+        let before = (
+            load_trust_totals(&pool, &targets).await?,
+            list_trust_basis_page(&pool, PUBKEY_A, None).await?,
+        );
+        assert_eq!(before.1.inputs.len(), 1);
+        assert!(before.0[PUBKEY_A].relative_units > 0.0);
 
-        // opt-out しても trust 入力は 1 件も減らない（troll 判定回避の手段にしない, §6.3）。
+        // opt-out しても集計と basis は 1 件も減らない（troll 判定回避の手段にしない, §6.3）。
         set_relation_optout(&pool, PUBKEY_A).await?;
-        let after = list_trust_risk_inputs(
-            &pool,
-            RiskSignalTarget::UserPubkey,
-            PUBKEY_A,
-            "2026-07-02T09:00:00Z",
-        )
-        .await?;
+        let after = (
+            load_trust_totals(&pool, &targets).await?,
+            list_trust_basis_page(&pool, PUBKEY_A, None).await?,
+        );
         assert_eq!(before, after);
         anyhow::Ok(())
     }

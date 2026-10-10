@@ -285,7 +285,6 @@ describe('useDesktopShellViewModels', () => {
     expect(card.media.kind).toBe('image');
     // object url 未取得の間は loading / preview なし
     expect(card.media.state).toBe('loading');
-    expect(card.media.imagePreviewSrc).toBeNull();
     expect(card.media.extraAttachmentCount).toBe(1);
     expect(card.media.metaMime).toBe('image/png');
     // gallery は image mime のみ(video_poster 以外)。src は object url 未取得なら null
@@ -309,7 +308,6 @@ describe('useDesktopShellViewModels', () => {
         },
       },
     ]);
-    expect(card.media.currentImageIndex).toBe(0);
 
     actPatchState(view.store, {
       mediaObjectUrls: { [imageHash]: null },
@@ -324,7 +322,6 @@ describe('useDesktopShellViewModels', () => {
 
     const readyCard = view.result.current.activeTimelinePostViews[0];
     expect(readyCard.media.state).toBe('ready');
-    expect(readyCard.media.imagePreviewSrc).toBe('blob:image-preview-1');
     expect(readyCard.media.imageGalleryItems).toEqual([
       {
         hash: imageHash,

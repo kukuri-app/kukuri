@@ -44,7 +44,6 @@ export function createView(overrides?: Partial<PostCardView>): PostCardView {
       state: 'ready',
       metaMime: null,
       metaBytesLabel: null,
-      imagePreviewSrc: null,
       videoPosterPreviewSrc: null,
       videoPlaybackSrc: null,
       videoUnsupportedOnClient: false,

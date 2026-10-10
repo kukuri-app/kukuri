@@ -556,7 +556,7 @@ fn indexer_stack_defaults_to_disabled_with_images() {
     assert!(tfvars.contains(
         "cn_indexer_image                  = \"ghcr.io/kukuri-app/kukuri-cn-indexer:latest\""
     ));
-    assert!(tfvars.contains("arcadedb_image                    = \"arcadedata/arcadedb:26.8.1\""));
+    assert!(tfvars.contains("arcadedb_image                    = \"arcadedata/arcadedb:26.10.1\""));
     assert!(tfvars.contains("relation_analyze_interval_minutes = 60"));
     assert!(tfvars.contains("safety_provider_known_csam            = \"\""));
 }

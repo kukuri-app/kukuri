@@ -313,6 +313,22 @@
   color: var(--foreground);
 }
 
+/* #1689: フィードとブックマークの tab の間にフィルターのボタンを並べる。tablist は箱を持たず、
+   2 つ目以降の tab をフィルターの後ろへ送る。フィルターが有効な間はアクセントで示す。 */
+.shell-phase1 .shell-column-view-tablist {
+  display: contents;
+}
+
+.shell-phase1 .shell-column-view-tab + .shell-column-view-tab {
+  order: 1;
+}
+
+.shell-phase1 .shell-column-view-filter[data-active] {
+  color: var(--accent-foreground);
+  border-color: var(--border-accent);
+  background: var(--surface-accent-soft);
+}
+
 /* Control Center「場所」: 共有ボタンの理由と、参加済みチャンネルが無い topic の空状態(Issue #966)。 */
 .shell-phase1 .shell-control-center-place-hint {
   margin: 0;

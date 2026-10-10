@@ -192,7 +192,7 @@ export function PostCard({
   const [reportAppeal, setReportAppeal] = useState<ReportAppealContext | null>(null);
   const advisoryDetails = usePostAdvisoryDetails();
   const [mediaViewerOpen, setMediaViewerOpen] = useState(false);
-  const [mediaViewerIndex, setMediaViewerIndex] = useState(view.media.currentImageIndex ?? 0);
+  const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
   const [reactionMenuPosition, setReactionMenuPosition] = useState<ContextActionMenuPosition | null>(
     null
   );
@@ -328,9 +328,9 @@ export function PostCard({
     if (!reactionMenuAsset) {
       return [];
     }
-    const canSaveReaction =
-      Boolean(onBookmarkCustomReaction) &&
-      reactionMenuAsset.owner_pubkey !== localAuthorPubkey;
+    const { blob_hash, search_key } = reactionMenuAsset; // 別の端末で作った自分のものも保存できる
+    const canSaveReaction = Boolean(onBookmarkCustomReaction) &&
+      !ownedReactionAssets.some((own) => own.blob_hash === blob_hash && own.search_key === search_key);
     return [
       {
         id: 'save',
@@ -350,7 +350,7 @@ export function PostCard({
         },
       },
     ];
-  }, [localAuthorPubkey, onBookmarkCustomReaction, reactionMenuAsset, t]);
+  }, [onBookmarkCustomReaction, ownedReactionAssets, reactionMenuAsset, t]);
   const postMenuItems = useMemo(() => {
     const identifiers = view.identifierCopy ?? {
       postId: post.object_id,

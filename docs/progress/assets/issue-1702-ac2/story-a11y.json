@@ -1,0 +1,56 @@
+[
+  {
+    "id": "core-authordetailcard--community-node-advisory",
+    "locale": "ja",
+    "theme": "dark",
+    "width": 520,
+    "state": "first-page",
+    "violations": [],
+    "incomplete": []
+  },
+  {
+    "id": "core-authordetailcard--community-node-advisory",
+    "locale": "ja",
+    "theme": "dark",
+    "width": 520,
+    "state": "after-show-more",
+    "violations": [],
+    "incomplete": []
+  },
+  {
+    "id": "core-authordetailcard--community-node-advisory",
+    "locale": "en",
+    "theme": "light",
+    "width": 520,
+    "state": "first-page",
+    "violations": [],
+    "incomplete": []
+  },
+  {
+    "id": "core-authordetailcard--community-node-advisory",
+    "locale": "en",
+    "theme": "light",
+    "width": 520,
+    "state": "after-show-more",
+    "violations": [],
+    "incomplete": []
+  },
+  {
+    "id": "core-authordetailcard--community-node-advisory",
+    "locale": "zh-CN",
+    "theme": "light",
+    "width": 390,
+    "state": "first-page",
+    "violations": [],
+    "incomplete": []
+  },
+  {
+    "id": "core-authordetailcard--community-node-advisory",
+    "locale": "zh-CN",
+    "theme": "light",
+    "width": 390,
+    "state": "after-show-more",
+    "violations": [],
+    "incomplete": []
+  }
+]

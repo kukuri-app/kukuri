@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use kukuri_cn_core::{
-    RetentionPolicy, apply_retention_policy, cleanup_expired, initialize_database,
+    RetentionPolicy, cleanup_expired, configure_case_retention, initialize_database,
 };
 use sqlx::PgPool;
 
@@ -18,8 +18,7 @@ pub(super) async fn run(pool: &PgPool, action: RetentionAction) -> Result<()> {
                 .context("--now must be RFC3339")?
                 .map(|value| value.with_timezone(&Utc))
                 .unwrap_or_else(Utc::now);
-            let policy = retention_policy()?;
-            apply_retention_policy(pool, &policy).await?;
+            configure_case_retention(pool, &retention_policy()?).await?;
             let counts = cleanup_expired(pool, now).await?;
             println!("{}", serde_json::to_string(&counts)?);
         }
@@ -27,7 +26,7 @@ pub(super) async fn run(pool: &PgPool, action: RetentionAction) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn retention_policy() -> Result<RetentionPolicy> {
+fn retention_policy() -> Result<RetentionPolicy> {
     let path = std::env::var_os("COMMUNITY_NODE_OPERATOR_CONFIG")
         .context("COMMUNITY_NODE_OPERATOR_CONFIG is required for retention operations")?;
     let yaml = std::fs::read_to_string(&path).with_context(|| {

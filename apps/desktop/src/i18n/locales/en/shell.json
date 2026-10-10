@@ -274,11 +274,19 @@
       "showTimeline": "Show timeline"
     },
     "noPosts": "No posts yet for this topic.",
+    "noFilteredPosts": "No posts match this filter.",
     "noPublicPosts": "No public posts from you in this topic yet.",
     "refresh": "Refresh",
     "savedCount": "{{count}} saved",
     "tabs": "Workspaces",
     "timelineViews": "Timeline views",
+    "timelineFilter": {
+      "label": "Filter",
+      "active": "Filter ({{filter}})",
+      "none": "No filter",
+      "mutual": "Mutuals only",
+      "following": "Following only"
+    },
     "timelineTopicSwitch": "Timeline topic",
     "primaryLabel": "Primary workspace",
     "skipToWorkspace": "Skip to workspace",

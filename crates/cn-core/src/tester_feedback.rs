@@ -11,8 +11,6 @@ use sqlx::Row;
 use sqlx::postgres::{PgPool, PgRow};
 use uuid::Uuid;
 
-use crate::RetentionPolicy;
-
 /// 保存済みのテスターフィードバックレコード。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TesterFeedback {
@@ -35,20 +33,16 @@ pub struct NewTesterFeedback {
     pub os: String,
 }
 
-/// 受信したテスターフィードバックを保存し、参照 ID を含むレコードを返す。
-pub async fn insert_tester_feedback_with_retention(
+/// 受信したテスターフィードバックを保存し、参照 ID を含むレコードを返す。保持の起算点は保存した時刻。
+pub async fn insert_tester_feedback(
     pool: &PgPool,
     input: &NewTesterFeedback,
-    retention: &RetentionPolicy,
-    now: DateTime<Utc>,
 ) -> Result<TesterFeedback> {
     let id = Uuid::new_v4().to_string();
-    let expires_at = retention.expiry(now, retention.tester_feedback_days);
     let row = sqlx::query(
         "INSERT INTO cn_admin.tester_feedback
-            (id, what_attempted, what_happened, what_seemed_wrong, client_version, os,
-             created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            (id, what_attempted, what_happened, what_seemed_wrong, client_version, os)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id, what_attempted, what_happened, what_seemed_wrong, client_version, os,
                    created_at",
     )
@@ -58,8 +52,6 @@ pub async fn insert_tester_feedback_with_retention(
     .bind(&input.what_seemed_wrong)
     .bind(&input.client_version)
     .bind(&input.os)
-    .bind(now)
-    .bind(expires_at)
     .fetch_one(pool)
     .await?;
     tester_feedback_from_row(&row)
@@ -75,7 +67,7 @@ pub async fn list_tester_feedback(
         "SELECT id, what_attempted, what_happened, what_seemed_wrong, client_version, os,
                 created_at
          FROM cn_admin.tester_feedback
-         WHERE expires_at > NOW()
+         WHERE created_at > NOW() - cn_admin.retention_interval('tester_feedback')
          ORDER BY created_at DESC
          LIMIT $1 OFFSET $2",
     )
@@ -92,7 +84,7 @@ pub async fn get_tester_feedback(pool: &PgPool, id: &str) -> Result<Option<Teste
         "SELECT id, what_attempted, what_happened, what_seemed_wrong, client_version, os,
                 created_at
          FROM cn_admin.tester_feedback
-         WHERE id = $1 AND expires_at > NOW()",
+         WHERE id = $1 AND created_at > NOW() - cn_admin.retention_interval('tester_feedback')",
     )
     .bind(id)
     .fetch_optional(pool)

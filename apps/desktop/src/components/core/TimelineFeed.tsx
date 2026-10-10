@@ -156,7 +156,7 @@ export function TimelineFeed({
   onMuteReportAuthor,
 }: TimelineFeedProps) {
   const { t } = useTranslation('common');
-  const { listRef, loadMore } = useWindowScrollAnchor(posts, onLoadMore);
+  const { listRef, loadMore } = useWindowScrollAnchor(posts, onLoadMore, loadingMore);
   const { sentinelRef: loadMoreRef, canAutoLoad, manualFallback } = useInfiniteScrollSentinel({
     // A failed automatic request must not immediately reconnect the observer and retry forever.
     // Keep the cursor, but require an explicit retry after an error.

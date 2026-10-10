@@ -71,6 +71,11 @@ pub async fn mock_node(
                 Json(json!({"entries": []})).into_response()
             }
         }
+        // #1702: 受け取った cursor の続きを示す cursor を返す（受け渡しの確認用）。
+        path if path.starts_with("/v1/trust/users/") => Json(json!({"viewer_pubkey": "f".repeat(64),
+            "target_id": path.trim_start_matches("/v1/trust/users/"), "absolute": 0.0, "relative": 0.0, "trust": 0.0, "w_abs_applied": 0.5,
+            "computed_at": "2026-10-09T00:00:00Z", "basis": [],
+            "basis_next_cursor": uri.query().and_then(|query| query.strip_prefix("cursor=")).map(|cursor| format!("{cursor}-next"))})).into_response(),
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }

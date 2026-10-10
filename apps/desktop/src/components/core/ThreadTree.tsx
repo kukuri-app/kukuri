@@ -101,7 +101,7 @@ export function ThreadTree({
 }: ThreadTreeProps) {
   const { t } = useTranslation('common');
   const nodes = useMemo(() => buildThreadTree(posts), [posts]);
-  const { listRef, loadMore } = useWindowScrollAnchor(posts, onLoadMore);
+  const { listRef, loadMore } = useWindowScrollAnchor(posts, onLoadMore, loadingMore);
   const { sentinelRef: loadMoreRef, canAutoLoad, manualFallback } = useInfiniteScrollSentinel({
     hasMore,
     loadingMore,

@@ -4,6 +4,8 @@
 
 Accepted
 
+**2026-10-09 改訂**（#1698）: §3 の判断記録の項目と、外部へ返す状態の範囲を実装（#761）に合わせた。当初の §3 は、判断記録に対象著者を持ち、状態を認証済み公開鍵と対象著者が一致する本人だけに返すとしていたが、実装は著者を持たず、状態を認証なしで返していた。本人だけに返す形と対象著者の保持は失効し、認証なしの状態取得を仕様とする。著者は自分の投稿への措置を認証なしで確かめられ、対象 ID を知る第三者にも措置の有無と根拠カテゴリが分かる。保存データと API の形は変わらないので、移行は無い。
+
 ## Date
 
 2026-08-25
@@ -37,7 +39,7 @@ safety 判定、法的判断、著者撤回、operator policy は根拠・author
 - Gossip Hint 必要有無: 無
 - Blob 必要有無: cache が有効な場合だけ削除対象 hash と再取得拒否を保持する。侵害内容は保持しない
 - SQLite projection 必要有無: 無
-- 必須 contract: authority scope、適用・解除 transaction、全 index surface の fail-closed gate、cache evict／deny、本人向け状態取得、解除後の fresh scan
+- 必須 contract: authority scope、適用・解除 transaction、全 index surface の fail-closed gate、cache evict／deny、認証なしの状態取得、解除後の fresh scan
 - 必須 scenario: 適用後に search／discovery／recommendation／cache から消え、restart／backfill／再投影で復活せず、解除後も fresh `allow` までは復活しない
 
 ## Decision
@@ -66,9 +68,9 @@ safety 判定、法的判断、著者撤回、operator policy は根拠・author
 
 ### 3. 法的な送信防止は node-local decision とする
 
-Postgres の decision record は対象、対象著者、根拠カテゴリ、措置 capability、決定者、決定時刻、失効時刻、解除時刻、関連 report ID を保持する。適用・解除と `cn_admin.operator_actions` への audit 追記は同じ transaction で行う。
+Postgres の decision record（`cn_legal.transmission_preventions`）は対象（`post` / `blob` の種別と ID）、根拠カテゴリ、措置 capability、決定者、決定時刻、失効時刻、解除時刻、関連 report ID を保持し、対象著者は持たない。適用・解除と `cn_admin.operator_actions` への audit 追記は同じ transaction で行う。
 
-外部へ返す本人向け状態は、認証済み公開鍵と対象著者が一致する record に限定し、公開可能な理由、状態、異議申立て先だけを返す。決定者、申出者、非公開説明、内部 audit は返さない。
+外部へは `GET /v1/transmission-preventions/{subject_kind}/{subject_id}` で状態を返す。認証は求めず、対象を指定した誰にでも、有効かどうか、根拠カテゴリ、措置 capability、決定時刻、失効時刻、異議申立て先（当該 node の `POST /v1/report`）だけを返す。決定者、申出者、関連 report ID、非公開説明、内部 audit は返さない。
 
 ### 4. 最終判断は理由を分離したまま合成する
 
@@ -81,7 +83,7 @@ Postgres の decision record は対象、対象著者、根拠カテゴリ、措
 
 ただし許可条件は全ゲートの論理積であり、どれか一つでも有効な抑止なら表示・索引しない。法的判断を解除しても著者撤回や safety verdict は変化しない。解除後の再取込は、有効な抑止が無いことと新しい scan の `allow` を必須にする。
 
-indexer は本文・blob の取得前と Postgres upsert 直前に合成判定を行う。適用時は Postgres の索引真実源を先に非許可化し、query gate を即時に閉じてから ArcadeDB と cache を冪等削除する。これにより派生投影削除が一時的に失敗しても surfacing しない。
+indexer は本文・blob の取得前と Postgres upsert 直前に合成判定を行う。適用時は Postgres の索引真実源を先に非許可化し、query gate を即時に閉じてから ArcadeDB と cache を冪等削除する。これにより派生投影削除が一時的に失敗しても surfacing しない。ArcadeDB の写しは、適用の transaction で索引真実源から外した scope と対象を消し待ち（`cn_index.projection_evictions`）に入れ、indexer の全体の巡回が 1 回 128 件以内で消す。消せなかった行は次の巡回で消し直す。解除・失効した対象の行は、解除の後の新しい取込で戻った写しを消さないよう、投影に触れずに外す。
 
 ### 5. capability ごとの境界
 

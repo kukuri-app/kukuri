@@ -316,17 +316,18 @@ impl AppService {
         else {
             return Ok(false);
         };
-        if !self
+        // 同じ版の再受信でも取り込みをやり直す（取り込みは表の行が変わらなければ何もしない）。
+        let adopted = self
             .services
             .projection_store
             .adopt_account_sync_row(&row_of(item)?)
-            .await?
-        {
+            .await?;
+        if !adopted && !self.holds_account_sync_item(item).await? {
             return Ok(false);
         }
         self.take_in_private_channel_participant(&state, participant, &record, false)
             .await?;
-        Ok(true)
+        Ok(adopted)
     }
 
     /// 自分の channel の参加者から自分への follow の edge を、本人の端末へ同期する(#1219 AC-5。相互フォロー限定の資格の

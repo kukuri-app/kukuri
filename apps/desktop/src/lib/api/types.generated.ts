@@ -530,7 +530,11 @@ requests: Array<IndexingRequestView>,
  */
 target?: IndexingTargetStatus | null, };
 
-export type CommunityNodeUserAdvisoryRequest = { base_url: string, target_pubkey: string, };
+export type CommunityNodeUserAdvisoryRequest = { base_url: string, target_pubkey: string, 
+/**
+ * trust の basis の続き（前の応答の `basis_next_cursor`、#1702）。relation の照会は使わない。
+ */
+cursor?: string | null, };
 
 export type CommunityNodeRelationNeighborsRequest = { base_url: string, limit?: number | null, };
 
@@ -595,7 +599,7 @@ policy_version: string,
  */
 trust_version: string, 
 /**
- * relation snapshot と対象への観測 revision の組。
+ * relation snapshot と、評価に使った対象への観測の digest の組（観測が無ければ `0`）。
  */
 relation_version: string, computed_at: string, 
 /**
@@ -675,13 +679,21 @@ export type TrustReadView = { target_id: string, absolute: number, relative: num
 /**
  * 評価の版・期限・表示 policy（#1061）。旧 node の応答では欠落し、クライアントは未評価として扱う。
  */
-evaluation?: TrustEvaluation | null, };
+evaluation?: TrustEvaluation | null, 
+/**
+ * basis の続きを取る cursor（`?cursor=`）。最後のページと旧 node の応答では欠落する。
+ */
+basis_next_cursor?: string | null, };
 
 export type TrustUserReadResponse = { viewer_pubkey: string, target_id: string, absolute: number, relative: number, trust: number, w_abs_applied: number, computed_at: string, basis: Array<TrustBasisEntry>, 
 /**
  * 評価の版・期限・表示 policy（#1061）。旧 node の応答では欠落し、クライアントは未評価として扱う。
  */
-evaluation?: TrustEvaluation | null, };
+evaluation?: TrustEvaluation | null, 
+/**
+ * basis の続きを取る cursor（`?cursor=`）。最後のページと旧 node の応答では欠落する。
+ */
+basis_next_cursor?: string | null, };
 
 export type ProximityBasisEntry = { feature: string, value: number, weight: number, contribution: number, };
 

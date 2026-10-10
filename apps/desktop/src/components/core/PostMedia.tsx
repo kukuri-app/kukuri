@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Flag } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/icon-button';
+import { POST_CARD_IMAGE_LIMIT } from '@/shell/media';
 
 import { MediaFetchFailure } from './MediaFetchFailure';
 import { MediaDemandObserver } from './MediaDemandObserver';
@@ -26,9 +27,18 @@ export function PostMedia({
 }: PostMediaProps) {
   const { t } = useTranslation(['common', 'shell']);
   const videoReportHash = media.kind === 'video' ? media.videoReportHash ?? null : null;
-  const imageHash = media.kind === 'image' ? media.imageGalleryItems?.[media.currentImageIndex ?? 0]?.hash ?? null : null;
+  const images = media.kind === 'image' ? media.imageGalleryItems ?? [] : [];
+  // #1690: 先頭 4 枚を並べ、並べた画像ごとに表示の需要を出す。
+  const tiles = images.slice(0, POST_CARD_IMAGE_LIMIT);
   const videoHash = media.kind === 'video' && !media.videoUnsupportedOnClient && videoReportHash !== media.videoPosterHash
     ? videoReportHash : null;
+  const demandObservers = (
+    <>
+      {tiles.map((tile, index) => <MediaDemandObserver key={`${index}:${tile.hash}`} hash={tile.hash} />)}
+      <MediaDemandObserver hash={media.videoPosterHash ?? null} />
+      <MediaDemandObserver hash={videoHash} />
+    </>
+  );
 
   if (!media.kind) {
     return null;
@@ -89,9 +99,7 @@ export function PostMedia({
   if (media.state === 'unavailable') {
     return (
       <>
-        <MediaDemandObserver hash={imageHash} />
-        <MediaDemandObserver hash={media.videoPosterHash ?? null} />
-        <MediaDemandObserver hash={videoHash} />
+        {demandObservers}
         <MediaFetchFailure
           hashes={media.retryHashes ?? []}
           retrying={media.retrying ?? false}
@@ -101,6 +109,42 @@ export function PostMedia({
     );
   }
 
+  const imageTiles = tiles.map((tile, index) =>
+    tile.src ? (
+      <button
+        key={`${index}:${tile.hash}`}
+        className='media-image-trigger'
+        type='button'
+        onClick={() => onOpenImage?.(index)}
+        // 拡大表示の説明と同じ「画像添付 2 / 5」の形で、どの画像かを示す。
+        aria-label={
+          images.length > 1 ? `${t('media.imageAlt')} ${index + 1} / ${images.length}` : t('media.imageAlt')
+        }
+      >
+        <img
+          className='media-preview'
+          src={tile.src}
+          alt={t('media.imageAlt')}
+          data-testid={`media-preview-${media.objectId}`}
+        />
+      </button>
+    ) : tile.failed ? (
+      <MediaFetchFailure
+        key={`${index}:${tile.hash}`}
+        hashes={[tile.hash]}
+        retrying={tile.retrying ?? false}
+        testId={`media-fetch-failure-${media.objectId}`}
+      />
+    ) : (
+      <div
+        key={`${index}:${tile.hash}`}
+        className='media-skeleton'
+        data-testid={`media-skeleton-${media.objectId}`}
+        aria-hidden='true'
+      />
+    )
+  );
+
   return (
     <>
       <div
@@ -108,9 +152,7 @@ export function PostMedia({
           media.state === 'loading' ? 'media-frame media-frame-loading' : 'media-frame media-frame-ready'
         }
       >
-        <MediaDemandObserver hash={imageHash} />
-        <MediaDemandObserver hash={media.videoPosterHash ?? null} />
-        <MediaDemandObserver hash={videoHash} />
+        {demandObservers}
         <div className='media-badges'>
           {media.kind === 'video' ? <span className='media-type-badge'>{t('media.video')}</span> : null}
           {media.extraAttachmentCount > 0 ? (
@@ -130,7 +172,15 @@ export function PostMedia({
           </IconButton>
         ) : null}
 
-        {media.kind === 'video' && media.videoPlaybackSrc && !media.videoUnsupportedOnClient ? (
+        {media.kind === 'image' ? (
+          tiles.length > 1 ? (
+            <div className='media-grid' data-count={tiles.length}>
+              {imageTiles}
+            </div>
+          ) : (
+            imageTiles
+          )
+        ) : media.videoPlaybackSrc && !media.videoUnsupportedOnClient ? (
           <video
             className='media-video'
             controls
@@ -140,27 +190,13 @@ export function PostMedia({
             data-testid={`media-video-${media.objectId}`}
             {...media.videoProps}
           />
-        ) : media.kind === 'video' && media.videoPosterPreviewSrc ? (
+        ) : media.videoPosterPreviewSrc ? (
           <img
             className='media-preview'
             src={media.videoPosterPreviewSrc}
             alt={t('media.videoPosterAlt')}
             data-testid={`media-preview-${media.objectId}`}
           />
-        ) : media.kind === 'image' && media.imagePreviewSrc ? (
-          <button
-            className='media-image-trigger'
-            type='button'
-            onClick={() => onOpenImage?.(media.currentImageIndex ?? 0)}
-            aria-label={t('media.imageAlt')}
-          >
-            <img
-              className='media-preview'
-              src={media.imagePreviewSrc}
-              alt={t('media.imageAlt')}
-              data-testid={`media-preview-${media.objectId}`}
-            />
-          </button>
         ) : (
           <div
             className='media-skeleton'

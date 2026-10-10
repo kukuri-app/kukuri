@@ -119,12 +119,11 @@ pub(crate) async fn revoke_trust_observations(
     let observer = require_bearer_identity(&state.pool, &state.jwt_config, &headers)
         .await?
         .pubkey;
-    let deleted =
-        revoke_trust_observation_sharing(&state.pool, observer.as_str(), chrono::Utc::now())
-            .await
-            .map_err(|source| {
-                TrustRelationError::trust_read(TrustRelationOperation::RevokeObservations, source)
-            })
-            .map_err(trust_relation_error)?;
+    let deleted = revoke_trust_observation_sharing(&state.pool, observer.as_str())
+        .await
+        .map_err(|source| {
+            TrustRelationError::trust_read(TrustRelationOperation::RevokeObservations, source)
+        })
+        .map_err(trust_relation_error)?;
     Ok(Json(TrustObservationsRevokeResponse { deleted }))
 }

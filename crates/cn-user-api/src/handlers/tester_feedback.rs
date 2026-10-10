@@ -4,8 +4,8 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use kukuri_cn_core::{
-    ApiError, ApiResult, NewTesterFeedback, insert_tester_feedback_with_retention,
-    require_bearer_identity, require_consents,
+    ApiError, ApiResult, NewTesterFeedback, insert_tester_feedback, require_bearer_identity,
+    require_consents,
 };
 use kukuri_cn_protocol::{
     CommunityNodeTesterFeedbackRequest, CommunityNodeTesterFeedbackResponse,
@@ -81,7 +81,7 @@ pub(crate) async fn submit_tester_feedback(
         }
     }
 
-    let stored = insert_tester_feedback_with_retention(
+    let stored = insert_tester_feedback(
         &state.pool,
         &NewTesterFeedback {
             what_attempted: what_attempted.to_string(),
@@ -90,8 +90,6 @@ pub(crate) async fn submit_tester_feedback(
             client_version: client_version.to_string(),
             os: os.to_string(),
         },
-        &state.retention,
-        chrono::Utc::now(),
     )
     .await
     .map_err(|source| {
