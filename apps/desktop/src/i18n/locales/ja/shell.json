@@ -274,11 +274,19 @@
       "showTimeline": "タイムラインを見る"
     },
     "noPosts": "このトピックにはまだ投稿がありません。",
+    "noFilteredPosts": "フィルターに一致する投稿がありません。",
     "noPublicPosts": "このトピックにはまだ自分の公開投稿がありません。",
     "refresh": "更新",
     "savedCount": "{{count}} 件保存済み",
     "tabs": "ワークスペース",
     "timelineViews": "タイムライン表示",
+    "timelineFilter": {
+      "label": "フィルター",
+      "active": "フィルター（{{filter}}）",
+      "none": "フィルターなし",
+      "mutual": "相互フォローのみ",
+      "following": "フォローのみ"
+    },
     "timelineTopicSwitch": "タイムラインのトピック",
     "primaryLabel": "メインワークスペース",
     "skipToWorkspace": "ワークスペースへ移動",

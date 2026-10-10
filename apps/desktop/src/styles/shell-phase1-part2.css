@@ -365,6 +365,24 @@
   cursor: pointer;
 }
 
+/* #1690: 投稿の先頭 4 枚の画像を枠に並べる。2 枚は左右、3 枚は左の 1 枚と右の 2 段、4 枚は 2×2。 */
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 2px;
+  height: 100%;
+}
+
+.media-grid[data-count='3'] > :first-child {
+  grid-row: span 2;
+}
+
+.media-grid > .media-fetch-failure {
+  justify-content: center;
+  padding: var(--space-xs);
+}
+
 .media-video {
   background: var(--surface-panel);
 }

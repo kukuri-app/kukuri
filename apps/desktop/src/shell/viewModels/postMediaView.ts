@@ -1,7 +1,12 @@
 import type { PostMediaView } from '@/components/core/types';
 import type { AttachmentView, PostView } from '@/lib/api';
 import { contentProvenanceFromView } from '@/lib/api/provenance';
-import { selectPrimaryImage, selectVideoManifest, selectVideoPoster } from '@/shell/media';
+import {
+  POST_CARD_IMAGE_LIMIT,
+  selectPostImages,
+  selectVideoManifest,
+  selectVideoPoster,
+} from '@/shell/media';
 import { formatBytes } from '@/shell/presentation';
 
 /// 投稿カードのメディア表示データ。タイムライン・スレッドと「見つける」の解決済み投稿が
@@ -35,69 +40,56 @@ export function buildPostMediaView(
     locale,
   }: BuildPostMediaViewOptions
 ): PostMediaView {
-  const primaryImage = selectPrimaryImage(post);
+  const images = selectPostImages(post);
+  // #1690: カードには先頭 4 枚を並べる。
+  const cardImages = images.slice(0, POST_CARD_IMAGE_LIMIT);
   const videoPoster = selectVideoPoster(post);
   const videoManifest = selectVideoManifest(post);
-  const imageGalleryItems = post.attachments
-    .filter(
-      (attachment) =>
-        attachment.mime.startsWith('image/') && attachment.role !== 'video_poster'
-    )
-    .map((attachment) => ({
-      hash: attachment.hash,
-      src:
-        typeof mediaObjectUrls[attachment.hash] === 'string'
-          ? mediaObjectUrls[attachment.hash]
-          : null,
-      failed: mediaObjectUrls[attachment.hash] === null,
-      retrying: mediaRetryingHashes[attachment.hash] === true,
-      mime: attachment.mime,
-      provenance: contentProvenanceFromView(attachment.provenance),
-    }));
-  const mediaKind = primaryImage ? 'image' : videoManifest || videoPoster ? 'video' : null;
+  const imageGalleryItems = images.map((attachment) => ({
+    hash: attachment.hash,
+    src:
+      typeof mediaObjectUrls[attachment.hash] === 'string'
+        ? mediaObjectUrls[attachment.hash]
+        : null,
+    failed: mediaObjectUrls[attachment.hash] === null,
+    retrying: mediaRetryingHashes[attachment.hash] === true,
+    mime: attachment.mime,
+    provenance: contentProvenanceFromView(attachment.provenance),
+  }));
+  const mediaKind = cardImages.length > 0 ? 'image' : videoManifest || videoPoster ? 'video' : null;
   // 照会中は取得済みでも表示しない(ゲートと同じく参照を止める)。
   const hidden = adultContentGated || advisoryPending;
   const mediaMetaAttachment =
-    mediaKind === 'video' ? videoManifest ?? videoPoster : primaryImage;
-  const reservedHashes = new Set<string>();
-  if (primaryImage) reservedHashes.add(primaryImage.hash);
-  if (videoPoster) reservedHashes.add(videoPoster.hash);
-  if (videoManifest) reservedHashes.add(videoManifest.hash);
+    mediaKind === 'video' ? videoManifest ?? videoPoster : cardImages[0] ?? null;
+  // カードに出す添付。全てが取得不可で確定したときだけ枠ごと失敗表示にする。
+  const shownAttachments = (mediaKind === 'image' ? cardImages : [videoManifest, videoPoster])
+    .filter((attachment): attachment is AttachmentView => attachment !== null);
+  const reservedHashes = new Set(
+    [...cardImages, videoPoster, videoManifest].map((attachment) => attachment?.hash)
+  );
   const extraAttachmentCount = post.attachments.filter(
     (attachment) => !reservedHashes.has(attachment.hash)
   ).length;
-  const imagePreviewSrc =
-    !hidden && primaryImage && typeof mediaObjectUrls[primaryImage.hash] === 'string'
-      ? mediaObjectUrls[primaryImage.hash]
+  const sourceOf = (attachment: AttachmentView | null) =>
+    !hidden && attachment && typeof mediaObjectUrls[attachment.hash] === 'string'
+      ? mediaObjectUrls[attachment.hash]
       : null;
-  const videoPosterPreviewSrc =
-    !hidden && videoPoster && typeof mediaObjectUrls[videoPoster.hash] === 'string'
-      ? mediaObjectUrls[videoPoster.hash]
-      : null;
-  const videoPlaybackSrc =
-    !hidden &&
-    videoManifest &&
-    typeof mediaObjectUrls[videoManifest.hash] === 'string'
-      ? mediaObjectUrls[videoManifest.hash]
-      : null;
+  const videoPosterPreviewSrc = sourceOf(videoPoster);
+  const videoPlaybackSrc = sourceOf(videoManifest);
+  const mediaReady =
+    mediaKind === 'video'
+      ? Boolean(videoPlaybackSrc || videoPosterPreviewSrc)
+      : cardImages.some((attachment) => sourceOf(attachment) !== null);
   const hasSettledUnavailable = (hash: string) =>
     Object.prototype.hasOwnProperty.call(mediaObjectUrls, hash) &&
     mediaObjectUrls[hash] === null;
   const mediaUnavailable =
-    mediaKind === 'image'
-      ? Boolean(primaryImage && hasSettledUnavailable(primaryImage.hash))
-      : mediaKind === 'video'
-        ? [videoManifest, videoPoster]
-            .filter((attachment): attachment is AttachmentView => attachment !== null)
-            .every((attachment) => hasSettledUnavailable(attachment.hash))
-        : false;
+    shownAttachments.length > 0 &&
+    shownAttachments.every((attachment) => hasSettledUnavailable(attachment.hash));
   // #1207: 明示再試行の対象。表示に使う hash のうち、取得不可が確定したものだけを取り直す。
   const retryHashes = hidden
     ? []
-    : (mediaKind === 'image' ? [primaryImage] : mediaKind === 'video' ? [videoManifest, videoPoster] : [])
-        .filter((attachment): attachment is AttachmentView => attachment !== null)
-        .map((attachment) => attachment.hash)
-        .filter((hash) => hasSettledUnavailable(hash));
+    : shownAttachments.map((attachment) => attachment.hash).filter(hasSettledUnavailable);
   const videoUnsupportedOnClient = Boolean(
     videoManifest && unsupportedVideoManifests[videoManifest.hash]
   );
@@ -108,35 +100,22 @@ export function buildPostMediaView(
     extraAttachmentCount,
     gatedBy: adultContentGated && mediaKind !== null ? gatedBy ?? 'self_label' : undefined,
     state:
-      adultContentGated && mediaKind !== null
-        ? 'gated'
-        : advisoryPending && mediaKind !== null
-          ? 'pending'
-          : mediaKind === 'video'
-          ? videoPlaybackSrc || videoPosterPreviewSrc
-            ? 'ready'
-            : mediaUnavailable
-              ? 'unavailable'
-              : 'loading'
-          : mediaKind === 'image'
-            ? imagePreviewSrc
+      mediaKind === null
+        ? 'ready'
+        : adultContentGated
+          ? 'gated'
+          : advisoryPending
+            ? 'pending'
+            : mediaReady
               ? 'ready'
               : mediaUnavailable
                 ? 'unavailable'
-                : 'loading'
-            : 'ready',
+                : 'loading',
     metaMime: mediaMetaAttachment?.mime ?? null,
     metaBytesLabel: mediaMetaAttachment
       ? formatBytes(mediaMetaAttachment.bytes, locale)
       : null,
-    imagePreviewSrc,
     imageGalleryItems: hidden ? [] : imageGalleryItems,
-    currentImageIndex: primaryImage
-      ? Math.max(
-          0,
-          imageGalleryItems.findIndex((item) => item.hash === primaryImage.hash)
-        )
-      : 0,
     videoPosterPreviewSrc,
     videoPosterHash: videoPoster?.hash ?? null,
     videoPlaybackSrc,

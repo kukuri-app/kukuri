@@ -25,8 +25,10 @@ import type { ProfileConnectionsView } from '@/components/shell/types';
 import {
   primarySectionForColumn,
   type ColumnState,
+  type ColumnTimelineFilter,
   type ColumnTimelineView,
 } from '@/shell/slices/workspace';
+import { postIdentityKey } from '@/shell/data/timelineMerge';
 
 import type {
   CommunityNodeConsentDocumentRef,
@@ -63,6 +65,11 @@ import { useShallow } from 'zustand/react/shallow';
 import { DEFAULT_ASYNC_PANEL_STATE } from '@/shell/slices/shared';
 
 type ViewModels = ReturnType<typeof useDesktopShellViewModels>;
+
+// #1689: フィルター中のフィードは、著者との関係が一致する投稿と自分の投稿だけを出す。
+function matchesTimelineFilter(post: PostView, filter: ColumnTimelineFilter | undefined, localAuthorPubkey: string) {
+  return !filter || post.author_pubkey === localAuthorPubkey || (filter === 'mutual' ? post.mutual : post.following);
+}
 
 export type DesktopShellPrimarySurfaceProps = {
   t: Translate;
@@ -248,6 +255,7 @@ export function DesktopShellPrimarySurface({
     patchState,
     ownedReactionAssets,
     pendingTimelineCountsByKey,
+    pendingTimelineSnapshotsByKey,
     profileDirty,
     profileError,
     profilePanelState,
@@ -310,6 +318,7 @@ export function DesktopShellPrimarySurface({
       patchState: s.patchState,
       ownedReactionAssets: s.ownedReactionAssets,
       pendingTimelineCountsByKey: s.pendingTimelineCountsByKey,
+      pendingTimelineSnapshotsByKey: s.pendingTimelineSnapshotsByKey,
       profileDirty: s.profileDirty,
       profileError: s.profileError,
       profilePanelState: s.profilePanelState,
@@ -395,18 +404,22 @@ export function DesktopShellPrimarySurface({
     joinedChannels: typeof surfaceJoinedChannels;
     view: PostCardView;
   }>());
+  const { timelineFilter } = column;
+  const localAuthorPubkey = syncStatus.local_author_pubkey;
   const surfaceTimelinePostViews = useMemo(
     () =>
-      (timelinesByKey[activeTimelineKey] ?? []).map((post) => {
-        const cached = postCardViews.get(post);
-        if (cached?.build === buildPostCardView && cached.joinedChannels === surfaceJoinedChannels) {
-          return cached.view;
-        }
-        const view = buildPostCardView(post, 'timeline', surfaceJoinedChannels);
-        postCardViews.set(post, { build: buildPostCardView, joinedChannels: surfaceJoinedChannels, view });
-        return view;
-      }),
-    [activeTimelineKey, buildPostCardView, postCardViews, surfaceJoinedChannels, timelinesByKey]
+      (timelinesByKey[activeTimelineKey] ?? [])
+        .filter((post) => matchesTimelineFilter(post, timelineFilter, localAuthorPubkey))
+        .map((post) => {
+          const cached = postCardViews.get(post);
+          if (cached?.build === buildPostCardView && cached.joinedChannels === surfaceJoinedChannels) {
+            return cached.view;
+          }
+          const view = buildPostCardView(post, 'timeline', surfaceJoinedChannels);
+          postCardViews.set(post, { build: buildPostCardView, joinedChannels: surfaceJoinedChannels, view });
+          return view;
+        }),
+    [activeTimelineKey, buildPostCardView, localAuthorPubkey, postCardViews, surfaceJoinedChannels, timelineFilter, timelinesByKey]
   );
   const surfaceScopeKey = timelineStorageKeyForChannel(surfaceTopic, surfaceChannelId);
   const [pendingLiveCount, setPendingLiveCount] = useState(0);
@@ -441,7 +454,15 @@ export function DesktopShellPrimarySurface({
       ];
     })
   );
-  const activeTimelinePendingCount = pendingTimelineCountsByKey[activeTimelineKey] ?? 0;
+  // #1689: フィルター中は、保留した新着のうち、フィルターに一致して未表示の投稿だけを数える。
+  const shownPostIds = timelineFilter
+    ? new Set(surfaceTimelinePostViews.map((view) => postIdentityKey(view.post)))
+    : null;
+  const activeTimelinePendingCount = shownPostIds
+    ? (pendingTimelineSnapshotsByKey[activeTimelineKey] ?? []).filter((post) =>
+        matchesTimelineFilter(post, timelineFilter, localAuthorPubkey) && !shownPostIds.has(postIdentityKey(post))
+      ).length
+    : pendingTimelineCountsByKey[activeTimelineKey] ?? 0;
   const activeTimelineHasMore = Boolean(timelineNextCursorByKey[activeTimelineKey]);
   const activeTimelineLoadingMore = timelineLoadingMoreByKey[activeTimelineKey] ?? false;
   const activeTimelineUnavailable = timelineUnavailableByKey[activeTimelineKey] ?? 0;
@@ -510,7 +531,7 @@ export function DesktopShellPrimarySurface({
               {activeTimelineView === 'feed' ? (
                 <TimelineFeed
                   posts={surfaceTimelinePostViews}
-                  emptyCopy={t('shell:workspace.noPosts')}
+                  emptyCopy={t(timelineFilter ? 'shell:workspace.noFilteredPosts' : 'shell:workspace.noPosts')}
                   onOpenAuthor={(authorPubkey) => void openAuthorDetail(authorPubkey)}
                   onOpenThread={openThreadInSurfaceScope}
                   onOpenThreadInTopic={openThreadInTopicFromSurface}

@@ -10,16 +10,16 @@
 //!   `SubscribedNodes` は subscriber と認証できた要求者のみ、`Public` は誰でも。
 //! - relation は本 module に開示口が **存在しない**（`Local` 固定、
 //!   `relation_defaults_local_and_not_cross_node_pullable` の構造的保証）。
+//!
+//! 開示できる signal の判定は、対象ごとの集計を作る `cn-core` の trigger が行ごとに持つ
+//! （`trust_target_signals.disclosure`、ADR 0026 §10）。本 module は開示分の集計と 1 ページを並べる。
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use kukuri_cn_safety::{AppealStatus, Basis, Visibility};
-
-use crate::inputs::{TrustComponentKind, TrustRiskInput, TrustRiskInputs};
-use crate::params::TrustParams;
-use crate::read::{TrustBasisEntry, build_trust_read};
-use crate::score::UniformRelationWeight;
+use crate::inputs::TrustRiskInput;
+use crate::read::{TrustBasisEntry, trust_basis};
+use crate::totals::TrustTotals;
 
 /// cross-node pull の要求者区分。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,68 +34,32 @@ pub enum PullAudience {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CrossNodeTrustDisclosure {
     pub target_id: String,
-    /// 開示可能な入力のみから再計算した絶対成分（`[-1, 1]`）。開示対象外の signal の
-    /// 存在が値から推測できないよう、全量からではなく開示分から計算する。
+    /// 開示できる signal だけから求めた絶対成分（`[-1, 1]`）。開示しない signal の存在が値から
+    /// 推測できないよう、全量からではなく開示分の集計から求める。
     pub absolute: f64,
     /// 計算時刻（RFC3339）。
     pub computed_at: String,
-    /// 開示した signal の根拠（issuer / basis / confidence / expiry を同伴）。
+    /// 開示した signal の根拠の 1 ページ（新しい順。issuer / basis / confidence / expiry を同伴）。
     pub basis: Vec<TrustBasisEntry>,
+    /// basis の続きを取る cursor（`?cursor=`）。最後のページでは欠落する。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basis_next_cursor: Option<String>,
 }
 
-/// 入力 1 件が `audience` へ開示可能か（§6.3 の全条件）。
-fn disclosable(input: &TrustRiskInput, audience: PullAudience) -> bool {
-    if input.appeal_status == AppealStatus::Cleared {
-        return false;
-    }
-    // 絶対成分のみ（相対成分・relation は node-local に閉じる）。
-    if input.component != TrustComponentKind::Absolute {
-        return false;
-    }
-    // confirmed のみ（classifier / local-policy 由来の suspected は拡散しない）。
-    if !matches!(input.basis, Basis::KnownHashMatch | Basis::ProviderVerdict) {
-        return false;
-    }
-    // visibility = pull へのアクセス範囲。
-    match input.visibility {
-        Visibility::Local => false,
-        Visibility::SubscribedNodes => audience == PullAudience::SubscribedNodes,
-        Visibility::Public => true,
-    }
-}
-
-/// cross-node pull への開示を組み立てる純関数。
-///
-/// 開示可能な入力だけで絶対成分を再計算する（開示不可の signal が値に影響しない =
-/// `Local` signal の存在を pull 応答から推測させない）。相対成分・合成 trust は含めない。
+/// cross-node pull への開示を組み立てる。`page` は `audience` へ開示できる signal の 1 ページ。
 pub fn cross_node_trust_disclosure(
     target_id: &str,
-    inputs: &TrustRiskInputs,
+    totals: &TrustTotals,
+    page: &[TrustRiskInput],
     audience: PullAudience,
     now: DateTime<Utc>,
 ) -> CrossNodeTrustDisclosure {
-    let disclosed = TrustRiskInputs {
-        absolute: inputs
-            .absolute
-            .iter()
-            .filter(|input| disclosable(input, audience))
-            .cloned()
-            .collect(),
-        relative: Vec::new(),
-    };
-    // 絶対成分は decay / relation 重み / params 非依存なので、view の absolute / basis を
-    // そのまま開示に使える（trust / relative は使わない）。
-    let view = build_trust_read(
-        target_id,
-        &disclosed,
-        now,
-        &TrustParams::default(),
-        &UniformRelationWeight::default(),
-    );
     CrossNodeTrustDisclosure {
-        target_id: view.target_id,
-        absolute: view.absolute,
-        computed_at: view.computed_at,
-        basis: view.basis,
+        target_id: target_id.to_string(),
+        absolute: totals.disclosed_absolute(audience),
+        computed_at: now.to_rfc3339(),
+        // 開示するのは絶対成分だけなので減衰しない（半減期は使われない）。
+        basis: trust_basis(page, now, totals.half_life_days),
+        basis_next_cursor: None,
     }
 }

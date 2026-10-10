@@ -4,6 +4,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { ColumnCanvas } from './ColumnCanvas';
 import { ColumnSurface } from './ColumnSurface';
 import { TimelineViewIconTabs, type TimelineViewId } from './TimelineViewIconTabs';
+import type { ColumnTimelineFilter } from '@/shell/slices/workspace';
 
 const meta = {
   title: 'Shell/ColumnCanvas',
@@ -26,11 +27,12 @@ const columns: StoryColumn[] = [
   { id: 'profile', pinned: false, scope: 'Profile · bob', title: 'Profile' },
 ];
 
-function CanvasStory({ count = 1 }: { count?: number }) {
+function CanvasStory({ count = 1, filter }: { count?: number; filter?: ColumnTimelineFilter }) {
   const visibleColumns = columns.slice(0, count);
   const [activeColumnId, setActiveColumnId] = useState(visibleColumns[0].id);
   const [timelineView, setTimelineView] = useState<TimelineViewId>('feed');
   const [timelineFlow, setTimelineFlow] = useState(false);
+  const [timelineFilter, setTimelineFilter] = useState<ColumnTimelineFilter | undefined>(filter);
   return (
     <div className='shell-phase1 min-h-screen'>
       <ColumnCanvas activeColumnId={activeColumnId} onActivateColumn={setActiveColumnId}>
@@ -56,6 +58,8 @@ function CanvasStory({ count = 1 }: { count?: number }) {
                   onSelect={setTimelineView}
                   flow={timelineFlow}
                   onToggleFlow={() => setTimelineFlow((flow) => !flow)}
+                  filter={timelineFilter}
+                  onSelectFilter={setTimelineFilter}
                 />
               ) : undefined
             }
@@ -76,6 +80,11 @@ function CanvasStory({ count = 1 }: { count?: number }) {
 
 export const SingleTimeline: Story = {
   render: () => <CanvasStory />,
+};
+
+// #1689: フィルターが有効な間は、ボタンのアイコンが替わりハイライトされる。
+export const FilteredTimeline: Story = {
+  render: () => <CanvasStory filter='mutual' />,
 };
 
 export const ActivePinnedTransient: Story = {

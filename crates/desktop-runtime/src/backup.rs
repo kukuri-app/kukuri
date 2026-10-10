@@ -133,7 +133,7 @@ pub use restore_recovery::{
 #[cfg(test)]
 pub(crate) use restore_recovery::{
     DeviceRestoreTestFailurePoint, fail_device_restore_at,
-    install_prepared_device_restore_with_storage,
+    install_prepared_device_restore_with_storage, rollback_pending_device_restore_with_storage,
 };
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

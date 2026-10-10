@@ -37,6 +37,7 @@ use crate::ingest::IngestPipeline;
 use crate::maintenance::IndexMaintenance;
 use crate::media_fetcher::BlobMediaFetcher;
 use crate::scheduler::PostFetchScheduler;
+use crate::search::{SEARCH_DIRECTORY, SearchIndex, SearchProjection};
 use crate::state::IndexerRuntimeState;
 use crate::status::spawn_status_server;
 use crate::worker::{IndexerWorker, WorkerConfig};
@@ -208,7 +209,7 @@ async fn run(config: IndexerConfig) -> Result<()> {
                 issuer_node_id = %service.issuer_node_id(),
                 "safety scan service constructed"
             );
-            let (docs_sync, bucket_reader, maintenance) = compose_ingest_stack(
+            let (docs_sync, bucket_reader, maintenance, search, committer) = compose_ingest_stack(
                 &config,
                 pool,
                 cipher,
@@ -238,6 +239,9 @@ async fn run(config: IndexerConfig) -> Result<()> {
 
             // 停止順: ワーカー → docs → iroh node。
             handle.shutdown().await;
+            committer.abort();
+            let _ = committer.await;
+            tokio::task::spawn_blocking(move || search.commit()).await??;
             docs_sync.shutdown().await;
             if let Err(error) = node.shutdown().await {
                 warn!(error = %format!("{error:#}"), "failed to shut down the iroh node cleanly");
@@ -306,7 +310,13 @@ async fn compose_ingest_stack(
     node: Arc<IrohDocsNode>,
     blob_service: Arc<dyn BlobService>,
     state: Arc<IndexerRuntimeState>,
-) -> Result<(Arc<IrohDocsSync>, BucketReader, IndexMaintenance)> {
+) -> Result<(
+    Arc<IrohDocsSync>,
+    BucketReader,
+    IndexMaintenance,
+    Arc<SearchIndex>,
+    tokio::task::JoinHandle<()>,
+)> {
     let docs_sync = Arc::new(IrohDocsSync::new(node));
 
     kukuri_cn_core::configure_retention(&pool, config.retention)
@@ -319,7 +329,11 @@ async fn compose_ingest_stack(
         "cn-indexer cannot reach ArcadeDB for the index projection \
          (fail-closed startup gate)",
     )?;
-    let projection = Arc::new(projection);
+    let search_path = config.data_dir.join(SEARCH_DIRECTORY);
+    let search =
+        Arc::new(tokio::task::spawn_blocking(move || SearchIndex::open(&search_path)).await??);
+    let source = Arc::new(projection);
+    let projection = Arc::new(SearchProjection::new(source.clone(), search.clone()));
 
     let post_scheduler = Arc::new(PostFetchScheduler::new(config.max_concurrent_posts));
     state.set_post_scheduler(Arc::clone(&post_scheduler));
@@ -341,9 +355,10 @@ async fn compose_ingest_stack(
         cipher.clone(),
     )
     .with_blob_seeds(blob_service, config.seed_peers.clone());
-    let maintenance = IndexMaintenance::new(pool, entries, projection, cipher)
+    let maintenance = IndexMaintenance::new(pool, entries, projection.clone(), cipher)
         .with_legacy_store(config.data_dir.join("legacy.retiring"));
-    Ok((docs_sync, bucket_reader, maintenance))
+    let committer = projection.spawn_committer(source);
+    Ok((docs_sync, bucket_reader, maintenance, search, committer))
 }
 
 fn init_tracing() {

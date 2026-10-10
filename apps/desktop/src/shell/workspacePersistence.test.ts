@@ -161,7 +161,7 @@ describe('workspace layout persistence', () => {
     const state = {
       ...fallback,
       columns: [
-        { ...fallback.columns[0], timelineView: 'bookmarks' as const, timelineFlow: true },
+        { ...fallback.columns[0], timelineView: 'bookmarks' as const, timelineFlow: true, timelineFilter: 'mutual' as const },
         {
           id: 'timeline-core',
           kind: 'timeline' as const,
@@ -181,6 +181,9 @@ describe('workspace layout persistence', () => {
     // Flow モード(#1647)も Column ごとに往復し、未設定は通常モードのまま。
     expect(restored.columns[0].timelineFlow).toBe(true);
     expect(restored.columns[1].timelineFlow).toBeUndefined();
+    // フィルター(#1689)も Column ごとに往復し、未設定はフィルターなしのまま。
+    expect(restored.columns[0].timelineFilter).toBe('mutual');
+    expect(restored.columns[1].timelineFilter).toBeUndefined();
   });
 
   it('drops invalid persisted timelineView values', () => {
@@ -197,6 +200,7 @@ describe('workspace layout persistence', () => {
             preferredDesktopSpan: 1,
             timelineView: 'invalid',
             timelineFlow: 'yes',
+            timelineFilter: 'followers',
           },
         ],
       })
@@ -206,6 +210,7 @@ describe('workspace layout persistence', () => {
     // 旧 layout / 破損値は既定(feed)へ倒す。
     expect(restored.columns[0].timelineView).toBeUndefined();
     expect(restored.columns[0].timelineFlow).toBeUndefined();
+    expect(restored.columns[0].timelineFilter).toBeUndefined();
   });
 
   it('falls back for malformed, unknown-version, empty, and failing storage', () => {

@@ -102,13 +102,13 @@ pub use dome_hosting::{
 pub use env::{parse_bool_env, parse_csv_env, parse_u32_env, parse_u64_env};
 pub use errors::{ApiError, ApiResult, auth_required_error, consent_required_error};
 pub use index_entries::{
-    IndexEntryStore, MemoryIndexEntryStore, NewIndexEntry, PgIndexEntryStore, StoredIndexEntry,
-    SurfaceableEntry, filter_surfaceable_objects, get_index_entry, remove_index_entry,
-    remove_index_scope_page, upsert_index_entry,
+    IndexEntryStore, MemoryIndexEntryStore, NewIndexEntry, PgIndexEntryStore,
+    REMOVE_INDEX_SCOPE_PAGE_SQL, StoredIndexEntry, SurfaceableEntry, filter_surfaceable_objects,
+    get_index_entry, remove_index_entry, remove_index_scope_page, upsert_index_entry,
 };
 pub use index_retention::{
-    MIN_RETENTION_SECS, RetentionSettings, advance_retention_floor, configure_retention,
-    reclaim_expired,
+    MIN_RETENTION_SECS, RECLAIM_EXPIRED_SQL, RetentionSettings, advance_retention_floor,
+    configure_retention, reclaim_expired,
 };
 pub use index_scope::{
     ChannelSecret, ChannelSecretCipher, ChannelSecretConflict, IndexScopeKind, IndexingRequest,
@@ -120,8 +120,8 @@ pub use index_scope::{
     revoke_indexing_request, rotate_channel_secret_epoch, upsert_channel_secret,
 };
 pub use legal_data::{
-    LegalDataCipher, SensitiveDataCategory, load_sensitive_json, upsert_sensitive_json_in_tx,
-    verify_sensitive_items,
+    LEGAL_DATA_KEY_CHECK_SQL, LegalDataCipher, SensitiveDataCategory, load_sensitive_json,
+    upsert_sensitive_json_in_tx, verify_legal_data_key,
 };
 pub use legal_holds::{
     LegalHold, LegalHoldExport, export_legal_hold, release_legal_hold, start_legal_hold,
@@ -138,7 +138,7 @@ pub use readiness_activation::{
 };
 pub use readiness_probe::{ReadinessProbeRecord, list_readiness_probes, upsert_readiness_probe};
 pub use readiness_runtime::{
-    IndexIntegrityFindings, RelationAnalyzeRun, inspect_index_integrity,
+    INDEX_INTEGRITY_SQL, IndexIntegrityFindings, RelationAnalyzeRun, inspect_index_integrity,
     latest_relation_analyze_run, record_relation_analyze_run,
 };
 pub use relation_actions::{
@@ -154,20 +154,18 @@ pub use rendezvous::TopicRendezvousStore;
 pub use reports::{
     COMMUNITY_NODE_REPORT_STATUS_RECEIVED, CommunityNodeReport, NewCommunityNodeReport,
     get_community_node_report, get_community_node_report_with_contact,
-    insert_community_node_appeal, insert_community_node_appeal_with_retention,
-    insert_community_node_report, insert_community_node_report_with_retention,
-    list_community_node_reports, seal_legacy_report_contacts,
+    insert_community_node_appeal, insert_community_node_report, list_community_node_reports,
 };
 pub use retention::{
-    CleanupCounts, RetentionPolicy, apply_retention_policy, cleanup_expired, retention_counts,
+    CleanupCounts, EXPIRED_DELETES, RETENTION_CLEANUP_BATCH, RetentionPolicy, cleanup_expired,
+    configure_case_retention, delete_expired_batch,
 };
-pub use rights_request_sensitive::seal_legacy_rights_request_data;
 pub use rights_requests::{
-    CreatedRightsRequest, RightsRequestActionResult, RightsRequestEvent, RightsRequestRecord,
-    action_rights_request, get_public_rights_request_status, get_rights_request,
-    get_rights_request_with_sensitive, insert_rights_request, list_rights_requests,
-    list_rights_requests_with_sensitive, resolve_rights_request_scope, transition_rights_request,
-    withdraw_rights_request,
+    CreatedRightsRequest, INDEXED_POST_EXISTS_SQL, RightsRequestActionResult, RightsRequestEvent,
+    RightsRequestRecord, action_rights_request, get_public_rights_request_status,
+    get_rights_request, get_rights_request_with_sensitive, insert_rights_request,
+    list_rights_requests, list_rights_requests_with_sensitive, resolve_rights_request_scope,
+    transition_rights_request, withdraw_rights_request,
 };
 pub use rollout::{ensure_default_auth_rollout, load_auth_rollout, store_auth_rollout};
 pub use safety_appeals::{
@@ -180,9 +178,8 @@ pub use safety_events::{
     attribute_risk_signal_subject_author, expire_superseded_advisory_signals, get_risk_signal,
     get_signed_moderation_event, list_distributable_moderation_events,
     list_distributable_risk_signals, list_risk_signals, list_risk_signals_for_target,
-    list_risk_signals_for_user, list_signed_moderation_events, persist_risk_signal,
-    persist_risk_signal_deduplicated, persist_risk_signal_with_author,
-    persist_signed_moderation_event,
+    list_signed_moderation_events, persist_risk_signal, persist_risk_signal_deduplicated,
+    persist_risk_signal_with_author, persist_signed_moderation_event,
 };
 pub use safety_runtime::{
     PgSafetyArtifactStore, resolve_safety_providers, resolve_safety_providers_with_pool,
@@ -191,21 +188,27 @@ pub use scan_verdicts::{
     StoredScanVerdict, get_scan_verdict, update_scan_verdict_advisories, upsert_scan_verdict,
 };
 pub use tester_feedback::{
-    NewTesterFeedback, TesterFeedback, get_tester_feedback, insert_tester_feedback_with_retention,
+    NewTesterFeedback, TesterFeedback, get_tester_feedback, insert_tester_feedback,
     list_tester_feedback,
 };
 pub use transmission_preventions::{
-    NewTransmissionPrevention, TransmissionPrevention, TransmissionPreventionBasis,
-    TransmissionPreventionCapability, TransmissionPreventionMutation,
+    NewTransmissionPrevention, REMOVE_PREVENTED_POST_INDEX_SQL, TransmissionPrevention,
+    TransmissionPreventionBasis, TransmissionPreventionCapability, TransmissionPreventionMutation,
     apply_transmission_prevention, get_active_transmission_prevention, is_transmission_prevented,
     is_transmission_prevented_for_any, release_transmission_prevention,
 };
-pub use trust_inputs::{list_trust_risk_inputs, trust_risk_inputs_from};
+pub use trust_inputs::{
+    TRUST_BASIS_PAGE_SIZE, TRUST_BASIS_PAGE_SQL, TRUST_REBUILD_BATCH, TRUST_SWEEP_BATCH,
+    TRUST_SWEEP_SQL, TRUST_TOTALS_SQL, TrustBasisCursor, TrustBasisPage,
+    list_disclosed_trust_basis_page, list_trust_basis_page, load_trust_totals,
+    rebuild_trust_totals, sweep_expired_trust_signals, sync_trust_half_life, trust_risk_input,
+};
 pub use trust_observations::{
-    ACTIVE_TRUST_OBSERVATION_RETENTION_DAYS, RELATION_OBSERVATIONS_PER_TARGET_LIMIT,
-    REVOKED_TRUST_OBSERVATION_RETENTION_DAYS, StoreTrustObservationsOutcome,
-    TRUST_OBSERVATION_MAX_CLOCK_SKEW_SECONDS, TrustObservationSharingStatus,
-    cleanup_trust_observations, latest_successful_relation_snapshot_id,
+    ACTIVE_TRUST_OBSERVATION_RETENTION_DAYS, EXPIRED_TRUST_OBSERVATIONS,
+    RELATION_OBSERVATIONS_PER_TARGET_LIMIT, REVOKED_TRUST_OBSERVATION_RETENTION_DAYS,
+    StoreTrustObservationsOutcome, TRUST_OBSERVATION_MAX_CLOCK_SKEW_SECONDS,
+    TrustObservationSharingStatus, cleanup_trust_observations,
+    delete_expired_trust_observations_batch, latest_successful_relation_snapshot_id,
     list_active_relation_observations, revoke_trust_observation_sharing, store_trust_observations,
-    trust_observation_revisions, trust_observation_sharing_status,
+    trust_observation_sharing_status,
 };

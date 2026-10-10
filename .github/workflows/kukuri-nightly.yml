@@ -7,6 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  LINDERA_BUILD_DICTIONARY_CACHE_DIR: ${{ github.workspace }}/.cache/lindera
   # #1120: CI の dev / test build は行番号だけの debuginfo にし、link 時間と cache の容量を減らす。
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
@@ -23,6 +24,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.1
+
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -56,6 +60,9 @@ jobs:
           libayatana-appindicator3-dev
           librsvg2-dev
           patchelf
+
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -102,6 +109,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
@@ -145,6 +155,9 @@ jobs:
           libayatana-appindicator3-dev
           librsvg2-dev
           patchelf
+
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -201,6 +214,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
@@ -252,6 +268,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
@@ -295,6 +314,9 @@ jobs:
           librsvg2-dev
           patchelf
 
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
@@ -328,6 +350,9 @@ jobs:
           libayatana-appindicator3-dev
           librsvg2-dev
           patchelf
+
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
@@ -370,6 +395,9 @@ jobs:
           libayatana-appindicator3-dev
           librsvg2-dev
           patchelf
+
+      - name: Cache Lindera dictionary
+        uses: ./.github/actions/cache-lindera
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2

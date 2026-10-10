@@ -51,9 +51,19 @@ impl TestServer {
         operator_config: &str,
         customize: impl FnOnce(UserApiState) -> UserApiState,
     ) -> Result<Self> {
+        let database = TestDatabase::create(admin_database_url, prefix).await?;
+        Self::spawn_on(database, prefix, operator_config, customize).await
+    }
+
+    /// 用意した DB で起動する（起動の前に置いた行を確かめるため）。
+    pub async fn spawn_on(
+        database: TestDatabase,
+        prefix: &str,
+        operator_config: &str,
+        customize: impl FnOnce(UserApiState) -> UserApiState,
+    ) -> Result<Self> {
         let rendezvous_redis_url = integration_test_rendezvous_redis_url();
         let rendezvous_key_prefix = format!("cn:test:{prefix}");
-        let database = TestDatabase::create(admin_database_url, prefix).await?;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .context("failed to bind test user-api listener")?;

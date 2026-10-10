@@ -2,7 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- #1195 AC-2: OS の自動 backup・端末間の転送・再 install 時の自動復元に kukuri のデータを載せない（2026-10-10 判断）。
+         鍵は端末の Keystore に縛られ、移った先では復号できない。移すには kukuri の暗号化 backup か移行 QR を使う。
+         Android 12 以降は allowBackup だけでは端末間の転送が止まらない端末があるので dataExtractionRules でも外す。 -->
     <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.kukuri_desktop_tauri"

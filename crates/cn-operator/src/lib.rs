@@ -225,7 +225,7 @@ manifest:
 #   # secret は値ではなく Secret Manager の ID のみ。credential / 鍵の実値は VM 起動時に取得される。
 #   deploy_indexer_stack: true
 #   cn_indexer_image: ghcr.io/kukuri-app/kukuri-cn-indexer:latest
-#   arcadedb_image: arcadedata/arcadedb:26.8.1
+#   arcadedb_image: arcadedata/arcadedb:26.10.1
 #   indexer_data_disk_gb: 10
 #   relation_analyze_interval_minutes: 60   # 1〜90
 #   indexer_retention_days: 30              # 必須。保持期間 T（3 以上）

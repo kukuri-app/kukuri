@@ -141,7 +141,8 @@ pub async fn get_signed_moderation_event(
         "SELECT id, issuer_node_id, target_type, target_id, action, reason_code, severity, basis,
                 visibility, confidence, policy_version, labels, signature, event_created_at, persisted_at
          FROM cn_safety.signed_moderation_events
-         WHERE id = $1 AND retention_expires_at > NOW()",
+         WHERE id = $1
+           AND persisted_at > NOW() - cn_admin.retention_interval('moderation_event')",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -159,7 +160,7 @@ pub async fn list_signed_moderation_events(
         "SELECT id, issuer_node_id, target_type, target_id, action, reason_code, severity, basis,
                 visibility, confidence, policy_version, labels, signature, event_created_at, persisted_at
          FROM cn_safety.signed_moderation_events
-         WHERE retention_expires_at > NOW()
+         WHERE persisted_at > NOW() - cn_admin.retention_interval('moderation_event')
          ORDER BY persisted_at DESC
          LIMIT $1 OFFSET $2",
     )
@@ -185,7 +186,7 @@ pub async fn list_distributable_moderation_events(
                 visibility, confidence, policy_version, labels, signature, event_created_at, persisted_at
          FROM cn_safety.signed_moderation_events
          WHERE visibility = ANY($1)
-           AND retention_expires_at > NOW()
+           AND persisted_at > NOW() - cn_admin.retention_interval('moderation_event')
          ORDER BY persisted_at DESC
          LIMIT $2 OFFSET $3",
     )
@@ -527,7 +528,8 @@ pub async fn expire_superseded_advisory_signals(
     Ok(result.rows_affected())
 }
 
-/// content target の risk signal を著者へ関連付ける（既にあれば何もしない）。
+/// content target の risk signal を著者へ関連付ける（既にあれば何もしない。risk signal の行が
+/// 無い内容には関連付けない）。
 ///
 /// 保存済み verdict を再利用したとき（#1050）に、共有 blob の 2 人目の著者が trust 入力から
 /// 漏れないようにするための入口。
@@ -557,6 +559,11 @@ fn validate_subject_author(target: RiskSignalTarget, author: &str) -> Result<()>
     Ok(())
 }
 
+/// 対応は、内容の risk signal の行が 1 行も無くなると削除の trigger が消す（#1699）。trigger とは
+/// advisory lock（ここは共有、trigger は排他）で直列化してから risk signal の行を確かめるので、
+/// 同時に進む期限削除と重なっても、参照先のある対応を消させず、参照先の無い対応を残さない。
+/// 内容の risk signal の行を書く trigger（信頼値の集計、#1702）も同じ lock を排他で取るので、
+/// 同じ内容への書込みと重なっても、対応の trigger は確定した行から著者の集計の行を作る。
 async fn insert_subject_author(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     target: &str,
@@ -564,9 +571,18 @@ async fn insert_subject_author(
     author: &str,
 ) -> Result<()> {
     sqlx::query(
+        "SELECT pg_advisory_xact_lock_shared(
+            hashtextextended('cn_safety.risk_signal_subject_authors', 0))",
+    )
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
         "INSERT INTO cn_safety.risk_signal_subject_authors
             (target, target_id, author_pubkey)
-         VALUES ($1, $2, $3)
+         SELECT $1, $2, $3
+         WHERE EXISTS (
+             SELECT 1 FROM cn_safety.risk_signals WHERE target = $1 AND target_id = $2
+         )
          ON CONFLICT (target, target_id, author_pubkey) DO NOTHING",
     )
     .bind(target)
@@ -586,7 +602,7 @@ pub async fn list_risk_signals(
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {RISK_SIGNAL_COLUMNS}
          FROM cn_safety.risk_signals
-         WHERE retention_expires_at > NOW()
+         WHERE persisted_at > NOW() - cn_admin.retention_interval('risk_signal')
          ORDER BY persisted_at DESC
          LIMIT $1 OFFSET $2"
     )))
@@ -602,7 +618,7 @@ pub async fn get_risk_signal(pool: &PgPool, id: &str) -> Result<Option<StoredRis
     let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {RISK_SIGNAL_COLUMNS}
          FROM cn_safety.risk_signals
-         WHERE id = $1 AND retention_expires_at > NOW()"
+         WHERE id = $1 AND persisted_at > NOW() - cn_admin.retention_interval('risk_signal')"
     )))
     .bind(id)
     .fetch_optional(pool)
@@ -620,37 +636,11 @@ pub async fn list_risk_signals_for_target(
         "SELECT {RISK_SIGNAL_COLUMNS}
          FROM cn_safety.risk_signals
          WHERE target = $1 AND target_id = $2
-           AND retention_expires_at > NOW()
+           AND persisted_at > NOW() - cn_admin.retention_interval('risk_signal')
          ORDER BY persisted_at DESC"
     )))
     .bind(to_db_enum(&target)?)
     .bind(target_id)
-    .fetch_all(pool)
-    .await?;
-    rows.iter().map(risk_signal_from_row).collect()
-}
-
-/// Return both user-scoped signals and content-scoped signals attributed to
-/// the user. The original content signal row is returned so expiry and appeal
-/// state remain connected to the moderation artifact that produced it.
-pub async fn list_risk_signals_for_user(
-    pool: &PgPool,
-    user_pubkey: &str,
-) -> Result<Vec<StoredRiskSignal>> {
-    let rows = sqlx::query(
-        "SELECT DISTINCT rs.id, rs.issuer_node_id, rs.target, rs.target_id, rs.category,
-                rs.severity, rs.basis, rs.visibility, rs.confidence, rs.expires_at,
-                rs.appeal_status, rs.persisted_at, rs.operator_adjusted_at,
-                rs.operator_origin_category
-         FROM cn_safety.risk_signals rs
-         LEFT JOIN cn_safety.risk_signal_subject_authors rsa
-           ON rsa.target = rs.target AND rsa.target_id = rs.target_id
-         WHERE ((rs.target = 'user_pubkey' AND rs.target_id = $1)
-            OR rsa.author_pubkey = $1)
-           AND rs.retention_expires_at > NOW()
-         ORDER BY rs.persisted_at DESC",
-    )
-    .bind(user_pubkey)
     .fetch_all(pool)
     .await?;
     rows.iter().map(risk_signal_from_row).collect()
@@ -672,7 +662,7 @@ pub async fn list_distributable_risk_signals(
          FROM cn_safety.risk_signals
          WHERE visibility = ANY($1)
            AND (expires_at IS NULL OR expires_at::timestamptz > $2::timestamptz)
-           AND retention_expires_at > NOW()
+           AND persisted_at > NOW() - cn_admin.retention_interval('risk_signal')
          ORDER BY persisted_at DESC
          LIMIT $3 OFFSET $4"
     )))

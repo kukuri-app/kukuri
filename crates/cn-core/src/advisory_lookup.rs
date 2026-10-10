@@ -39,7 +39,7 @@ pub async fn list_content_advisories_for_subjects(
              OR (target = 'blob_cid' AND target_id = ANY($3)))
            AND (appeal_status IS NULL OR appeal_status <> 'cleared')
            AND (expires_at IS NULL OR expires_at::timestamptz > $4::timestamptz)
-           AND retention_expires_at > NOW()
+           AND persisted_at > NOW() - cn_admin.retention_interval('risk_signal')
          ORDER BY target, target_id, category, persisted_at DESC, id"
     )))
     .bind(issuer_node_id)

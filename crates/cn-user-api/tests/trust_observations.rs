@@ -12,18 +12,21 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use kukuri_cn_core::{
     JwtConfig, TestDatabase, cleanup_trust_observations, connect_postgres,
-    list_active_relation_observations, persist_risk_signal, store_trust_observations,
+    delete_expired_trust_observations_batch, list_active_relation_observations,
+    persist_risk_signal, store_trust_observations,
 };
 use kukuri_cn_protocol::{
-    AcceptConsentsRequest, CommunityNodePoliciesResponse, TRUST_OBSERVATION_SHARING_POLICY_SLUG,
-    TrustEvaluationReason, TrustEvaluationsResponse, TrustObservationsRevokeResponse,
-    TrustObservationsSubmitResponse, TrustUserReadResponse, build_auth_envelope_json,
+    AcceptConsentsRequest, CommunityNodeConsentStatus, CommunityNodePoliciesResponse,
+    TRUST_OBSERVATION_SHARING_POLICY_SLUG, TrustEvaluationReason, TrustEvaluationsResponse,
+    TrustObservationsRevokeResponse, TrustObservationsSubmitResponse, TrustUserReadResponse,
+    build_auth_envelope_json,
 };
 use kukuri_cn_safety::{
     Basis, RiskSignalTarget, SafetyCategory, SafetyRiskSignal, Severity, Visibility,
 };
 use kukuri_cn_trust::{
     EdgeFeatures, FEATURE_SHARED_TOPICS, MemoryRelationStore, RelationStore, TrustParams,
+    TrustReadView, compose_trust,
 };
 use kukuri_cn_user_api::{
     RelationVisibilityState, TrustReadState, UserApiConfig, app_router, build_state,
@@ -128,6 +131,17 @@ impl TestServer {
                 .fetch_one(&self.pool)
                 .await?,
         )
+    }
+
+    async fn sharing_consent_rows(&self, subscriber: &KukuriKeys) -> Result<i64> {
+        Ok(sqlx::query_scalar(
+            "SELECT COUNT(*) FROM cn_user.policy_consents
+             WHERE subscriber_pubkey = $1 AND policy_slug = $2",
+        )
+        .bind(subscriber.public_key_hex())
+        .bind(TRUST_OBSERVATION_SHARING_POLICY_SLUG)
+        .fetch_one(&self.pool)
+        .await?)
     }
 }
 
@@ -491,6 +505,23 @@ async fn observation_revocation_deletes_rows_and_blocks_intake() -> Result<()> {
         .await?;
     assert_eq!(revoked.deleted, 2);
     assert_eq!(server.observation_rows().await?, 1);
+    // 取消は本人の観測提供の同意の行も消し、他の利用者の同意は残す。同意状態でも未同意になる。
+    assert_eq!(server.sharing_consent_rows(&observer).await?, 0);
+    assert_eq!(server.sharing_consent_rows(&bystander).await?, 1);
+    let status = client
+        .get(format!("{base_url}/v1/consents/status"))
+        .bearer_auth(token.as_str())
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<CommunityNodeConsentStatus>()
+        .await?;
+    let sharing = status
+        .items
+        .iter()
+        .find(|item| item.policy_slug == TRUST_OBSERVATION_SHARING_POLICY_SLUG)
+        .context("sharing document is in the consent status")?;
+    assert!(sharing.accepted_at.is_none());
 
     // 取消後は再同意まで受け付けない。
     next_millisecond().await;
@@ -510,7 +541,6 @@ async fn observation_revocation_deletes_rows_and_blocks_intake() -> Result<()> {
     assert_eq!(server.observation_rows().await?, 1);
 
     // 再同意すれば受け付ける。
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     accept_sharing_consent(&client, base_url, token.as_str()).await?;
     submit(
         &client,
@@ -610,10 +640,30 @@ async fn observation_retention_purges_expired() -> Result<()> {
         now - chrono::Duration::days(31),
     )
     .await?;
-    assert_eq!(server.observation_rows().await?, 3);
-    let deleted = cleanup_trust_observations(&server.pool, now).await?;
-    assert_eq!(deleted, 2);
-    assert_eq!(server.observation_rows().await?, 1);
+    let extra_targets = [
+        generate_keys().public_key(),
+        generate_keys().public_key(),
+        generate_keys().public_key(),
+    ];
+    store_trust_observations(
+        &server.pool,
+        observer.public_key_hex().as_str(),
+        &extra_targets
+            .iter()
+            .map(|target| observation(target, true, now - chrono::Duration::days(181)))
+            .collect::<Vec<_>>(),
+        now,
+    )
+    .await?;
+    assert_eq!(server.observation_rows().await?, 6);
+    for (deleted, remaining) in [(2, 4), (2, 2), (1, 1), (0, 1)] {
+        assert_eq!(
+            delete_expired_trust_observations_batch(&server.pool, now, 2).await?,
+            deleted
+        );
+        assert_eq!(server.observation_rows().await?, remaining);
+    }
+    assert_eq!(cleanup_trust_observations(&server.pool, now).await?, 0);
     server.shutdown().await
 }
 
@@ -700,12 +750,17 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
 
     let (before_a, _) = read_trust(&client, base_url, token_a.as_str(), &target_hex).await?;
     let (before_c, _) = read_trust(&client, base_url, token_c.as_str(), &target_hex).await?;
-    let t_value = before_a.view.trust;
+    // T は応答ごとの内訳から求める（相対成分は照会の時刻まで減衰するので、別の照会とは比べない。
+    // JSON の数値の読み取りは最後の桁がずれうる）。
+    let t_of = |view: &TrustReadView| {
+        compose_trust(&TrustParams::default(), view.absolute, view.relative).trust
+    };
+    let is_t = |view: &TrustReadView| (view.trust - t_of(view)).abs() < 1e-12;
+    let t_value = t_of(&before_a.view);
     assert!(t_value < 0.0);
-    assert_eq!(
-        before_c.view.trust, t_value,
-        "観測が無ければ閲覧者によらず S = T"
-    );
+    for before in [&before_a, &before_c] {
+        assert!(is_t(&before.view), "観測が無ければ閲覧者によらず S = T");
+    }
     let before_eval = before_a.view.evaluation.clone().expect("evaluation");
     assert_eq!(
         before_eval.reasons,
@@ -728,12 +783,12 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
     let (after_c, body_c) = read_trust(&client, base_url, token_c.as_str(), &target_hex).await?;
     // 同じ観測でも、U との relation が高い A の方が大きく下がる。
     assert!(after_a.view.trust < after_c.view.trust);
-    assert!(after_c.view.trust < t_value);
-    assert!((after_a.view.trust - (t_value - 0.9).max(-1.0)).abs() < 1e-9);
-    // T の内訳は閲覧者・観測で変わらない。
+    assert!(after_c.view.trust < t_of(&after_c.view));
+    assert!((after_a.view.trust - (t_of(&after_a.view) - 0.9).max(-1.0)).abs() < 1e-9);
+    // T の内訳は閲覧者・観測で変わらない（照会の時刻の差の減衰だけが残る）。
     for after in [&after_a, &after_c] {
         assert_eq!(after.view.absolute, before_a.view.absolute);
-        assert_eq!(after.view.relative, before_a.view.relative);
+        assert!((after.view.relative - before_a.view.relative).abs() < 1e-6);
         assert_eq!(after.view.basis.len(), before_a.view.basis.len());
         let eval = after.view.evaluation.as_ref().expect("evaluation");
         assert_eq!(eval.trust_version, before_eval.trust_version);
@@ -768,7 +823,7 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
     let batch: TrustEvaluationsResponse = serde_json::from_str(&batch_body)?;
     assert_eq!(batch.viewer_pubkey, viewer_a.public_key_hex());
     assert_eq!(batch.evaluations.len(), 1, "重複 target は 1 件にまとめる");
-    assert_eq!(batch.evaluations[0].trust, after_a.view.trust);
+    assert!((batch.evaluations[0].trust - after_a.view.trust).abs() < 1e-6);
     assert!(batch.evaluations[0].evaluation.hide_recommended);
     for invalid in [serde_json::json!([]), serde_json::json!(["not-a-pubkey"])] {
         let response = client
@@ -812,7 +867,7 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
     .await?
     .error_for_status()?;
     let (restored, _) = read_trust(&client, base_url, token_a.as_str(), &target_hex).await?;
-    assert_eq!(restored.view.trust, t_value);
+    assert!(is_t(&restored.view));
     let restored_eval = restored.view.evaluation.unwrap();
     assert_eq!(
         restored_eval.reasons,
@@ -823,7 +878,7 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
         after_a.view.evaluation.unwrap().relation_version
     );
 
-    // 提供同意を取り消した observer の観測は、行が残っていても評価に使わない。
+    // 提供同意が無くなった observer の観測は、行が残っていても評価に使わず、版も変わる。
     next_millisecond().await;
     submit(
         &client,
@@ -833,14 +888,22 @@ async fn trust_read_sums_absolute_and_viewer_relation() -> Result<()> {
     )
     .await?
     .error_for_status()?;
+    let (reblocked, _) = read_trust(&client, base_url, token_a.as_str(), &target_hex).await?;
     sqlx::query(
-        "INSERT INTO cn_trust.observation_sharing_revocations (observer_pubkey, revoked_at)
-         VALUES ($1, NOW())",
+        "DELETE FROM cn_user.policy_consents WHERE subscriber_pubkey = $1 AND policy_slug = $2",
     )
     .bind(observer_hex.as_str())
+    .bind(TRUST_OBSERVATION_SHARING_POLICY_SLUG)
     .execute(&server.pool)
     .await?;
     let (withdrawn, _) = read_trust(&client, base_url, token_a.as_str(), &target_hex).await?;
-    assert_eq!(withdrawn.view.trust, t_value);
+    assert!(is_t(&withdrawn.view));
+    let withdrawn_version = withdrawn.view.evaluation.unwrap().relation_version;
+    assert_ne!(
+        withdrawn_version,
+        reblocked.view.evaluation.unwrap().relation_version
+    );
+    // 評価に使う観測が同じ（無い）なら同じ版になる。
+    assert_eq!(withdrawn_version, restored_eval.relation_version);
     server.shutdown().await
 }

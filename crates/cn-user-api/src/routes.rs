@@ -68,7 +68,10 @@ use crate::handlers::trust_relation::{
 };
 use crate::rate_limit::apply_rate_limit;
 use crate::state::{ManifestState, UserApiState, build_runtime_state};
-use kukuri_cn_core::{apply_retention_policy, cleanup_expired, cleanup_trust_observations};
+use kukuri_cn_core::{
+    TRUST_REBUILD_BATCH, TRUST_SWEEP_BATCH, cleanup_expired, cleanup_trust_observations,
+    rebuild_trust_totals, sweep_expired_trust_signals,
+};
 
 pub fn app_router(state: UserApiState) -> Router {
     let manifest = manifest_routes(
@@ -287,6 +290,7 @@ pub async fn run_from_env() -> Result<()> {
     let rate_limit = RateLimitConfig::from_env()?;
     let state = build_runtime_state(&config).await?;
     spawn_retention_cleanup(state.clone());
+    spawn_trust_totals_maintenance(state.clone());
     let admin_bind_addr = std::env::var("COMMUNITY_NODE_ADMIN_BIND_ADDR")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -359,14 +363,13 @@ pub fn with_cors(router: Router, allowed_origins: &[String]) -> Result<Router> {
     ))
 }
 
-fn spawn_retention_cleanup(state: UserApiState) {
+/// 期限削除（ADR 0034 §4）を、起動直後と以後 1 時間ごとに背景で回す。起動（listen）はこれを待たない。
+pub fn spawn_retention_cleanup(state: UserApiState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60 * 60));
-        interval.tick().await;
         loop {
             interval.tick().await;
             let result = async {
-                apply_retention_policy(&state.pool, &state.retention).await?;
                 let now = chrono::Utc::now();
                 let counts = cleanup_expired(&state.pool, now).await?;
                 let trust_observations = cleanup_trust_observations(&state.pool, now).await?;
@@ -380,6 +383,42 @@ fn spawn_retention_cleanup(state: UserApiState) {
             match result {
                 Ok(counts) => tracing::info!(?counts, "community-node retention cleanup completed"),
                 Err(error) => tracing::error!(%error, "community-node retention cleanup failed"),
+            }
+        }
+    })
+}
+
+/// 信頼値の集計の保守（ADR 0026 §10）。1 分ごとに、期限を過ぎた行を 1 回 1,000 行ずつ外し、運営者が
+/// 変えた半減期で作っていない集計を 1 回 100 対象ずつ作り直す。作り直しが長く続いても期限の掃除を
+/// 止めないよう、1 回ずつ交互に進める。止まっても次の回に残りから続く。
+fn spawn_trust_totals_maintenance(state: UserApiState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let result = async {
+                let (mut swept, mut rebuilt) = (0, 0);
+                loop {
+                    let now = chrono::Utc::now();
+                    let removed = sweep_expired_trust_signals(&state.pool, now).await?;
+                    let count = rebuild_trust_totals(&state.pool, now).await?;
+                    swept += removed;
+                    rebuilt += count;
+                    if removed < TRUST_SWEEP_BATCH as u64 && count < TRUST_REBUILD_BATCH as u64 {
+                        break;
+                    }
+                }
+                anyhow::Ok((swept, rebuilt))
+            }
+            .await;
+            match result {
+                Ok((0, 0)) => {}
+                Ok((swept, rebuilt)) => {
+                    tracing::info!(swept, rebuilt, "community-node trust totals maintained");
+                }
+                Err(error) => {
+                    tracing::error!(%error, "community-node trust totals maintenance failed");
+                }
             }
         }
     });
