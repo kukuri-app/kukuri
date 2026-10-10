@@ -280,7 +280,7 @@ export function CommunityNodePanel({
             className='min-w-0 rounded-[20px] border border-[var(--border-subtle)] bg-[var(--surface-panel-soft)] p-4 shadow-[var(--shadow-dropdown)]'
           >
             <div className='flex flex-wrap items-start justify-between gap-3'>
-              <div className='min-w-0 flex-1 space-y-3'>
+              <div className='min-w-0 flex-auto space-y-3'>
                 <h4 className='break-all text-base font-semibold text-foreground'>
                   {node.baseUrl.trim() || t('settings:communityNode.baseUrlsPlaceholder')}
                 </h4>
