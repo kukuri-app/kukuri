@@ -5,6 +5,10 @@
       "path": "crates/cn-operator/src/config.rs"
     },
     {
+      "lines": 1226,
+      "path": "docs/THIRD_PARTY_NOTICES.md"
+    },
+    {
       "lines": 1218,
       "path": "crates/harness/src/scenarios/community_node.rs"
     },
@@ -17,12 +21,8 @@
       "path": "crates/cn-operator/src/docs.rs"
     },
     {
-      "lines": 1146,
+      "lines": 1150,
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
-    },
-    {
-      "lines": 1226,
-      "path": "docs/THIRD_PARTY_NOTICES.md"
     },
     {
       "lines": 1132,
@@ -73,11 +73,19 @@
       "path": "crates/store/src/parity/lists.rs"
     },
     {
+      "lines": 1022,
+      "path": "crates/app-api/src/tests/media.rs"
+    },
+    {
       "lines": 1020,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {
-      "lines": 1002,
+      "lines": 1018,
+      "path": "crates/app-api/src/timeline.rs"
+    },
+    {
+      "lines": 1013,
       "path": "crates/app-api/src/views.rs"
     },
     {

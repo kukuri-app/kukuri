@@ -5,8 +5,8 @@ import {
 } from '@/lib/api';
 import {
   blobToCreateAttachment,
-  fileToCreateAttachment,
 } from '@/lib/attachments';
+import { fileToPostAttachment } from '@/lib/androidPostAttachments';
 
 import {
   type DraftMediaItem,
@@ -426,7 +426,7 @@ export async function buildImageDraftItem(
   file: File,
   nextDraftId: () => string
 ): Promise<DraftMediaItem> {
-  const attachment = await fileToCreateAttachment(file, 'image_original');
+  const attachment = await fileToPostAttachment(file, 'image_original');
   return {
     id: nextDraftId(),
     source_name: file.name,
@@ -445,7 +445,7 @@ export async function buildVideoDraftItem(
     source_name: file.name,
     preview_url: URL.createObjectURL(posterFile),
     attachments: [
-      await fileToCreateAttachment(file, 'video_manifest'),
+      await fileToPostAttachment(file, 'video_manifest'),
       await blobToCreateAttachment(posterFile, posterFile.name, 'video_poster'),
     ],
   };

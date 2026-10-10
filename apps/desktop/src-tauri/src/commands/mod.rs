@@ -1,4 +1,5 @@
 pub mod app_consent;
+pub mod attachment_documents;
 pub mod background_notifications;
 pub mod developer_logs;
 pub mod device_backup;

@@ -57,6 +57,11 @@ pub enum BlobStatus {
 #[async_trait]
 pub trait BlobService: Send + Sync {
     async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
+    /// 本人の選択した native file を全量 allocation せず、通常の本人の blob と同じ所有先へ置く。
+    #[cfg(not(target_family = "wasm"))]
+    async fn put_blob_file(&self, _path: &Path, _mime: &str) -> Result<StoredBlob> {
+        anyhow::bail!("file-backed own blob storage is not supported")
+    }
     /// 本人の書込みを、保護参照 `reference` を付けて置く(#1221 R5-I。参照を外すと保護が解ける)。
     /// 保護所有先の無い実装は `put_blob` と同じ。
     async fn put_owned_blob(
@@ -275,6 +280,10 @@ impl IrohBlobService {
 #[async_trait]
 impl BlobService for MemoryBlobService {
     #[cfg(not(target_family = "wasm"))]
+    async fn put_blob_file(&self, path: &Path, mime: &str) -> Result<StoredBlob> {
+        self.put_blob(tokio::fs::read(path).await?, mime).await
+    }
+    #[cfg(not(target_family = "wasm"))]
     async fn put_remote_blob_file(&self, path: &Path, hash: &BlobHash, _adult: bool) -> Result<()> {
         let bytes = tokio::fs::read(path).await?;
         anyhow::ensure!(
@@ -365,6 +374,23 @@ impl BlobService for MemoryBlobService {
 
 #[async_trait]
 impl BlobService for IrohBlobService {
+    #[cfg(not(target_family = "wasm"))]
+    async fn put_blob_file(&self, path: &Path, mime: &str) -> Result<StoredBlob> {
+        let bytes = tokio::fs::metadata(path).await?.len();
+        let imported = self.node.blobs().blobs().add_path(path).await?;
+        let hash = imported.hash.to_string();
+        if let Some(cache) = &self.remote_cache {
+            cache
+                .add_protected_ref(&format!("own_blob:{hash}"), "blob", &hash)
+                .await?;
+            cache.put_remote_blob_file(&hash, path).await?;
+        }
+        Ok(StoredBlob {
+            hash: BlobHash::new(hash),
+            mime: mime.into(),
+            bytes,
+        })
+    }
     #[cfg(not(target_family = "wasm"))]
     async fn put_remote_blob_file(&self, path: &Path, hash: &BlobHash, adult: bool) -> Result<()> {
         if tokio::fs::metadata(path).await?.len() > kukuri_store::REMOTE_CACHE_CAPACITY_BYTES as u64

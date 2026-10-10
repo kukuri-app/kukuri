@@ -7,6 +7,63 @@ mod media_file_display;
 mod media_scoped_fetch;
 
 #[tokio::test]
+async fn selected_post_file_keeps_roles_and_private_write_guard() {
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(FakeTransport::new("app", FakeNetwork::default()));
+    let app = AppService::new(store, transport);
+    let file = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(file.path(), b"selected-video").unwrap();
+    let source = || crate::PostAttachmentSource::File {
+        path: file.path().into(),
+        mime: "video/mp4".into(),
+        role: AssetRole::VideoManifest,
+    };
+    let topic = "kukuri:topic:chosen-file";
+    let object_id = app
+        .create_post_with_attachment_sources_in_channel(
+            topic,
+            ChannelRef::Public,
+            "selected",
+            None,
+            vec![source()],
+            vec![],
+        )
+        .await
+        .unwrap();
+    let timeline = app.list_timeline(topic, None, 10).await.unwrap();
+    let post = timeline
+        .items
+        .iter()
+        .find(|post| post.object_id == object_id)
+        .unwrap();
+    assert_eq!(
+        post.attachments[0].hash,
+        blake3::hash(b"selected-video").to_hex().as_str()
+    );
+    assert_eq!(post.attachments[0].bytes, 14);
+    assert_eq!(post.attachments[0].role, "video_manifest");
+    // 存在しない file でも、先に private の書込み権限を判定する。
+    let rejected = app
+        .create_post_with_attachment_sources_in_channel(
+            topic,
+            ChannelRef::PrivateChannel {
+                channel_id: "not-joined".into(),
+            },
+            "private",
+            None,
+            vec![crate::PostAttachmentSource::File {
+                path: file.path().with_extension("missing"),
+                mime: "video/mp4".into(),
+                role: AssetRole::VideoManifest,
+            }],
+            vec![],
+        )
+        .await
+        .unwrap_err();
+    assert!(!rejected.to_string().contains("os error"), "{rejected}");
+}
+
+#[tokio::test]
 async fn create_post_with_image_only_succeeds() {
     let store = Arc::new(MemoryStore::default());
     let transport = Arc::new(FakeTransport::new("app", FakeNetwork::default()));
