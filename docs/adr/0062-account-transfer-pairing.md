@@ -13,6 +13,7 @@ Accepted（Issue #1211 W7 AC-1、鍵・設定の転送と保存は AC-2 で §5�
 
 - 端末は iroh の endpoint を 1 つ持ち、`Router` に ALPN ごとの protocol を登録している（`crates/iroh-node/src/node.rs`）。接続先の endpoint id は QUIC の認証で確かめられる。
 - desktop は `kukuri://` のリンク起動を受ける（`tauri.conf.json` の deep-link）。
+- Android は同じ custom scheme を mobile deep-link 設定へ登録し、既存 plugin の cold/warm intent から Ready 後の入力欄へ渡す（#1197 AC-3b）。App Links は採用せず、受信だけで接続・移行・同意を実行しない。チャンネル招待の既存 `kukuri://access-preview?token=...` は同じ登録から既存の確認 Dialog へ入り、明示 Join 前の参加を行わない。
 - Web の公開 URL・origin は未定（ADR 0060 §2）。
 
 ## Decision
