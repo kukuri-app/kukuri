@@ -20,7 +20,8 @@ const activation = vi.hoisted(() => ({
 
 vi.mock('@/shell/useOsNotificationActivation', () => ({
   useOsNotificationActivation: (
-    _notifications: NotificationView[],
+    _api: unknown,
+    _account: string | null,
     onActivate: (notification: NotificationView) => void | Promise<void>
   ) => {
     activation.open = onActivate;
