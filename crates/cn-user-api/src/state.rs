@@ -293,9 +293,17 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
         let projection = ArcadeDbProjection::new(ArcadeDbConfig::from_env())
             .context("failed to build ArcadeDB client for index query")?;
         let entries = PgIndexEntryStore::new(pool.clone());
+        let path = config
+            .indexer_data_dir
+            .join(kukuri_cn_indexer::search::SEARCH_DIRECTORY);
+        let search = tokio::task::spawn_blocking(move || {
+            kukuri_cn_indexer::search::SearchReader::open_or_create(&path)
+        })
+        .await??;
         Some(Arc::new(FailClosedIndexQuery::new(
             Arc::new(projection),
             Arc::new(entries),
+            search,
         )))
     } else {
         None

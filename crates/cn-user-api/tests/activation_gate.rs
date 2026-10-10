@@ -63,6 +63,7 @@ async fn spawn_api(
         .context("failed to bind test listener")?;
     let addr = listener.local_addr()?;
     let base_url = format!("http://{addr}");
+    let indexer_dir = tempfile::tempdir()?;
     let state = build_state(&UserApiConfig {
         bind_addr: addr,
         database_url: database_url.to_string(),
@@ -76,6 +77,7 @@ async fn spawn_api(
         channel_secret_key: None,
         legal_data_key: None,
         index_query_enabled: true,
+        indexer_data_dir: indexer_dir.path().to_path_buf(),
         trust_read_enabled: true,
         relation_distance_optout_min_proximity: Some(0.5),
         deployment_revision: "test-deployment-v1".to_string(),
@@ -85,6 +87,7 @@ async fn spawn_api(
     .await?;
     let app = app_router(state);
     let task = tokio::spawn(async move {
+        let _indexer_dir = indexer_dir;
         axum::serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),

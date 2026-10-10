@@ -73,6 +73,7 @@ impl TestServer {
             channel_secret_key: None,
             legal_data_key: Some("unit-test-legal-data-key-0123456789abcdef".to_string()),
             index_query_enabled: false,
+            indexer_data_dir: Default::default(),
             trust_read_enabled: false,
             relation_distance_optout_min_proximity: None,
             deployment_revision: "test-deployment-v1".to_string(),
@@ -84,8 +85,11 @@ impl TestServer {
             let store = Arc::new(MemorySafetyArtifactStore::new());
             let entries = Arc::new(MemoryIndexEntryStore::new(store));
             let projection = Arc::new(MemoryIndexProjection::new());
-            state =
-                state.with_index_query(Arc::new(FailClosedIndexQuery::new(projection, entries)));
+            state = state.with_index_query(Arc::new(FailClosedIndexQuery::new(
+                projection.clone(),
+                entries,
+                projection.search_reader(),
+            )));
         }
         let app = app_router(state);
         let task = tokio::spawn(async move {
