@@ -44,6 +44,7 @@ Accepted
 ### 3. Join / Share を unified action にする
 - UI 上の import action は 1 つの `Join` に統一する。token kind の判定は runtime が内部で行い、invite / grant / share へ振り分ける。
 - UI 上の export action は 1 つの `Share` に統一する。audience kind に応じた invite / grant / share の選択は runtime が内部で行う。
+- 既存の `kukuri://access-preview?token=...` は同じ確認 Dialog へ入り、署名付き JSON の形式を変えずに運ぶ。受信だけでは参加せず、現在の token の local preview 後に明示 Join を行う。新しい URL、閉じる、終了より前の確認結果は破棄し、token/data と native listener を回収する（#1197 AC-3a）。cold 起動時の遅い URL 取得は、その間に受けた warm リンクを上書きしない。
 - `Join Invite`, `Join Grant`, `Join Share`, `Create Invite`, `Create Grant`, `Create Share` の個別 button は primary UI に置かない。
 - `Freeze`, `Rotate`, `Close Sharing` の standalone button は primary UI に置かない。
 

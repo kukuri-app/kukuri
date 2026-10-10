@@ -148,7 +148,11 @@ fn fixture() -> QueryFixture {
     let (service, store) = allow_service();
     let entries = Arc::new(MemoryIndexEntryStore::new(store.clone()));
     let pipeline = IngestPipeline::new(docs.clone(), service, entries.clone(), projection.clone());
-    let query = FailClosedIndexQuery::new(projection.clone(), entries.clone());
+    let query = FailClosedIndexQuery::new(
+        projection.clone(),
+        entries.clone(),
+        projection.search_reader(),
+    );
     QueryFixture {
         docs,
         projection,

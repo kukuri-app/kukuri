@@ -6,10 +6,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use kukuri_cn_core::{
     ChannelSecretCipher, DatabaseInitMode, JwtConfig, LegalDataCipher, PgIndexEntryStore,
-    RetentionPolicy, TopicRendezvousStore, cleanup_expired, configure_case_retention,
-    connect_postgres, initialize_database, initialize_database_for_runtime,
-    latest_readiness_activation, readiness_context_fingerprint, sync_policies,
-    sync_trust_half_life, verify_legal_data_key,
+    RetentionPolicy, TopicRendezvousStore, configure_case_retention, connect_postgres,
+    initialize_database, initialize_database_for_runtime, latest_readiness_activation,
+    readiness_context_fingerprint, sync_policies, sync_trust_half_life, verify_legal_data_key,
 };
 use kukuri_cn_indexer::{
     ArcadeDbConfig, ArcadeDbProjection, ArcadeDbRelationGraph, FailClosedIndexQuery, IndexQuery,
@@ -235,12 +234,10 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
             anyhow::bail!("COMMUNITY_NODE_LEGAL_DATA_KEY is required to read stored legal data");
         }
     }
+    // 期限削除は待たない（背景の処理が起動直後から小分けに消す。読取りは日数で期限切れを返さない）。
     configure_case_retention(&pool, &retention)
         .await
         .context("failed to configure case retention days")?;
-    cleanup_expired(&pool, chrono::Utc::now())
-        .await
-        .context("initial retention cleanup failed")?;
     // 有効化の関門（#616）。activation は起動後にtimerが作成・更新・失効するため、
     // backendの構成有無とは分離し、各requestで現在値を検査する。ここでは起動時点の状態を
     // 運用logへ残すだけにする。
@@ -296,9 +293,17 @@ async fn build_state_from_pool(config: &UserApiConfig, pool: PgPool) -> Result<U
         let projection = ArcadeDbProjection::new(ArcadeDbConfig::from_env())
             .context("failed to build ArcadeDB client for index query")?;
         let entries = PgIndexEntryStore::new(pool.clone());
+        let path = config
+            .indexer_data_dir
+            .join(kukuri_cn_indexer::search::SEARCH_DIRECTORY);
+        let search = tokio::task::spawn_blocking(move || {
+            kukuri_cn_indexer::search::SearchReader::open_or_create(&path)
+        })
+        .await??;
         Some(Arc::new(FailClosedIndexQuery::new(
             Arc::new(projection),
             Arc::new(entries),
+            search,
         )))
     } else {
         None

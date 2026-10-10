@@ -17,7 +17,7 @@ use kukuri_cn_core::IndexScopeKind;
 
 use crate::config::ArcadeDbConfig;
 use crate::projection::{IndexProjection, IndexedEntry};
-use crate::query::IndexQuery;
+use crate::query::IndexRecent;
 
 /// index 投影 document の ArcadeDB type 名。
 const ENTRY_TYPE: &str = "IndexedEntry";
@@ -145,13 +145,101 @@ impl ArcadeDbProjection {
             ),
         )
         .await?;
-        // 全文検索 index（Lucene）。ユーザー向け search は #404 が使う。
+        // 同じ作成時刻の投稿も取りこぼさない既存投影の写し（#1724 AC-2）。
+        // 初回作成中の待ちは #1724 の決定8で受け入れ済み。
         self.command(
             "sql",
-            &format!("CREATE INDEX IF NOT EXISTS ON {ENTRY_TYPE} (text) FULL_TEXT ENGINE LUCENE"),
-        )
-        .await?;
+            &format!("CREATE INDEX IF NOT EXISTS ON {ENTRY_TYPE} (created_at, scope_kind, scope_id, object_id) NOTUNIQUE"),
+        ).await?;
+        // 検索は Tantivy が持つ。既存の全文索引を消し、文書と新着の索引は残す（#1724）。
+        self.command("sql", &format!("DROP INDEX `{ENTRY_TYPE}[text]` IF EXISTS"))
+            .await?;
         Ok(())
+    }
+
+    /// 作成時刻の降順に、同じ時刻の scope/object の位置も持って128件まで写す。
+    pub async fn read_backfill_page(
+        &self,
+        cursor: &crate::backfill::BackfillCursor,
+    ) -> Result<crate::backfill::BackfillPage> {
+        use crate::backfill::{BACKFILL_PAGE, BackfillCursor, BackfillPage};
+        let mut cursor = cursor.clone();
+        let mut entries = Vec::new();
+        while entries.len() < BACKFILL_PAGE {
+            let left = BACKFILL_PAGE - entries.len();
+            match &cursor {
+                BackfillCursor::Complete => break,
+                BackfillCursor::Start | BackfillCursor::Before(_) => {
+                    let (operator, time) = match cursor {
+                        BackfillCursor::Before(time) => ("<", time),
+                        _ => ("<=", i64::MAX),
+                    };
+                    let mut first = self
+                        .backfill_query(
+                            &format!("WHERE created_at {operator} :time ORDER BY created_at DESC"),
+                            json!({"time": time}),
+                            1,
+                        )
+                        .await?;
+                    cursor = first.first().map_or(BackfillCursor::Complete, |entry| {
+                        BackfillCursor::Time(entry.created_at)
+                    });
+                    entries.append(&mut first);
+                }
+                BackfillCursor::Time(time) => {
+                    let mut page = self.backfill_query(
+                        "WHERE created_at = :time AND scope_kind >= :kind ORDER BY scope_kind DESC",
+                        json!({"time": time, "kind": ""}), left,
+                    ).await?;
+                    cursor = page
+                        .last()
+                        .map_or(BackfillCursor::Before(*time), BackfillCursor::after);
+                    entries.append(&mut page);
+                }
+                BackfillCursor::After {
+                    time,
+                    kind,
+                    scope,
+                    object,
+                } => {
+                    let params = json!({"time": time, "kind": kind.as_str(), "scope": scope, "object": object});
+                    let mut page = Vec::new();
+                    // 一つの range と一つの ORDER BY を使う。複数列の ORDER BY は全件を読む。
+                    for tail in [
+                        "WHERE created_at = :time AND scope_kind = :kind AND scope_id = :scope AND object_id < :object ORDER BY object_id DESC",
+                        "WHERE created_at = :time AND scope_kind = :kind AND scope_id < :scope ORDER BY scope_id DESC",
+                        "WHERE created_at = :time AND scope_kind < :kind ORDER BY scope_kind DESC",
+                    ] {
+                        page = self.backfill_query(tail, params.clone(), left).await?;
+                        if !page.is_empty() {
+                            break;
+                        }
+                    }
+                    cursor = page
+                        .last()
+                        .map_or(BackfillCursor::Before(*time), BackfillCursor::after);
+                    entries.append(&mut page);
+                }
+            }
+        }
+        Ok(BackfillPage { entries, cursor })
+    }
+
+    async fn backfill_query(
+        &self,
+        tail: &str,
+        params: Value,
+        limit: usize,
+    ) -> Result<Vec<IndexedEntry>> {
+        entries_from_result(
+            &self
+                .command_with_params(
+                    "sql",
+                    &format!("SELECT {ENTRY_COLUMNS} FROM {ENTRY_TYPE} {tail} LIMIT {limit}"),
+                    params,
+                )
+                .await?,
+        )
     }
 
     /// 投影に入っている項目の総数を返す（#616 readiness の真実源との突合用）。
@@ -314,47 +402,7 @@ impl IndexProjection for ArcadeDbProjection {
 }
 
 #[async_trait]
-impl IndexQuery for ArcadeDbProjection {
-    async fn search_scope(
-        &self,
-        scope_kind: IndexScopeKind,
-        scope_id: &str,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<IndexedEntry>> {
-        // Lucene 全文 index（`SEARCH_INDEX`）+ scope 絞り込み。query は Lucene クエリ構文。
-        let command = format!(
-            "SELECT {ENTRY_COLUMNS} FROM {ENTRY_TYPE} \
-             WHERE SEARCH_INDEX('{ENTRY_TYPE}[text]', :query) \
-             AND scope_kind = :scope_kind AND scope_id = :scope_id \
-             ORDER BY created_at DESC LIMIT {limit}"
-        );
-        let value = self
-            .command_with_params(
-                "sql",
-                &command,
-                json!({
-                    "query": query,
-                    "scope_kind": Self::scope_kind_str(scope_kind),
-                    "scope_id": scope_id,
-                }),
-            )
-            .await?;
-        entries_from_result(&value)
-    }
-
-    async fn search_all(&self, query: &str, limit: usize) -> Result<Vec<IndexedEntry>> {
-        let command = format!(
-            "SELECT {ENTRY_COLUMNS} FROM {ENTRY_TYPE} \
-             WHERE SEARCH_INDEX('{ENTRY_TYPE}[text]', :query) \
-             ORDER BY created_at DESC LIMIT {limit}"
-        );
-        let value = self
-            .command_with_params("sql", &command, json!({ "query": query }))
-            .await?;
-        entries_from_result(&value)
-    }
-
+impl IndexRecent for ArcadeDbProjection {
     async fn list_recent(
         &self,
         scope: Option<(IndexScopeKind, &str)>,

@@ -99,7 +99,7 @@ export function createDirectMessageActions({
         reply_to_message_id: null,
         attachments: optimisticAttachments,
         outgoing: true,
-        delivered: true,
+        delivered: false,
       } satisfies DirectMessageMessageView;
       const optimisticConversation = {
         dm_id: optimisticMessage.dm_id,

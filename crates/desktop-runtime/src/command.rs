@@ -389,6 +389,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     get_discovery_config() => runtime.get_discovery_config().await.map_err(map_error);
     get_local_peer_ticket() => runtime.local_peer_ticket().await.map_err(map_error);
     get_my_profile() => runtime.get_my_profile().await.map_err(map_error);
+    get_notification(request: NotificationIdRequest) => runtime.get_notification(request).await.map_err(map_error);
     get_notification_status() => runtime.get_notification_status().await.map_err(map_error);
     get_sync_status() => runtime.get_sync_status().await.map_err(map_error);
     import_channel_access_token(request: ImportChannelAccessTokenRequest) => runtime.import_channel_access_token(request).await.map_err(map_error);

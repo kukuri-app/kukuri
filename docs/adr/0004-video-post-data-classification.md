@@ -28,6 +28,8 @@ Accepted
 - frontend の media 表示は `data URL` ではなく `Blob + object URL` を canonical にし、image/video とも同じ object URL cache を使う。
 - composer の添付 UI は単一 `Attach` に統合し、video 選択時は browser 内で `VideoPoster` を自動生成する。
 - `VideoPoster` の client-side 生成に失敗した video は publish を許可しない。
+- 画像・動画の添付容量に製品上の上限を設けない（#1197、2026-10-10 ユーザー判断で現行の上限なしを維持）。
+- poster 生成は `preload=auto` で読み込んだ frame を元の解像度・JPEG quality 0.85 で保存する。WebView の idle JPEG callback を待たず、`toDataURL` の一時的な結果を直ちに File の bytes へ戻す。表示用の canonical は引き続き object URL。生成成功・失敗・既存の5秒timeoutのいずれでも video と生成元URLを回収する。
 - `gossip` は video bytes や poster bytes を運ばず、`TopicIndexUpdated` hint のみを publish する。
 - `SQLite` は video post の timeline/thread projection、poster status、local preview cache に限定する。
 

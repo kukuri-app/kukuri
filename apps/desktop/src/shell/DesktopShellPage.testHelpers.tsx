@@ -208,9 +208,7 @@ export function installSuccessfulPosterGenerationMocks() {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
     drawImage: vi.fn(),
   } as unknown as CanvasRenderingContext2D);
-  vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
-    callback(new Blob([Uint8Array.from([9, 8, 7, 6])], { type: 'image/jpeg' }));
-  });
+  vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/jpeg;base64,CQgHBg==');
 }
 
 export function installMetadataSeekPosterGenerationMocks() {
@@ -253,9 +251,7 @@ export function installMetadataSeekPosterGenerationMocks() {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
     drawImage: vi.fn(),
   } as unknown as CanvasRenderingContext2D);
-  vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
-    callback(new Blob([Uint8Array.from([9, 8, 7, 6])], { type: 'image/jpeg' }));
-  });
+  vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/jpeg;base64,CQgHBg==');
 }
 
 export function installFailedPosterGenerationMocks() {

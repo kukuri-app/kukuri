@@ -48,6 +48,26 @@ pub const TRUST_BASIS_PAGE_SQL: &str = "SELECT s.*
     ORDER BY e.absolute DESC, e.persisted_at DESC, e.signal_id DESC
     LIMIT $5";
 
+/// 期限を過ぎた行を消す SQL（`$1` = 基準時刻、`$2` = 1 回の上限）。選んだ行は `ctid` の配列で引いて消す。
+/// 選んだ行と結合して消すと、選ぶ行の見積りが多い回に Postgres が表の全行を読む計画を選ぶ（#1732）。
+/// この表の行は trigger と掃除が INSERT と DELETE するだけで UPDATE しない。選んだ行は同じ文で lock を
+/// 持つので、`ctid` は文の中で変わらない。
+pub const TRUST_SWEEP_SQL: &str = "WITH lapsed AS (
+         SELECT ctid FROM cn_safety.trust_target_signals
+         WHERE removal_at <= $1
+         ORDER BY removal_at
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+     ), retired AS (
+         SELECT ctid FROM cn_safety.trust_target_signals
+         WHERE persisted_at <= $1 - cn_admin.retention_interval('risk_signal')
+         ORDER BY persisted_at
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+     )
+     DELETE FROM cn_safety.trust_target_signals
+     WHERE ctid = ANY (ARRAY(SELECT * FROM lapsed UNION SELECT * FROM retired LIMIT $2))";
+
 const DISCLOSED_PUBLIC_PAGE_SQL: &str = "SELECT s.*
     FROM cn_safety.trust_target_signals e
     JOIN cn_safety.risk_signals s ON s.id = e.signal_id
@@ -239,30 +259,11 @@ fn page_from_rows(rows: &[sqlx::postgres::PgRow]) -> Result<TrustBasisPage> {
 /// （`cn_admin.retention_days`）で判定するので、日数を縮めた分の行もここで外れる。
 pub async fn sweep_expired_trust_signals(pool: &PgPool, now: DateTime<Utc>) -> Result<u64> {
     restore_retained_trust_signals(pool, now).await?;
-    let result = sqlx::query(
-        "WITH lapsed AS (
-             SELECT target_pubkey, signal_id FROM cn_safety.trust_target_signals
-             WHERE removal_at <= $1
-             ORDER BY removal_at
-             LIMIT $2
-             FOR UPDATE SKIP LOCKED
-         ), retired AS (
-             SELECT target_pubkey, signal_id FROM cn_safety.trust_target_signals
-             WHERE persisted_at <= $1 - cn_admin.retention_interval('risk_signal')
-             ORDER BY persisted_at
-             LIMIT $2
-             FOR UPDATE SKIP LOCKED
-         ), expired AS (
-             SELECT * FROM lapsed UNION SELECT * FROM retired LIMIT $2
-         )
-         DELETE FROM cn_safety.trust_target_signals e
-         USING expired x
-         WHERE e.target_pubkey = x.target_pubkey AND e.signal_id = x.signal_id",
-    )
-    .bind(now)
-    .bind(TRUST_SWEEP_BATCH)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query(TRUST_SWEEP_SQL)
+        .bind(now)
+        .bind(TRUST_SWEEP_BATCH)
+        .execute(pool)
+        .await?;
     Ok(result.rows_affected())
 }
 

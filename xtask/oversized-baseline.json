@@ -5,6 +5,10 @@
       "path": "crates/cn-operator/src/config.rs"
     },
     {
+      "lines": 1226,
+      "path": "docs/THIRD_PARTY_NOTICES.md"
+    },
+    {
       "lines": 1218,
       "path": "crates/harness/src/scenarios/community_node.rs"
     },
@@ -17,12 +21,8 @@
       "path": "crates/cn-operator/src/docs.rs"
     },
     {
-      "lines": 1146,
+      "lines": 1151,
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
-    },
-    {
-      "lines": 1139,
-      "path": "docs/THIRD_PARTY_NOTICES.md"
     },
     {
       "lines": 1132,

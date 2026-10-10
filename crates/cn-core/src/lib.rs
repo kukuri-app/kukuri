@@ -102,13 +102,13 @@ pub use dome_hosting::{
 pub use env::{parse_bool_env, parse_csv_env, parse_u32_env, parse_u64_env};
 pub use errors::{ApiError, ApiResult, auth_required_error, consent_required_error};
 pub use index_entries::{
-    IndexEntryStore, MemoryIndexEntryStore, NewIndexEntry, PgIndexEntryStore, StoredIndexEntry,
-    SurfaceableEntry, filter_surfaceable_objects, get_index_entry, remove_index_entry,
-    remove_index_scope_page, upsert_index_entry,
+    IndexEntryStore, MemoryIndexEntryStore, NewIndexEntry, PgIndexEntryStore,
+    REMOVE_INDEX_SCOPE_PAGE_SQL, StoredIndexEntry, SurfaceableEntry, filter_surfaceable_objects,
+    get_index_entry, remove_index_entry, remove_index_scope_page, upsert_index_entry,
 };
 pub use index_retention::{
-    MIN_RETENTION_SECS, RetentionSettings, advance_retention_floor, configure_retention,
-    reclaim_expired,
+    MIN_RETENTION_SECS, RECLAIM_EXPIRED_SQL, RetentionSettings, advance_retention_floor,
+    configure_retention, reclaim_expired,
 };
 pub use index_scope::{
     ChannelSecret, ChannelSecretCipher, ChannelSecretConflict, IndexScopeKind, IndexingRequest,
@@ -157,8 +157,8 @@ pub use reports::{
     insert_community_node_appeal, insert_community_node_report, list_community_node_reports,
 };
 pub use retention::{
-    CleanupCounts, EXPIRED_DELETES, RetentionPolicy, cleanup_expired, configure_case_retention,
-    retention_counts,
+    CleanupCounts, EXPIRED_DELETES, RETENTION_CLEANUP_BATCH, RetentionPolicy, cleanup_expired,
+    configure_case_retention, delete_expired_batch,
 };
 pub use rights_requests::{
     CreatedRightsRequest, INDEXED_POST_EXISTS_SQL, RightsRequestActionResult, RightsRequestEvent,
@@ -199,15 +199,16 @@ pub use transmission_preventions::{
 };
 pub use trust_inputs::{
     TRUST_BASIS_PAGE_SIZE, TRUST_BASIS_PAGE_SQL, TRUST_REBUILD_BATCH, TRUST_SWEEP_BATCH,
-    TRUST_TOTALS_SQL, TrustBasisCursor, TrustBasisPage, list_disclosed_trust_basis_page,
-    list_trust_basis_page, load_trust_totals, rebuild_trust_totals, sweep_expired_trust_signals,
-    sync_trust_half_life, trust_risk_input,
+    TRUST_SWEEP_SQL, TRUST_TOTALS_SQL, TrustBasisCursor, TrustBasisPage,
+    list_disclosed_trust_basis_page, list_trust_basis_page, load_trust_totals,
+    rebuild_trust_totals, sweep_expired_trust_signals, sync_trust_half_life, trust_risk_input,
 };
 pub use trust_observations::{
-    ACTIVE_TRUST_OBSERVATION_RETENTION_DAYS, RELATION_OBSERVATIONS_PER_TARGET_LIMIT,
-    REVOKED_TRUST_OBSERVATION_RETENTION_DAYS, StoreTrustObservationsOutcome,
-    TRUST_OBSERVATION_MAX_CLOCK_SKEW_SECONDS, TrustObservationSharingStatus,
-    cleanup_trust_observations, latest_successful_relation_snapshot_id,
+    ACTIVE_TRUST_OBSERVATION_RETENTION_DAYS, EXPIRED_TRUST_OBSERVATIONS,
+    RELATION_OBSERVATIONS_PER_TARGET_LIMIT, REVOKED_TRUST_OBSERVATION_RETENTION_DAYS,
+    StoreTrustObservationsOutcome, TRUST_OBSERVATION_MAX_CLOCK_SKEW_SECONDS,
+    TrustObservationSharingStatus, cleanup_trust_observations,
+    delete_expired_trust_observations_batch, latest_successful_relation_snapshot_id,
     list_active_relation_observations, revoke_trust_observation_sharing, store_trust_observations,
     trust_observation_sharing_status,
 };

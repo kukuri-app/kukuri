@@ -1,0 +1,9 @@
+name: Cache Lindera dictionary
+description: Reuse the compiled IPADIC-NEologd dictionary across Rust jobs and profiles.
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/.cache/lindera/5.3.0-fmt2/lindera-ipadic-neologd
+        key: lindera-ipadic-neologd-5.3.0-fmt2-${{ runner.os }}

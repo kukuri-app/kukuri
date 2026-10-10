@@ -266,19 +266,15 @@ async fn blob_text_post_body_is_searchable_in_scope_and_across_supported_entries
     assert_eq!(stored[0].text, "Community Index CUA E2E テスト");
 
     for query in ["CUA", "テスト"] {
-        let scoped = kukuri_cn_indexer::query::IndexQuery::search_scope(
-            projection.as_ref(),
-            IndexScopeKind::PublicTopic,
-            "rust",
+        let scoped = projection.search_reader().search(
+            Some((IndexScopeKind::PublicTopic, "rust")),
             query,
             10,
-        )
-        .await?;
+        )?;
         assert_eq!(scoped.len(), 1);
         assert_eq!(scoped[0].object_id, object_id);
 
-        let all = kukuri_cn_indexer::query::IndexQuery::search_all(projection.as_ref(), query, 10)
-            .await?;
+        let all = projection.search_reader().search(None, query, 10)?;
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].object_id, object_id);
     }

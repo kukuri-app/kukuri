@@ -29,7 +29,7 @@ use kukuri_cn_indexer::ingest::IngestPipeline;
 use kukuri_cn_indexer::maintenance::IndexMaintenance;
 use kukuri_cn_indexer::media_fetcher::BlobMediaFetcher;
 use kukuri_cn_indexer::projection::{IndexProjection, MemoryIndexProjection};
-use kukuri_cn_indexer::query::IndexQuery;
+use kukuri_cn_indexer::query::IndexRecent;
 use kukuri_cn_indexer::state::IndexerRuntimeState;
 use kukuri_cn_safety::provider::MediaFetcher;
 use kukuri_cn_safety::{MockSafetyProvider, ModerationEventSigner};
@@ -274,9 +274,11 @@ async fn two_node_blob_text_ingest_is_searchable_and_ephemeral() -> Result<()> {
     let mut indexed = false;
     for _ in 0..20 {
         reader.poll_once(now, true).await?;
-        let hits = projection
-            .search_scope(IndexScopeKind::PublicTopic, "rust", "テスト", 10)
-            .await?;
+        let hits = projection.search_reader().search(
+            Some((IndexScopeKind::PublicTopic, "rust")),
+            "テスト",
+            10,
+        )?;
         if hits.iter().any(|entry| entry.object_id == object_id) {
             indexed = true;
             break;
@@ -344,8 +346,16 @@ async fn ingest_and_maintenance_write_and_deindex_real_arcadedb_projection() -> 
         .await?;
     let object_id = persist_blob_text_post(docs.as_ref(), &replica, &topic, &stored).await;
 
-    let projection = Arc::new(ArcadeDbProjection::new(ArcadeDbConfig::from_env())?);
-    projection.ensure_schema().await?;
+    let source = Arc::new(ArcadeDbProjection::new(ArcadeDbConfig::from_env())?);
+    source.ensure_schema().await?;
+    let search_dir = tempfile::tempdir()?;
+    let search = Arc::new(kukuri_cn_indexer::search::SearchIndex::open(
+        search_dir.path(),
+    )?);
+    let projection = Arc::new(kukuri_cn_indexer::search::SearchProjection::new(
+        source.clone(),
+        search.clone(),
+    ));
 
     let (service, artifact_store) = allow_service();
     let entries = Arc::new(MemoryIndexEntryStore::new(artifact_store));
@@ -368,15 +378,18 @@ async fn ingest_and_maintenance_write_and_deindex_real_arcadedb_projection() -> 
         "ingest did not project into real ArcadeDB"
     );
     // 実投影の発見一覧と topic 内 / 横断検索が同じ object を返す。
-    let recent = projection
+    let recent = source
         .list_recent(Some((IndexScopeKind::PublicTopic, topic_id.as_str())), 10)
         .await?;
     assert!(recent.iter().any(|entry| entry.object_id == object_id));
-    let scoped = projection
-        .search_scope(IndexScopeKind::PublicTopic, topic_id.as_str(), "CUA", 10)
-        .await?;
+    search.commit()?;
+    let scoped = search.reader().search(
+        Some((IndexScopeKind::PublicTopic, topic_id.as_str())),
+        "CUA",
+        10,
+    )?;
     assert!(scoped.iter().any(|entry| entry.object_id == object_id));
-    let all = projection.search_all("テスト", 10).await?;
+    let all = search.reader().search(None, "テスト", 10)?;
     assert!(all.iter().any(|entry| entry.object_id == object_id));
 
     // サポート対象から外すと、保守の巡回で実投影からも消える（投影 → 真実源の順）。
@@ -461,39 +474,9 @@ async fn arcadedb_projection_reclaims_in_bounded_pages() -> Result<()> {
     Ok(())
 }
 
-/// 試験から実 ArcadeDB へ command を送る（文書の一括投入と統計の読取り。本体には置かない）。
-async fn arcadedb_command(
-    config: &ArcadeDbConfig,
-    language: &str,
-    command: &str,
-) -> Result<serde_json::Value> {
-    Ok(reqwest::Client::new()
-        .post(format!(
-            "{}/api/v1/command/{}",
-            config.base_url.trim_end_matches('/'),
-            config.database
-        ))
-        .basic_auth(&config.username, Some(&config.password))
-        .json(&serde_json::json!({ "language": language, "command": command }))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?)
-}
+mod arcadedb_support;
+use arcadedb_support::{command as arcadedb_command, read_records as arcadedb_read_records};
 
-/// データベースが読んだ文書の累計（`schema:stats` の `readRecord`）。
-async fn arcadedb_read_records(config: &ArcadeDbConfig) -> Result<u64> {
-    let stats = arcadedb_command(config, "sql", "SELECT readRecord FROM schema:stats").await?;
-    stats["result"][0]["readRecord"]
-        .as_u64()
-        .ok_or_else(|| anyhow::anyhow!("readRecord is missing: {stats}"))
-}
-
-/// 実 ArcadeDB: 新着の列挙が読む文書の数は、scope の文書の数によらず返した件数と同じ（#1719）。
-///
-/// 読んだ文書の数はデータベースごとの統計の前後の差で数えるので、同じ ArcadeDB を使う
-/// 他の試験と並行させない（`-- --test-threads=1`）。
 #[tokio::test]
 async fn arcadedb_recent_listing_reads_only_returned_entries() -> Result<()> {
     if !kukuri_test_support::env_flag_enabled("KUKURI_CN_RUN_ARCADEDB_TESTS") {

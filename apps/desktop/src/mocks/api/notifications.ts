@@ -5,11 +5,15 @@ import { type MockRuntime } from '../mockRuntime';
 
 type NotificationsMock = Pick<
   DesktopApi,
-  'listNotificationsPage' | 'markNotificationRead' | 'markAllNotificationsRead' | 'getNotificationStatus'
+  'listNotificationsPage' | 'getNotification' | 'markNotificationRead' | 'markAllNotificationsRead' | 'getNotificationStatus'
 >;
 
 export function createNotificationsMock(runtime: MockRuntime): NotificationsMock {
   return {
+    async getNotification(id) {
+      const item = runtime.notifications.find((notification) => notification.notification_id === id);
+      return item ? cloneNotification(item) : null;
+    },
     async listNotificationsPage(cursor, before = false) {
       const sorted = [...runtime.notifications].sort((a, b) =>
         Number(b.received_at - a.received_at) || b.notification_id.localeCompare(a.notification_id));

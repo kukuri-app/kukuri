@@ -91,6 +91,7 @@ export function DesktopShellPage({
   onThemeChange,
 }: DesktopShellPageProps) {
   const storeApi = useDesktopShellStoreApi();
+  const notificationAccount = useDesktopShellStore((state) => state.syncStatus.local_author_pubkey);
   const { t, i18n: i18nInstance } = useTranslation([
     'common',
     'shell',
@@ -108,7 +109,6 @@ export function DesktopShellPage({
     workspaceState,
     trackedTopics,
     topicInput,
-    notifications,
     selectedAuthorPubkey,
     selectedDirectMessagePeerPubkey,
     selectedLiveSessionId,
@@ -307,7 +307,7 @@ export function DesktopShellPage({
     },
     [setSettingsOpen, setWorkspaceState, handleOpenNotification]
   );
-  useOsNotificationActivation(notifications, handleActivateOsNotification);
+  useOsNotificationActivation(api, notificationAccount, handleActivateOsNotification);
   const syncTopicContext = useCallback(
     async (topic: string, channelId: string | null) => {
       const nextTopics = trackedTopics.includes(topic) ? trackedTopics : [...trackedTopics, topic];
