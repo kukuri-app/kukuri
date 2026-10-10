@@ -70,6 +70,19 @@ test.each(['null', 'error'])('missing/ineligible notification or lookup %s does 
   expect(activate).not.toHaveBeenCalled();
 });
 
+test('new native activation supersedes an older launch URI', async () => {
+  api.getNotification.mockImplementation(async (id: string) => ({ ...target, notification_id: id }));
+  let initial!: (urls: string[]) => void;
+  native.getCurrent.mockReturnValue(new Promise((resolve) => { initial = resolve; }));
+  const activate = vi.fn();
+  renderHook(() => useOsNotificationActivation(api, 'account', activate));
+  await vi.waitFor(() => expect(native.getCurrent).toHaveBeenCalled());
+  onEvent({ payload: { notification_id: 'received-0' } });
+  initial(['kukuri://notification?id=older']);
+  await vi.waitFor(() => expect(activate).toHaveBeenCalledExactlyOnceWith(target));
+  expect(api.getNotification).toHaveBeenCalledExactlyOnceWith('received-0');
+});
+
 test('malformed link and non-ready/non-native context do not look up a notification', async () => {
   const first = renderHook(() => useOsNotificationActivation(api, null, vi.fn()));
   expect(native.listen).not.toHaveBeenCalled();

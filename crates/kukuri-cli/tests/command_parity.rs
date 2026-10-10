@@ -113,6 +113,7 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
         "os" => matches!(
             tauri,
             "commands::os_notification::show_os_notification"
+                | "get_notification"
                 | "commands::os_notification::get_os_notification_permission"
                 | "commands::os_notification::request_os_notification_permission"
                 | "commands::background_notifications::set_os_notification_settings"

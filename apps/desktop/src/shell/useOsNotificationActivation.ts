@@ -92,7 +92,7 @@ export function useOsNotificationActivation(
       unlistenUrl = dispose;
       // Subscribe before reading the launch URL; a newer live event supersedes it.
       const urls = await getCurrent();
-      if (!liveUrlReceived) activateUrl(urls ?? [], true);
+      if (!liveUrlReceived && generation === 0) activateUrl(urls ?? [], true);
     }).catch(() => undefined);
 
     return () => {
