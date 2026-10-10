@@ -51,6 +51,7 @@ android {
             }
         }
         getByName("release") {
+            ndk.debugSymbolLevel = "FULL"
             optimization {
                enable = true
             }

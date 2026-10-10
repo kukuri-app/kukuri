@@ -1,0 +1,156 @@
+name: Kukuri Android Package
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/kukuri-android-package.yml'
+      - 'scripts/release/*android*'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/**'
+      - 'apps/desktop/**'
+  workflow_dispatch:
+    inputs:
+      signing:
+        description: 'testは一時鍵、uploadは登録済みupload鍵（Play提出・公開はしない）'
+        type: choice
+        options: [test, upload]
+        default: test
+      tag:
+        description: 'uploadは選択したworkflow refと同じ既存release tagが必須'
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      source_ref:
+        type: string
+        required: true
+      tag:
+        type: string
+        required: true
+      signing:
+        type: string
+        default: upload
+    secrets:
+      ANDROID_UPLOAD_KEYSTORE_BASE64:
+        required: true
+      ANDROID_UPLOAD_KEYSTORE_PASSWORD:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kukuri-android-package-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # JAVA/SDK/Gradle values match the Android foundation. Credentials are never build inputs.
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/29.0.14206865
+  PNPM_VERSION: 10.16.1
+  PACKAGE_DIRECTORY: /tmp/kukuri-android-package
+  BUNDLETOOL_JAR: /tmp/bundletool-all-1.18.3.jar
+
+jobs:
+  unsigned:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      source: ${{ steps.prepare.outputs.source }}
+      tag: ${{ steps.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-linux-android
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Signing and workflow contracts
+        run: |
+          python3 -m pip install PyYAML==6.0.3
+          python3 -m unittest discover -s scripts/release -p test_android_package.py
+      - name: Resolve source, version and signing purpose
+        id: prepare
+        env:
+          REQUESTED_SOURCE: ${{ inputs.source_ref }}
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          SIGNING_MODE: ${{ github.event_name == 'pull_request' && 'test' || inputs.signing || 'test' }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          ANDROID_UPLOAD_CERT_SHA256: ${{ vars.ANDROID_UPLOAD_CERT_SHA256 }}
+          UPLOAD_KEY_AVAILABLE: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 != '' && secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD != '' }}
+        run: python3 scripts/release/android_package.py prepare --directory "$PACKAGE_DIRECTORY" --signing "$SIGNING_MODE" --tag "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - name: Install Android SDK components and pinned bundletool
+        run: |
+          sdkmanager 'platforms;android-36' 'build-tools;36.1.0' 'ndk;29.0.14206865'
+          curl --fail --location --silent --show-error \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar --output "$BUNDLETOOL_JAR"
+          echo "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  $BUNDLETOOL_JAR" | sha256sum --check
+      - name: Install frontend dependencies
+        run: pnpm --dir apps/desktop install --frozen-lockfile
+      - name: Build unsigned AAB, verification APK and native symbols
+        env:
+          CARGO_PROFILE_RELEASE_DEBUG: '2'
+          NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        run: pnpm --dir apps/desktop tauri android build --ci --target aarch64 --aab --apk --config "$PACKAGE_DIRECTORY/version-config.json"
+      - name: Inspect and collect the fixed unsigned candidate
+        run: python3 scripts/release/android_package.py collect --directory "$PACKAGE_DIRECTORY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kukuri-android-unsigned
+          path: ${{ env.PACKAGE_DIRECTORY }}
+          retention-days: 1
+          if-no-files-found: error
+
+  # Fresh runner: build/dependency processes never share a VM with upload-key material.
+  sign:
+    needs: unsigned
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.unsigned.outputs.source }}
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/download-artifact@v4
+        with:
+          name: kukuri-android-unsigned
+          path: ${{ env.PACKAGE_DIRECTORY }}
+      - name: Install inspection tools
+        run: |
+          sdkmanager 'build-tools;36.1.0'
+          curl --fail --location --silent --show-error \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar --output "$BUNDLETOOL_JAR"
+      - name: Sign and verify the candidate
+        env:
+          GITHUB_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          SIGNING_MODE: ${{ github.event_name == 'pull_request' && 'test' || inputs.signing || 'test' }}
+          ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v') && inputs.signing == 'upload' && secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 || '' }}
+          ANDROID_UPLOAD_KEYSTORE_PASSWORD: ${{ github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v') && inputs.signing == 'upload' && secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD || '' }}
+          ANDROID_UPLOAD_KEY_ALIAS: ${{ vars.ANDROID_UPLOAD_KEY_ALIAS }}
+          ANDROID_UPLOAD_CERT_SHA256: ${{ vars.ANDROID_UPLOAD_CERT_SHA256 }}
+        run: python3 scripts/release/android_package.py sign --directory "$PACKAGE_DIRECTORY" --signing "$SIGNING_MODE"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kukuri-android-verified-${{ github.event_name == 'pull_request' && 'test' || inputs.signing || 'test' }}
+          path: ${{ env.PACKAGE_DIRECTORY }}
+          retention-days: 14
+          if-no-files-found: error
