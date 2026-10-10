@@ -3,7 +3,13 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { App } from '@/App';
-import { getActiveColumn } from '@/shell/DesktopShellPage.testHelpers';
+import {
+  getActiveColumn,
+  installFailedPosterGenerationMocks,
+  installMetadataSeekPosterGenerationMocks,
+  installObjectUrlMocks,
+  installSuccessfulPosterGenerationMocks,
+} from '@/shell/DesktopShellPage.testHelpers';
 import type {
   AttachmentView,
   BlobViewStatus,
@@ -93,96 +99,6 @@ function buildVideoPost(overrides?: Partial<PostView>): PostView {
     audience_label: 'Public',
     ...overrides,
   };
-}
-
-function installObjectUrlMocks() {
-  let sequence = 0;
-  vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:mock-${++sequence}`);
-  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-}
-
-function installSuccessfulPosterGenerationMocks() {
-  Object.defineProperty(HTMLVideoElement.prototype, 'videoWidth', {
-    configurable: true,
-    get: () => 640,
-  });
-  Object.defineProperty(HTMLVideoElement.prototype, 'videoHeight', {
-    configurable: true,
-    get: () => 360,
-  });
-  Object.defineProperty(HTMLMediaElement.prototype, 'readyState', {
-    configurable: true,
-    get: () => 2,
-  });
-  vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(function load(
-    this: HTMLMediaElement
-  ) {
-    queueMicrotask(() => {
-      this.dispatchEvent(new Event('loadeddata'));
-    });
-  });
-  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
-  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
-    drawImage: vi.fn(),
-  } as unknown as CanvasRenderingContext2D);
-  vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
-    callback(new Blob([Uint8Array.from([9, 8, 7, 6])], { type: 'image/jpeg' }));
-  });
-}
-
-function installMetadataSeekPosterGenerationMocks() {
-  Object.defineProperty(HTMLVideoElement.prototype, 'videoWidth', {
-    configurable: true,
-    get: () => 640,
-  });
-  Object.defineProperty(HTMLVideoElement.prototype, 'videoHeight', {
-    configurable: true,
-    get: () => 360,
-  });
-  Object.defineProperty(HTMLMediaElement.prototype, 'duration', {
-    configurable: true,
-    get: () => 12,
-  });
-  Object.defineProperty(HTMLMediaElement.prototype, 'readyState', {
-    configurable: true,
-    get: () => 2,
-  });
-  let currentTime = 0;
-  Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
-    configurable: true,
-    get: () => currentTime,
-    set(this: HTMLMediaElement, value: number) {
-      currentTime = value;
-      queueMicrotask(() => {
-        this.dispatchEvent(new Event('seeked'));
-      });
-    },
-  });
-  vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(function load(
-    this: HTMLMediaElement
-  ) {
-    queueMicrotask(() => {
-      this.dispatchEvent(new Event('loadedmetadata'));
-    });
-  });
-  vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => undefined);
-  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
-  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
-    drawImage: vi.fn(),
-  } as unknown as CanvasRenderingContext2D);
-  vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
-    callback(new Blob([Uint8Array.from([9, 8, 7, 6])], { type: 'image/jpeg' }));
-  });
-}
-
-function installFailedPosterGenerationMocks() {
-  vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(function load(
-    this: HTMLMediaElement
-  ) {
-    queueMicrotask(() => {
-      this.dispatchEvent(new Event('error'));
-    });
-  });
 }
 
 async function openPublishDialog(user: ReturnType<typeof userEvent.setup>) {

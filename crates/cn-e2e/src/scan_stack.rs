@@ -13,11 +13,11 @@ use anyhow::{Context, Result};
 
 use kukuri_blob_service::BlobService;
 use kukuri_cn_core::{ChannelSecretCipher, PgIndexEntryStore, PgSafetyArtifactStore};
+use kukuri_cn_indexer::IndexMaintenance;
 use kukuri_cn_indexer::bucket_reader::BucketReader;
 use kukuri_cn_indexer::ingest::IngestPipeline;
 use kukuri_cn_indexer::state::IndexerRuntimeState;
 use kukuri_cn_indexer::worker::{IndexerWorker, WorkerConfig};
-use kukuri_cn_indexer::{ArcadeDbProjection, IndexMaintenance};
 use kukuri_cn_safety::SafetyProvider;
 use kukuri_cn_safety::provider::MediaFetcher;
 use kukuri_cn_safety_arachnid::{
@@ -60,7 +60,7 @@ pub(crate) struct WorkerParts {
     pub(crate) docs: Arc<IrohDocsSync>,
     pub(crate) blobs: Arc<dyn BlobService>,
     pub(crate) entries: Arc<PgIndexEntryStore>,
-    pub(crate) projection: Arc<ArcadeDbProjection>,
+    pub(crate) projection: Arc<kukuri_cn_indexer::search::SearchProjection>,
     pub(crate) runtime_state: Arc<IndexerRuntimeState>,
     pub(crate) arachnid_url: String,
     pub(crate) vlm_url: String,

@@ -82,6 +82,7 @@ impl TestServer {
             channel_secret_key: None,
             legal_data_key: None,
             index_query_enabled: false,
+            indexer_data_dir: Default::default(),
             trust_read_enabled: false,
             relation_distance_optout_min_proximity: None,
             deployment_revision: "test-deployment-v1".to_string(),

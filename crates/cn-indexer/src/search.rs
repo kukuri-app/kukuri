@@ -14,7 +14,7 @@ use lindera_tantivy::tokenizer::LinderaTokenizer;
 use tantivy::{
     DocAddress, DocSet, Index, IndexReader, IndexWriter, ReloadPolicy, TERMINATED, TantivyDocument,
     Term,
-    collector::TopDocs,
+    collector::{Count, TopDocs},
     query::{BooleanQuery, EmptyQuery, Occur, PhraseQuery, Query, TermQuery},
     schema::{
         Field, INDEXED, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions,
@@ -80,6 +80,7 @@ fn configure(index: &Index) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone)]
 pub struct SearchReader {
     index: Index,
     reader: IndexReader,
@@ -89,6 +90,15 @@ pub struct SearchReader {
 impl SearchReader {
     pub fn open(path: &Path) -> Result<Self> {
         Self::from_index(Index::open_in_dir(path)?)
+    }
+
+    pub fn open_or_create(path: &Path) -> Result<Self> {
+        std::fs::create_dir_all(path)?;
+        let (schema, _) = schema();
+        Self::from_index(Index::open_or_create(
+            tantivy::directory::MmapDirectory::open(path)?,
+            schema,
+        )?)
     }
 
     fn from_index(index: Index) -> Result<Self> {
@@ -116,6 +126,28 @@ impl SearchReader {
         text: &str,
         limit: usize,
     ) -> Result<Vec<IndexedEntry>> {
+        self.reload()?;
+        let query = self.query(scope, text)?;
+        let searcher = self.reader.searcher();
+        searcher
+            .search(
+                &*query,
+                &TopDocs::with_limit(crate::clamp_query_limit(limit)).order_by_score(),
+            )?
+            .into_iter()
+            .map(|(_, addr)| {
+                let doc = searcher.doc::<TantivyDocument>(addr)?;
+                serde_json::from_str(
+                    doc.get_first(self.fields.entry)
+                        .and_then(|v| v.as_str())
+                        .context("missing search entry")?,
+                )
+                .context("invalid search entry")
+            })
+            .collect()
+    }
+
+    fn query(&self, scope: Option<(IndexScopeKind, &str)>, text: &str) -> Result<Box<dyn Query>> {
         let mut clauses = vec![(
             Occur::Must,
             term_query(match scope {
@@ -144,25 +176,20 @@ impl SearchReader {
             clauses.push((Occur::Must, query));
         }
         if clauses.len() == 1 {
-            return Ok(vec![]);
+            return Ok(Box::new(EmptyQuery));
         }
-        let searcher = self.reader.searcher();
-        searcher
-            .search(
-                &BooleanQuery::new(clauses),
-                &TopDocs::with_limit(limit.clamp(1, 100)).order_by_score(),
-            )?
-            .into_iter()
-            .map(|(_, addr)| {
-                let doc = searcher.doc::<TantivyDocument>(addr)?;
-                serde_json::from_str(
-                    doc.get_first(self.fields.entry)
-                        .and_then(|v| v.as_str())
-                        .context("missing search entry")?,
-                )
-                .context("invalid search entry")
-            })
-            .collect()
+        Ok(Box::new(BooleanQuery::new(clauses)))
+    }
+
+    pub fn contains_object(&self, kind: IndexScopeKind, scope: &str, object: &str) -> Result<bool> {
+        self.reload()?;
+        Ok(self.reader.searcher().search(
+            &term_query(Term::from_field_text(
+                self.fields.key,
+                &object_key(kind, scope, object),
+            )),
+            &Count,
+        )? > 0)
     }
 }
 
@@ -192,6 +219,14 @@ impl SearchIndex {
         std::fs::create_dir_all(path)?;
         let (schema, _) = schema();
         let index = Index::open_or_create(tantivy::directory::MmapDirectory::open(path)?, schema)?;
+        Self::from_index(index)
+    }
+
+    pub fn in_ram() -> Result<Self> {
+        Self::from_index(Index::create_in_ram(schema().0))
+    }
+
+    fn from_index(index: Index) -> Result<Self> {
         configure(&index)?;
         let writer = index.writer_with_num_threads(1, 50_000_000)?;
         let cursor = index
@@ -209,6 +244,10 @@ impl SearchIndex {
                 cursor_dirty: false,
             }),
         })
+    }
+
+    pub fn reader(&self) -> SearchReader {
+        self.reader.clone()
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Writer>> {
@@ -528,6 +567,109 @@ mod backfill_tests {
         let projection =
             SearchProjection::new(Arc::new(crate::MemoryIndexProjection::new()), search);
         assert_eq!(projection.backfill_page(&source).await?, 0);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::*;
+
+    fn entry(scope: &str, id: &str, text: &str) -> IndexedEntry {
+        IndexedEntry {
+            scope_kind: IndexScopeKind::PublicTopic,
+            scope_id: scope.into(),
+            object_id: id.into(),
+            author_pubkey: "author".into(),
+            text: text.into(),
+            created_at: 1,
+            source_replica_id: "replica".into(),
+            content_advisories: vec![],
+        }
+    }
+
+    #[test]
+    fn phrases_all_words_relevance_and_scope_use_the_same_tokenizer() -> Result<()> {
+        let index = SearchIndex::in_ram()?;
+        for (scope, id, text) in [
+            ("first", "once", "京都の天気 写真"),
+            ("first", "repeated", "京都の天気 京都の天気 写真 写真 写真"),
+            ("other", "other", "京都の天気 写真"),
+            ("first", "reversed", "天気の京都 写真"),
+            ("first", "missing", "京都の天気"),
+            ("first", "name", "東京タワー ＫＵＫＵＲＩ"),
+        ] {
+            index.upsert(&entry(scope, id, text))?;
+        }
+        let mut private = entry("secret", "private", "京都の天気 写真");
+        private.scope_kind = IndexScopeKind::PrivateChannel;
+        index.upsert(&private)?;
+        index.commit()?;
+        let reader = index.reader();
+        let hits = reader.search(
+            Some((IndexScopeKind::PublicTopic, "first")),
+            "京都の天気 写真",
+            100,
+        )?;
+        assert_eq!(
+            hits.iter()
+                .map(|e| e.object_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["repeated", "once"]
+        );
+        let cross = reader.search(None, "京都の天気 写真", 100)?;
+        assert_eq!(cross.len(), 3);
+        assert!(
+            cross
+                .iter()
+                .all(|e| e.scope_kind == IndexScopeKind::PublicTopic)
+        );
+        assert_eq!(
+            reader
+                .search(
+                    Some((IndexScopeKind::PrivateChannel, "secret")),
+                    "京都の天気 写真",
+                    100
+                )?
+                .len(),
+            1
+        );
+        assert!(reader.search(None, "東京", 100)?.is_empty());
+        assert_eq!(reader.search(None, "kukuri", 100)?[0].object_id, "name");
+        Ok(())
+    }
+
+    #[test]
+    fn rare_matches_and_returned_documents_stay_bounded_as_the_index_grows() -> Result<()> {
+        let index = SearchIndex::in_ram()?;
+        let mut inserted = 0;
+        for total in [2_000, 20_000] {
+            for i in inserted..total {
+                let text = if i < 50 {
+                    "くくり 珍品"
+                } else {
+                    "くくり"
+                };
+                index.upsert(&entry(
+                    if i < 200 { "small" } else { "other" },
+                    &i.to_string(),
+                    text,
+                ))?;
+            }
+            inserted = total;
+            index.commit()?;
+            let reader = index.reader();
+            let query = reader.query(None, "珍品")?;
+            assert_eq!(reader.reader.searcher().search(&*query, &Count)?, 50);
+            assert_eq!(reader.search(None, "珍品", 100)?.len(), 50);
+            assert_eq!(reader.search(None, "くくり", 100)?.len(), 100);
+            assert_eq!(
+                reader
+                    .search(Some((IndexScopeKind::PublicTopic, "small")), "くくり", 100)?
+                    .len(),
+                100
+            );
+        }
         Ok(())
     }
 }

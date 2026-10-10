@@ -17,7 +17,7 @@ use kukuri_cn_core::IndexScopeKind;
 
 use crate::config::ArcadeDbConfig;
 use crate::projection::{IndexProjection, IndexedEntry};
-use crate::query::IndexQuery;
+use crate::query::IndexRecent;
 
 /// index 投影 document の ArcadeDB type 名。
 const ENTRY_TYPE: &str = "IndexedEntry";
@@ -151,12 +151,9 @@ impl ArcadeDbProjection {
             "sql",
             &format!("CREATE INDEX IF NOT EXISTS ON {ENTRY_TYPE} (created_at, scope_kind, scope_id, object_id) NOTUNIQUE"),
         ).await?;
-        // 全文検索 index（Lucene）。ユーザー向け search は #404 が使う。
-        self.command(
-            "sql",
-            &format!("CREATE INDEX IF NOT EXISTS ON {ENTRY_TYPE} (text) FULL_TEXT ENGINE LUCENE"),
-        )
-        .await?;
+        // 検索は Tantivy が持つ。既存の全文索引を消し、文書と新着の索引は残す（#1724）。
+        self.command("sql", &format!("DROP INDEX `{ENTRY_TYPE}[text]` IF EXISTS"))
+            .await?;
         Ok(())
     }
 
@@ -405,47 +402,7 @@ impl IndexProjection for ArcadeDbProjection {
 }
 
 #[async_trait]
-impl IndexQuery for ArcadeDbProjection {
-    async fn search_scope(
-        &self,
-        scope_kind: IndexScopeKind,
-        scope_id: &str,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<IndexedEntry>> {
-        // Lucene 全文 index（`SEARCH_INDEX`）+ scope 絞り込み。query は Lucene クエリ構文。
-        let command = format!(
-            "SELECT {ENTRY_COLUMNS} FROM {ENTRY_TYPE} \
-             WHERE SEARCH_INDEX('{ENTRY_TYPE}[text]', :query) \
-             AND scope_kind = :scope_kind AND scope_id = :scope_id \
-             ORDER BY created_at DESC LIMIT {limit}"
-        );
-        let value = self
-            .command_with_params(
-                "sql",
-                &command,
-                json!({
-                    "query": query,
-                    "scope_kind": Self::scope_kind_str(scope_kind),
-                    "scope_id": scope_id,
-                }),
-            )
-            .await?;
-        entries_from_result(&value)
-    }
-
-    async fn search_all(&self, query: &str, limit: usize) -> Result<Vec<IndexedEntry>> {
-        let command = format!(
-            "SELECT {ENTRY_COLUMNS} FROM {ENTRY_TYPE} \
-             WHERE SEARCH_INDEX('{ENTRY_TYPE}[text]', :query) \
-             ORDER BY created_at DESC LIMIT {limit}"
-        );
-        let value = self
-            .command_with_params("sql", &command, json!({ "query": query }))
-            .await?;
-        entries_from_result(&value)
-    }
-
+impl IndexRecent for ArcadeDbProjection {
     async fn list_recent(
         &self,
         scope: Option<(IndexScopeKind, &str)>,
