@@ -93,7 +93,53 @@ async fn launch_browser(url: Url) -> Result<(), &'static str> {
         .map_err(|_| OPEN_FAILED)
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "android")]
+async fn launch_browser(url: Url) -> Result<(), &'static str> {
+    use jni::{JValue, jni_sig, jni_str, objects::JObject};
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let context = ndk_context::android_context();
+        // SAFETY: tao の process 所有の JavaVM / Application Context。local refs は attach の frame 内だけ。
+        let vm = unsafe { jni::JavaVM::from_raw(context.vm().cast()) };
+        vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+            let value = env.new_string(url.as_str())?;
+            let uri = env
+                .call_static_method(
+                    jni_str!("android/net/Uri"),
+                    jni_str!("parse"),
+                    jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
+                    &[JValue::Object(&value)],
+                )?
+                .l()?;
+            let action = env.new_string("android.intent.action.VIEW")?;
+            let intent = env.new_object(
+                jni_str!("android/content/Intent"),
+                jni_sig!("(Ljava/lang/String;Landroid/net/Uri;)V"),
+                &[JValue::Object(&action), JValue::Object(&uri)],
+            )?;
+            // Application Context から起動するため FLAG_ACTIVITY_NEW_TASK を付ける。
+            env.call_method(
+                &intent,
+                jni_str!("addFlags"),
+                jni_sig!("(I)Landroid/content/Intent;"),
+                &[JValue::Int(0x10000000)],
+            )?;
+            let application = unsafe { JObject::from_raw(env, context.context().cast()) };
+            env.call_method(
+                &application,
+                jni_str!("startActivity"),
+                jni_sig!("(Landroid/content/Intent;)V"),
+                &[JValue::Object(&intent)],
+            )?;
+            Ok(())
+        })
+    })
+    .await
+    .map_err(|_| OPEN_FAILED)?
+    .map_err(|_| OPEN_FAILED)
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "android")))]
 async fn launch_browser(_url: Url) -> Result<(), &'static str> {
     Err(OPEN_FAILED)
 }

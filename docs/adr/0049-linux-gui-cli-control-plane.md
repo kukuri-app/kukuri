@@ -172,6 +172,7 @@ DebにCLIは同梱しない。Deb payloadはfirst-party ELF、desktop／iconとn
 ## GUIの外部リンク起動
 
 - Releaseの公開資料・feedbackと通報画面の運用者policy／権利侵害受付リンクは、明示操作でGUI専用 `open_external_url` commandからOSの既定ブラウザーへ渡す。Ready／終了gateを維持し、HTTP(S)の絶対URL・hostあり・credentialなしだけを許可する。file、任意scheme、shell／program指定の起動権限は公開しない。
+- Android の同じ sink は、既存の JavaVM / Application Context から `ACTION_VIEW` と `FLAG_ACTIVITY_NEW_TASK` で渡す（#1197 AC-3b）。新しい permission・plugin・URL parser は追加せず、OS が受け付けなければ従来の固定エラーを返す。JNI の参照と例外は attach の frame 内で回収する。
 - LinuxはOpenURI portalで起動し、AppImageのlibrary／GIO環境を外部processへ継承しない。WindowsはShellExecuteを使用する。サービス不在・拒否・期限超過は局所的な失敗表示とし、自動retryや成功の推定はしない。通常のbrowser版anchor、内部navigation、downloadは対象外。
 - URLとpending／errorは操作中だけのTransient状態であり、新しいDB／backup／peer送信やログ保存を追加しない。OSへ渡した公開URLの先では外部ブラウザーのcookie・network等の規則が適用される。通報本文、診断本文、identity等をURLへ付加しない。
 
