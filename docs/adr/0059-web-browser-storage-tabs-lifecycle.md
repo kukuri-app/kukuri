@@ -123,6 +123,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
     - 中断: window の `pagehide`・`offline`、document の `freeze`
     - 復帰: window の `online`・`pageshow`、document の `resume`、可視になった `visibilitychange`
   - Android（#1196 AC-1）: Tauri の `WindowEvent::Suspended/Resumed`（Activity の onPause/onResume）を `src-tauri/src/android_lifecycle.rs` の単一 worker に渡す。最新1状態だけを保持し、同意・初期化・復元・切替の operation guard を待ってから Ready の現在 host に適用する。callback ごとの task・独自の復旧・全 topic の再購読を追加せず、Exit で worker を破棄する。process kill 後は既存の startup gate と永続状態の起動経路を使う。
+    - 回線の変化（#1196 AC-2）: `ConnectivityManager.registerDefaultNetworkCallback` の available/lost/route の通知を、Tauri の native Channel から同じ worker へ渡す。Activity の休止中または offline では中断し、foreground かつ online で既存の復帰入口を通す。同じ online 値のままの route 変更も通知し、回線が不明な間は offline と決めない。OS callback は1つだけ登録し、Activity の破棄で外す。追加 permission は実行時の許可画面を持たない `ACCESS_NETWORK_STATE` だけ。Android の依存 RouteMonitor は通知を実装していないため、この入口を使う。通信の優先順、node 別の同意・期限・無効化、保存・wire の意味は変えない。
   - WebRTC の session の開閉と復帰後の経路は、W10 の試験（`Signaling::reset`・`resume`）と、W8（#1220）の実ブラウザの復帰の E2E で照合する（ADR 0060 §4 の W8 AC-4 の実装）。
 
 ### 6. データの喪失と復旧
