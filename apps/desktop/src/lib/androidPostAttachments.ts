@@ -7,9 +7,26 @@ type SelectedFile = { uri: string; name: string; size: number | null };
 type NativeAttachment = CreateAttachmentInput & {
   [selectedFile]?: { file: File; uri: string };
 };
+const pickedUris = new WeakMap<File, string>();
 
 declare global {
   interface Window { __KUKURI_SELECTED_FILES__?: SelectedFile[] }
+}
+
+if (IS_ANDROID) {
+  // OS callback と FileList は同じ選択順。名前・サイズを File の識別子として使わず、
+  // 実際の input の File だけへ対応を付ける。貼り付けた File へ古い URI を流さない。
+  document.addEventListener('change', event => {
+    if (!(event.target instanceof HTMLInputElement) || event.target.type !== 'file') return;
+    const selected = window.__KUKURI_SELECTED_FILES__ ?? [];
+    window.__KUKURI_SELECTED_FILES__ = [];
+    Array.from(event.target.files ?? []).forEach((file, index) => {
+      const item = selected[index];
+      if (item?.name === file.name && (item.size === null || item.size === file.size)) {
+        pickedUris.set(file, item.uri);
+      }
+    });
+  }, true);
 }
 
 // File と URI はローカル下書きの寿命だけ保持する。Symbol は JSON/wire に含まれず、
@@ -19,15 +36,13 @@ export async function fileToPostAttachment(
   role: CreateAttachmentInput['role']
 ): Promise<CreateAttachmentInput> {
   if (!IS_ANDROID) return fileToCreateAttachment(file, role);
-  const selected = window.__KUKURI_SELECTED_FILES__?.find(
-    item => item.name === file.name && (item.size === null || item.size === file.size)
-  );
+  const uri = pickedUris.get(file);
   // 貼り付けた画像など OS picker 由来でない File は既存の bytes 入力を維持する。
-  if (!selected) return fileToCreateAttachment(file, role);
+  if (!uri) return fileToCreateAttachment(file, role);
   return {
     file_name: file.name, mime: file.type || 'application/octet-stream',
     byte_size: file.size, role, data_base64: '',
-    [selectedFile]: { file, uri: selected.uri },
+    [selectedFile]: { file, uri },
   } as NativeAttachment;
 }
 
