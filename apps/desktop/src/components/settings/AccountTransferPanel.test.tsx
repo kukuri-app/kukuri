@@ -22,10 +22,14 @@ vi.mock('@/lib/api/identity', () => identityApi);
 const jsQR = vi.hoisted(() => vi.fn());
 vi.mock('jsqr', () => ({ default: jsQR }));
 
+const cameraPlatform = vi.hoisted(() => ({ android: false }));
+vi.mock('@/lib/platform', () => ({ get IS_ANDROID() { return cameraPlatform.android; } }));
+
 const LINK = 'kukuri://transfer#v1.ZXhhbXBsZQ';
 let status: AccountTransferStatus;
 
 beforeEach(() => {
+  cameraPlatform.android = false;
   status = { state: 'idle' };
   identityApi.getAccountTransferStatus.mockImplementation(async () => status);
   identityApi.cancelAccountTransfer.mockResolvedValue(undefined);
@@ -255,7 +259,7 @@ test.each([
   }
 });
 
-// #1628: Web 版の移行先は、カメラで QR を読んで入力欄へ入れる（接続は利用者の操作）。読み取り・やめる・閉じるで
+// Web と Android の移行先は、カメラで QR を読んで入力欄へ入れる（接続は利用者の操作）。読み取り・やめる・閉じるで
 // カメラを止め、カメラを使えないときは理由を示して貼り付けを残す。desktop（Tauri）には出さない。
 function installCamera(getUserMedia: () => Promise<MediaStream>) {
   Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: vi.fn(getUserMedia) } });
@@ -275,9 +279,12 @@ function cameraStream() {
 
 afterEach(() => {
   Reflect.deleteProperty(navigator, 'mediaDevices');
+  Reflect.deleteProperty(window, '__TAURI_INTERNALS__');
 });
 
-test('on the web the target reads the transfer link from the camera without connecting', async () => {
+test.each([false, true])('the target reads the transfer link without connecting (Android=%s)', async (android) => {
+  cameraPlatform.android = android;
+  if (android) Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} });
   const user = userEvent.setup();
   const { track, stream } = cameraStream();
   const getUserMedia = installCamera(async () => stream);
@@ -295,7 +302,9 @@ test('on the web the target reads the transfer link from the camera without conn
   expect(identityApi.openAccountTransfer).toHaveBeenCalledWith(LINK, null);
 });
 
-test('the camera stops when scanning stops or the panel closes, and an unusable camera is explained', async () => {
+test.each([false, true])('the camera stops and explains an unusable camera (Android=%s)', async (android) => {
+  cameraPlatform.android = android;
+  if (android) Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: {} });
   const user = userEvent.setup();
   const first = cameraStream();
   const second = cameraStream();

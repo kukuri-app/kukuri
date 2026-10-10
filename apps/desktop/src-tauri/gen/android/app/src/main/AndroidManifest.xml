@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <!-- #1195 AC-2: OS の自動 backup・端末間の転送・再 install 時の自動復元に kukuri のデータを載せない（2026-10-10 判断）。
          鍵は端末の Keystore に縛られ、移った先では復号できない。移すには kukuri の暗号化 backup か移行 QR を使う。
