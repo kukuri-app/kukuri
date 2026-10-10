@@ -2,6 +2,36 @@ use crate::NotificationPageView;
 use crate::service::*;
 
 impl AppService {
+    pub async fn get_notification(
+        &self,
+        notification_id: &str,
+    ) -> Result<Option<NotificationView>> {
+        let Some(row) = self
+            .services
+            .projection_store
+            .get_notification(notification_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if row.recipient_pubkey != self.current_author_pubkey().as_str() {
+            return Ok(None);
+        }
+        if let Some(channel) = row.channel_id.as_deref() {
+            let Some(topic) = row.topic_id.as_deref() else {
+                return Ok(None);
+            };
+            if self
+                .joined_private_channel_state(topic, channel)
+                .await
+                .is_none()
+            {
+                return Ok(None);
+            }
+        }
+        self.notification_view_from_row(row).await.map(Some)
+    }
+
     pub async fn list_notifications_page(
         &self,
         cursor: Option<&kukuri_store::NotificationCursor>,

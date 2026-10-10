@@ -90,6 +90,56 @@ async fn dispatch_pages_follow_insertion_order_for_tied_timestamps() {
 }
 
 #[tokio::test]
+async fn notification_id_lookup_is_indexed_and_preserves_read_watermark() {
+    let sqlite = SqliteStore::connect_memory().await.unwrap();
+    let memory = MemoryStore::default();
+    for store in [&sqlite as &dyn NotificationStore, &memory] {
+        for count in [21, 2048] {
+            for index in 0..count {
+                store.put_notification_if_absent(row(index)).await.unwrap();
+            }
+            assert!(
+                !store
+                    .list_notifications_page(None, false)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .take(NOTIFICATION_PAGE_SIZE)
+                    .any(|row| row.notification_id == "notification-0")
+            );
+            assert_eq!(
+                store
+                    .get_notification("notification-0")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .notification_id,
+                "notification-0"
+            );
+            assert!(store.get_notification("absent").await.unwrap().is_none());
+        }
+        store.mark_all_notifications_read(55).await.unwrap();
+        assert_eq!(
+            store
+                .get_notification("notification-0")
+                .await
+                .unwrap()
+                .unwrap()
+                .read_at,
+            Some(55)
+        );
+    }
+    let plan = sqlx::query("EXPLAIN QUERY PLAN SELECT * FROM notification_inbox_rows WHERE notification_id = 'notification-0'")
+        .fetch_all(sqlite.pool()).await.unwrap().iter()
+        .map(|row| row.get::<String, _>("detail")).collect::<Vec<_>>().join(" | ");
+    assert!(
+        plan.contains("SEARCH n USING INDEX sqlite_autoindex_notifications_1"),
+        "{plan}"
+    );
+    assert!(!plan.contains("SCAN n"), "{plan}");
+}
+
+#[tokio::test]
 async fn notification_inbox_page_uses_the_received_index_and_status_uses_one_state_row() {
     let store = SqliteStore::connect_memory().await.unwrap();
     let page_plan = sqlx::query(

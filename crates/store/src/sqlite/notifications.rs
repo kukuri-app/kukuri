@@ -2,6 +2,15 @@ use super::*;
 
 #[async_trait]
 impl NotificationStore for SqliteStore {
+    async fn get_notification(&self, notification_id: &str) -> Result<Option<NotificationRow>> {
+        sqlx::query("SELECT * FROM notification_inbox_rows WHERE notification_id = ?1")
+            .bind(notification_id)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(row_to_notification)
+            .transpose()
+    }
+
     async fn put_notification_if_absent(&self, row: NotificationRow) -> Result<bool> {
         let result = sqlx::query(
             r#"
