@@ -49,9 +49,10 @@ pub async fn create_post_from_documents(
         .iter()
         .map(|item| item.byte_size)
         .collect::<Vec<_>>();
-    let files = tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<_> {
-        let root = app.path().app_cache_dir()?;
-        std::fs::create_dir_all(&root)?;
+    let (directory, files) = tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<_> {
+        let directory = app
+            .state::<crate::attachment_staging::AttachmentStaging>()
+            .session(&app.path().app_cache_dir()?)?;
         let mut files = BTreeMap::new();
         for document in documents {
             let expected = sizes
@@ -65,14 +66,14 @@ pub async fn create_post_from_documents(
                 .ok_or_else(|| {
                     anyhow::anyhow!("selected attachment is not an Android Content URI")
                 })?;
-            let mut file = tempfile::NamedTempFile::new_in(&root)?;
+            let mut file = tempfile::NamedTempFile::new_in(directory.path())?;
             anyhow::ensure!(
                 copy_selected(reader, &mut file)? == *expected,
                 "selected attachment size changed"
             );
             files.insert(document.index, file);
         }
-        Ok(files)
+        Ok((directory, files))
     })
     .await
     .map_err(|error| CommandError::from(format!("attachment copy failed: {error}")))?
@@ -94,6 +95,7 @@ pub async fn create_post_from_documents(
         .map_err(map_error);
     // NamedTempFile の owner は保存完了/失敗まで保持し、その後必ず回収する。
     drop(files);
+    drop(directory);
     if host.generation() != generation {
         return Err(CommandError::new(
             kukuri_desktop_runtime::STALE_RUNTIME_CODE,
