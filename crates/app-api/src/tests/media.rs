@@ -47,7 +47,7 @@ async fn selected_post_file_keeps_roles_and_private_write_guard() {
         .create_post_with_attachment_sources_in_channel(
             topic,
             ChannelRef::PrivateChannel {
-                channel_id: "not-joined".into(),
+                channel_id: ChannelId::new("not-joined"),
             },
             "private",
             None,
