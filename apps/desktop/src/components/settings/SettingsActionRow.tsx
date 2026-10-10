@@ -11,7 +11,7 @@ export function SettingsActionRow({ children, className }: SettingsActionRowProp
   return (
     <div
       className={cn(
-        'flex flex-wrap items-stretch gap-3 [&>*]:flex-auto [&>button]:whitespace-normal sm:[&>*]:min-w-[9.5rem]',
+        'flex flex-wrap items-stretch gap-3 [&>*]:flex-auto [&>button]:whitespace-normal sm:[&>*]:flex-1 sm:[&>*]:min-w-[9.5rem]',
         className
       )}
     >
