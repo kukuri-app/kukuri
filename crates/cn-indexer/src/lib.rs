@@ -42,7 +42,9 @@ pub use ingest::{IngestPipeline, IngestSummary};
 pub use maintenance::IndexMaintenance;
 pub use media_fetcher::BlobMediaFetcher;
 pub use projection::{IndexProjection, IndexedEntry, MemoryIndexProjection};
-pub use query::{FailClosedIndexQuery, IndexQuery, MAX_QUERY_LIMIT, clamp_query_limit};
+pub use query::{
+    FailClosedIndexQuery, IndexQuery, IndexRecent, MAX_QUERY_LIMIT, clamp_query_limit,
+};
 pub use relation_graph::ArcadeDbRelationGraph;
 pub use relation_worker::{
     DEFAULT_ANALYSIS_LIMIT, RelationAnalysisReport, analyze_relations, topic_cluster,

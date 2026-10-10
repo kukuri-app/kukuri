@@ -6,26 +6,9 @@ use kukuri_cn_core::IndexScopeKind;
 use kukuri_cn_indexer::backfill::BackfillCursor;
 use kukuri_cn_indexer::search::{SearchIndex, SearchProjection, SearchReader};
 use kukuri_cn_indexer::{ArcadeDbConfig, ArcadeDbProjection, IndexProjection, IndexedEntry};
-use serde_json::{Value, json};
 
-async fn command(config: &ArcadeDbConfig, language: &str, sql: &str) -> Result<Value> {
-    Ok(reqwest::Client::new()
-        .post(format!(
-            "{}/api/v1/command/{}",
-            config.base_url, config.database
-        ))
-        .basic_auth(&config.username, Some(&config.password))
-        .json(&json!({"language":language,"command":sql}))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?)
-}
-
-async fn reads(config: &ArcadeDbConfig) -> Result<u64> {
-    Ok(command(config, "sql", "SELECT readRecord FROM schema:stats").await?["result"][0]["readRecord"].as_u64().expect("readRecord"))
-}
+mod arcadedb_support;
+use arcadedb_support::{command, read_records as reads};
 
 fn entry(i: usize) -> IndexedEntry {
     IndexedEntry {

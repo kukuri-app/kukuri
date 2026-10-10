@@ -73,6 +73,7 @@ impl TestServer {
             .context("failed to bind test indexing listener")?;
         let addr = listener.local_addr()?;
         let base_url = format!("http://{addr}");
+        let indexer_dir = tempfile::tempdir()?;
         let state = build_state(&UserApiConfig {
             bind_addr: addr,
             database_url: database.database_url.clone(),
@@ -86,6 +87,7 @@ impl TestServer {
             channel_secret_key,
             legal_data_key: None,
             index_query_enabled: gate != IndexGate::NotConfigured,
+            indexer_data_dir: indexer_dir.path().to_path_buf(),
             trust_read_enabled: false,
             relation_distance_optout_min_proximity: (gate != IndexGate::NotConfigured)
                 .then_some(0.5),
@@ -108,6 +110,7 @@ impl TestServer {
         }
         let app = app_router(state);
         let task = tokio::spawn(async move {
+            let _indexer_dir = indexer_dir;
             axum::serve(
                 listener,
                 app.into_make_service_with_connect_info::<SocketAddr>(),

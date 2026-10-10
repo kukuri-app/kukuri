@@ -1,7 +1,7 @@
 //! index 投影 store の境界（#413 / T6）。
 //!
-//! index 投影は canonical source ではない derived な写像である（ADR 0025 §2.1）。全文検索は ArcadeDB
-//! （Lucene）に置く。backend を差し替え可能にするため trait `IndexProjection` を境界に置き、本番は
+//! index 投影は canonical source ではない derived な写像である（ADR 0025 §2.1）。全文検索は Tantivy
+//! に置く。backend を差し替え可能にするため trait `IndexProjection` を境界に置き、本番は
 //! ArcadeDB adapter（`arcadedb.rs`）、テストは in-memory 実装で駆動する。
 //!
 //! 投影に入るのは safety verdict が `allow` の entry のみ（fail-closed は ingest 側で担保）。scope
@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use kukuri_cn_core::IndexScopeKind;
 use kukuri_cn_safety::ContentAdvisory;
 
-use crate::query::IndexQuery;
+use crate::query::IndexRecent;
+use crate::search::{SearchIndex, SearchReader};
 
 /// 投影 1 件（検索対象エントリ）。
 ///
@@ -84,14 +85,52 @@ pub trait IndexProjection: Send + Sync {
 }
 
 /// in-memory 実装（contract / unit テスト用）。
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct MemoryIndexProjection {
     entries: std::sync::Arc<tokio::sync::Mutex<Vec<IndexedEntry>>>,
+    search: std::sync::Arc<SearchIndex>,
+}
+
+impl Default for MemoryIndexProjection {
+    fn default() -> Self {
+        Self {
+            entries: Default::default(),
+            search: std::sync::Arc::new(SearchIndex::in_ram().expect("RAM search index")),
+        }
+    }
 }
 
 impl MemoryIndexProjection {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn search_reader(&self) -> SearchReader {
+        self.search.reader()
+    }
+
+    async fn remove_matching(
+        &self,
+        matches: impl Fn(&IndexedEntry) -> bool + Send + Sync,
+        limit: usize,
+    ) -> Result<usize> {
+        let mut entries = self.entries.lock().await;
+        let keys: Vec<_> = entries
+            .iter()
+            .filter(|entry| matches(entry))
+            .take(limit)
+            .map(|e| (e.scope_kind, e.scope_id.clone(), e.object_id.clone()))
+            .collect();
+        for (kind, scope, object) in &keys {
+            self.search.remove_object(*kind, scope, object)?;
+        }
+        self.search.commit()?;
+        entries.retain(|e| {
+            !keys
+                .iter()
+                .any(|(kind, scope, object)| same_object(e, *kind, scope, object))
+        });
+        Ok(keys.len())
     }
 
     /// scope 内の全 entry を取得する（テスト用の read ヘルパ）。
@@ -123,6 +162,8 @@ fn same_object(
 impl IndexProjection for MemoryIndexProjection {
     async fn upsert_entry(&self, entry: &IndexedEntry) -> Result<()> {
         let mut entries = self.entries.lock().await;
+        self.search.upsert(entry)?;
+        self.search.commit()?;
         if let Some(existing) = entries.iter_mut().find(|existing| {
             same_object(
                 existing,
@@ -168,24 +209,16 @@ impl IndexProjection for MemoryIndexProjection {
         scope_id: &str,
         limit: usize,
     ) -> Result<usize> {
-        let mut removed = 0;
-        self.entries.lock().await.retain(|entry| {
-            let remove =
-                removed < limit && entry.scope_kind == scope_kind && entry.scope_id == scope_id;
-            removed += usize::from(remove);
-            !remove
-        });
-        Ok(removed)
+        self.remove_matching(
+            |entry| entry.scope_kind == scope_kind && entry.scope_id == scope_id,
+            limit,
+        )
+        .await
     }
 
     async fn remove_older_than(&self, floor: i64, limit: usize) -> Result<usize> {
-        let mut removed = 0;
-        self.entries.lock().await.retain(|entry| {
-            let remove = removed < limit && entry.created_at < floor;
-            removed += usize::from(remove);
-            !remove
-        });
-        Ok(removed)
+        self.remove_matching(|entry| entry.created_at < floor, limit)
+            .await
     }
 
     async fn remove_object(
@@ -194,63 +227,17 @@ impl IndexProjection for MemoryIndexProjection {
         scope_id: &str,
         object_id: &str,
     ) -> Result<()> {
-        self.entries
-            .lock()
-            .await
-            .retain(|entry| !same_object(entry, scope_kind, scope_id, object_id));
+        self.remove_matching(
+            |entry| same_object(entry, scope_kind, scope_id, object_id),
+            1,
+        )
+        .await?;
         Ok(())
     }
 }
 
-/// in-memory の全文検索近似: query を空白区切りの term に分け、いずれかの term を含む text に
-/// hit する（Lucene の既定 OR 演算に対応する最小近似。contract テスト用）。
-fn memory_text_matches(text: &str, query: &str) -> bool {
-    let text = text.to_lowercase();
-    query
-        .split_whitespace()
-        .any(|term| !term.is_empty() && text.contains(&term.to_lowercase()))
-}
-
 #[async_trait]
-impl IndexQuery for MemoryIndexProjection {
-    async fn search_scope(
-        &self,
-        scope_kind: IndexScopeKind,
-        scope_id: &str,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<IndexedEntry>> {
-        let mut hits: Vec<IndexedEntry> = self
-            .entries
-            .lock()
-            .await
-            .iter()
-            .filter(|entry| {
-                entry.scope_kind == scope_kind
-                    && entry.scope_id == scope_id
-                    && memory_text_matches(&entry.text, query)
-            })
-            .cloned()
-            .collect();
-        hits.sort_by_key(|hit| std::cmp::Reverse(hit.created_at));
-        hits.truncate(limit);
-        Ok(hits)
-    }
-
-    async fn search_all(&self, query: &str, limit: usize) -> Result<Vec<IndexedEntry>> {
-        let mut hits: Vec<IndexedEntry> = self
-            .entries
-            .lock()
-            .await
-            .iter()
-            .filter(|entry| memory_text_matches(&entry.text, query))
-            .cloned()
-            .collect();
-        hits.sort_by_key(|hit| std::cmp::Reverse(hit.created_at));
-        hits.truncate(limit);
-        Ok(hits)
-    }
-
+impl IndexRecent for MemoryIndexProjection {
     async fn list_recent(
         &self,
         scope: Option<(IndexScopeKind, &str)>,

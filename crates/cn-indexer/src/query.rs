@@ -7,8 +7,8 @@
 //! - 新着列挙（`list_recent`。discovery / recommendation の最小 surface。ranking / 関連度
 //!   スコアリングの具体は ADR 0025 §4 でスコープ外）
 //!
-//! fail-closed query gate（[`FailClosedIndexQuery`]）が唯一のユーザー向け入口である。投影
-//! （ArcadeDB）の hit を index 真実源（`cn_index.index_entries` + 最新 verdict join）と突合し、
+//! fail-closed query gate（[`FailClosedIndexQuery`]）が唯一のユーザー向け入口である。検索索引と
+//! 新着投影の hit を index 真実源（`cn_index.index_entries` + 最新 verdict join）と突合し、
 //! 真実源に無い / 現在の verdict が非 allow / critical の hit を結果から落とす。これにより
 //! 「`allow` 以外の verdict が search / discovery / recommendation に入らない」
 //! （`search_discovery_recommendation_excludes_non_allow`）が、投影の残留や de-index の遅延に
@@ -22,6 +22,7 @@ use async_trait::async_trait;
 use kukuri_cn_core::{IndexEntryStore, IndexScopeKind, SurfaceableEntry};
 
 use crate::projection::IndexedEntry;
+use crate::search::SearchReader;
 
 /// query 1 回で返す hit 数の上限（投影への問い合わせと真実源突合の両方を有界にする）。
 pub const MAX_QUERY_LIMIT: usize = 100;
@@ -57,19 +58,57 @@ pub trait IndexQuery: Send + Sync {
     ) -> Result<Vec<IndexedEntry>>;
 }
 
+/// 新着列挙は既存投影が持ち、全文検索の reader と分ける。
+#[async_trait]
+pub trait IndexRecent: Send + Sync {
+    async fn list_recent(
+        &self,
+        scope: Option<(IndexScopeKind, &str)>,
+        limit: usize,
+    ) -> Result<Vec<IndexedEntry>>;
+}
+
 /// fail-closed query gate（#404 の単一判定点への突合）。
 ///
 /// 投影（`inner`）の hit を真実源（`entries`）の `filter_surfaceable`（entry 存在 + 最新 verdict
 /// が `allow` かつ非 critical）で絞ってから返す。落ちた hit はエラーにせず結果から除くだけ
 /// （fail-closed。返さない側に倒す）。
 pub struct FailClosedIndexQuery {
-    inner: Arc<dyn IndexQuery>,
+    inner: Arc<dyn IndexRecent>,
+    search: SearchReader,
     entries: Arc<dyn IndexEntryStore>,
 }
 
 impl FailClosedIndexQuery {
-    pub fn new(inner: Arc<dyn IndexQuery>, entries: Arc<dyn IndexEntryStore>) -> Self {
-        Self { inner, entries }
+    pub fn new(
+        inner: Arc<dyn IndexRecent>,
+        entries: Arc<dyn IndexEntryStore>,
+        search: SearchReader,
+    ) -> Self {
+        Self {
+            inner,
+            entries,
+            search,
+        }
+    }
+
+    async fn search(
+        &self,
+        scope: Option<(IndexScopeKind, &str)>,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<IndexedEntry>> {
+        let search = self.search.clone();
+        let scope = scope.map(|(kind, id)| (kind, id.to_owned()));
+        let query = query.to_owned();
+        tokio::task::spawn_blocking(move || {
+            search.search(
+                scope.as_ref().map(|(kind, id)| (*kind, id.as_str())),
+                &query,
+                limit,
+            )
+        })
+        .await?
     }
 
     /// hit 群を真実源と突合し、surfacing してよいものだけを元の順序で返す。
@@ -129,15 +168,14 @@ impl IndexQuery for FailClosedIndexQuery {
     ) -> Result<Vec<IndexedEntry>> {
         let limit = clamp_query_limit(limit);
         let hits = self
-            .inner
-            .search_scope(scope_kind, scope_id, query, limit)
+            .search(Some((scope_kind, scope_id)), query, limit)
             .await?;
         self.gate(hits).await
     }
 
     async fn search_all(&self, query: &str, limit: usize) -> Result<Vec<IndexedEntry>> {
         let limit = clamp_query_limit(limit);
-        let hits = exclude_private_channel(self.inner.search_all(query, limit).await?);
+        let hits = exclude_private_channel(self.search(None, query, limit).await?);
         self.gate(hits).await
     }
 

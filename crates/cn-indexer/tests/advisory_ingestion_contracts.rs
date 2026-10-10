@@ -93,7 +93,11 @@ async fn general_nsfw_is_indexed_with_advisory_label() -> Result<()> {
     assert_eq!(store.events()[0].body.action, ModerationAction::RiskLabel);
 
     // query 境界: 真実源の最新 verdict から content_advisories を同梱する。投影には書かない。
-    let query = FailClosedIndexQuery::new(projection.clone(), entries.clone());
+    let query = FailClosedIndexQuery::new(
+        projection.clone(),
+        entries.clone(),
+        projection.search_reader(),
+    );
     let hits = query
         .search_scope(IndexScopeKind::PublicTopic, "rust", "beach", 10)
         .await?;
@@ -270,7 +274,11 @@ async fn labeled_allow_text_does_not_short_circuit_media_scan() -> Result<()> {
     for advisory in &post.advisories {
         assert!(signals.iter().any(|(id, _, _)| id == &advisory.signal_id));
     }
-    let query = FailClosedIndexQuery::new(projection.clone(), entries.clone());
+    let query = FailClosedIndexQuery::new(
+        projection.clone(),
+        entries.clone(),
+        projection.search_reader(),
+    );
     let hits = query
         .search_scope(IndexScopeKind::PublicTopic, "rust", "spicy", 10)
         .await?;

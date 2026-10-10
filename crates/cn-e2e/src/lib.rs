@@ -114,7 +114,9 @@ pub struct E2eStack {
     pub indexer_node: Arc<IrohDocsNode>,
     pub indexer_docs: Arc<IrohDocsSync>,
     pub runtime_state: Arc<IndexerRuntimeState>,
-    pub projection: Arc<ArcadeDbProjection>,
+    pub projection: Arc<kukuri_cn_indexer::search::SearchProjection>,
+    search: Arc<kukuri_cn_indexer::search::SearchIndex>,
+    committer: tokio::task::JoinHandle<()>,
     pub entries: Arc<PgIndexEntryStore>,
     pub api_base_url: String,
     arachnid_auth: SyntheticBasicAuth,
@@ -304,6 +306,17 @@ impl E2eStack {
             .ensure_schema()
             .await
             .context("ArcadeDB is unreachable; run via `cargo xtask cn-e2e`")?;
+        let search = Arc::new(kukuri_cn_indexer::search::SearchIndex::open(
+            &indexer_dir
+                .path()
+                .join(kukuri_cn_indexer::search::SEARCH_DIRECTORY),
+        )?);
+        let source = projection;
+        let projection = Arc::new(kukuri_cn_indexer::search::SearchProjection::new(
+            source.clone(),
+            search.clone(),
+        ));
+        let committer = projection.spawn_committer(source);
 
         // 7. 走査系（本物のプロバイダ実装 + wiremock、真実源は実 Postgres）と常駐ワーカー
         //    （本番と同じ pipeline / bucket reader / 保守の構成）。
@@ -358,6 +371,7 @@ impl E2eStack {
             channel_secret_key: None,
             legal_data_key: None,
             index_query_enabled: true,
+            indexer_data_dir: indexer_dir.path().to_path_buf(),
             trust_read_enabled: true,
             relation_distance_optout_min_proximity: Some(0.5),
             deployment_revision: "cn-e2e-v1".to_string(),
@@ -386,6 +400,8 @@ impl E2eStack {
             indexer_docs,
             runtime_state,
             projection,
+            search,
+            committer,
             entries,
             api_base_url,
             arachnid_auth,
@@ -600,6 +616,11 @@ impl E2eStack {
                 )
                 .await
                 .unwrap_or(false)
+                && self.search.reader().contains_object(
+                    IndexScopeKind::PublicTopic,
+                    &self.topic_id,
+                    object_id,
+                )?
             {
                 return Ok(true);
             }
@@ -804,6 +825,9 @@ impl E2eStack {
         if let Some(worker) = self.worker.take() {
             worker.shutdown().await;
         }
+        self.committer.abort();
+        let _ = self.committer.await;
+        self.search.commit()?;
         self.indexer_docs.shutdown().await;
         self.author.docs.shutdown().await;
         self.indexer_node.shutdown().await?;

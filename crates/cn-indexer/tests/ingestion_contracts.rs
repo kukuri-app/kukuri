@@ -423,14 +423,11 @@ async fn allow_media_post_is_indexed_and_searchable_via_derived_tags() -> Result
     assert_eq!(stored.len(), 1);
     assert!(stored[0].text.contains("media caption"));
     assert!(stored[0].text.contains("sunset"));
-    let hits = kukuri_cn_indexer::query::IndexQuery::search_scope(
-        projection.as_ref(),
-        IndexScopeKind::PublicTopic,
-        "rust",
+    let hits = projection.search_reader().search(
+        Some((IndexScopeKind::PublicTopic, "rust")),
         "sunset",
         10,
-    )
-    .await?;
+    )?;
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].object_id, object_id);
     Ok(())

@@ -89,6 +89,7 @@ impl TestServer {
             channel_secret_key: None,
             legal_data_key: Some("unit-test-legal-data-key-0123456789abcdef".to_string()),
             index_query_enabled: false,
+            indexer_data_dir: Default::default(),
             trust_read_enabled: false,
             relation_distance_optout_min_proximity: None,
             deployment_revision: "test-deployment-v1".to_string(),
