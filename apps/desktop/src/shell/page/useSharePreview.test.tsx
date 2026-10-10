@@ -7,12 +7,13 @@ import { useSharePreview } from '@/shell/page/useSharePreview';
 
 const deepLinkMock = vi.hoisted(() => ({
   currentUrls: [] as string[],
+  currentResult: null as Promise<string[]> | null,
   onOpenUrl: vi.fn(),
   unlisten: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/plugin-deep-link', () => ({
-  getCurrent: vi.fn(async () => deepLinkMock.currentUrls),
+  getCurrent: vi.fn(async () => deepLinkMock.currentResult ?? deepLinkMock.currentUrls),
   onOpenUrl: deepLinkMock.onOpenUrl,
 }));
 
@@ -40,11 +41,77 @@ function setup() {
 
 afterEach(() => {
   deepLinkMock.currentUrls = [];
+  deepLinkMock.currentResult = null;
   deepLinkMock.onOpenUrl.mockReset();
   deepLinkMock.unlisten.mockReset();
 });
 
 describe('useSharePreview', () => {
+  test('keeps a warm link when an earlier current-URL lookup finishes later', async () => {
+    let finishCurrent!: (urls: string[]) => void;
+    deepLinkMock.currentResult = new Promise((resolve) => { finishCurrent = resolve; });
+    deepLinkMock.onOpenUrl.mockResolvedValue(deepLinkMock.unlisten);
+    const { api, hook, importChannelAccessToken } = setup();
+    const previewSpy = vi.spyOn(api, 'previewChannelAccessToken');
+    await waitFor(() => expect(deepLinkMock.onOpenUrl).toHaveBeenCalled());
+    await act(async () => {
+      deepLinkMock.onOpenUrl.mock.calls[0][0]([buildChannelAccessPreviewDeepLink('invite:warm')]);
+    });
+    await act(async () => { finishCurrent([buildChannelAccessPreviewDeepLink('invite:old-current')]); });
+    expect(hook.result.current.token).toBe('invite:warm');
+    expect(previewSpy).toHaveBeenCalledTimes(1);
+    expect(importChannelAccessToken).not.toHaveBeenCalled();
+  });
+
+  test('keeps the selected token and its preview together when an older lookup finishes late', async () => {
+    deepLinkMock.onOpenUrl.mockResolvedValue(deepLinkMock.unlisten);
+    const { api, hook, importChannelAccessToken } = setup();
+    let resolveOld!: (value: typeof preview) => void;
+    vi.spyOn(api, 'previewChannelAccessToken').mockReturnValueOnce(
+      new Promise((resolve) => { resolveOld = resolve; })
+    );
+    let oldRequest!: Promise<void>;
+    act(() => { oldRequest = hook.result.current.openPreview('invite:old'); });
+    await act(async () => { await hook.result.current.openPreview('invite:current'); });
+    await act(async () => {
+      resolveOld({ ...preview, channel_id: 'old-channel' });
+      await oldRequest;
+    });
+    expect(hook.result.current.token).toBe('invite:current');
+    expect(hook.result.current.data?.channel_id).toBe(preview.channel_id);
+    expect(importChannelAccessToken).not.toHaveBeenCalled();
+  });
+
+  test('releases the secret and preview when closed during a lookup', async () => {
+    deepLinkMock.onOpenUrl.mockResolvedValue(deepLinkMock.unlisten);
+    const { api, hook, importChannelAccessToken } = setup();
+    let resolvePreview!: (value: typeof preview) => void;
+    vi.spyOn(api, 'previewChannelAccessToken').mockReturnValueOnce(
+      new Promise((resolve) => { resolvePreview = resolve; })
+    );
+    let request!: Promise<void>;
+    act(() => { request = hook.result.current.openPreview('invite:cancelled'); });
+    act(() => { hook.result.current.handleOpenChange(false); });
+    await act(async () => { resolvePreview(preview); await request; });
+    expect(hook.result.current.open).toBe(false);
+    expect(hook.result.current.token).toBeNull();
+    expect(hook.result.current.data).toBeNull();
+    expect(hook.result.current.loading).toBe(false);
+    expect(importChannelAccessToken).not.toHaveBeenCalled();
+  });
+
+  test('disposes a native listener that finishes registering after unmount', async () => {
+    let finishRegistration!: (dispose: () => void) => void;
+    deepLinkMock.onOpenUrl.mockReturnValueOnce(
+      new Promise((resolve) => { finishRegistration = resolve; })
+    );
+    const { hook } = setup();
+    await waitFor(() => expect(deepLinkMock.onOpenUrl).toHaveBeenCalled());
+    hook.unmount();
+    await act(async () => { finishRegistration(deepLinkMock.unlisten); });
+    expect(deepLinkMock.unlisten).toHaveBeenCalledTimes(1);
+  });
+
   test('opens a preview from a browser deep-link event and imports only after confirmation', async () => {
     deepLinkMock.onOpenUrl.mockResolvedValue(deepLinkMock.unlisten);
     const { api, hook, importChannelAccessToken } = setup();
