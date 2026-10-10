@@ -457,3 +457,23 @@ test('keyboard guidance opens from the Control Center and from the composer hint
   });
   expect(screen.getByPlaceholderText('Write a post')).toHaveValue('draft survives help');
 });
+
+// #1198: 前回と別の項目で設定を開くと履歴が 2 つ積まれ、戻ると前回の項目へ移っていた。
+// 開く操作は履歴を 1 つだけ積み、1 回の戻るで開く前の画面へ戻る。
+test('opening settings at another section adds one history entry, so going back closes the drawer', async () => {
+  const user = userEvent.setup();
+  render(<App api={createDesktopMockApi()} />);
+
+  const controlCenter = await openControlCenter(user);
+  const historyLength = window.history.length;
+  await user.click(within(controlCenter).getByRole('button', { name: 'Keyboard' }));
+  await screen.findByRole('dialog', { name: 'Settings' });
+  expect(window.location.hash).toContain('settings=keyboard');
+  expect(window.history.length).toBe(historyLength + 1);
+
+  act(() => window.history.back());
+  await waitFor(() => {
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+  });
+  expect(window.location.hash).not.toContain('settings=');
+});
