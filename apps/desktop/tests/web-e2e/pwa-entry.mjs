@@ -29,6 +29,19 @@ async function accounts(browser) {
   return webInvoke(browser, 'list_accounts');
 }
 
+async function openPwaFromHome(adb) {
+  await adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
+  const homeIcon = attrs => /^(kukuri|kukuri web)$/.test(attrs.text);
+  await nativeTap(adb, homeIcon, 'home icon', 5_000).catch(async () => {
+    const size = (await adb('shell', 'wm', 'size')).match(/(\d+)x(\d+)/);
+    assert.ok(size, 'emulator display size');
+    const [width, height] = size.slice(1).map(Number);
+    await adb('shell', 'input', 'swipe', String(Math.floor(width * .85)), String(Math.floor(height * .5)),
+      String(Math.floor(width * .15)), String(Math.floor(height * .5)), '250');
+    await nativeTap(adb, homeIcon, 'adjacent home icon');
+  });
+}
+
 async function nativeState(adb, what) {
   const activity = (await adb('shell', 'dumpsys', 'activity', 'activities')).split('\n')
     .filter(line => /mResumedActivity|topResumedActivity/.test(line));
@@ -82,17 +95,7 @@ export async function installPwa(browser, adb) {
     await nativeTap(adb, attrs => (/^(Add automatically|Add to home screen)$/i.test(attrs.text) && attrs.clickable === 'true') ||
       /\/(add_button|button1)$/.test(attrs['resource-id']), 'launcher confirmation', 5_000).catch(() => undefined);
     await nativeState(adb, 'after launcher confirmation');
-    await adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
-    const homeIcon = attrs => /^(kukuri|kukuri web)$/.test(attrs.text);
-    await nativeTap(adb, homeIcon, 'home icon', 5_000).catch(async () => {
-      // factory launcherは追加したshortcutを右隣のpageへ置くことがある。
-      const size = (await adb('shell', 'wm', 'size')).match(/(\d+)x(\d+)/);
-      assert.ok(size, 'emulator display size');
-      const [width, height] = size.slice(1).map(Number);
-      await adb('shell', 'input', 'swipe', String(Math.floor(width * .85)), String(Math.floor(height * .5)),
-        String(Math.floor(width * .15)), String(Math.floor(height * .5)), '250');
-      await nativeTap(adb, homeIcon, 'adjacent home icon');
-    });
+    await openPwaFromHome(adb);
     await nativeState(adb, 'after home icon');
     await eventually('standalone PWA window', async () => {
       for (const handle of await browser.getWindowHandles()) {
@@ -119,6 +122,10 @@ export async function installPwa(browser, adb) {
     const after = await accounts(browser);
     assert.equal(after.active_account_id, before.active_account_id);
     assert.equal(after.accounts[0].pubkey, before.accounts[0].pubkey);
+    console.log('PWA driver focus before native foreground', await browser.execute(() => ({ visibility: document.visibilityState, focus: document.hasFocus() })));
+    await openPwaFromHome(adb);
+    console.log('PWA native foreground', await browser.execute(() => ({ visibility: document.visibilityState, focus: document.hasFocus() })));
+    await eventually('PWA document is visible', () => browser.execute(() => document.visibilityState === 'visible'));
     const activity = (await adb('shell', 'dumpsys', 'activity', 'activities')).split('\n').find(line => /mResumedActivity|topResumedActivity/.test(line));
     console.log(`PWA launcher/standalone/account: PASS; ${activity?.trim()}`);
     return tab;

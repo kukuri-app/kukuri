@@ -5,7 +5,7 @@ import { webInvoke } from './web-invoke.mjs';
 import { installPwa } from './pwa-entry.mjs';
 
 export async function pwaShellFlow({ openClient, greetNative, native, fixture, openDirectMessage,
-  nativeCreatesChannel, joinChannel, openSettings, publicColumn, openComposer, replaceValue, openChannelDialog, channelDialogClosed,
+  nativeCreatesChannel, joinChannel, openSettings, publicColumn, openComposer, replaceValue, openChannelDialog, channelDialogClosed, seesInChannel,
   origin, topic, run, browserName, adb }) {
   if (!['chrome', 'android'].includes(browserName)) throw new Error('PWA shell acceptance runs on Chrome');
   const browser = await openClient('pwa-shell', { ice: true });
@@ -161,6 +161,14 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
       await browser.$('button=Check for updates').waitForClickable({ timeout: 90_000 });
       await browser.$('button=Check for updates').click();
     }
+    console.log('PWA cache owners after prior tab close', await browser.execute(async () => {
+      const builds = [];
+      for (const name of (await caches.keys()).filter(name => name.startsWith('kukuri-shell-'))) {
+        const root = await (await caches.open(name)).match('/');
+        builds.push({ name, owners: JSON.parse(root.headers.get('x-kukuri-shell-clients') || '[]') });
+      }
+      return builds;
+    }), { oldTab, current: await browser.getWindowHandle(), windows: await browser.getWindowHandles() });
     await eventually('unused prior shell cache is reclaimed', () => browser.execute(async () =>
       (await caches.keys()).filter(name => name.startsWith('kukuri-shell-')).length === 1));
     // 一時Columnは再起動で閉じる。保存済みの所属からchannelを開き、既存の有効需要を戻す。
@@ -171,6 +179,7 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     await open.waitForClickable({ timeout: 90_000 });
     await open.click();
     await channelDialogClosed(browser);
+    await seesInChannel(browser, channel.channelId, accepted.find(item => item.kind === 'private').text);
     for (const item of accepted) {
       if (item.kind === 'dm') {
         await eventually('the same queued DM is delivered', async () => {
