@@ -111,6 +111,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.22.0'
+      - uses: android-actions/setup-android@v3
       - name: Install Android SDK components and pinned bundletool
         run: |
           sdkmanager 'platforms;android-36' 'build-tools;36.1.0' 'ndk;29.0.14206865'
@@ -151,6 +152,7 @@ jobs:
         with:
           name: kukuri-android-unsigned
           path: ${{ env.PACKAGE_DIRECTORY }}
+      - uses: android-actions/setup-android@v3
       - name: Install inspection tools
         run: |
           sdkmanager 'build-tools;36.1.0'

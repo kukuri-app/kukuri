@@ -130,6 +130,7 @@ json.NewEncoder(f).Encode(map[string]any{"args":a,"length":len(b),"sha256":hex.E
             wrapper = root / 'operator.ps1'
             wrapper.write_text('''param([string]$Script,[string]$Key,[string]$Mode)
 $ErrorActionPreference = 'Stop'
+[Console]::InputEncoding = [Text.UTF8Encoding]::new($true)
 function Read-Host { param([string]$Prompt,[switch]$AsSecureString); ConvertTo-SecureString $env:KUKURI_OPERATOR_FIXTURE_PASSWORD -AsPlainText -Force }
 try {
     if ($Mode -eq 'existing') { & $Script -KeystorePath $Key -Repository fixture/unused -RegisterExisting }
@@ -170,6 +171,7 @@ try {
                         self.assertEqual(group[0]['args'], ['secret', 'set', 'ANDROID_UPLOAD_KEYSTORE_BASE64', '--repo', 'fixture/unused'])
                         import base64
                         encoded = base64.b64encode(key.read_bytes())
+                        self.assertEqual(group[0]['length'], len(encoded))
                         self.assertEqual(group[0]['sha256'], hashlib.sha256(encoded).hexdigest())
                         self.assertEqual(group[1]['length'], len(password.encode('utf-8')))
                         self.assertEqual(group[1]['sha256'], hashlib.sha256(password.encode('utf-8')).hexdigest())

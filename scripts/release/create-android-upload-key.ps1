@@ -28,12 +28,17 @@ function Invoke-UploadTool([string]$Executable, [string[]]$ToolArguments, [strin
     $startInfo.RedirectStandardInput = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
-    $process = [Diagnostics.Process]::Start($startInfo)
+    $inputEncoding = [Console]::InputEncoding
+    try {
+        # PS5.1 creates its stdin writer with Console.InputEncoding, including its BOM.
+        [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+        $process = [Diagnostics.Process]::Start($startInfo)
+    } finally { [Console]::InputEncoding = $inputEncoding }
     try {
         $output = $process.StandardOutput.ReadToEndAsync()
         $diagnostics = $process.StandardError.ReadToEndAsync()
-        $writer = [IO.StreamWriter]::new($process.StandardInput.BaseStream, [Text.UTF8Encoding]::new($false))
-        try { $writer.Write($InputValue) } finally { $writer.Dispose() }
+        $process.StandardInput.Write($InputValue)
+        $process.StandardInput.Close()
         $process.WaitForExit()
         $null = $output.GetAwaiter().GetResult()
         $null = $diagnostics.GetAwaiter().GetResult()
