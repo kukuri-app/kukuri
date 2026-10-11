@@ -16,7 +16,7 @@ async function updateOwners(cache, response, ids) {
 // 凍結中のtabも守るため、固定HTMLの内部headerにbuildの使用者を記録する。
 // 各clientは1buildだけを所有し、close済みのIDはこの有限な集合から外す。
 async function collect(owner, version) {
-  if (registration.installing) return;
+  let preserve = Boolean(registration.installing);
   const live = new Set((await clients.matchAll({ includeUncontrolled: true })).map(client => client.id));
   let waiting;
   if (registration.waiting) {
@@ -26,7 +26,7 @@ async function collect(owner, version) {
       channel.port1.onmessage = event => { clearTimeout(timeout); channel.port1.close(); resolve(event.data); };
       registration.waiting.postMessage({ type: 'version' }, [channel.port2]);
     });
-    if (waiting === null) return;
+    if (waiting === null) preserve = true;
   }
   for (const name of (await caches.keys()).filter(name => name.startsWith(PREFIX))) {
     const cache = await caches.open(name);
@@ -34,14 +34,16 @@ async function collect(owner, version) {
     if (!html) continue;
     const ids = JSON.parse(html.headers.get(OWNERS) || '[]').filter(id => live.has(id) && id !== owner);
     if (owner && name === PREFIX + version) ids.push(owner);
-    if (ids.length || name === CACHE || name === PREFIX + waiting) await updateOwners(cache, html, ids);
+    if (preserve || ids.length || name === CACHE || name === PREFIX + waiting) await updateOwners(cache, html, ids);
     else await caches.delete(name);
   }
 }
 
 globalThis.addEventListener('install', event => {
   event.waitUntil((async () => {
-    try { await (await caches.open(CACHE)).addAll(BUILD.assets); }
+    const cache = await caches.open(CACHE);
+    if (await cache.match('/')) return;
+    try { await cache.addAll(BUILD.assets); }
     catch (error) { await caches.delete(CACHE); throw error; }
   })());
 });
