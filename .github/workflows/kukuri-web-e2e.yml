@@ -39,6 +39,10 @@ on:
         description: 'Optional signed Chrome APK for the Android emulator; signer and stable version are verified before install'
         type: string
         default: ''
+      android_accessibility_apk_url:
+        description: 'Optional pinned Google Android Accessibility Suite APK for the isolated emulator'
+        type: string
+        default: ''
   schedule:
     - cron: '30 18 * * *'
     # Safari。

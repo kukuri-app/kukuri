@@ -7,6 +7,18 @@ scenario="$1"
 trap 'status=$?; if [ "$status" -ne 0 ]; then adb logcat -d -b crash -t 150 || true; adb shell dumpsys meminfo | head -60 || true; fi; exit "$status"' EXIT
 
 adb wait-for-device
+accessibility_url=$(jq -r '.inputs.android_accessibility_apk_url // ""' "${GITHUB_EVENT_PATH:-/dev/null}")
+if [ -n "$accessibility_url" ]; then
+  echo "::add-mask::$accessibility_url"
+  accessibility_dir=$(mktemp -d)
+  tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+  curl -sfL "$accessibility_url" -o "$accessibility_dir/talkback.apk"
+  echo '100ea562b3b6fc3b2ce50cdd745a7a419ab58a9f4eaad94952c22e578cfd723a  '"$accessibility_dir/talkback.apk" | sha256sum -c -
+  "$tools/apksigner" verify --verbose --print-certs "$accessibility_dir/talkback.apk"
+  "$tools/aapt" dump badging "$accessibility_dir/talkback.apk" | grep -q "^package: name='com.google.android.marvin.talkback' .*versionName='17.1.0.983118198'"
+  adb install -r "$accessibility_dir/talkback.apk"
+  echo 'Verified Google Eyes-Free Project TalkBack 17.1.0.983118198 x86'
+fi
 # 現行stableの検証も隔離CIで自動準備する。通常のlaneは既存imageのChromeを使う。
 apk_url=$(jq -r '.inputs.android_chrome_apk_url // ""' "${GITHUB_EVENT_PATH:-/dev/null}")
 if [ -n "$apk_url" ]; then
