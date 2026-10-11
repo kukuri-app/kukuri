@@ -55,7 +55,7 @@ export async function pwaAttachmentFlow({ openClient, greetNative, native, fixtu
     const uploads = [];
     for (const part of parts) {
       const blob = new Blob([Uint8Array.from(atob(part.data), c => c.charCodeAt(0))], { type: part.mime });
-      const identity = await module.prepare_attachment(blob);
+      const identity = await module.prepare_attachment(blob).catch(error => { throw new Error(`prepare ${mode ?? command}: ${JSON.stringify(error)}`); });
       const reference = { id: crypto.randomUUID(), ...identity };
       sources.push({ reference, blob });
       uploads.push({ file_name: 'original', mime: part.mime, role: part.role, byte_size: blob.size, data_base64: '', source_ref: reference });
