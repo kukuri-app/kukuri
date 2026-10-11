@@ -5,7 +5,7 @@ import { webInvoke } from './web-invoke.mjs';
 import { installPwa } from './pwa-entry.mjs';
 
 export async function pwaShellFlow({ openClient, greetNative, native, fixture, openDirectMessage,
-  nativeCreatesChannel, joinChannel, openSettings, publicColumn, openComposer, replaceValue,
+  nativeCreatesChannel, joinChannel, openSettings, publicColumn, openComposer, replaceValue, openChannelDialog, channelDialogClosed,
   origin, topic, run, browserName, adb }) {
   if (!['chrome', 'android'].includes(browserName)) throw new Error('PWA shell acceptance runs on Chrome');
   const browser = await openClient('pwa-shell', { ice: true });
@@ -19,7 +19,7 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     await adb('shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A');
     await adb('shell', 'input', 'keyevent', 'KEYCODE_DEL');
     await adb('shell', 'input', 'text', text.replaceAll(' ', '%s'));
-    await eventually('Android input reaches the PWA field', async () => await field.getValue() === text);
+    await eventually('Android input reaches the PWA field', async () => await field.getProperty('value') === text);
   };
   const account = await webInvoke(browser, 'list_accounts');
   const settings = await webInvoke(browser, 'set_adult_content_display_enabled', { enabled: true });
@@ -33,6 +33,7 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
   const pubkey = hello.webPost.author_pubkey;
   const { pubkey: peer } = await fixture('/fixture/info');
   await native('follow_author', { request: { pubkey } });
+  await browser.$(`article*=${hello.fromNative}`).waitForExist({ timeout: 90_000 });
   await openDirectMessage(browser, hello.fromNative, peer);
   const channel = await nativeCreatesChannel(`offline-${run}`);
   await joinChannel(browser, channel.token, `offline-${run}`);
@@ -87,7 +88,7 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     try {
       await publicColumn(browser).$('button=Post').click();
       await publicColumn(browser).$('form [role="alert"]').waitForDisplayed();
-      assert.equal(await field.getValue(), failedText);
+      assert.equal(await field.getProperty('value'), failedText);
       assert.equal((await page(invoke, 'post')).items.some(item => item.content === failedText), false);
     } finally { await browser.execute(() => { window.__kukuriRestorePut(); delete window.__kukuriRestorePut; }); }
     // 操作の入口は実UI、媒体の組合せは実WASM commandの同じ受付境界で照合する。
@@ -131,7 +132,7 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     await browser.refresh();
     await browser.$('[data-testid="control-center-trigger"]').waitForDisplayed({ timeout: 90_000 });
     await assertAccount();
-    assert.equal(await (await openComposer(publicColumn(browser))).getValue(), draft);
+    assert.equal(await (await openComposer(publicColumn(browser))).getProperty('value'), draft);
     await assertDrafts();
     await assertStored();
     // 同originの2つ目の実buildを準備。延期しても現在の下書きと画面を保つ。
@@ -149,7 +150,7 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     }, 90_000);
     await browser.$('[data-testid="control-center-trigger"]').waitForDisplayed({ timeout: 90_000 });
     await assertAccount();
-    assert.equal(await (await openComposer(publicColumn(browser))).getValue(), draft);
+    assert.equal(await (await openComposer(publicColumn(browser))).getProperty('value'), draft);
     await assertDrafts();
     if (oldTab && oldTab !== await browser.getWindowHandle()) {
       assert.equal(await browser.execute(async () => (await caches.keys()).filter(name => name.startsWith('kukuri-shell-')).length), 2, 'the original live tab keeps its prior build');
@@ -162,6 +163,14 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     }
     await eventually('unused prior shell cache is reclaimed', () => browser.execute(async () =>
       (await caches.keys()).filter(name => name.startsWith('kukuri-shell-')).length === 1));
+    // 一時Columnは再起動で閉じる。保存済みの所属からchannelを開き、既存の有効需要を戻す。
+    const closeSettings = browser.$('#shell-settings-drawer .shell-settings-close');
+    if (await closeSettings.isDisplayed()) await closeSettings.click();
+    const channels = await openChannelDialog(browser);
+    const open = channels.$(`button[aria-label="Open offline-${run}"]`);
+    await open.waitForClickable({ timeout: 90_000 });
+    await open.click();
+    await channelDialogClosed(browser);
     for (const item of accepted) {
       if (item.kind === 'dm') {
         await eventually('the same queued DM is delivered', async () => {
