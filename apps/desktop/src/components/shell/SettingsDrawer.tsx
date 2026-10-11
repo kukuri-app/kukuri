@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/card';
 import { IconButton } from '@/components/ui/icon-button';
 import { cn } from '@/lib/utils';
+import { useWebBackLayer } from '@/lib/useWebBackLayer';
 
 import { type SettingsSection } from './types';
 
@@ -34,6 +35,7 @@ export function SettingsDrawer({
   onSectionChange,
   sections,
 }: SettingsDrawerProps) {
+  useWebBackLayer(open, () => onOpenChange(false));
   const { t } = useTranslation('shell');
   const currentSection = sections.find((section) => section.id === activeSection) ?? sections[0];
   const [visited, setVisited] = React.useState<SettingsSection[]>([]);

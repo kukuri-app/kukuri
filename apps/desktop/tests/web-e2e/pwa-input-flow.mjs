@@ -10,12 +10,22 @@ async function nativeSnapshot(adb, name) {
   await adb('pull', file, `test-results/pwa-input/${name}.png`);
 }
 
-export async function pwaInputFlow({ openClient, greetNative, publicColumn, openComposer, replaceValue, browserName, adb, origin }) {
+export async function pwaInputFlow({ openClient, greetNative, openSettings, publicColumn, openComposer, replaceValue, browserName, adb, origin }) {
   const browser = await openClient('pwa-input', { ice: true, beforeConsent: browserName === 'android' ? async browser => {
-    await browser.$('[data-testid="age-attestation-checkbox"]').waitForDisplayed({ timeout: 90_000 });
+    const age = browser.$('[data-testid="age-attestation-checkbox"]');
+    await age.waitForDisplayed({ timeout: 90_000 });
     await eventually('320px mobile viewport', () => browser.execute(() => Math.abs(innerWidth - 320) <= 1));
-    await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 700))));
-    await nativeSnapshot(adb, 'initial-consent-320-font200');
+    for (const locale of ['ja', 'en']) {
+      await browser.$('.app-consent-panel select').selectByAttribute('value', locale);
+      await eventually(`initial consent ${locale}`, () => browser.execute(language => document.documentElement.lang === language, locale));
+      await age.click();
+      assert.equal(await age.isSelected(), true);
+      await age.click();
+      assert.equal(await age.isSelected(), false);
+      assert.equal(await browser.$('.app-consent-actions button').isEnabled(), false);
+      await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 700))));
+      await nativeSnapshot(adb, `initial-consent-${locale}-320-font200`);
+    }
     console.log('PWA input initial consent font scale', (await adb('shell', 'settings', 'get', 'system', 'font_scale')).trim());
     assert.equal(await browser.execute(() => document.documentElement.scrollWidth > innerWidth), false);
   } : undefined });
@@ -99,6 +109,22 @@ export async function pwaInputFlow({ openClient, greetNative, publicColumn, open
   await eventually('back closes the control center', async () => !(await browser.$('#shell-control-center').isDisplayed()));
   assert.equal(new URL(await browser.getUrl()).origin, origin);
   if (browserName === 'android') {
+    await openSettings(browser, 'appearance');
+    for (const locale of ['ja', 'en']) {
+      await browser.$('#shell-settings-drawer select').selectByAttribute('value', locale);
+      await eventually(`settings ${locale}`, () => browser.execute(language => document.documentElement.lang === language, locale));
+      for (const theme of [0, 1]) {
+        const option = (await browser.$$('#shell-settings-drawer [role="radio"]'))[theme];
+        await option.click();
+        assert.equal(await option.getAttribute('aria-checked'), 'true');
+        assert.equal(await browser.execute(() => document.documentElement.scrollWidth > innerWidth), false);
+        await nativeSnapshot(adb, `settings-${locale}-${theme}-320-font200`);
+      }
+    }
+    await (await browser.$$('#shell-settings-drawer [role="radio"]'))[0].click();
+    await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+    await eventually('back closes the settings drawer', async () => await browser.$('#shell-settings-drawer').getAttribute('data-open') === 'false');
+    assert.equal(new URL(await browser.getUrl()).origin, origin);
     const composer = await openComposer(publicColumn(browser));
     const before = await composer.getProperty('value');
     await publicColumn(browser).$('button=Choose files').click();

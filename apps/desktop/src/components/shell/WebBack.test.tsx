@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { createDesktopShellStore, DesktopShellStoreContext } from '@/shell/store';
 import { columnDraftKey, type ColumnDraftTarget } from '@/shell/slices/columnDrafts';
 import { ColumnComposerFooter } from './ColumnComposerFooter';
+import { SettingsDrawer } from './SettingsDrawer';
 
 vi.mock('@/lib/webRuntime', () => ({ IS_WEB_RUNTIME: true }));
 const target: ColumnDraftTarget = { columnId: 'public', action: 'post', scope: { topicId: 'general', channelId: null } };
@@ -21,11 +22,16 @@ function setup(preventDismiss = false) {
   const submit = vi.fn(async () => undefined);
   function View() {
     const [open, setOpen] = useState(false);
+    const [settingsOpen, setSettingsOpen] = useState(false);
     return <DesktopShellStoreContext.Provider value={store}>
       <ColumnComposerFooter active destinationLabel='general' locale='en' target={target}
         onActivate={() => undefined} onAttachmentSelection={async () => undefined}
         onAttachmentPaste={async () => undefined} onRemoveAttachment={() => undefined} onSubmit={submit} />
       <button onClick={() => setOpen(true)}>Open overlay</button>
+      <button onClick={() => setSettingsOpen(true)}>Open settings</button>
+      <SettingsDrawer drawerId='settings' open={settingsOpen} onOpenChange={setSettingsOpen}
+        activeSection='appearance' onSectionChange={() => undefined}
+        sections={[{ id: 'appearance', label: 'Appearance', description: '', content: <p>Appearance settings</p> }]} />
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent hideClose={preventDismiss} onEscapeKeyDown={event => { if (preventDismiss) event.preventDefault(); }}
           aria-describedby={undefined}><DialogTitle>Overlay</DialogTitle></DialogContent>
@@ -67,6 +73,19 @@ it('a confirmation that refuses dismissal remains open on back', async () => {
   expect(screen.getByRole('dialog')).toBeVisible();
   expect(location.hash).toBe('#/timeline');
   expect(submit).not.toHaveBeenCalled();
+});
+it('back closes the settings drawer before its underlying composer', async () => {
+  const { user, submit } = setup();
+  await user.click(screen.getByRole('button', { name: 'Post to general' }));
+  await user.type(screen.getByPlaceholderText('Write a post'), 'settings draft');
+  await user.click(screen.getByRole('button', { name: 'Open settings' }));
+  await back();
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  expect(screen.getByDisplayValue('settings draft')).toBeVisible();
+  expect(location.hash).toBe('#/timeline');
+  expect(submit).not.toHaveBeenCalled();
+  await back();
+  await waitFor(() => expect(screen.queryByPlaceholderText('Write a post')).not.toBeInTheDocument());
 });
 it('closing the composer normally leaves no extra back step', async () => {
   const { user } = setup();
