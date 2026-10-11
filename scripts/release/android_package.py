@@ -111,7 +111,7 @@ def validate(directory, metadata):
         raise ValueError('AAB SDK or release mode mismatch')
     badging = run(tool('aapt2'), 'dump', 'badging', apk)
     for expected_text in (f"name='{PACKAGE}'", f"versionCode='{metadata['version_code']}'",
-                          f"versionName='{metadata['version_name']}'", "sdkVersion:'29'", "targetSdkVersion:'36'"):
+                          f"versionName='{metadata['version_name']}'", "minSdkVersion:'29'", "targetSdkVersion:'36'"):
         if expected_text not in badging:
             raise ValueError('Verification APK identity, SDK or version mismatch')
     for path, prefix in ((aab, 'base/lib/'), (apk, 'lib/')):

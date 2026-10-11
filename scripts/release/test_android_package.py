@@ -18,6 +18,26 @@ import android_package as package
 
 
 class SourceAndWorkflowTests(unittest.TestCase):
+    def test_pinned_aapt2_min_sdk_badging_accepts_29_and_rejects_28(self):
+        metadata = {'version_name': '0.4.3', 'version_code': 400301}
+        manifest = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+            package="app.kukuri.android" android:versionCode="400301" android:versionName="0.4.3">
+            <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="36"/><application/></manifest>'''
+        # Actual build-tools 36.1.0 badging uses minSdkVersion, not sdkVersion.
+        badging = "package: name='app.kukuri.android' versionCode='400301' versionName='0.4.3'\nminSdkVersion:'29'\ntargetSdkVersion:'36'"
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            for name, entry in zip(package.FILES, ('base/lib/arm64-v8a/libapp.so',
+                                                  'lib/arm64-v8a/libapp.so', 'arm64-v8a/libapp.so.dbg')):
+                with zipfile.ZipFile(root / name, 'w') as archive:
+                    archive.writestr(entry, b'fixture')
+            with mock.patch.object(package, 'java_tool'), mock.patch.object(package, 'bundletool'), mock.patch.object(package, 'tool'):
+                with mock.patch.object(package, 'run', side_effect=[manifest, badging]):
+                    package.validate(root, metadata)
+                with mock.patch.object(package, 'run', side_effect=[manifest, badging.replace("minSdkVersion:'29'", "minSdkVersion:'28'")]):
+                    with self.assertRaises(ValueError):
+                        package.validate(root, metadata)
+
     def test_upload_signing_requires_the_same_tag_and_workflow_source(self):
         source = 'a' * 40
         tag = 'v0.4.3-preview.5'
