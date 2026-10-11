@@ -29,7 +29,9 @@ export function useWebBackLayer(open: boolean, close: () => void) {
     return () => {
       layers.splice(layers.indexOf(layer), 1);
       if (!layers.length) window.removeEventListener('popstate', onBack);
-      if (!layer.popped && history.state?.[KEY] === layer.id && location.href === layer.url) history.back();
+      if (!layer.popped) queueMicrotask(() => {
+        if (history.state?.[KEY] === layer.id && location.href === layer.url) history.back();
+      });
     };
   }, [open]);
 }
