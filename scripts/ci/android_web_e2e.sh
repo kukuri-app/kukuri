@@ -17,6 +17,7 @@ if [ -n "$apk_url" ]; then
   curl -sfL "$apk_url" -o "$apk_dir/chrome.apk"
   signer() { "$tools/apksigner" verify --print-certs "$1" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'; }
   reference_signer=$(signer "$apk_dir/reference.apk")
+  echo "SDK Chrome signer: $reference_signer"
   [ -n "$reference_signer" ] && [ "$(signer "$apk_dir/chrome.apk")" = "$reference_signer" ] || {
     echo 'Chrome APK signer does not match the preinstalled Google Chrome'; exit 1;
   }

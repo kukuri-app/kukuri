@@ -334,7 +334,7 @@ jobs:
       - name: Web E2E
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ inputs.android_chrome_apk_url != '' && '36.1' || '35' }}
           target: ${{ inputs.android_chrome_apk_url != '' && 'google_apis_playstore' || 'google_apis' }}
           arch: x86_64
           profile: pixel_7
