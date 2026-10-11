@@ -103,8 +103,13 @@ async function typeJapanese(browser, field, adb) {
   }
   await browser.execute(element => {
     window.__pwaImeEvents = [];
+    window.__pwaImeComposing = false;
     for (const type of ['compositionstart', 'compositionupdate', 'compositionend', 'keydown']) {
-      element.addEventListener(type, event => window.__pwaImeEvents.push({ type, key: event.key, composing: event.isComposing, data: event.data }));
+      element.addEventListener(type, event => {
+        if (type === 'compositionstart') window.__pwaImeComposing = true;
+        if (type === 'compositionend') window.__pwaImeComposing = false;
+        window.__pwaImeEvents.push({ type, key: event.key, composing: event.isComposing, data: event.data });
+      });
     }
   }, field);
   await adb('shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A');
@@ -114,8 +119,9 @@ async function typeJapanese(browser, field, adb) {
     await adb('shell', 'input', 'tap', String(x), String(y));
   }
   await nativeSnapshot(adb, 'japanese-composing');
-  await adb('shell', 'input', 'tap', '450', '1700');
+  assert.equal(await browser.execute(() => window.__pwaImeComposing), true, 'Enter is pressed during actual IME composition');
   await adb('shell', 'input', 'keyevent', 'KEYCODE_ENTER');
+  assert.equal(await browser.execute(() => window.__pwaImeComposing), false, 'Enter commits the actual IME composition');
   const text = await field.getProperty('value');
   assert.equal(text.trim(), 'にほん');
   const events = await browser.execute(() => window.__pwaImeEvents);
