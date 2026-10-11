@@ -335,7 +335,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
-          target: google_apis
+          target: ${{ inputs.android_chrome_apk_url != '' && 'google_apis_playstore' || 'google_apis' }}
           arch: x86_64
           profile: pixel_7
           disk-size: 8G
