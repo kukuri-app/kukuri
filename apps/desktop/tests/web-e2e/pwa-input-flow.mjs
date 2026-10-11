@@ -34,7 +34,7 @@ async function configureJapanese(browser, field, adb) {
     await adb('shell', 'input', 'text', 'Japanese');
     await nativeTap(adb, attrs => attrs.text === '日本語', 'Japanese language result');
     await nativeSnapshot(adb, 'japanese-layout-options');
-    await nativeTap(adb, attrs => attrs.text === '12 keys', 'disable Japanese 12-key layout');
+    await nativeTap(adb, attrs => /^(12 keys|12 キー)$/.test(attrs.text), 'disable Japanese 12-key layout');
     await nativeTap(adb, attrs => attrs.text === 'QWERTY', 'Japanese QWERTY');
     await nativeTap(adb, attrs => attrs.text === 'Done', 'save Japanese keyboard');
     await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
@@ -322,6 +322,8 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
         const option = (await browser.$$('#shell-settings-drawer [role="radio"]'))[theme];
         await option.click();
         assert.equal(await option.getAttribute('aria-checked'), 'true');
+        await eventually('selected theme reaches the rendered document', () => browser.execute(expected => document.documentElement.dataset.theme === expected, theme === 0 ? 'dark' : 'light'));
+        await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 700))));
         assert.equal(await browser.execute(() => document.documentElement.scrollWidth > innerWidth), false);
         await nativeSnapshot(adb, `settings-${locale}-${theme}-320-font200`);
       }
@@ -382,6 +384,8 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
     await choose();
     await publicColumn(browser).$(`img[alt="draft preview ${name}"]`).waitForDisplayed();
     assert.equal(await composer.getProperty('value'), before);
+    await browser.execute(element => element.scrollIntoView({ block: 'center', inline: 'center' }), await publicColumn(browser).$(`img[alt="draft preview ${name}"]`));
+    await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 700))));
     await nativeSnapshot(adb, 'file-selected-preview');
     await publicColumn(browser).$('.draft-attachment-list').$('button=Remove').click();
     console.log('PWA native file selection/read failure/retry retains text and accepts the explicit image: PASS');
