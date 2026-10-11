@@ -14,6 +14,7 @@ export async function pwaInputFlow({ openClient, greetNative, publicColumn, open
   const browser = await openClient('pwa-input', { ice: true, beforeConsent: browserName === 'android' ? async browser => {
     await browser.$('[data-testid="age-attestation-checkbox"]').waitForDisplayed({ timeout: 90_000 });
     await eventually('320px mobile viewport', () => browser.execute(() => Math.abs(innerWidth - 320) <= 1));
+    await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 700))));
     await nativeSnapshot(adb, 'initial-consent-320-font200');
     console.log('PWA input initial consent font scale', (await adb('shell', 'settings', 'get', 'system', 'font_scale')).trim());
     assert.equal(await browser.execute(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -32,10 +33,19 @@ export async function pwaInputFlow({ openClient, greetNative, publicColumn, open
     await eventually('native keyboard opens', () => browser.execute(() => visualViewport.height < innerHeight * .8));
     await nativeSnapshot(adb, 'gboard-initial');
     // GoogleのGboard手順と同じ実UIで日本語QWERTYを追加する（入力eventを注入しない）。
-    await nativeTap(adb, attrs => attrs.package === 'com.google.android.inputmethod.latin' && attrs['content-desc'] === 'Settings', 'Gboard settings');
+    // SDK GboardのkeyboardはUIAutomatorへvirtual keyを公開しない。
+    // 同じAPI35/320px/200%の実画面で確認したtoolbarのgearをtapする。
+    const size = (await adb('shell', 'wm', 'size')).match(/Override size: (\d+)x(\d+)/);
+    assert.deepEqual(size?.slice(1).map(Number), [840, 1890]);
+    await adb('shell', 'input', 'tap', '540', '1200');
     await nativeSnapshot(adb, 'gboard-settings');
-    await nativeTap(adb, attrs => attrs.text === 'Languages', 'Gboard languages');
-    await nativeTap(adb, attrs => attrs.text === 'Add keyboard', 'Gboard add keyboard');
+    try {
+      await nativeTap(adb, attrs => attrs.text === 'Languages', 'Gboard languages');
+      await nativeTap(adb, attrs => attrs.text === 'Add keyboard', 'Gboard add keyboard');
+    } catch (error) {
+      await nativeSnapshot(adb, 'gboard-settings-failed');
+      throw error;
+    }
     await nativeSnapshot(adb, 'gboard-language-list');
     await nativeTap(adb, attrs => attrs.text === 'Japanese', 'Japanese language');
     await nativeTap(adb, attrs => attrs.text === 'QWERTY', 'Japanese QWERTY');
@@ -69,5 +79,16 @@ export async function pwaInputFlow({ openClient, greetNative, publicColumn, open
   else await browser.back();
   await eventually('back closes the control center', async () => !(await browser.$('#shell-control-center').isDisplayed()));
   assert.equal(new URL(await browser.getUrl()).origin, origin);
+  if (browserName === 'android') {
+    const composer = await openComposer(publicColumn(browser));
+    const before = await composer.getProperty('value');
+    await publicColumn(browser).$('button=Choose files').click();
+    await nativeSnapshot(adb, 'file-picker-before-cancel');
+    await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+    await eventually('file picker cancellation returns to the composer', () => composer.isDisplayed());
+    assert.equal(await composer.getProperty('value'), before);
+    assert.equal(await publicColumn(browser).$('img[alt^="draft preview"]').isExisting(), false);
+    console.log('PWA native file picker cancellation retains the text: PASS');
+  }
   console.log('PWA input composer/control center back and retained draft: PASS');
 }
