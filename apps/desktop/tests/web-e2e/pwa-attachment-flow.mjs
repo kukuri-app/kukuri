@@ -79,7 +79,7 @@ export async function pwaAttachmentFlow({ openClient, greetNative, native, fixtu
     }
     try {
       return { value: await module.invoke_with_attachments(command, args, sources), hashes: sources.map(item => item.reference.hash) };
-    } catch (error) { return { error }; }
+    } catch (error) { return { rejected: error }; }
     finally { Blob.prototype.arrayBuffer = read; }
   }, command, request, parts, slot, mode, target);
   const image = { data: png, mime: 'image/png', role: 'image_original' };
@@ -92,7 +92,7 @@ export async function pwaAttachmentFlow({ openClient, greetNative, native, fixtu
         channel_ref: kind === 'private' ? { kind: 'private_channel', channel_id: channel.channelId } : { kind: 'public' },
       };
       const result = await call(kind === 'dm' ? 'send_direct_message' : 'create_post', request, parts);
-      assert.equal(result.error, undefined, JSON.stringify(result.error));
+      assert.equal(result.rejected, undefined, JSON.stringify(result.rejected));
       const page = await webInvoke(browser, kind === 'dm' ? 'list_direct_message_messages' : kind === 'reply' ? 'list_thread' : 'list_timeline', { request: {
         cursor: null, limit: 50, ...(kind === 'dm' ? { pubkey: peer } : kind === 'reply' ? { topic, thread_id: hello.webPost.object_id } : {
           topic, scope: kind === 'private' ? { kind: 'channel', channel_id: channel.channelId } : { kind: 'public' },
@@ -110,16 +110,16 @@ export async function pwaAttachmentFlow({ openClient, greetNative, native, fixtu
     }
   }
   const profile = await call('set_my_profile', { name: 'attachment', display_name: 'attachment', about: '', nip05: null, clear_picture: false }, [{ ...image, role: 'profile_avatar' }], 'picture_upload');
-  assert.equal(profile.error, undefined, JSON.stringify(profile.error));
+  assert.equal(profile.rejected, undefined, JSON.stringify(profile.rejected));
   assert.equal(profile.value.picture_asset.hash, profile.hashes[0]);
   const custom = await call('create_custom_reaction_asset', { crop_rect: { x: 0, y: 0, size: 1 }, search_key: `attachment-${run}` }, [image], 'upload');
-  assert.equal(custom.error, undefined, JSON.stringify(custom.error));
+  assert.equal(custom.rejected, undefined, JSON.stringify(custom.rejected));
   const nativeCustom = await native('create_custom_reaction_asset', { request: { crop_rect: { x: 0, y: 0, size: 1 }, search_key: `native-${run}`,
     upload: { file_name: 'original', mime: image.mime, byte_size: Buffer.from(png, 'base64').length, data_base64: png, role: image.role } } });
   assert.equal(custom.value.blob_hash, nativeCustom.blob_hash);
   const failedText = `attachment-failed-${run}`;
   const postRequest = content => ({ topic, content, reply_to: null, content_labels: [], channel_ref: { kind: 'public' } });
-  assert.ok((await call('create_post', postRequest(failedText), [image], 'attachments', 'failure')).error);
+  assert.ok((await call('create_post', postRequest(failedText), [image], 'attachments', 'failure')).rejected);
   const old = await browser.execute(() => window.__attachmentOldArgs);
   await assert.rejects(webInvoke(browser, old.command, old.args));
   const account = await webInvoke(browser, 'list_accounts');
@@ -129,7 +129,7 @@ export async function pwaAttachmentFlow({ openClient, greetNative, native, fixtu
   await webInvoke(browser, 'save_initial_profile', { request: { account_id: nextId, profile: { name: 'second', display_name: 'second', about: '', picture_upload: null, clear_picture: false, nip05: null } } });
   await webInvoke(browser, 'switch_account', { request: { account_id: account.active_account_id } });
   const switchedText = `attachment-switched-${run}`;
-  assert.ok((await call('create_post', postRequest(switchedText), [image], 'attachments', 'switch', nextId)).error);
+  assert.ok((await call('create_post', postRequest(switchedText), [image], 'attachments', 'switch', nextId)).rejected);
   await webInvoke(browser, 'switch_account', { request: { account_id: account.active_account_id } });
   const interruptedText = `attachment-interrupted-${run}`;
   const interrupted = await call('create_post', postRequest(interruptedText), [image], 'attachments', 'restart');
