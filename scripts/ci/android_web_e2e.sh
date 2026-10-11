@@ -11,18 +11,10 @@ echo 'SDK TalkBack package diagnostics'
 adb shell pm list packages -u | grep 'talkback' || true
 adb shell pm path com.google.android.marvin.talkback || true
 adb shell dumpsys package com.google.android.marvin.talkback | grep -E 'codePath=|versionName=|primaryCpuAbi=|User 0:|flags=' || true
-accessibility_url=$(jq -r '.inputs.android_accessibility_apk_url // ""' "${GITHUB_EVENT_PATH:-/dev/null}")
-if [ -n "$accessibility_url" ]; then
-  echo "::add-mask::$accessibility_url"
-  accessibility_dir=$(mktemp -d)
-  tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-  curl -sfL "$accessibility_url" -o "$accessibility_dir/talkback.apk"
-  echo '82e6457bf481d9e77bdc412825feaa277629c07ffb9b29166740193c7eb8f108  '"$accessibility_dir/talkback.apk" | sha256sum -c -
-  "$tools/apksigner" verify --verbose --print-certs "$accessibility_dir/talkback.apk"
-  accessibility_badging=$("$tools/aapt" dump badging "$accessibility_dir/talkback.apk")
-  grep -q "^package: name='com.google.android.marvin.talkback' .*versionName='17.0.1.926549743'" <<< "$accessibility_badging"
-  adb install -r "$accessibility_dir/talkback.apk"
-  echo 'Verified Google Eyes-Free Project TalkBack 17.0.1.926549743 x86_64'
+if [ "$scenario" = pwa-input ]; then
+  density=$(adb shell wm density | sed -n 's/.*density: \([0-9]*\).*/\1/p' | tail -1)
+  adb shell wm size "$((320 * density / 160))x$((720 * density / 160))"
+  adb shell settings put system font_scale 2.0
 fi
 # 現行stableの検証も隔離CIで自動準備する。通常のlaneは既存imageのChromeを使う。
 apk_url=$(jq -r '.inputs.android_chrome_apk_url // ""' "${GITHUB_EVENT_PATH:-/dev/null}")
