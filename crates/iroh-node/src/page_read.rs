@@ -316,7 +316,6 @@ impl DocReadProtocol {
         let (mut send, mut recv) = connection.accept_bi().await?;
         let bytes = recv.read_to_end(MAX_REQUEST_BYTES).await?;
         let request: Request = serde_json::from_slice(&bytes)?;
-        let private_diagnostic = private_replica(&request.replica);
         request.check_budget()?;
         let namespace = NamespaceId::from_str(&request.namespace)?;
         // R5-H: 書き手の docs handle は上限(128)で閉じるので、提供する namespace は読む間だけ開く。
@@ -325,17 +324,6 @@ impl DocReadProtocol {
         // (書き手本人)へ進めるようにする。
         let opened = self.sync.open(namespace, OpenOpts::default()).await;
         let response = self.respond(request, namespace, opened.is_ok()).await;
-        #[cfg(target_family = "wasm")]
-        if private_diagnostic && let Err(error) = &response {
-            #[wasm_bindgen::prelude::wasm_bindgen]
-            extern "C" {
-                #[wasm_bindgen(js_namespace = console, js_name = warn)]
-                fn private_read_warning(value: &str);
-            }
-            private_read_warning(&format!("[kukuri.private-read] {error:#}"));
-        }
-        #[cfg(not(target_family = "wasm"))]
-        let _ = private_diagnostic;
         if opened.is_ok() {
             let _ = self.sync.close(namespace).await;
         }
@@ -391,6 +379,20 @@ impl DocReadProtocol {
                 "docs namespace is not the requested public bucket"
             );
         }
+        // 再起動後の本人記録だけで保持する private 領域も、未撤回・未reaction の空応答を返す。
+        // 要求の key が無いことと、領域を保持していないことを区別する（権限は上で確認済み）。
+        let held_private = if !opened && private_replica(&request.replica) {
+            match self.remote_cache.get() {
+                Some(cache) => !cache
+                    .remote_record_keys(&request.replica, "", false, None, 1, true)
+                    .await?
+                    .0
+                    .is_empty(),
+                None => false,
+            }
+        } else {
+            false
+        };
         let response = match request.query {
             DocReadQuery::Keys {
                 prefix,
@@ -473,7 +475,10 @@ impl DocReadProtocol {
                 }
                 // 手元に無い namespace は、公開 topic の bucket か保持分があるときだけ答える。それ以外は読取りの失敗に
                 // して、呼出元が次の provider(書き手本人)へ進めるようにする。
-                ensure!(opened || topic || held_any, "docs namespace is not held");
+                ensure!(
+                    opened || topic || held_any || held_private,
+                    "docs namespace is not held"
+                );
                 DocReadResponse::Keys {
                     entries,
                     reached_limit,
@@ -518,6 +523,7 @@ impl DocReadProtocol {
                 ensure!(
                     opened
                         || topic_replica(&request.replica)
+                        || held_private
                         || !cached.is_empty()
                         || stored.is_some(),
                     "docs namespace is not held"

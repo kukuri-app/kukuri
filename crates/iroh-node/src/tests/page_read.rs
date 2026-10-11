@@ -22,6 +22,84 @@ async fn register_private(node: &IrohDocsNode, replica: &ReplicaId, secret: &Nam
 }
 
 #[tokio::test]
+async fn a_held_private_replica_answers_missing_withdrawals_after_restart() -> Result<()> {
+    use kukuri_store::ContentCacheStore;
+    let provider = IrohDocsNode::memory().await?;
+    let requester = IrohDocsNode::memory().await?;
+    let cache = Arc::new(SqliteStore::connect_memory().await?);
+    provider.install_remote_cache(cache.clone())?;
+    let replica = ReplicaId::new("bucket::v1::channel::6368616e6e656c::65706f6368::1");
+    let secret = NamespaceSecret::from_bytes(&[7; 32]);
+    register_private(&provider, &replica, &secret).await;
+    let author = provider.docs().author_default().await?.to_string();
+    let value = b"saved post".to_vec();
+    let record = DocReadRecord {
+        key: "objects/post/envelope".into(),
+        content_hash: blake3::hash(&value).to_hex().to_string(),
+        content_len: value.len() as u64,
+        value,
+        docs_author: author.clone(),
+    };
+    let exact = DocReadQuery::Exact {
+        key: "withdrawals/post/state".into(),
+        limit: 1,
+        author: Some(author.clone()),
+    };
+    // capability があっても、まだ領域を保持していない provider は候補失敗のまま。
+    assert!(
+        requester
+            .query_remote_docs(provider.endpoint().addr(), &replica, &secret, exact.clone())
+            .await
+            .is_err()
+    );
+    cache
+        .put_owned_record(
+            replica.as_str(),
+            &record.key,
+            &author,
+            &serde_json::to_vec(&record)?,
+        )
+        .await?;
+    for query in [
+        exact.clone(),
+        DocReadQuery::Keys {
+            prefix: "reactions/".into(),
+            descending: false,
+            limit: 1,
+            author: None,
+        },
+    ] {
+        let response = requester
+            .query_remote_docs(provider.endpoint().addr(), &replica, &secret, query)
+            .await?;
+        match response {
+            DocReadResponse::Records(records) => assert!(records.is_empty()),
+            DocReadResponse::Keys {
+                entries,
+                reached_limit,
+            } => {
+                assert!(entries.is_empty());
+                assert!(!reached_limit);
+            }
+        }
+    }
+    assert!(
+        requester
+            .query_remote_docs(
+                provider.endpoint().addr(),
+                &replica,
+                &NamespaceSecret::from_bytes(&[8; 32]),
+                exact
+            )
+            .await
+            .is_err()
+    );
+    requester.shutdown().await?;
+    provider.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn stored_profiles_are_verified_and_limited_to_public_author_profile_keys() -> Result<()> {
     use kukuri_core::{KukuriProfileEnvelopeContentV1, build_profile_envelope, generate_keys};
     use kukuri_store::Store;

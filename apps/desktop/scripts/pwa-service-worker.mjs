@@ -18,24 +18,27 @@ async function updateOwners(cache, response, ids) {
 async function collect(owner, version) {
   let preserve = Boolean(registration.installing);
   const live = new Set((await clients.matchAll({ includeUncontrolled: true })).map(client => client.id));
+  const pending = registration.waiting;
   let waiting;
-  if (registration.waiting) {
+  if (pending) {
     const channel = new MessageChannel();
     waiting = await new Promise(resolve => {
       const timeout = setTimeout(() => { channel.port1.close(); resolve(null); }, 3000);
       channel.port1.onmessage = event => { clearTimeout(timeout); channel.port1.close(); resolve(event.data); };
-      registration.waiting.postMessage({ type: 'version' }, [channel.port2]);
+      pending.postMessage({ type: 'version' }, [channel.port2]);
     });
     if (waiting === null) preserve = true;
   }
   for (const name of (await caches.keys()).filter(name => name.startsWith(PREFIX))) {
-    const cache = await caches.open(name);
-    const html = await cache.match('/');
-    if (!html) continue;
+    const html = await caches.match('/', { cacheName: name });
+    if (!html) {
+      if (!preserve && !registration.installing && registration.waiting === pending && name !== CACHE && name !== PREFIX + waiting) await caches.delete(name);
+      continue;
+    }
     const ids = JSON.parse(html.headers.get(OWNERS) || '[]').filter(id => live.has(id) && id !== owner);
     if (owner && name === PREFIX + version) ids.push(owner);
-    if (preserve || ids.length || name === CACHE || name === PREFIX + waiting) await updateOwners(cache, html, ids);
-    else await caches.delete(name);
+    if (preserve || ids.length || name === CACHE || name === PREFIX + waiting) await updateOwners(await caches.open(name), html, ids);
+    else if (!registration.installing && registration.waiting === pending) await caches.delete(name);
   }
 }
 

@@ -4072,7 +4072,6 @@ dependencies = [
  "tokio",
  "tracing",
  "udp-addr-index",
- "wasm-bindgen",
  "wasm-bindgen-test",
  "web-time",
 ]

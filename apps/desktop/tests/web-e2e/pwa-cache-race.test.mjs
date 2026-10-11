@@ -3,7 +3,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-test('a concurrent asset lookup cannot recreate a reclaimed shell cache', { timeout: 10000 }, async () => {
+for (const operation of ['asset lookup', 'collection']) test(`a concurrent ${operation} cannot recreate a reclaimed shell cache`, { timeout: 10000 }, async () => {
   const source = readFileSync(new URL('../../scripts/pwa-service-worker.mjs', import.meta.url), 'utf8').replace('/* KUKURI_PWA_BUILD */ null',
     JSON.stringify({ version: 'two', assets: ['/', '/new.js'] }));
   const data = new Map([
@@ -11,9 +11,9 @@ test('a concurrent asset lookup cannot recreate a reclaimed shell cache', { time
     ['kukuri-shell-two', new Map([['/', new Response('new')], ['https://shell.test/new.js', new Response('asset')]])],
   ]);
   let resumeFetch;
-  const blocked = new Promise(resolve => { resumeFetch = resolve; });
+  let blocked = new Promise(resolve => { resumeFetch = resolve; });
   let reportSnapshot;
-  const snapshotReady = new Promise(resolve => { reportSnapshot = resolve; });
+  let snapshotReady = new Promise(resolve => { reportSnapshot = resolve; });
   let pauseFirstKeys = true;
   const requestKey = key => typeof key === 'string' ? key : key.url;
   const caches = {
@@ -33,31 +33,50 @@ test('a concurrent asset lookup cannot recreate a reclaimed shell cache', { time
     async match(key, { cacheName }) { return data.get(cacheName)?.get(requestKey(key))?.clone(); },
     async delete(name) { return data.delete(name); },
   };
-  const handlers = {};
-  vm.runInNewContext(source, {
-    caches, clients: { async matchAll() { return [{ id: 'new-client' }]; } }, registration: {},
+  const createWorker = () => {
+    const handlers = {};
+    vm.runInNewContext(source, {
+    caches, clients: { async matchAll() { return [{ id: 'new-client' }]; } }, registration,
     Headers, Response, URL, location: { origin: 'https://shell.test' },
     addEventListener(type, fn) { handlers[type] = fn; },
     async fetch() { return new Response('network'); },
-  });
-  let fetched;
-  handlers.fetch({
-    request: { method: 'GET', mode: 'cors', url: 'https://shell.test/new.js' },
-    respondWith(value) { fetched = value; },
-  });
-  await snapshotReady;
-  async function collect() {
+    });
+    return handlers;
+  };
+  const registration = {};
+  const handlers = createWorker();
+  const other = createWorker();
+  const collect = async (worker = handlers) => {
     let finished;
-    handlers.message({
+    worker.message({
       data: { type: 'hello', version: 'two' }, source: { id: 'new-client' }, ports: [],
       waitUntil(value) { finished = value; },
     });
     await finished;
-  }
-  await collect();
+  };
+  let fetched;
+  if (operation === 'asset lookup') handlers.fetch({
+    request: { method: 'GET', mode: 'cors', url: 'https://shell.test/new.js' },
+    respondWith(value) { fetched = value; },
+  });
+  else fetched = collect();
+  await snapshotReady;
+  await collect(other);
   assert.equal(data.has('kukuri-shell-one'), false, 'GC initially deletes the unused old build');
   resumeFetch();
-  assert.equal(await (await fetched).text(), 'asset');
+  if (operation === 'asset lookup') assert.equal(await (await fetched).text(), 'asset');
+  else await fetched;
   await collect();
-  assert.deepEqual([...data.keys()], ['kukuri-shell-two'], 'the stale fetch snapshot must not leave an old cache');
+  assert.deepEqual([...data.keys()], ['kukuri-shell-two'], 'a stale cache snapshot must not leave an old cache');
+  // 回収の await 中に始まった install の、まだ HTML が無い cache を消さない。
+  data.set('kukuri-shell-three', new Map());
+  pauseFirstKeys = true;
+  blocked = new Promise(resolve => { resumeFetch = resolve; });
+  snapshotReady = new Promise(resolve => { reportSnapshot = resolve; });
+  const preparing = collect();
+  await snapshotReady;
+  registration.installing = {};
+  resumeFetch();
+  await preparing;
+  assert.equal(data.has('kukuri-shell-three'), true, 'an installation that started during collection stays intact');
 });

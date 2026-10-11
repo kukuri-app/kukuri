@@ -161,30 +161,8 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
       await browser.$('button=Check for updates').waitForClickable({ timeout: 90_000 });
       await browser.$('button=Check for updates').click();
     }
-    try { await eventually('unused prior shell cache is reclaimed', () => browser.execute(async () =>
-      (await caches.keys()).filter(name => name.startsWith('kukuri-shell-')).length === 1)); }
-    catch (error) {
-      const snapshot = () => browser.execute(async () => {
-        const registration = await navigator.serviceWorker.getRegistration();
-        const entries = await Promise.all((await caches.keys()).filter(name => name.startsWith('kukuri-shell-')).map(async name => {
-          const root = await caches.match('/', { cacheName: name });
-          return { name, root: Boolean(root), owners: root?.headers.get('x-kukuri-shell-clients') };
-        }));
-        return { entries, active: registration.active?.state, waiting: registration.waiting?.state, installing: registration.installing?.state,
-          build: document.querySelector('meta[name="kukuri-shell-build"]')?.content };
-      });
-      console.log('shell cache diagnostic before hello', JSON.stringify(await snapshot()), await browser.getWindowHandles());
-      await browser.execute(async () => {
-        const channel = new MessageChannel();
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('diagnostic hello timed out')), 5000);
-          channel.port1.onmessage = () => { clearTimeout(timeout); channel.port1.close(); resolve(); };
-          navigator.serviceWorker.controller.postMessage({ type: 'hello', version: document.querySelector('meta[name="kukuri-shell-build"]').content }, [channel.port2]);
-        });
-      });
-      console.log('shell cache diagnostic after hello', JSON.stringify(await snapshot()));
-      throw error;
-    }
+    await eventually('unused prior shell cache is reclaimed', () => browser.execute(async () =>
+      (await caches.keys()).filter(name => name.startsWith('kukuri-shell-')).length === 1));
     // 一時Columnは再起動で閉じる。保存済みの所属からchannelを開き、既存の有効需要を戻す。
     const closeSettings = browser.$('#shell-settings-drawer .shell-settings-close');
     if (await closeSettings.isDisplayed()) await closeSettings.click();
@@ -195,35 +173,6 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     await channelDialogClosed(browser);
     await openComposer(channelColumn(browser, channel.channelId));
     await seesInChannel(browser, channel.channelId, accepted.find(item => item.kind === 'private').text);
-    const privateDiagnostic = async () => {
-      console.log('private read errors', JSON.stringify(await browser.execute(() => window.__kukuriPrivateReadEvents)));
-      for (const [name, endpoint] of [['web', invoke], ['native', native]]) {
-        const sync = await endpoint('get_sync_status');
-        const peers = await endpoint('list_connectivity_peers', { request: { kind: 'connected', topic: `private/${channel.channelId}`, cursor: null, limit: 4 } });
-        const timeline = await page(endpoint, 'private');
-        const memberships = await endpoint('list_joined_private_channels', { request: { topic, cursor: null } });
-        console.log('private delivery diagnostic', JSON.stringify({ name, channelId: channel.channelId,
-          endpoint: sync.discovery.local_endpoint_id,
-          epoch: memberships.items.find(item => item.channel_id === channel.channelId)?.current_epoch_id,
-          topics: sync.topic_diagnostics.filter(item => item.topic.includes(channel.channelId)), peers,
-          unavailable: timeline.unavailable_count, ids: timeline.items.map(item => item.object_id) }));
-      }
-      console.log('private owned records', JSON.stringify(await browser.execute(async channelId => {
-        const name = (await indexedDB.databases()).find(item => item.name.startsWith('kukuri-cache-v1-')).name;
-        const db = await new Promise((resolve, reject) => { const request = indexedDB.open(name); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
-        try {
-          const prefix = `bucket::v1::channel::${Array.from(new TextEncoder().encode(channelId), byte => byte.toString(16).padStart(2, '0')).join('')}::`;
-          return await new Promise((resolve, reject) => {
-            const request = db.transaction('contents').objectStore('contents').index('own').openCursor(IDBKeyRange.bound([prefix], [prefix.slice(0, -1) + ';']));
-            const rows = [];
-            request.onsuccess = () => { const cursor = request.result; if (!cursor || rows.length === 20) return resolve(rows);
-              const row = cursor.value; rows.push({ replica: row.replica, key: row.rkey, own: row.own, bytes: row.hlen }); cursor.continue(); };
-            request.onerror = () => reject(request.error);
-          });
-        } finally { db.close(); }
-      }, channel.channelId)));
-    };
-    await privateDiagnostic();
     for (const item of accepted) {
       if (item.kind === 'dm') {
         await eventually('the same queued DM is delivered', async () => {
@@ -232,11 +181,11 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
           assert.ok(copies.length <= 1);
           return copies.length === 1 && copies[0].message_id === item.id;
         });
-      } else try { await eventually(`the same ${item.kind} is delivered`, async () => {
+      } else await eventually(`the same ${item.kind} is delivered`, async () => {
         const copies = (await page(native, item.kind)).items.filter(post => post.content === item.text);
         assert.ok(copies.length <= 1);
         return copies.length === 1 && copies[0].object_id === item.id;
-      }); } catch (error) { await privateDiagnostic(); throw error; }
+      });
     }
     await eventually('the durable DM outbox receives the ACK', async () => {
       const messages = (await page(invoke, 'dm')).items;
