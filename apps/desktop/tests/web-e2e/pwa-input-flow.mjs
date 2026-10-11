@@ -31,39 +31,37 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
     console.log('PWA input initial consent font scale', (await adb('shell', 'settings', 'get', 'system', 'font_scale')).trim());
     assert.equal(await browser.execute(() => document.documentElement.scrollWidth > innerWidth), false);
   } : undefined });
+  const dismissOverlay = async dialog => {
+    if (browserName !== 'android') return browser.back();
+    if (await browser.execute(() => visualViewport.height < innerHeight * .8)) {
+      await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+      await eventually('overlay keyboard closes first', () => browser.execute(() => visualViewport.height >= innerHeight * .8));
+      assert.equal(await dialog.isDisplayed(), true);
+    }
+    await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+  };
   try {
   await greetNative(browser, 'pwa-input');
   if (browserName === 'android') {
     await installPwa(browser, adb);
     console.log('PWA input emulator IMEs', await adb('shell', 'ime', 'list', '-s'));
     console.log('PWA input emulator accessibility', await adb('shell', 'pm', 'list', 'packages', 'com.google.android.marvin.talkback'));
-    await openSettings(browser, 'appearance');
-    try {
-      await adb('shell', 'pm', 'grant', 'com.google.android.marvin.talkback', 'android.permission.POST_NOTIFICATIONS');
-      await adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', 'com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService');
-      await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '1');
-      await eventually('SDK TalkBack service binds', async () => (await adb('shell', 'dumpsys', 'accessibility')).includes('TalkBackService'));
-      const accessibility = await adb('shell', 'dumpsys', 'accessibility');
-      console.log('PWA SDK accessibility state', accessibility.split('\n').filter(line => /TalkBack|boundServices|bindingServices|touchExploration|FocusedWindow/.test(line)).join('\n'));
-      console.log('PWA SDK touch exploration', (await adb('shell', 'settings', 'get', 'secure', 'touch_exploration_enabled')).trim());
-      await nativeSnapshot(adb, 'talkback-start');
-      for (let step = 1; step <= 3; step += 1) {
-        await adb('shell', 'input', 'swipe', '200', '700', '600', '700', '150');
-        await nativeSnapshot(adb, `talkback-focus-${step}`);
-      }
-      await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-input-accessibility.xml');
-      const tree = await adb('shell', 'cat', '/sdcard/kukuri-input-accessibility.xml');
-      console.log('PWA SDK TalkBack native labels', JSON.stringify([...tree.matchAll(/(?:text|content-desc)="([^"]+)"/g)].map(match => match[1]).slice(0, 45)));
-    } finally {
-      await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '0');
-      await adb('shell', 'settings', 'delete', 'secure', 'enabled_accessibility_services');
-    }
-    await browser.$('#shell-settings-drawer .shell-settings-close').click();
+
   }
   const field = await openComposer(publicColumn(browser));
   const text = 'retained native back draft';
   if (browserName === 'android') {
     assert.equal(process.env.CI, 'true');
+    await browser.execute(element => {
+      window.__pwaImeEvents = [];
+      for (const type of ['compositionstart', 'compositionupdate', 'compositionend', 'keydown']) {
+        element.addEventListener(type, event => {
+          const events = window.__pwaImeEvents;
+          events.push({ type, key: event.key, composing: event.isComposing, data: event.data });
+          if (events.length > 24) events.shift();
+        });
+      }
+    }, field);
     await field.click();
     await eventually('native keyboard opens', () => browser.execute(() => visualViewport.height < innerHeight * .8));
     await nativeSnapshot(adb, 'gboard-initial');
@@ -82,7 +80,7 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
       throw error;
     }
     await nativeSnapshot(adb, 'gboard-language-list');
-    await nativeTap(adb, attrs => attrs['content-desc'] === 'Search language', 'search Gboard languages');
+    await nativeTap(adb, attrs => attrs.text === 'Search language' || attrs['content-desc'] === 'Search language', 'search Gboard languages');
     await adb('shell', 'input', 'text', 'Japanese');
     await nativeTap(adb, attrs => attrs.text === 'Japanese', 'Japanese language');
     await nativeTap(adb, attrs => attrs.text === 'QWERTY', 'Japanese QWERTY');
@@ -159,8 +157,7 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
   await invite.$('textarea[placeholder="Paste a private channel invite, mutual grant, or mutuals+ share"]').setValue(channel.token);
   await invite.$('button=Join').waitForEnabled();
   assert.equal((await joined()).some(item => item.channel_id === channel.channelId), false);
-  if (browserName === 'android') await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
-  else await browser.back();
+  await dismissOverlay(invite);
   await invite.waitForDisplayed({ reverse: true });
   assert.equal((await joined()).some(item => item.channel_id === channel.channelId), false);
   const beforeTransfer = await webInvoke(browser, 'list_accounts');
@@ -172,8 +169,7 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
   await target.waitForDisplayed();
   await target.$('input').setValue(transfer.link);
   assert.equal((await webInvoke(browser, 'get_account_transfer_status')).state, 'idle');
-  if (browserName === 'android') await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
-  else await browser.back();
+  await dismissOverlay(target);
   await target.waitForDisplayed({ reverse: true });
   assert.deepEqual(await webInvoke(browser, 'list_accounts'), beforeTransfer);
   console.log('PWA invite/transfer paste and cancellation do not join/connect/import before confirmation: PASS');
@@ -275,8 +271,36 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
   await browser.executeAsync(done => setTimeout(done, 200));
   assert.ok((await browser.getUrl()).includes('connectionsView=muted'));
   assert.equal(await browser.$('#shell-settings-drawer').getAttribute('data-open'), 'false');
+  if (browserName === 'android') {
+    await openSettings(browser, 'appearance');
+    try {
+      await adb('shell', 'pm', 'grant', 'com.google.android.marvin.talkback', 'android.permission.POST_NOTIFICATIONS');
+      await adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', 'com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService');
+      await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '1');
+      await eventually('SDK TalkBack service binds', async () => (await adb('shell', 'dumpsys', 'accessibility')).includes('TalkBackService'));
+      const accessibility = await adb('shell', 'dumpsys', 'accessibility');
+      console.log('PWA SDK accessibility state', accessibility.split('\n').filter(line => /TalkBack|boundServices|bindingServices|touchExploration|FocusedWindow/.test(line)).join('\n'));
+      console.log('PWA SDK touch exploration', (await adb('shell', 'settings', 'get', 'secure', 'touch_exploration_enabled')).trim());
+      await eventually('SDK TalkBack touch exploration activates', async () => (await adb('shell', 'settings', 'get', 'secure', 'touch_exploration_enabled')).trim() === '1', 20000);
+      await nativeSnapshot(adb, 'talkback-start');
+      for (let step = 1; step <= 3; step += 1) {
+        await adb('shell', 'input', 'swipe', '200', '700', '600', '700', '150');
+        await nativeSnapshot(adb, `talkback-focus-${step}`);
+      }
+      await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-input-accessibility.xml');
+      const tree = await adb('shell', 'cat', '/sdcard/kukuri-input-accessibility.xml');
+      console.log('PWA SDK TalkBack native labels', JSON.stringify([...tree.matchAll(/(?:text|content-desc)="([^"]+)"/g)].map(match => match[1]).slice(0, 45)));
+    } finally {
+      await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '0');
+      await adb('shell', 'settings', 'delete', 'secure', 'enabled_accessibility_services');
+    }
+    await browser.$('#shell-settings-drawer .shell-settings-close').click();
+  }
   console.log('PWA input composer/control center back and retained draft: PASS');
   } finally {
-    if (browserName === 'android') await nativeSnapshot(adb, 'final-state');
+    if (browserName === 'android') {
+      console.log('PWA real IME events', await browser.execute(() => window.__pwaImeEvents ?? []));
+      await nativeSnapshot(adb, 'final-state');
+    }
   }
 }
