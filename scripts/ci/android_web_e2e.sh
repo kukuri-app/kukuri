@@ -3,13 +3,13 @@
 # android-emulator-runner の script は 1 行ずつ別の shell で動くので、手順はこの file にまとめる。
 set -euo pipefail
 scenario="$1"
+[ "${CI:-}" = true ] || { echo 'Android Web E2E requires the isolated CI emulator'; exit 1; }
 trap 'status=$?; if [ "$status" -ne 0 ]; then adb logcat -d -b crash -t 150 || true; adb shell dumpsys meminfo | head -60 || true; fi; exit "$status"' EXIT
 
 adb wait-for-device
 # 現行stableの検証も隔離CIで自動準備する。通常のlaneは既存imageのChromeを使う。
 apk_url=$(jq -r '.inputs.android_chrome_apk_url // ""' "${GITHUB_EVENT_PATH:-/dev/null}")
 if [ -n "$apk_url" ]; then
-  [ "${CI:-}" = true ] || { echo 'Chrome update requires the isolated CI emulator'; exit 1; }
   echo "::add-mask::$apk_url"
   apk_dir=$(mktemp -d)
   tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
@@ -31,6 +31,9 @@ fi
 # Chrome の初回の画面（利用規約・同期の案内）を出さない。
 adb shell am set-debug-app --persistent com.android.chrome
 adb shell "echo '_ --disable-fre --no-default-browser-check --no-first-run' > /data/local/tmp/chrome-command-line"
+# factory launcherのANRがChromeのOS操作を遮ったため、試験前に停止する。
+# ホーム画面の検証ではlauncherを新しく起動する（専用CI emulatorのみ）。
+adb shell am force-stop com.google.android.apps.nexuslauncher
 
 # emulator の Chrome の版に合う chromedriver（Chrome for Testing は 115 から。それより前は旧い配布先）。
 version=$(adb shell dumpsys package com.android.chrome | sed -n 's/.*versionName=\([0-9.]*\).*/\1/p' | head -1)
