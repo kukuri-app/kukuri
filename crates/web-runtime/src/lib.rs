@@ -5,6 +5,7 @@
 
 mod account;
 mod actor;
+mod attachments;
 mod client;
 mod content_cache;
 mod idb;

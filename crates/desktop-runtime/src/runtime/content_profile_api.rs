@@ -22,11 +22,7 @@ impl DesktopRuntime {
     }
 
     pub async fn create_post(&self, request: CreatePostRequest) -> Result<String> {
-        let attachments = request
-            .attachments
-            .into_iter()
-            .map(pending_attachment_from_request)
-            .collect::<Result<Vec<_>>>()?;
+        let attachments = pending_attachments_from_requests(request.attachments).await?;
         self.app_service
             .create_post_with_attachments_in_channel(
                 request.topic.as_str(),
@@ -155,8 +151,8 @@ impl DesktopRuntime {
         request: CreateCustomReactionAssetRequest,
     ) -> Result<CustomReactionAssetView> {
         let upload = request.upload;
-        let raw = BASE64_STANDARD
-            .decode(upload.data_base64.as_bytes())
+        let raw = attachment_bytes(&upload)
+            .await
             .context("failed to decode custom reaction upload")?;
         let normalized =
             normalize_custom_reaction_upload(raw, upload.mime.as_str(), &request.crop_rect)?;
@@ -342,10 +338,10 @@ impl DesktopRuntime {
                 name: request.name,
                 display_name: request.display_name,
                 about: request.about,
-                picture_upload: request
-                    .picture_upload
-                    .map(pending_attachment_from_request)
-                    .transpose()?,
+                picture_upload: match request.picture_upload {
+                    Some(upload) => Some(pending_attachment_from_request(upload).await?),
+                    None => None,
+                },
                 clear_picture: request.clear_picture,
                 nip05: request.nip05,
             })

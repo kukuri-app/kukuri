@@ -18,5 +18,7 @@ declare module '@kukuri/web-runtime' {
   export default function init(): Promise<unknown>;
   export function start(config: unknown): Promise<unknown>;
   export function invoke(command: string, args: unknown): Promise<unknown>;
+  export function prepare_attachment(blob: Blob): Promise<{ owner: string; hash: string }>;
+  export function invoke_with_attachments(command: string, args: unknown, sources: unknown[]): Promise<unknown>;
   export function listen(callback: (event: never) => void): void;
 }

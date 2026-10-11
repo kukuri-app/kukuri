@@ -85,11 +85,7 @@ impl DesktopRuntime {
     }
 
     pub async fn send_direct_message(&self, request: SendDirectMessageRequest) -> Result<String> {
-        let attachments = request
-            .attachments
-            .into_iter()
-            .map(pending_attachment_from_request)
-            .collect::<Result<Vec<_>>>()?;
+        let attachments = pending_attachments_from_requests(request.attachments).await?;
         self.app_service
             .send_direct_message(
                 request.pubkey.as_str(),

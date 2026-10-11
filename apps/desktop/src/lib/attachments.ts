@@ -1,4 +1,5 @@
 import type { CreateAttachmentInput } from './api';
+import { IS_WEB_RUNTIME, prepareWebAttachment } from './webRuntime';
 
 function readBlobAsDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -31,6 +32,13 @@ export async function blobToCreateAttachment(
   fileName: string,
   role: CreateAttachmentInput['role']
 ): Promise<CreateAttachmentInput> {
+  if (IS_WEB_RUNTIME) {
+    const source = await prepareWebAttachment(blob);
+    return {
+      file_name: fileName, mime: blob.type || 'application/octet-stream', byte_size: blob.size,
+      data_base64: '', role, web_source: { blob, ...source },
+    };
+  }
   return {
     file_name: fileName,
     mime: blob.type || 'application/octet-stream',

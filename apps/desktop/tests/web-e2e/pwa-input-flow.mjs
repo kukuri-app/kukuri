@@ -364,9 +364,9 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
       });
     };
     await browser.execute(() => {
-      const read = FileReader.prototype.readAsDataURL;
-      window.__pwaRestoreFileRead = () => { FileReader.prototype.readAsDataURL = read; };
-      FileReader.prototype.readAsDataURL = function () { throw new DOMException('Injected file read failure', 'NotReadableError'); };
+      const read = Blob.prototype.arrayBuffer;
+      window.__pwaRestoreFileRead = () => { Blob.prototype.arrayBuffer = read; };
+      Blob.prototype.arrayBuffer = function () { return Promise.reject(new DOMException('Injected file read failure', 'NotReadableError')); };
     });
     try {
       await choose();

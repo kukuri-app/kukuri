@@ -48,7 +48,21 @@ impl ClientHost {
             anyhow::bail!("client host is shutting down");
         }
         lifecycle::profile_setup_required(&self.app_data_dir, &request.account_id).await?;
-        let request_hash = blake3::hash(&serde_json::to_vec(&request.profile)?)
+        #[cfg(target_family = "wasm")]
+        let fingerprint = {
+            let mut profile = request.profile.clone();
+            if let Some(source) = profile
+                .picture_upload
+                .as_mut()
+                .and_then(|upload| upload.source_ref.as_mut())
+            {
+                source.id.clear();
+            }
+            profile
+        };
+        #[cfg(not(target_family = "wasm"))]
+        let fingerprint = &request.profile;
+        let request_hash = blake3::hash(&serde_json::to_vec(&fingerprint)?)
             .to_hex()
             .to_string();
         let journal = account_db_path(&self.app_data_dir, &request.account_id)

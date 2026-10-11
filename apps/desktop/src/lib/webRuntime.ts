@@ -35,7 +35,26 @@ export function invokeWebRuntime<T>(command: string, args?: Record<string, unkno
   if (!runtime) {
     return Promise.reject({ code: 'command_failed', message: 'the web runtime is not loaded' });
   }
-  return runtime.invoke(command, args) as Promise<T>;
+  const sources: { reference: { id: string; owner: string; hash: string }; blob: Blob }[] = [];
+  const wire = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(wire);
+    if (!value || typeof value !== 'object') return value;
+    if ('web_source' in value && value.web_source) {
+      const { web_source, ...metadata } = value as import('./api/types').CreateAttachmentInput;
+      const { blob, ...identity } = web_source!;
+      const reference = { id: crypto.randomUUID(), ...identity };
+      sources.push({ reference, blob });
+      return { ...metadata, source_ref: reference };
+    }
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, wire(item)]));
+  };
+  const request = wire(args);
+  return (sources.length ? runtime.invoke_with_attachments(command, request, sources) : runtime.invoke(command, request)) as Promise<T>;
+}
+
+export function prepareWebAttachment(blob: Blob): Promise<{ owner: string; hash: string }> {
+  if (!runtime) return Promise.reject({ code: 'command_failed', message: 'the web runtime is not loaded' });
+  return runtime.prepare_attachment(blob);
 }
 
 export function listenWebRuntimeEvents(listener: (event: RuntimeEvent) => void): () => void {
