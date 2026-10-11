@@ -22,7 +22,8 @@ async function request(worker: ServiceWorker, type: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => { channel.port1.close(); reject(new Error('Shell worker did not respond')); }, 5000);
     channel.port1.onmessage = event => { clearTimeout(timeout); channel.port1.close(); resolve(event.data); };
-    worker.postMessage({ type, version: version() }, [channel.port2]);
+    try { worker.postMessage({ type, version: version() }, [channel.port2]); }
+    catch (error) { clearTimeout(timeout); channel.port1.close(); reject(error); }
   });
 }
 
@@ -103,7 +104,8 @@ export async function applyPwaShell() {
           reject(new Error('Shell update did not activate'));
         }, 10_000);
         navigator.serviceWorker.addEventListener('controllerchange', changed, { once: true });
-        registration!.waiting!.postMessage({ type: 'apply' });
+        try { registration!.waiting!.postMessage({ type: 'apply' }); }
+        catch (error) { clearTimeout(timeout); navigator.serviceWorker.removeEventListener('controllerchange', changed); reject(error); }
       });
     }
     if (isChangingAccount()) throw new Error('Account transition is active');

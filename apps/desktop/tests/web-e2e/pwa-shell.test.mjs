@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
+import { gzipSync } from 'node:zlib';
 import { chromium } from '@playwright/test';
 import { pwaWorkerSource } from '../../scripts/webPwaShell.mjs';
 
@@ -15,7 +16,8 @@ test('offline shell, explicit update, live-client retention, and static-only cac
       response.end(await pwaWorkerSource(version, ['/', `/app-${version}.js`]));
     } else if (request.url === '/') {
       response.setHeader('Content-Type', 'text/html');
-      response.end(`<meta name="kukuri-shell-build" content="${version}"><script src="/app-${version}.js"></script><main>${version}</main>`);
+      response.setHeader('Content-Encoding', 'gzip');
+      response.end(gzipSync(`<meta name="kukuri-shell-build" content="${version}"><script src="/app-${version}.js"></script><main>${version}</main>`));
     } else if (request.url === `/app-${version}.js`) {
       if (failPreparation) response.writeHead(503);
       else response.setHeader('Content-Type', 'text/javascript');

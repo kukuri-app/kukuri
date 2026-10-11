@@ -84,6 +84,7 @@ fn web_build(test_community_node: Option<&str>) -> Result<()> {
         &desktop_dir(),
         &[
             ("VITE_KUKURI_TARGET", "web"),
+            ("KUKURI_WEB_E2E", if test_community_node.is_some() { "1" } else { "" }),
             // 空なら配布の設定（`webRuntime.ts`）。手元の環境の値を配信の build に持ち込まない。
             (
                 "VITE_KUKURI_COMMUNITY_NODE_BASE_URL",
