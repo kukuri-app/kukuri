@@ -59,15 +59,27 @@ async function reviewTalkBack(browser, openSettings, adb) {
       console.log('PWA SDK accessibility state', accessibility.split('\n').filter(line => /TalkBack|boundServices|bindingServices|touchExploration|FocusedWindow/.test(line)).join('\n'));
       console.log('PWA SDK touch exploration', (await adb('shell', 'settings', 'get', 'secure', 'touch_exploration_enabled')).trim());
       await eventually('SDK TalkBack touch exploration activates', async () => (await adb('shell', 'settings', 'get', 'secure', 'touch_exploration_enabled')).trim() === '1', 20000);
+      const focused = async () => {
+        const output = await adb('shell', 'am', 'instrument', '-w', 'app.kukuri.focusprobe/app.kukuri.focusprobe.FocusProbe');
+        const json = output.match(/^INSTRUMENTATION_RESULT: focus=(.+)$/m)?.[1];
+        assert.ok(json, output);
+        return JSON.parse(json);
+      };
+      // 実画面の「Language & theme」へtouch explorationの焦点を置く。
+      await adb('shell', 'input', 'tap', '590', '380');
+      await browser.executeAsync(done => setTimeout(done, 700));
       await nativeSnapshot(adb, 'talkback-start');
+      const focus = [await focused()];
       for (let step = 1; step <= 3; step += 1) {
         await adb('shell', 'input', 'swipe', '200', '700', '600', '700', '150');
         await browser.executeAsync(done => setTimeout(done, 500));
         await nativeSnapshot(adb, `talkback-focus-${step}`);
+        focus.push(await focused());
       }
-      await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-input-accessibility.xml');
-      const tree = await adb('shell', 'cat', '/sdcard/kukuri-input-accessibility.xml');
-      console.log('PWA SDK TalkBack native labels', JSON.stringify([...tree.matchAll(/(?:text|content-desc)="([^"]+)"/g)].map(match => match[1]).slice(0, 45)));
+      console.log('PWA SDK TalkBack real focus nodes', JSON.stringify(focus));
+      assert.ok(focus.every(node => node.package === 'com.android.chrome'));
+      assert.ok(new Set(focus.map(node => `${node.text}/${node.description}/${node.top}/${node.left}`)).size > 1, 'TalkBack moves focus through actual UI nodes');
+      assert.ok(focus.some(node => /Language|theme|Settings|Keyboard|Safety/.test(`${node.text} ${node.description}`)));
     } finally {
       await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '0');
       await adb('shell', 'settings', 'delete', 'secure', 'enabled_accessibility_services');

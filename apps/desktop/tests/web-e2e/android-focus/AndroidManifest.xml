@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="app.kukuri.focusprobe">
+  <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35" />
+  <application android:label="kukuri focus probe" android:debuggable="true" />
+  <instrumentation android:name="app.kukuri.focusprobe.FocusProbe" android:targetPackage="app.kukuri.focusprobe" />
+</manifest>
