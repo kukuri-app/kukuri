@@ -31,6 +31,16 @@ async function accounts(browser) {
   });
 }
 
+async function nativeState(adb, what) {
+  await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-pwa-entry.xml');
+  const xml = await adb('shell', 'cat', '/sdcard/kukuri-pwa-entry.xml');
+  const controls = [...xml.matchAll(/<node\s[^>]+/g)].map(item =>
+    Object.fromEntries([...item[0].matchAll(/([\w-]+)="([^"]*)"/g)].map(match => [match[1], match[2]])))
+    .filter(node => node.text || node['content-desc']).slice(0, 35)
+    .map(node => ({ text: node.text, description: node['content-desc'], id: node['resource-id'], clickable: node.clickable }));
+  console.log(`PWA native ${what}: ${JSON.stringify(controls)}`);
+}
+
 export async function pwaEntry({ openClient, openSettings, browserName, origin, adb, unconfirmed }) {
   const browser = await openClient('pwa-entry', { ice: true });
   const manifest = await browser.execute(async () => {
@@ -56,9 +66,11 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
     await nativeTap(adb, attrs => attrs['resource-id'] === 'com.android.chrome:id/menu_button', 'Chrome menu');
     await nativeTap(adb, attrs => /^(Add to home screen|Install app)$/i.test(attrs.text), 'install menu');
     await nativeTap(adb, attrs => /^(Install|Add)$/i.test(attrs.text), 'install confirmation');
+    await nativeState(adb, 'after Chrome confirmation');
     // shortcutの場合はlauncherがもう一度確認する。WebAPKの場合はこの確認がない。
     await nativeTap(adb, attrs => /^(Add automatically)$/i.test(attrs.text) ||
       /\/(add_button|button1)$/.test(attrs['resource-id']), 'launcher confirmation', 5_000).catch(() => undefined);
+    await nativeState(adb, 'after launcher confirmation');
     await adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
     const homeIcon = attrs => /^(kukuri|kukuri web)$/.test(attrs.text);
     await nativeTap(adb, homeIcon, 'home icon', 5_000).catch(async () => {
