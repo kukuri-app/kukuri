@@ -83,7 +83,7 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
     await nativeSnapshot(adb, 'gboard-language-list');
     await nativeTap(adb, attrs => attrs.text === 'Search language' || attrs['content-desc'] === 'Search language', 'search Gboard languages');
     await adb('shell', 'input', 'text', 'Japanese');
-    await nativeTap(adb, attrs => attrs.text === 'Japanese', 'Japanese language');
+    await nativeTap(adb, attrs => attrs.text === '日本語', 'Japanese language result');
     await nativeTap(adb, attrs => attrs.text === 'QWERTY', 'Japanese QWERTY');
     await nativeTap(adb, attrs => attrs.text === 'Done', 'save Japanese keyboard');
     await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
