@@ -1918,10 +1918,14 @@ async function sameAccount() {
   assert.ok(afterLoss.archived - beforeLoss.archived <= 1, 'one request advances the epoch at most once');
 }
 
+const inputProbe = phase => () => pwaInputFlow({ openClient, greetNative, openSettings, openChannelDialog, dialogWith, nativeCreatesChannel, native,
+    nativeLinkPost, sees, enableDeveloperMode, publicColumn, openComposer, replaceValue, browserName: BROWSER, adb, origin: ORIGIN, topic: TOPIC, phase, unconfirmed });
+
 /** scenario（`cargo xtask web-e2e` と CI の matrix は、`--list` でこの一覧を読む）。 */
 const scenarios = {
-  'pwa-input': () => pwaInputFlow({ openClient, greetNative, openSettings, openChannelDialog, dialogWith, nativeCreatesChannel, native,
-    nativeLinkPost, sees, enableDeveloperMode, publicColumn, openComposer, replaceValue, browserName: BROWSER, adb, origin: ORIGIN, topic: TOPIC }),
+  'pwa-input': inputProbe('input'),
+  'pwa-ime': inputProbe('ime'),
+  'pwa-accessibility': inputProbe('accessibility'),
   'pwa-shell': () => pwaShellFlow({ openClient, greetNative, native, fixture, openDirectMessage,
     nativeCreatesChannel, joinChannel, openSettings, publicColumn, channelColumn, openComposer, replaceValue, openChannelDialog, channelDialogClosed, seesInChannel,
     origin: ORIGIN, topic: TOPIC, run: RUN, browserName: BROWSER, adb }),

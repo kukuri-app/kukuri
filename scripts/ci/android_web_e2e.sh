@@ -11,7 +11,7 @@ echo 'SDK TalkBack package diagnostics'
 adb shell pm list packages -u | grep 'talkback' || true
 adb shell pm path com.google.android.marvin.talkback || true
 adb shell dumpsys package com.google.android.marvin.talkback | grep -E 'codePath=|versionName=|primaryCpuAbi=|User 0:|flags=' || true
-if [ "$scenario" = pwa-input ]; then
+if [[ "$scenario" =~ ^pwa-(input|ime|accessibility)$ ]]; then
   density=$(adb shell wm density | sed -n 's/.*density: \([0-9]*\).*/\1/p' | tail -1)
   adb shell wm size "$((320 * density / 160))x$((720 * density / 160))"
   adb shell settings put system font_scale 2.0

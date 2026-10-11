@@ -11,8 +11,69 @@ async function nativeSnapshot(adb, name) {
   await adb('pull', file, `test-results/pwa-input/${name}.png`);
 }
 
+async function configureJapanese(browser, field, adb) {
+  await field.click();
+  await eventually('native Japanese keyboard opens', () => browser.execute(() => visualViewport.height < innerHeight * .8));
+    await nativeSnapshot(adb, 'gboard-initial');
+    // GoogleのGboard手順と同じ実UIで日本語QWERTYを追加する（入力eventを注入しない）。
+    // SDK GboardのkeyboardはUIAutomatorへvirtual keyを公開しない。
+    // 同じAPI35/320px/200%の実画面で確認したtoolbarのgearをtapする。
+    const size = (await adb('shell', 'wm', 'size')).match(/Override size: (\d+)x(\d+)/);
+    assert.deepEqual(size?.slice(1).map(Number), [840, 1890]);
+    await adb('shell', 'input', 'tap', '540', '1200');
+    await nativeSnapshot(adb, 'gboard-settings');
+    try {
+      await nativeTap(adb, attrs => attrs.text === 'Languages', 'Gboard languages');
+      await nativeTap(adb, attrs => attrs.text === 'Add keyboard', 'Gboard add keyboard');
+    } catch (error) {
+      await nativeSnapshot(adb, 'gboard-settings-failed');
+      throw error;
+    }
+    await nativeSnapshot(adb, 'gboard-language-list');
+    await nativeTap(adb, attrs => /^Search (?:for a )?language$/.test(attrs.text) || /^Search (?:for a )?language$/.test(attrs['content-desc']), 'search Gboard languages');
+    await adb('shell', 'input', 'text', 'Japanese');
+    await nativeTap(adb, attrs => attrs.text === '日本語', 'Japanese language result');
+    await nativeTap(adb, attrs => attrs.text === 'QWERTY', 'Japanese QWERTY');
+    await nativeTap(adb, attrs => attrs.text === 'Done', 'save Japanese keyboard');
+    await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+    await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+    await field.click();
+    await nativeSnapshot(adb, 'gboard-configured');
+    await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-input-keyboard.xml');
+    const keyboard = await adb('shell', 'cat', '/sdcard/kukuri-input-keyboard.xml');
+    const keys = [...keyboard.matchAll(/<node\s[^>]+/g)].map(item => Object.fromEntries([...item[0].matchAll(/([\w-]+)="([^"]*)"/g)].map(match => [match[1], match[2]])))
+      .filter(attrs => attrs.package === 'com.google.android.inputmethod.latin').map(attrs => ({ text: attrs.text, description: attrs['content-desc'], id: attrs['resource-id'], bounds: attrs.bounds })).slice(0, 50);
+    console.log('PWA input Japanese Gboard controls', JSON.stringify(keys));
+}
+
+async function reviewTalkBack(browser, openSettings, adb) {
+    await openSettings(browser, 'appearance');
+    try {
+      await adb('shell', 'pm', 'grant', 'com.google.android.marvin.talkback', 'android.permission.POST_NOTIFICATIONS');
+      await adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', 'com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService');
+      await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '1');
+      await eventually('SDK TalkBack service binds', async () => (await adb('shell', 'dumpsys', 'accessibility')).includes('TalkBackService'));
+      const accessibility = await adb('shell', 'dumpsys', 'accessibility');
+      console.log('PWA SDK accessibility state', accessibility.split('\n').filter(line => /TalkBack|boundServices|bindingServices|touchExploration|FocusedWindow/.test(line)).join('\n'));
+      console.log('PWA SDK touch exploration', (await adb('shell', 'settings', 'get', 'secure', 'touch_exploration_enabled')).trim());
+      await eventually('SDK TalkBack touch exploration activates', async () => (await adb('shell', 'settings', 'get', 'secure', 'touch_exploration_enabled')).trim() === '1', 20000);
+      await nativeSnapshot(adb, 'talkback-start');
+      for (let step = 1; step <= 3; step += 1) {
+        await adb('shell', 'input', 'swipe', '200', '700', '600', '700', '150');
+        await nativeSnapshot(adb, `talkback-focus-${step}`);
+      }
+      await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-input-accessibility.xml');
+      const tree = await adb('shell', 'cat', '/sdcard/kukuri-input-accessibility.xml');
+      console.log('PWA SDK TalkBack native labels', JSON.stringify([...tree.matchAll(/(?:text|content-desc)="([^"]+)"/g)].map(match => match[1]).slice(0, 45)));
+    } finally {
+      await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '0');
+      await adb('shell', 'settings', 'delete', 'secure', 'enabled_accessibility_services');
+    }
+    await browser.$('#shell-settings-drawer .shell-settings-close').click();
+}
+
 export async function pwaInputFlow({ openClient, greetNative, openSettings, openChannelDialog, dialogWith, nativeCreatesChannel, native,
-  nativeLinkPost, sees, enableDeveloperMode, publicColumn, openComposer, replaceValue, browserName, adb, origin, topic }) {
+  nativeLinkPost, sees, enableDeveloperMode, publicColumn, openComposer, replaceValue, browserName, adb, origin, topic, phase, unconfirmed }) {
   const browser = await openClient('pwa-input', { ice: true, beforeConsent: browserName === 'android' ? async browser => {
     const age = browser.$('[data-testid="age-attestation-checkbox"]');
     await age.waitForDisplayed({ timeout: 90_000 });
@@ -48,6 +109,20 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
     console.log('PWA input emulator accessibility', await adb('shell', 'pm', 'list', 'packages', 'com.google.android.marvin.talkback'));
 
   }
+  if (phase !== 'input') {
+    if (browserName !== 'android') {
+      unconfirmed.push(`installed Android ${phase}: real OS verification runs only in the emulator`);
+      return;
+    }
+    if (phase === 'accessibility') {
+      await reviewTalkBack(browser, openSettings, adb);
+      return;
+    }
+    const ime = await openComposer(publicColumn(browser));
+    await ime.waitForDisplayed();
+    await configureJapanese(browser, ime, adb);
+    throw new Error('Japanese conversion Enter contracts are not yet evaluated');
+  }
   const field = await openComposer(publicColumn(browser));
   await field.waitForDisplayed();
   const text = 'retained native back draft';
@@ -65,36 +140,6 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
     }, field);
     await field.click();
     await eventually('native keyboard opens', () => browser.execute(() => visualViewport.height < innerHeight * .8));
-    await nativeSnapshot(adb, 'gboard-initial');
-    // GoogleのGboard手順と同じ実UIで日本語QWERTYを追加する（入力eventを注入しない）。
-    // SDK GboardのkeyboardはUIAutomatorへvirtual keyを公開しない。
-    // 同じAPI35/320px/200%の実画面で確認したtoolbarのgearをtapする。
-    const size = (await adb('shell', 'wm', 'size')).match(/Override size: (\d+)x(\d+)/);
-    assert.deepEqual(size?.slice(1).map(Number), [840, 1890]);
-    await adb('shell', 'input', 'tap', '540', '1200');
-    await nativeSnapshot(adb, 'gboard-settings');
-    try {
-      await nativeTap(adb, attrs => attrs.text === 'Languages', 'Gboard languages');
-      await nativeTap(adb, attrs => attrs.text === 'Add keyboard', 'Gboard add keyboard');
-    } catch (error) {
-      await nativeSnapshot(adb, 'gboard-settings-failed');
-      throw error;
-    }
-    await nativeSnapshot(adb, 'gboard-language-list');
-    await nativeTap(adb, attrs => attrs.text === 'Search language' || attrs['content-desc'] === 'Search language', 'search Gboard languages');
-    await adb('shell', 'input', 'text', 'Japanese');
-    await nativeTap(adb, attrs => attrs.text === '日本語', 'Japanese language result');
-    await nativeTap(adb, attrs => attrs.text === 'QWERTY', 'Japanese QWERTY');
-    await nativeTap(adb, attrs => attrs.text === 'Done', 'save Japanese keyboard');
-    await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
-    await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
-    await field.click();
-    await nativeSnapshot(adb, 'gboard-configured');
-    await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-input-keyboard.xml');
-    const keyboard = await adb('shell', 'cat', '/sdcard/kukuri-input-keyboard.xml');
-    const keys = [...keyboard.matchAll(/<node\s[^>]+/g)].map(item => Object.fromEntries([...item[0].matchAll(/([\w-]+)="([^"]*)"/g)].map(match => [match[1], match[2]])))
-      .filter(attrs => attrs.package === 'com.google.android.inputmethod.latin').map(attrs => ({ text: attrs.text, description: attrs['content-desc'], id: attrs['resource-id'], bounds: attrs.bounds })).slice(0, 50);
-    console.log('PWA input Japanese Gboard controls', JSON.stringify(keys));
     await adb('shell', 'input', 'text', text.replaceAll(' ', '%s'));
     assert.equal(await field.getProperty('value'), text);
     await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
@@ -272,31 +317,6 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
   await browser.executeAsync(done => setTimeout(done, 200));
   assert.ok((await browser.getUrl()).includes('connectionsView=muted'));
   assert.equal(await browser.$('#shell-settings-drawer').getAttribute('data-open'), 'false');
-  if (browserName === 'android') {
-    await openSettings(browser, 'appearance');
-    try {
-      await adb('shell', 'pm', 'grant', 'com.google.android.marvin.talkback', 'android.permission.POST_NOTIFICATIONS');
-      await adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', 'com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService');
-      await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '1');
-      await eventually('SDK TalkBack service binds', async () => (await adb('shell', 'dumpsys', 'accessibility')).includes('TalkBackService'));
-      const accessibility = await adb('shell', 'dumpsys', 'accessibility');
-      console.log('PWA SDK accessibility state', accessibility.split('\n').filter(line => /TalkBack|boundServices|bindingServices|touchExploration|FocusedWindow/.test(line)).join('\n'));
-      console.log('PWA SDK touch exploration', (await adb('shell', 'settings', 'get', 'secure', 'touch_exploration_enabled')).trim());
-      await eventually('SDK TalkBack touch exploration activates', async () => (await adb('shell', 'settings', 'get', 'secure', 'touch_exploration_enabled')).trim() === '1', 20000);
-      await nativeSnapshot(adb, 'talkback-start');
-      for (let step = 1; step <= 3; step += 1) {
-        await adb('shell', 'input', 'swipe', '200', '700', '600', '700', '150');
-        await nativeSnapshot(adb, `talkback-focus-${step}`);
-      }
-      await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-input-accessibility.xml');
-      const tree = await adb('shell', 'cat', '/sdcard/kukuri-input-accessibility.xml');
-      console.log('PWA SDK TalkBack native labels', JSON.stringify([...tree.matchAll(/(?:text|content-desc)="([^"]+)"/g)].map(match => match[1]).slice(0, 45)));
-    } finally {
-      await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '0');
-      await adb('shell', 'settings', 'delete', 'secure', 'enabled_accessibility_services');
-    }
-    await browser.$('#shell-settings-drawer .shell-settings-close').click();
-  }
   console.log('PWA input composer/control center back and retained draft: PASS');
   } finally {
     if (browserName === 'android') {
