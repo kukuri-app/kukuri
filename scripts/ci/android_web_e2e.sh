@@ -15,7 +15,8 @@ if [ -n "$accessibility_url" ]; then
   curl -sfL "$accessibility_url" -o "$accessibility_dir/talkback.apk"
   echo '100ea562b3b6fc3b2ce50cdd745a7a419ab58a9f4eaad94952c22e578cfd723a  '"$accessibility_dir/talkback.apk" | sha256sum -c -
   "$tools/apksigner" verify --verbose --print-certs "$accessibility_dir/talkback.apk"
-  "$tools/aapt" dump badging "$accessibility_dir/talkback.apk" | grep -q "^package: name='com.google.android.marvin.talkback' .*versionName='17.1.0.983118198'"
+  accessibility_badging=$("$tools/aapt" dump badging "$accessibility_dir/talkback.apk")
+  grep -q "^package: name='com.google.android.marvin.talkback' .*versionName='17.1.0.983118198'" <<< "$accessibility_badging"
   adb install -r "$accessibility_dir/talkback.apk"
   echo 'Verified Google Eyes-Free Project TalkBack 17.1.0.983118198 x86'
 fi
