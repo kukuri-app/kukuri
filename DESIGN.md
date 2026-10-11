@@ -249,6 +249,8 @@ WCAG 2.2 AAを基準とする。対象操作・platformと適用される条件�
 
 ## 8. Component設計
 
+Android Chrome のPWA（#1767、[ADR0066](docs/adr/0066-pwa-mobile-install-offline-update.md)）では、ホーム画面への追加は任意の案内と操作にし、通常tabの利用を妨げない。更新可能になったら案内し、明示操作で反映する。入力中に自動再読込せず、保存できないときは入力を維持して再試行を示す。オフラインは保存済み内容を表示し、未取得の部分と送信受付を相手への送達と区別する。IME変換Enterでは送信せず、戻るはkeyboard・overlay・composer・画面の1層を閉じ、文章下書きを保つ。実装/検証の完了は計画の各ACで判定する。
+
 - native要素、既存primitive/variant、共通componentへの統合、置換・削除を含めて最終コード量を比較する。既存componentを残すためだけのwrapperや別実装を増やさない。
 - 同じ状態・判断・操作を個別経路で繰り返し直す場合は、共通の責務へ集約する。見た目だけが似て意味が異なるものを無理に統合したり、将来用途だけの抽象化を作ったりしない。
 - boolean propの増殖で暗黙の組合せを作らず、product上の意味を持つ明示variantまたはcompound componentを使う。

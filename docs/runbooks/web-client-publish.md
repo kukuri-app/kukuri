@@ -2,6 +2,10 @@
 
 インストール不要の Web クライアント（ADR 0056・0060）の配信の artifact を作り、静的な host に置く手順。本番の公開（URL・DNS・公開の時期）は、この手順とは別の操作として扱う（#1220 の Non-goals）。
 
+PWA の製品境界は [ADR 0066](../adr/0066-pwa-mobile-install-offline-update.md)、
+実装・検証は [#1767 の計画](../progress/2026-10-11-1767-pwa-mobile-plan.md) に従う。
+以下の既存 Web 配信・browser tab の成功だけで install / offline / update を確認済みとしない。
+
 ## artifact を作る
 
 ```bash
