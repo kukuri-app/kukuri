@@ -921,5 +921,14 @@
       "checking": "Checking notification availability…",
       "requestPermission": "Check notification availability"
     }
+  },
+  "pwa": {
+    "title": "Home screen",
+    "summary": "Open kukuri from your home screen. You can also keep using this browser tab.",
+    "install": "Add to home screen",
+    "pending": "Waiting for your choice…",
+    "installed": "Added to home screen.",
+    "menu": "If supported, add kukuri from the browser menu.",
+    "failed": "Could not open the installation prompt. Use the browser menu or try again when installation is offered."
   }
 }

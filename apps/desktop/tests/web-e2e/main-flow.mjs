@@ -22,6 +22,7 @@ import path from 'node:path';
 import { Key, remote } from 'webdriverio';
 import { androidClick } from './android-click.mjs';
 import { eventually } from './wait.mjs';
+import { pwaEntry } from './pwa-entry.mjs';
 
 const ORIGIN = process.env.KUKURI_WEB_E2E_ORIGIN ?? 'http://127.0.0.1:4180';
 const TOPIC = 'kukuri:topic:general';
@@ -70,7 +71,7 @@ const SELECT_ALL = process.platform === 'darwin' ? Key.Command : Key.Ctrl;
 const unconfirmed = [];
 
 const adb = (...args) =>
-  new Promise((resolve, reject) => execFile('adb', args, (error) => (error ? reject(error) : resolve())));
+  new Promise((resolve, reject) => execFile('adb', args, (error, stdout) => (error ? reject(error) : resolve(stdout))));
 
 async function fixture(route, body) {
   const response = await fetch(`${ORIGIN}${route}`, body === undefined ? undefined : {
@@ -1893,6 +1894,7 @@ async function sameAccount() {
 
 /** scenario（`cargo xtask web-e2e` と CI の matrix は、`--list` でこの一覧を読む）。 */
 const scenarios = {
+  'pwa-entry': () => pwaEntry({ openClient, openSettings, browserName: BROWSER, origin: ORIGIN, adb, unconfirmed }),
   direct,
   fallback,
   settings,

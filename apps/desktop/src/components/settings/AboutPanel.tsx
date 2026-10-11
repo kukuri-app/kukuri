@@ -10,6 +10,7 @@ import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 import { useAppUpdateStore } from '@/shell/useAppUpdateStore';
 
 import { SettingsDiagnosticList } from './SettingsDiagnosticList';
+import { PwaInstallNotice } from './PwaInstallNotice';
 
 function formatAcceptedAt(value: number | null | undefined, locale: string): string | null {
   if (!value) {
@@ -97,6 +98,7 @@ export function AboutPanel() {
       </CardHeader>
       {error ? <Notice tone='destructive'>{error}</Notice> : null}
       {IS_WEB_RUNTIME ? <Notice>{t('legal:about.webUnavailable')}</Notice> : null}
+      {IS_WEB_RUNTIME ? <PwaInstallNotice /> : null}
       <SettingsDiagnosticList items={diagnostics} columns={2} />
       <section className='min-w-0 space-y-4'>
         <h4 className='text-base font-semibold text-foreground'>
