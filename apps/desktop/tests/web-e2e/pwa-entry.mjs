@@ -2,18 +2,23 @@ import assert from 'node:assert/strict';
 import { eventually } from './wait.mjs';
 
 // OS操作は隔離されたCIのemulatorだけ。手元の端末でこのhelperを使わない。
-async function nativeTap(adb, matches, timeout = 30_000) {
+async function nativeTap(adb, matches, what, timeout = 30_000) {
   assert.equal(process.env.CI, 'true', 'PWA OS actions require the isolated CI emulator');
-  const node = await eventually('PWA Android control', async () => {
+  let lastXml = '';
+  const node = await eventually(`PWA Android ${what}`, async () => {
     await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-pwa-entry.xml');
     const xml = await adb('shell', 'cat', '/sdcard/kukuri-pwa-entry.xml');
+    lastXml = xml;
     for (const item of xml.matchAll(/<node\s[^>]+/g)) {
       const attrs = Object.fromEntries([...item[0].matchAll(/([\w-]+)="([^"]*)"/g)].map(m => [m[1], m[2]]));
       const bounds = attrs.bounds?.match(/^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$/);
       if (bounds && matches(attrs)) return bounds.slice(1).map(Number);
     }
     return null;
-  }, timeout);
+  }, timeout).catch(error => {
+    const labels = [...lastXml.matchAll(/(?:text|content-desc)="([^"]+)"/g)].map(match => match[1]).slice(0, 30);
+    throw new Error(`${error.message}; CI emulator labels: ${JSON.stringify(labels)}`);
+  });
   await adb('shell', 'input', 'tap', String(Math.floor((node[0] + node[2]) / 2)), String(Math.floor((node[1] + node[3]) / 2)));
 }
 
@@ -48,13 +53,14 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
   }
   assert.equal(process.env.CI, 'true', 'installed PWA verification requires the CI emulator');
   try {
-    await nativeTap(adb, attrs => attrs['resource-id'] === 'com.android.chrome:id/menu_button');
-    await nativeTap(adb, attrs => /^(Add to [Hh]ome screen|Install app)$/.test(attrs.text));
-    await nativeTap(adb, attrs => /^(Install|Add)$/.test(attrs.text));
+    await nativeTap(adb, attrs => attrs['resource-id'] === 'com.android.chrome:id/menu_button', 'Chrome menu');
+    await nativeTap(adb, attrs => /^(Add to home screen|Install app)$/i.test(attrs.text), 'install menu');
+    await nativeTap(adb, attrs => /^(Install|Add)$/i.test(attrs.text), 'install confirmation');
     // shortcutの場合はlauncherがもう一度確認する。WebAPKの場合はこの確認がない。
-    await nativeTap(adb, attrs => /^(Add to home screen|Add automatically)$/.test(attrs.text), 3_000).catch(() => undefined);
+    await nativeTap(adb, attrs => /^(Add automatically)$/i.test(attrs.text) ||
+      /\/(add_button|button1)$/.test(attrs['resource-id']), 'launcher confirmation', 5_000).catch(() => undefined);
     await adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
-    await nativeTap(adb, attrs => attrs.text === 'kukuri');
+    await nativeTap(adb, attrs => attrs.text === 'kukuri', 'home icon');
     await eventually('standalone PWA window', async () => {
       for (const handle of await browser.getWindowHandles()) {
         await browser.switchToWindow(handle);
@@ -62,8 +68,11 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
       }
       return false;
     }, 60_000);
-    const takeOver = browser.$('button=Use in this tab');
-    if (await takeOver.isExisting()) await takeOver.click();
+    await eventually('PWA startup', async () => {
+      const takeOver = browser.$('button=Use in this tab');
+      if (await takeOver.isDisplayed()) { await takeOver.click(); return true; }
+      return browser.$('[data-testid="control-center-trigger"]').isDisplayed();
+    }, 90_000);
     await browser.$('[data-testid="control-center-trigger"]').waitForDisplayed({ timeout: 90_000 });
     const after = await accounts(browser);
     assert.equal(after.active_account_id, before.active_account_id);
