@@ -173,7 +173,6 @@ export function DesktopShellPage({
   const setNotificationAutoReadError = useDesktopShellFieldSetter('notificationAutoReadError');
   const setNotificationPanelState = useDesktopShellFieldSetter('notificationPanelState');
   const setDirectMessageError = useDesktopShellFieldSetter('directMessageError');
-  const setShellChromeState = useDesktopShellFieldSetter('shellChromeState');
   const setVisibleListColumnIds = useDesktopShellFieldSetter('visibleListColumnIds');
   const updateAvailable = useAppUpdateStore(selectUpdateAvailable);
   const checkForUpdate = useAppUpdateStore((state) => state.checkForUpdate);
