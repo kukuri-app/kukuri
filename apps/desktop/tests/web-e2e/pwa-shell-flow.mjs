@@ -5,12 +5,22 @@ import { webInvoke } from './web-invoke.mjs';
 import { installPwa } from './pwa-entry.mjs';
 
 export async function pwaShellFlow({ openClient, greetNative, native, fixture, openDirectMessage,
-  nativeCreatesChannel, joinChannel, openSettings, publicColumn, openComposer, post, sendDirectMessage, replaceValue,
+  nativeCreatesChannel, joinChannel, openSettings, publicColumn, openComposer, replaceValue,
   origin, topic, run, browserName, adb }) {
   if (!['chrome', 'android'].includes(browserName)) throw new Error('PWA shell acceptance runs on Chrome');
   const browser = await openClient('pwa-shell', { ice: true });
-  const oldTab = browserName === 'android' ? await installPwa(browser, adb) : null;
   const hello = await greetNative(browser, 'pwa-shell');
+  const oldTab = browserName === 'android' ? await installPwa(browser, adb) : null;
+  const enter = async (field, text) => {
+    if (browserName !== 'android') return replaceValue(browser, field, text);
+    assert.equal(process.env.CI, 'true');
+    assert.match(text, /^[a-zA-Z0-9 _-]+$/, 'this scenario uses ASCII fixture text for Android input');
+    await field.click();
+    await adb('shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A');
+    await adb('shell', 'input', 'keyevent', 'KEYCODE_DEL');
+    await adb('shell', 'input', 'text', text.replaceAll(' ', '%s'));
+    await eventually('Android input reaches the PWA field', async () => await field.getValue() === text);
+  };
   const account = await webInvoke(browser, 'list_accounts');
   const settings = await webInvoke(browser, 'set_adult_content_display_enabled', { enabled: true });
   const assertAccount = async () => {
@@ -65,7 +75,7 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     await eventually('the browser reports offline', () => browser.execute(() => !navigator.onLine));
     const failedText = `unaccepted storage failure ${run}`;
     const field = await openComposer(publicColumn(browser));
-    await replaceValue(browser, field, failedText);
+    await enter(field, failedText);
     await browser.execute(() => {
       const put = IDBObjectStore.prototype.put;
       window.__kukuriRestorePut = () => { IDBObjectStore.prototype.put = put; };
@@ -82,9 +92,16 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     } finally { await browser.execute(() => { window.__kukuriRestorePut(); delete window.__kukuriRestorePut; }); }
     // 操作の入口は実UI、媒体の組合せは実WASM commandの同じ受付境界で照合する。
     const uiPost = `UI offline post ${run}`;
-    await post(browser, uiPost);
+    await enter(await openComposer(publicColumn(browser)), uiPost);
+    await publicColumn(browser).$('button=Post').click();
+    await browser.$(`article*=${uiPost}`).waitForDisplayed();
     const uiMessage = `UI offline DM ${run}`;
-    await sendDirectMessage(browser, peer, uiMessage);
+    const conversation = browser.$(`section[data-column-id^="column:conversation:"][data-column-id$="${peer}"]`);
+    const messageField = conversation.$('textarea[placeholder="Write a message"]');
+    if (!(await messageField.isDisplayed())) await conversation.$('button[aria-label^="Message to "]').click();
+    await enter(messageField, uiMessage);
+    await conversation.$('button=Send').click();
+    await browser.$(`article*=${uiMessage}`).waitForDisplayed();
     for (const [index, attachments] of media.entries()) {
       for (const kind of ['post', 'reply', 'private', 'dm']) {
         const text = `offline ${kind} media-${index} ${run}`;
@@ -100,15 +117,13 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     }
     await assertStored();
     const draft = `retained offline draft ${run}`;
-    await replaceValue(browser, await openComposer(publicColumn(browser)), draft);
+    await enter(await openComposer(publicColumn(browser)), draft);
     const messageDraft = `retained message draft ${run}`;
-    const conversation = browser.$(`section[data-column-id^="column:conversation:"][data-column-id$="${peer}"]`);
-    const messageField = conversation.$('textarea[placeholder="Write a message"]');
     if (!(await messageField.isDisplayed())) await conversation.$('button[aria-label^="Message to "]').click();
-    await replaceValue(browser, messageField, messageDraft);
+    await enter(messageField, messageDraft);
     await browser.$(`article*=${hello.webPost.content}`).$('button[aria-label="Reply"]').click();
     const replyDraft = `retained reply draft ${run}`;
-    await replaceValue(browser, browser.$('textarea[placeholder="Write a reply"]'), replyDraft);
+    await enter(browser.$('textarea[placeholder="Write a reply"]'), replyDraft);
     const assertDrafts = async () => {
       const saved = await browser.execute(() => localStorage.getItem('kukuri:column-drafts:v1'));
       for (const text of [draft, messageDraft, replyDraft]) assert.ok(saved.includes(text));
