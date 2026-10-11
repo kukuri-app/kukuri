@@ -5,14 +5,14 @@ import { webInvoke } from './web-invoke.mjs';
 import { installPwa } from './pwa-entry.mjs';
 
 export async function pwaShellFlow({ openClient, greetNative, native, fixture, openDirectMessage,
-  nativeCreatesChannel, joinChannel, openSettings, publicColumn, openComposer, post, sendDirectMessage,
+  nativeCreatesChannel, joinChannel, openSettings, publicColumn, openComposer, post, sendDirectMessage, replaceValue,
   origin, topic, run, browserName, adb }) {
   if (!['chrome', 'android'].includes(browserName)) throw new Error('PWA shell acceptance runs on Chrome');
   const browser = await openClient('pwa-shell', { ice: true });
-  if (browserName === 'android') await installPwa(browser, adb);
+  const oldTab = browserName === 'android' ? await installPwa(browser, adb) : null;
   const hello = await greetNative(browser, 'pwa-shell');
   const account = await webInvoke(browser, 'list_accounts');
-  const settings = await webInvoke(browser, 'get_content_display_settings');
+  const settings = await webInvoke(browser, 'set_adult_content_display_enabled', { enabled: true });
   const assertAccount = async () => {
     const after = await webInvoke(browser, 'list_accounts');
     assert.equal(after.active_account_id, account.active_account_id);
@@ -27,8 +27,12 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
   const channel = await nativeCreatesChannel(`offline-${run}`);
   await joinChannel(browser, channel.token, `offline-${run}`);
   await eventually('shell controls the real application', () => browser.execute(() => navigator.serviceWorker.controller !== null));
-  const build = () => browser.execute(() => document.querySelector('meta[name="kukuri-shell-build"]').content);
+  const build = () => browser.execute(() => document.querySelector('meta[name="kukuri-shell-build"]')?.content).catch(error => {
+    if (error.message.includes('Cannot find context with specified id')) return null;
+    throw error;
+  });
   const firstBuild = await build();
+  assert.ok(firstBuild);
   const png = Buffer.from(await (await fetch(`${origin}/fixture/payload.png`)).arrayBuffer());
   const video = await readFile(new URL('../../../../crates/cn-safety-video/src/probes/benign.mp4', import.meta.url));
   const attachment = (bytes, mime, role) => ({ file_name: `offline.${mime === 'image/png' ? 'png' : 'mp4'}`,
@@ -50,7 +54,7 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
       if (item.kind === 'dm') assert.equal(stored.delivered, false);
       assert.equal(stored.attachments.length, media[item.index].length);
       for (const attachment of stored.attachments) {
-        assert.notEqual(attachment.status, 'missing');
+        assert.notEqual(attachment.status, 'Missing');
         const payload = await invoke('get_blob_media_payload', { request: { hash: attachment.hash, mime: attachment.mime, source_object_id: item.kind === 'dm' ? null : item.id } });
         assert.equal(payload?.bytes_base64, media[item.index].find(value => value.role === attachment.role).data_base64);
       }
@@ -61,7 +65,7 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     await eventually('the browser reports offline', () => browser.execute(() => !navigator.onLine));
     const failedText = `unaccepted storage failure ${run}`;
     const field = await openComposer(publicColumn(browser));
-    await field.setValue(failedText);
+    await replaceValue(browser, field, failedText);
     await browser.execute(() => {
       const put = IDBObjectStore.prototype.put;
       window.__kukuriRestorePut = () => { IDBObjectStore.prototype.put = put; };
@@ -96,15 +100,15 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     }
     await assertStored();
     const draft = `retained offline draft ${run}`;
-    await (await openComposer(publicColumn(browser))).setValue(draft);
+    await replaceValue(browser, await openComposer(publicColumn(browser)), draft);
     const messageDraft = `retained message draft ${run}`;
     const conversation = browser.$(`section[data-column-id^="column:conversation:"][data-column-id$="${peer}"]`);
     const messageField = conversation.$('textarea[placeholder="Write a message"]');
     if (!(await messageField.isDisplayed())) await conversation.$('button[aria-label^="Message to "]').click();
-    await messageField.setValue(messageDraft);
+    await replaceValue(browser, messageField, messageDraft);
     await browser.$(`article*=${hello.webPost.content}`).$('button[aria-label="Reply"]').click();
     const replyDraft = `retained reply draft ${run}`;
-    await browser.$('textarea[placeholder="Write a reply"]').setValue(replyDraft);
+    await replaceValue(browser, browser.$('textarea[placeholder="Write a reply"]'), replyDraft);
     const assertDrafts = async () => {
       const saved = await browser.execute(() => localStorage.getItem('kukuri:column-drafts:v1'));
       for (const text of [draft, messageDraft, replyDraft]) assert.ok(saved.includes(text));
@@ -124,11 +128,23 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     await browser.$('button=Save drafts and update').waitForDisplayed({ timeout: 90_000 });
     assert.equal(await build(), firstBuild, 'the prepared update is deferred');
     await browser.$('button=Save drafts and update').click();
-    await eventually('the explicit update loads the next build', async () => (await build()) !== firstBuild, 90_000);
+    await eventually('the explicit update loads the next build', async () => {
+      const current = await build();
+      return current && current !== firstBuild;
+    }, 90_000);
     await browser.$('[data-testid="control-center-trigger"]').waitForDisplayed({ timeout: 90_000 });
     await assertAccount();
     assert.equal(await (await openComposer(publicColumn(browser))).getValue(), draft);
     await assertDrafts();
+    if (oldTab && oldTab !== await browser.getWindowHandle()) {
+      assert.equal(await browser.execute(async () => (await caches.keys()).filter(name => name.startsWith('kukuri-shell-')).length), 2, 'the original live tab keeps its prior build');
+      const pwa = await browser.getWindowHandle();
+      await browser.switchToWindow(oldTab); await browser.closeWindow(); await browser.switchToWindow(pwa);
+      assert.equal(await browser.execute(() => matchMedia('(display-mode: standalone)').matches), true);
+      await openSettings(browser, 'release');
+      await browser.$('button=Check for updates').waitForClickable({ timeout: 90_000 });
+      await browser.$('button=Check for updates').click();
+    }
     await eventually('unused prior shell cache is reclaimed', () => browser.execute(async () =>
       (await caches.keys()).filter(name => name.startsWith('kukuri-shell-')).length === 1));
     for (const item of accepted) {
@@ -145,6 +161,10 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
         return copies.length === 1 && copies[0].object_id === item.id;
       });
     }
+    await eventually('the durable DM outbox receives the ACK', async () => {
+      const messages = (await page(invoke, 'dm')).items;
+      return accepted.filter(item => item.kind === 'dm').every(item => messages.some(message => message.message_id === item.id && message.delivered));
+    });
     console.log('PWA real WASM offline/restart/update/receipt and same-ID delivery: PASS');
   } finally { await network(false); }
 }

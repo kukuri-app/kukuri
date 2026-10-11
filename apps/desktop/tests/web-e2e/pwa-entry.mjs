@@ -66,6 +66,7 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
 
 export async function installPwa(browser, adb) {
   const before = await accounts(browser);
+  const tab = await browser.getWindowHandle();
   assert.equal(process.env.CI, 'true', 'installed PWA verification requires the CI emulator');
   try {
     await nativeTap(adb, attrs => attrs['resource-id'] === 'com.android.chrome:id/menu_button', 'Chrome menu');
@@ -120,6 +121,7 @@ export async function installPwa(browser, adb) {
     assert.equal(after.accounts[0].pubkey, before.accounts[0].pubkey);
     const activity = (await adb('shell', 'dumpsys', 'activity', 'activities')).split('\n').find(line => /mResumedActivity|topResumedActivity/.test(line));
     console.log(`PWA launcher/standalone/account: PASS; ${activity?.trim()}`);
+    return tab;
   } finally {
     await adb('shell', 'rm', '-f', '/sdcard/kukuri-pwa-entry.xml').catch(() => undefined);
   }
