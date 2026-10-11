@@ -33,6 +33,8 @@ async function configureJapanese(browser, field, adb) {
     await nativeTap(adb, attrs => /^Search (?:for a )?language$/.test(attrs.text) || /^Search (?:for a )?language$/.test(attrs['content-desc']), 'search Gboard languages');
     await adb('shell', 'input', 'text', 'Japanese');
     await nativeTap(adb, attrs => attrs.text === '日本語', 'Japanese language result');
+    await nativeSnapshot(adb, 'japanese-layout-options');
+    await nativeTap(adb, attrs => attrs.text === '12 keys', 'disable Japanese 12-key layout');
     await nativeTap(adb, attrs => attrs.text === 'QWERTY', 'Japanese QWERTY');
     await nativeTap(adb, attrs => attrs.text === 'Done', 'save Japanese keyboard');
     await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
@@ -70,8 +72,9 @@ async function reviewTalkBack(browser, openSettings, adb) {
       await browser.executeAsync(done => setTimeout(done, 700));
       await nativeSnapshot(adb, 'talkback-start');
       const focus = [await focused()];
-      for (let step = 1; step <= 3; step += 1) {
-        await adb('shell', 'input', 'swipe', '200', '700', '600', '700', '150');
+      // 実touch explorationで異なるcontrolを探り、nodeの名前・位置の移動を照合する。
+      for (const [step, x, y] of [[1, 220, 550], [2, 590, 550], [3, 450, 1300]]) {
+        await adb('shell', 'input', 'tap', String(x), String(y));
         await browser.executeAsync(done => setTimeout(done, 500));
         await nativeSnapshot(adb, `talkback-focus-${step}`);
         focus.push(await focused());
