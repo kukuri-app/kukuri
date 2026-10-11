@@ -123,7 +123,7 @@ jobs:
           test "$KUKURI_WEB_E2E_BROWSER" = android
           build_head=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN" --jq .head_sha)
           git fetch --no-tags origin "$build_head" --depth=1
-          test -z "$(git diff --name-only "$build_head" HEAD -- . ':!docs/**' ':!.github/**' ':!apps/desktop/tests/web-e2e/main-flow.mjs' ':!apps/desktop/tests/web-e2e/pwa-input-flow.mjs' ':!apps/desktop/tests/web-e2e/pwa-entry.mjs' ':!scripts/ci/android_web_e2e.sh')"
+          test -z "$(git diff --name-only "$build_head" HEAD -- . ':!docs/**' ':!.github/**' ':!apps/desktop/tests/web-e2e/main-flow.mjs' ':!apps/desktop/tests/web-e2e/pwa-input-flow.mjs' ':!apps/desktop/tests/web-e2e/pwa-entry.mjs' ':!apps/desktop/tests/web-e2e/android-focus/**' ':!scripts/ci/android_web_e2e.sh')"
           echo "Reuse build from $BUILD_RUN ($build_head); product code equals $GITHUB_SHA"
 
       - name: Reuse the verified build
