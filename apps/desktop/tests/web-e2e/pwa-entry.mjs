@@ -32,6 +32,9 @@ async function accounts(browser) {
 }
 
 async function nativeState(adb, what) {
+  const activity = (await adb('shell', 'dumpsys', 'activity', 'activities')).split('\n')
+    .filter(line => /mResumedActivity|topResumedActivity/.test(line));
+  console.log(`PWA activity ${what}: ${JSON.stringify(activity)}`);
   await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-pwa-entry.xml');
   const xml = await adb('shell', 'cat', '/sdcard/kukuri-pwa-entry.xml');
   const controls = [...xml.matchAll(/<node\s[^>]+/g)].map(item =>
@@ -82,13 +85,23 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
         String(Math.floor(width * .15)), String(Math.floor(height * .5)), '250');
       await nativeTap(adb, homeIcon, 'adjacent home icon');
     });
+    await nativeState(adb, 'after home icon');
     await eventually('standalone PWA window', async () => {
       for (const handle of await browser.getWindowHandles()) {
         await browser.switchToWindow(handle);
         if (await browser.execute(() => matchMedia('(display-mode: standalone)').matches)) return true;
       }
       return false;
-    }, 60_000);
+    }, 60_000).catch(async error => {
+      await nativeState(adb, 'standalone timeout');
+      const windows = [];
+      for (const handle of await browser.getWindowHandles()) {
+        await browser.switchToWindow(handle);
+        windows.push(await browser.execute(() => ({ url: location.href, standalone: matchMedia('(display-mode: standalone)').matches })));
+      }
+      console.log(`PWA driver windows: ${JSON.stringify(windows)}`);
+      throw error;
+    });
     await eventually('PWA startup', async () => {
       const takeOver = browser.$('button=Use in this tab');
       if (await takeOver.isDisplayed()) { await takeOver.click(); return true; }

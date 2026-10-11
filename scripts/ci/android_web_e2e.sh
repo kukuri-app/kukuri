@@ -3,6 +3,7 @@
 # android-emulator-runner の script は 1 行ずつ別の shell で動くので、手順はこの file にまとめる。
 set -euo pipefail
 scenario="$1"
+trap 'status=$?; if [ "$status" -ne 0 ]; then adb logcat -d -b crash -t 150 || true; adb shell dumpsys meminfo | head -60 || true; fi; exit "$status"' EXIT
 
 adb wait-for-device
 # 現行stableの検証も隔離CIで自動準備する。通常のlaneは既存imageのChromeを使う。
