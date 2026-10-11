@@ -22,7 +22,7 @@ import path from 'node:path';
 import { Key, remote } from 'webdriverio';
 import { androidClick } from './android-click.mjs';
 import { eventually } from './wait.mjs';
-import { installPwa, pwaEntry } from './pwa-entry.mjs';
+import { installPwa, openPwaFromHome, pwaEntry } from './pwa-entry.mjs';
 import { pwaShellFlow } from './pwa-shell-flow.mjs';
 import { pwaInputFlow } from './pwa-input-flow.mjs';
 
@@ -826,7 +826,13 @@ async function siteData() {
   const browser = await openClient('web-a', { ice: true });
   if (BROWSER === 'android') {
     await greetNative(browser, 'key-recovery');
-    await installPwa(browser, adb);
+    const oldTab = await installPwa(browser, adb);
+    const pwa = await browser.getWindowHandle();
+    // deleteDatabaseは開いているoriginのDB connectionを待つ。試験自身の元tabを閉じる。
+    await browser.switchToWindow(oldTab);
+    await browser.closeWindow();
+    await browser.switchToWindow(pwa);
+    await openPwaFromHome(adb);
   }
   const passphrase = `recovery-${RUN}`;
   await openSettings(browser, 'account');
@@ -859,6 +865,7 @@ async function siteData() {
         const request = indexedDB.deleteDatabase(name);
         request.onsuccess = resolve;
         request.onerror = () => reject(request.error);
+        request.onblocked = () => reject(new Error('site-data deletion is blocked by an open document'));
       });
     }
     localStorage.clear();
@@ -1913,7 +1920,8 @@ async function sameAccount() {
 
 /** scenario（`cargo xtask web-e2e` と CI の matrix は、`--list` でこの一覧を読む）。 */
 const scenarios = {
-  'pwa-input': () => pwaInputFlow({ openClient, greetNative, openSettings, publicColumn, openComposer, replaceValue, browserName: BROWSER, adb, origin: ORIGIN }),
+  'pwa-input': () => pwaInputFlow({ openClient, greetNative, openSettings, openChannelDialog, dialogWith, nativeCreatesChannel, native,
+    nativeLinkPost, sees, enableDeveloperMode, publicColumn, openComposer, replaceValue, browserName: BROWSER, adb, origin: ORIGIN, topic: TOPIC }),
   'pwa-shell': () => pwaShellFlow({ openClient, greetNative, native, fixture, openDirectMessage,
     nativeCreatesChannel, joinChannel, openSettings, publicColumn, channelColumn, openComposer, replaceValue, openChannelDialog, channelDialogClosed, seesInChannel,
     origin: ORIGIN, topic: TOPIC, run: RUN, browserName: BROWSER, adb }),

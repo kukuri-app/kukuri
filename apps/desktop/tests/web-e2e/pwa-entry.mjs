@@ -29,7 +29,7 @@ async function accounts(browser) {
   return webInvoke(browser, 'list_accounts');
 }
 
-async function openPwaFromHome(adb) {
+export async function openPwaFromHome(adb) {
   await adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
   const homeIcon = attrs => /^(kukuri|kukuri web)$/.test(attrs.text);
   await nativeTap(adb, homeIcon, 'home icon', 5_000).catch(async () => {
