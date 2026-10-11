@@ -112,7 +112,7 @@ const nativeReact = (target, emoji) =>
 const clients = [];
 
 /** 新しい profile のブラウザを開き、初回同意 → Community Node の同意まで進める（profile の dialog が出ている）。 */
-async function startClient(name, { ice }) {
+async function startClient(name, { ice, beforeConsent }) {
   const kind = SINGLE && clients.length > 0 ? 'chrome' : BROWSER;
   const paired = `${SINGLE} with ${SINGLE} (the driver opens one session at a time)`;
   if (kind !== BROWSER && !unconfirmed.includes(paired)) unconfirmed.push(paired);
@@ -200,13 +200,14 @@ async function startClient(name, { ice }) {
     });
   }
   await browser.url(ORIGIN);
+  await beforeConsent?.(browser);
   await acceptFirstRun(browser);
   return browser;
 }
 
 /** 新しい profile のブラウザを開き、初回同意 → Community Node の同意 → アカウントの profile まで進める。 */
-async function openClient(name, { ice }) {
-  const browser = await startClient(name, { ice });
+async function openClient(name, { ice, beforeConsent }) {
+  const browser = await startClient(name, { ice, beforeConsent });
   const profile = await dialogWith(browser, 'Set up your profile');
   const displayName = profile.$('input');
   await displayName.waitForClickable({ timeout: WAIT });

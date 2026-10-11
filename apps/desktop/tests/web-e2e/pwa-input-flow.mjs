@@ -11,7 +11,21 @@ async function nativeSnapshot(adb, name) {
 }
 
 export async function pwaInputFlow({ openClient, greetNative, publicColumn, openComposer, replaceValue, browserName, adb, origin }) {
-  const browser = await openClient('pwa-input', { ice: true });
+  const browser = await openClient('pwa-input', { ice: true, beforeConsent: browserName === 'android' ? async browser => {
+    await browser.$('[data-testid="age-attestation-checkbox"]').waitForDisplayed({ timeout: 90_000 });
+    const ratio = await browser.execute(() => devicePixelRatio);
+    await adb('shell', 'wm', 'size', `${Math.round(320 * ratio)}x${Math.round(720 * ratio)}`);
+    await adb('shell', 'settings', 'put', 'system', 'font_scale', '2.0');
+    await eventually('320px mobile viewport', () => browser.execute(() => Math.abs(innerWidth - 320) <= 1));
+    await nativeSnapshot(adb, 'initial-consent-320-font200');
+    console.log('PWA input initial consent font scale', (await adb('shell', 'settings', 'get', 'system', 'font_scale')).trim());
+    assert.equal(await browser.execute(() => document.documentElement.scrollWidth > innerWidth), false);
+  } : undefined });
+  if (browserName === 'android') {
+    await adb('shell', 'wm', 'size', 'reset');
+    await adb('shell', 'settings', 'put', 'system', 'font_scale', '1.0');
+    await eventually('mobile viewport restored after consent', () => browser.execute(() => innerWidth > 320));
+  }
   await greetNative(browser, 'pwa-input');
   if (browserName === 'android') {
     await installPwa(browser, adb);
