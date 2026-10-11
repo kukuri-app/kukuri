@@ -49,6 +49,7 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
 
   }
   const field = await openComposer(publicColumn(browser));
+  await field.waitForDisplayed();
   const text = 'retained native back draft';
   if (browserName === 'android') {
     assert.equal(process.env.CI, 'true');
