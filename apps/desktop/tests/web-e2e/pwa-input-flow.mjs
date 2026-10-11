@@ -194,14 +194,14 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
       if (kind === 'post') { field = ime; submit = publicColumn(browser).$('button=Post'); }
       else if (kind === 'reply') {
         await browser.$(`article*=${hello.fromWeb}`).$('button[aria-label="Reply"]').click();
-        field = browser.$('textarea[placeholder="Write a reply"]');
+        field = await browser.$('textarea[placeholder="Write a reply"]');
         submit = browser.$('button=Reply');
       } else {
         await native('follow_author', { request: { pubkey: hello.webPost.author_pubkey } });
         await openDirectMessage(browser, hello.fromNative, peer);
         const column = browser.$(`section[data-column-id^="column:conversation:"][data-column-id$="${peer}"]`);
         await column.$('button[aria-label^="Message to "]').click();
-        field = column.$('textarea[placeholder="Write a message"]');
+        field = await column.$('textarea[placeholder="Write a message"]');
         submit = column.$('button=Send');
       }
       await field.waitForDisplayed();
