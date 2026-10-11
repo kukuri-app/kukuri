@@ -29,7 +29,8 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
   const video = await readFile(new URL('../../../../crates/cn-safety-video/src/probes/benign.mp4', import.meta.url));
   const attachment = (bytes, mime, role) => ({ file_name: `offline.${mime === 'image/png' ? 'png' : 'mp4'}`,
     mime, role, byte_size: bytes.length, data_base64: bytes.toString('base64') });
-  const media = [[], [attachment(png, 'image/png', 'image_original')], [attachment(video, 'video/mp4', 'video_manifest')]];
+  const media = [[], [attachment(png, 'image/png', 'image_original')],
+    [attachment(video, 'video/mp4', 'video_manifest'), attachment(png, 'image/png', 'video_poster')]];
   const network = offline => browser.setNetworkConditions({ offline, latency: 0, download_throughput: -1, upload_throughput: -1 });
   const accepted = [];
   try {

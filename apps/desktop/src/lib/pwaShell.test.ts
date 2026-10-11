@@ -37,7 +37,7 @@ afterEach(() => { stopDrafts(); stop(); meta.remove(); vi.restoreAllMocks(); vi.
 
 test('a failed draft write prevents worker activation and keeps input, identity, and settings', async () => {
   const write = Storage.prototype.setItem;
-  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (name, value) {
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, name, value) {
     if (name === COLUMN_DRAFT_STORAGE_KEY) throw new Error('quota');
     write.call(this, name, value);
   });
