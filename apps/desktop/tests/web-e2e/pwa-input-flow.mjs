@@ -38,6 +38,8 @@ async function configureJapanese(browser, field, adb) {
     await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
     await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
     await field.click();
+    await adb('shell', 'input', 'tap', '400', '1000');
+    await eventually('configured Japanese keyboard opens', () => browser.execute(() => visualViewport.height < innerHeight * .8));
     await nativeSnapshot(adb, 'gboard-configured');
     await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-input-keyboard.xml');
     const keyboard = await adb('shell', 'cat', '/sdcard/kukuri-input-keyboard.xml');
@@ -60,6 +62,7 @@ async function reviewTalkBack(browser, openSettings, adb) {
       await nativeSnapshot(adb, 'talkback-start');
       for (let step = 1; step <= 3; step += 1) {
         await adb('shell', 'input', 'swipe', '200', '700', '600', '700', '150');
+        await browser.executeAsync(done => setTimeout(done, 500));
         await nativeSnapshot(adb, `talkback-focus-${step}`);
       }
       await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-input-accessibility.xml');
@@ -190,21 +193,29 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
     console.log('PWA native rotation preserves composer scope and draft: PASS');
   }
   await publicColumn(browser).$('button=Close').click();
+  console.log('PWA input stage: composer manually closed');
   await browser.$('[data-testid="control-center-trigger"]').click();
+  console.log('PWA input stage: control center opened');
   await browser.$('#shell-control-center').waitForDisplayed();
   if (browserName === 'android') await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
   else await browser.back();
   await eventually('back closes the control center', async () => !(await browser.$('#shell-control-center').isDisplayed()));
   assert.equal(new URL(await browser.getUrl()).origin, origin);
+  console.log('PWA input stage: control center back completed');
   const channel = await nativeCreatesChannel('PWA input confirmation');
+  console.log('PWA input stage: native invitation created');
   const joined = async () => (await webInvoke(browser, 'list_joined_private_channels', { request: { topic, cursor: null } })).items;
   assert.equal((await joined()).some(item => item.channel_id === channel.channelId), false);
   const invite = await openChannelDialog(browser);
+  console.log('PWA input stage: invite dialog opened');
   await invite.$('textarea[placeholder="Paste a private channel invite, mutual grant, or mutuals+ share"]').setValue(channel.token);
-  await invite.$('button=Join').waitForEnabled();
+  await eventually('invite confirmation is enabled', async () => {
+    const button = browser.$('.ui-dialog-content').$('button=Join');
+    return await button.isExisting() && button.isEnabled();
+  });
   assert.equal((await joined()).some(item => item.channel_id === channel.channelId), false);
   await dismissOverlay(invite);
-  await invite.waitForDisplayed({ reverse: true });
+  await eventually('invite dialog is closed', async () => !(await browser.$('textarea[placeholder="Paste a private channel invite, mutual grant, or mutuals+ share"]').isExisting()));
   assert.equal((await joined()).some(item => item.channel_id === channel.channelId), false);
   const beforeTransfer = await webInvoke(browser, 'list_accounts');
   const transfer = await native('create_account_transfer_invite');
@@ -216,7 +227,7 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
   await target.$('input').setValue(transfer.link);
   assert.equal((await webInvoke(browser, 'get_account_transfer_status')).state, 'idle');
   await dismissOverlay(target);
-  await target.waitForDisplayed({ reverse: true });
+  await eventually('transfer dialog is closed', async () => !(await browser.$('[data-testid="account-transfer-target"]').isExisting()));
   assert.deepEqual(await webInvoke(browser, 'list_accounts'), beforeTransfer);
   console.log('PWA invite/transfer paste and cancellation do not join/connect/import before confirmation: PASS');
   if (browserName === 'android') {
