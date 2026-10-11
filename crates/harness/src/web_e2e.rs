@@ -137,12 +137,22 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
     let cn_addr = env_or("KUKURI_WEB_E2E_CN_ADDR", "127.0.0.1:4181");
     let web_origin = format!("http://{web_addr}");
     let rules = Arc::new(artifact_headers(&dist)?);
-    let html = axum::response::Html(std::fs::read_to_string(dist.join("index.html"))?.replacen(
-        "<head>",
-        r#"<head><script src="/fixture/page-init.js"></script>"#,
-        1,
-    ));
-    let index = move || std::future::ready(html.clone());
+    let index_dist = dist.clone();
+    let index = move || {
+        let dist = index_dist.clone();
+        async move {
+            std::fs::read_to_string(dist.join("index.html"))
+                .map(|html| {
+                    axum::response::Html(html.replacen(
+                        "<head>",
+                        r#"<head><script src="/fixture/page-init.js"></script>"#,
+                        1,
+                    ))
+                })
+                .map_err(failed)
+        }
+    };
+    let next_dist = dist.clone();
 
     let public_blobs = PublicBlobNet::start().await?;
     let search =
@@ -187,6 +197,22 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
         .route("/fixture/payload.png", get(payload_png))
         .route("/fixture/link-preview", post(link_preview))
         .route("/fixture/shutdown", post(shutdown))
+        .route(
+            "/fixture/shell-build",
+            post(move || {
+                let dist = next_dist.clone();
+                async move {
+                    for (source, target) in [
+                        ("shell-next-index.html", "index.html"),
+                        ("shell-next-sw.js", "sw.js"),
+                    ] {
+                        std::fs::copy(dist.join("fixture").join(source), dist.join(target))
+                            .map_err(failed)?;
+                    }
+                    Ok::<_, (StatusCode, Json<Value>)>(Json(serde_json::json!({ "ready": true })))
+                }
+            }),
+        )
         .route("/fixture/account-sync-items", get(account_sync_items))
         .route("/fixture/public-blob-holder", post(public_blob_holder))
         .route(

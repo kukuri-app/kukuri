@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { eventually } from './wait.mjs';
+import { webInvoke } from './web-invoke.mjs';
 
 // OS操作は隔離されたCIのemulatorだけ。手元の端末でこのhelperを使わない。
 async function nativeTap(adb, matches, what, timeout = 30_000) {
@@ -25,12 +26,7 @@ async function nativeTap(adb, matches, what, timeout = 30_000) {
 }
 
 async function accounts(browser) {
-  return browser.execute(async () => {
-    const module = performance.getEntriesByType('resource').find(entry =>
-      entry.name.includes('/kukuri_web_runtime-') && entry.name.endsWith('.js'));
-    if (!module) throw new Error('web-runtime module was not loaded');
-    return (await import(module.name)).invoke('list_accounts', {});
-  });
+  return webInvoke(browser, 'list_accounts');
 }
 
 async function nativeState(adb, what) {
