@@ -23,7 +23,6 @@ async fn register_private(node: &IrohDocsNode, replica: &ReplicaId, secret: &Nam
 
 #[tokio::test]
 async fn a_held_private_replica_answers_missing_withdrawals_after_restart() -> Result<()> {
-    use kukuri_store::ContentCacheStore;
     let provider = IrohDocsNode::memory().await?;
     let requester = IrohDocsNode::memory().await?;
     let cache = Arc::new(SqliteStore::connect_memory().await?);
