@@ -28,6 +28,7 @@ repositories {
 android {
     // #1193 D7: target は Google Play の要件の API 36、minSdk は 29（tauri.android.conf.json）。
     compileSdk = 36
+    ndkVersion = "29.0.14206865"
     namespace = "app.kukuri.android"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
