@@ -1,0 +1,76 @@
+import assert from 'node:assert/strict';
+import { eventually } from './wait.mjs';
+
+// OS操作は隔離されたCIのemulatorだけ。手元の端末でこのhelperを使わない。
+async function nativeTap(adb, matches, timeout = 30_000) {
+  assert.equal(process.env.CI, 'true', 'PWA OS actions require the isolated CI emulator');
+  const node = await eventually('PWA Android control', async () => {
+    await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-pwa-entry.xml');
+    const xml = await adb('shell', 'cat', '/sdcard/kukuri-pwa-entry.xml');
+    for (const item of xml.matchAll(/<node\s[^>]+/g)) {
+      const attrs = Object.fromEntries([...item[0].matchAll(/([\w-]+)="([^"]*)"/g)].map(m => [m[1], m[2]]));
+      const bounds = attrs.bounds?.match(/^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$/);
+      if (bounds && matches(attrs)) return bounds.slice(1).map(Number);
+    }
+    return null;
+  }, timeout);
+  await adb('shell', 'input', 'tap', String(Math.floor((node[0] + node[2]) / 2)), String(Math.floor((node[1] + node[3]) / 2)));
+}
+
+async function accounts(browser) {
+  return browser.execute(async () => {
+    const module = performance.getEntriesByType('resource').find(entry =>
+      entry.name.includes('/kukuri_web_runtime-') && entry.name.endsWith('.js'));
+    if (!module) throw new Error('web-runtime module was not loaded');
+    return (await import(module.name)).invoke('list_accounts', {});
+  });
+}
+
+export async function pwaEntry({ openClient, openSettings, browserName, origin, adb, unconfirmed }) {
+  const browser = await openClient('pwa-entry', { ice: true });
+  const manifest = await browser.execute(async () => {
+    const link = document.querySelector('link[rel="manifest"]');
+    if (!link) throw new Error('missing web manifest');
+    return { url: link.href, value: await (await fetch(link.href)).json() };
+  });
+  assert.equal(manifest.url, `${origin}/manifest.webmanifest`);
+  assert.equal(manifest.value.id, '/');
+  assert.equal(manifest.value.start_url, '/');
+  assert.equal(manifest.value.scope, '/');
+  assert.equal(manifest.value.display, 'standalone');
+  const before = await accounts(browser);
+  await openSettings(browser, 'about');
+  await browser.$('section[aria-label="Home screen"]').waitForDisplayed();
+  await browser.$('#shell-settings-drawer .shell-settings-close').click();
+  if (browserName !== 'android') {
+    unconfirmed.push('installed Android PWA: OS actions run only in the Android CI emulator');
+    return;
+  }
+  assert.equal(process.env.CI, 'true', 'installed PWA verification requires the CI emulator');
+  try {
+    await nativeTap(adb, attrs => attrs['resource-id'] === 'com.android.chrome:id/menu_button');
+    await nativeTap(adb, attrs => /^(Add to [Hh]ome screen|Install app)$/.test(attrs.text));
+    await nativeTap(adb, attrs => /^(Install|Add)$/.test(attrs.text));
+    // shortcutの場合はlauncherがもう一度確認する。WebAPKの場合はこの確認がない。
+    await nativeTap(adb, attrs => /^(Add to home screen|Add automatically)$/.test(attrs.text), 3_000).catch(() => undefined);
+    await adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
+    await nativeTap(adb, attrs => attrs.text === 'kukuri');
+    await eventually('standalone PWA window', async () => {
+      for (const handle of await browser.getWindowHandles()) {
+        await browser.switchToWindow(handle);
+        if (await browser.execute(() => matchMedia('(display-mode: standalone)').matches)) return true;
+      }
+      return false;
+    }, 60_000);
+    const takeOver = browser.$('button=Use in this tab');
+    if (await takeOver.isExisting()) await takeOver.click();
+    await browser.$('[data-testid="control-center-trigger"]').waitForDisplayed({ timeout: 90_000 });
+    const after = await accounts(browser);
+    assert.equal(after.active_account_id, before.active_account_id);
+    assert.equal(after.accounts[0].pubkey, before.accounts[0].pubkey);
+    const activity = (await adb('shell', 'dumpsys', 'activity', 'activities')).split('\n').find(line => line.includes('mResumedActivity'));
+    console.log(`PWA launcher/standalone/account: PASS; ${activity?.trim()}`);
+  } finally {
+    await adb('shell', 'rm', '-f', '/sdcard/kukuri-pwa-entry.xml').catch(() => undefined);
+  }
+}
