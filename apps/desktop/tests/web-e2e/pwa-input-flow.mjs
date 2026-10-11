@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
 import { eventually } from './wait.mjs';
 import { installPwa, nativeTap } from './pwa-entry.mjs';
+
+async function nativeSnapshot(adb, name) {
+  await mkdir('test-results/pwa-input', { recursive: true });
+  const file = `/sdcard/kukuri-input-${name}.png`;
+  await adb('shell', 'screencap', '-p', file);
+  await adb('pull', file, `test-results/pwa-input/${name}.png`);
+}
 
 export async function pwaInputFlow({ openClient, greetNative, publicColumn, openComposer, replaceValue, browserName, adb, origin }) {
   const browser = await openClient('pwa-input', { ice: true });
@@ -16,16 +24,20 @@ export async function pwaInputFlow({ openClient, greetNative, publicColumn, open
     assert.equal(process.env.CI, 'true');
     await field.click();
     await eventually('native keyboard opens', () => browser.execute(() => visualViewport.height < innerHeight * .8));
+    await nativeSnapshot(adb, 'gboard-initial');
     // GoogleのGboard手順と同じ実UIで日本語QWERTYを追加する（入力eventを注入しない）。
     await nativeTap(adb, attrs => attrs.package === 'com.google.android.inputmethod.latin' && attrs['content-desc'] === 'Settings', 'Gboard settings');
+    await nativeSnapshot(adb, 'gboard-settings');
     await nativeTap(adb, attrs => attrs.text === 'Languages', 'Gboard languages');
     await nativeTap(adb, attrs => attrs.text === 'Add keyboard', 'Gboard add keyboard');
+    await nativeSnapshot(adb, 'gboard-language-list');
     await nativeTap(adb, attrs => attrs.text === 'Japanese', 'Japanese language');
     await nativeTap(adb, attrs => attrs.text === 'QWERTY', 'Japanese QWERTY');
     await nativeTap(adb, attrs => attrs.text === 'Done', 'save Japanese keyboard');
     await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
     await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
     await field.click();
+    await nativeSnapshot(adb, 'gboard-configured');
     await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-input-keyboard.xml');
     const keyboard = await adb('shell', 'cat', '/sdcard/kukuri-input-keyboard.xml');
     const keys = [...keyboard.matchAll(/<node\s[^>]+/g)].map(item => Object.fromEntries([...item[0].matchAll(/([\w-]+)="([^"]*)"/g)].map(match => [match[1], match[2]])))
