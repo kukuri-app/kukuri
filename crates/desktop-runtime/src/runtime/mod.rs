@@ -46,7 +46,8 @@ use kukuri_transport::{DhtDiscoveryOptions, TransportNetworkConfig, TransportRel
 use tokio::sync::Mutex;
 
 use crate::attachments::{
-    normalize_custom_reaction_upload, pending_attachment_from_request, reaction_key_from_request,
+    attachment_bytes, normalize_custom_reaction_upload, pending_attachment_from_request,
+    pending_attachments_from_requests, reaction_key_from_request,
 };
 use crate::community_node::{
     AcceptCommunityNodeConsentsRequest, COMMUNITY_NODE_TOKEN_PURPOSE,

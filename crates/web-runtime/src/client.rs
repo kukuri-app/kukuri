@@ -152,6 +152,7 @@ async fn install_storage() -> Result<(), CommandError> {
     }
     let storage = BrowserStorage::open().await?;
     install_platform_storage(Box::leak(Box::new(storage)));
+    crate::attachments::install();
     STORAGE_INSTALLED.set(true);
     Ok(())
 }
@@ -427,6 +428,47 @@ pub async fn shutdown() {
 #[wasm_bindgen]
 pub async fn invoke(command: String, args: JsValue) -> Result<JsValue, JsValue> {
     let client = current()?;
+    let args = from_js(&args).map_err(|error| error_value(&error))?;
+    match invoke_command(&client, &command, args).await {
+        Ok(value) => to_js(&value),
+        Err(error) => Err(error_value(&error)),
+    }
+}
+
+#[wasm_bindgen]
+pub async fn prepare_attachment(blob: web_sys::Blob) -> Result<JsValue, JsValue> {
+    let client = current()?;
+    client
+        .gate
+        .require_running()
+        .map_err(|error| error_value(&error))?;
+    let host = client
+        .gate
+        .host()
+        .ok_or_else(|| JsValue::from_str("the account is not started"))?;
+    let value = crate::attachments::fingerprint(blob, host)
+        .await
+        .map_err(|error| error_value(&CommandError::from(error)))?;
+    to_js(&value)
+}
+
+#[wasm_bindgen]
+pub async fn invoke_with_attachments(
+    command: String,
+    args: JsValue,
+    sources: js_sys::Array,
+) -> Result<JsValue, JsValue> {
+    let client = current()?;
+    client
+        .gate
+        .require_running()
+        .map_err(|error| error_value(&error))?;
+    let host = client
+        .gate
+        .host()
+        .ok_or_else(|| JsValue::from_str("the account is not started"))?;
+    let _inputs = crate::attachments::Inputs::register(sources, host)
+        .map_err(|error| error_value(&CommandError::from(error)))?;
     let args = from_js(&args).map_err(|error| error_value(&error))?;
     match invoke_command(&client, &command, args).await {
         Ok(value) => to_js(&value),

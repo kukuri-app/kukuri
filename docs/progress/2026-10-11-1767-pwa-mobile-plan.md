@@ -55,3 +55,9 @@ IssueのINVAR-1〜5を維持する。
 D1〜D5/M0〜M6の採用調査は終了。技術調査は該当ACの入口と結果に限定する。
 新しい入力制限・platform保証・保存/通信の意味の変更が必要なら、ユーザー判断を得る。
 次はAC-PLANの照合/PR CI、その後AC-ENTRYのcontractと実装。
+
+### AC-ATTACHMENT の実装方法
+
+JS draft/snapshotにFile/Blobそのものを所有させ、共通invokeの期間だけaccount・host世代に束縛した入力参照へ変換する。共有raw-byte helperで1MiB以下ずつ読み、既存PendingAttachment・原本/poster/private/DM保存へ渡す。カスタムリアクションの独自decodeも統合する。選択時は同じchunk単位で読取りと原本hashを確認し、初回profileのretry判定を一時参照IDへ依存させない。
+
+永続stagingは追加しない。取消/失敗/切替で操作参照を失効させ、ページ終了/次回起動に残る仮入力は0件。既存JS全量base64をWeb File/Blob経路から撤去し、nativeと旧requestのbase64は維持する。Rustの既存原本Vecは維持し、全量メモリ回避の成果とは扱わない。終了判定は本表ACとT5のまま、追加製品上限なし。

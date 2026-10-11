@@ -75,6 +75,17 @@ pub struct CreateAttachmentRequest {
     pub byte_size: u64,
     pub data_base64: String,
     pub role: Option<String>,
+    #[cfg(target_family = "wasm")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ref: Option<WebAttachmentRef>,
+}
+
+#[cfg(target_family = "wasm")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebAttachmentRef {
+    pub id: String,
+    pub owner: String,
+    pub hash: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -8,11 +8,39 @@ use kukuri_core::{AssetRole, BlobHash, CustomReactionAssetSnapshotV1, ReactionKe
 
 use crate::requests::{CreateAttachmentRequest, CustomReactionCropRect, ReactionKeyRequest};
 
-pub(crate) fn pending_attachment_from_request(
+#[cfg(target_family = "wasm")]
+#[async_trait::async_trait]
+pub trait WebAttachmentInput: Send + Sync {
+    async fn read(&self, source: &crate::requests::WebAttachmentRef) -> Result<Vec<u8>>;
+}
+
+#[cfg(target_family = "wasm")]
+static WEB_INPUT: std::sync::OnceLock<&'static dyn WebAttachmentInput> = std::sync::OnceLock::new();
+
+#[cfg(target_family = "wasm")]
+pub fn install_web_attachment_input(input: &'static dyn WebAttachmentInput) {
+    let _ = WEB_INPUT.set(input);
+}
+
+pub(crate) async fn attachment_bytes(request: &CreateAttachmentRequest) -> Result<Vec<u8>> {
+    #[cfg(target_family = "wasm")]
+    if let Some(source) = &request.source_ref {
+        return WEB_INPUT
+            .get()
+            .context("Web attachment input is unavailable")?
+            .read(source)
+            .await;
+    }
+    BASE64_STANDARD
+        .decode(request.data_base64.as_bytes())
+        .map_err(Into::into)
+}
+
+pub(crate) async fn pending_attachment_from_request(
     request: CreateAttachmentRequest,
 ) -> Result<PendingAttachment> {
-    let bytes = BASE64_STANDARD
-        .decode(request.data_base64.as_bytes())
+    let bytes = attachment_bytes(&request)
+        .await
         .context("failed to decode attachment data")?;
     let role = match request.role.as_deref() {
         Some("image_preview") => AssetRole::ImagePreview,
@@ -32,6 +60,16 @@ pub(crate) fn pending_attachment_from_request(
 pub(crate) struct NormalizedCustomReactionUpload {
     pub(crate) mime: String,
     pub(crate) bytes: Vec<u8>,
+}
+
+pub(crate) async fn pending_attachments_from_requests(
+    requests: Vec<CreateAttachmentRequest>,
+) -> Result<Vec<PendingAttachment>> {
+    let mut attachments = Vec::with_capacity(requests.len());
+    for request in requests {
+        attachments.push(pending_attachment_from_request(request).await?);
+    }
+    Ok(attachments)
 }
 
 pub(crate) fn reaction_key_from_request(request: ReactionKeyRequest) -> Result<ReactionKeyV1> {

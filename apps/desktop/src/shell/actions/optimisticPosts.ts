@@ -287,6 +287,8 @@ export function createOptimisticPostActions({
           local_state: 'syncing',
           local_error: null,
           server_object_id: serverObjectId,
+          local_draft: null,
+          local_draft_media_items: [],
         }),
         draft.topic
       );

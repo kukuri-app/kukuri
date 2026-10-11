@@ -25,6 +25,7 @@ import { eventually } from './wait.mjs';
 import { installPwa, openPwaFromHome, pwaEntry } from './pwa-entry.mjs';
 import { pwaShellFlow } from './pwa-shell-flow.mjs';
 import { pwaInputFlow } from './pwa-input-flow.mjs';
+import { pwaAttachmentFlow } from './pwa-attachment-flow.mjs';
 
 const ORIGIN = process.env.KUKURI_WEB_E2E_ORIGIN ?? 'http://127.0.0.1:4180';
 const TOPIC = 'kukuri:topic:general';
@@ -1923,6 +1924,8 @@ const inputProbe = phase => () => pwaInputFlow({ openClient, greetNative, openSe
 
 /** scenario（`cargo xtask web-e2e` と CI の matrix は、`--list` でこの一覧を読む）。 */
 const scenarios = {
+  'pwa-attachment': () => pwaAttachmentFlow({ openClient, greetNative, native, fixture, nativeCreatesChannel, joinChannel,
+    publicColumn, openComposer, replaceValue, topic: TOPIC, origin: ORIGIN, run: RUN, browserName: BROWSER, adb }),
   'pwa-input': inputProbe('input'),
   'pwa-ime': inputProbe('ime'),
   'pwa-accessibility': inputProbe('accessibility'),
