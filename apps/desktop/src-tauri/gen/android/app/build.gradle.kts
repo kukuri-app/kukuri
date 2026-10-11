@@ -44,12 +44,6 @@ android {
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false
-            packaging {
-                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
-                jniLibs.keepDebugSymbols.add("*/armeabi-v7a/*.so")
-                jniLibs.keepDebugSymbols.add("*/x86/*.so")
-                jniLibs.keepDebugSymbols.add("*/x86_64/*.so")
-            }
         }
         getByName("release") {
             ndk.debugSymbolLevel = "FULL"
@@ -73,6 +67,12 @@ android {
     }
     // ランチャーアイコンは `tauri icon` の出力をそのまま使う（権利は docs/ASSET_MANIFEST.json で管理）。
     sourceSets["main"].res.srcDir("../../../icons/android")
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.packaging.jniLibs.keepDebugSymbols.add("**/*.so")
+    }
 }
 
 kotlin {
