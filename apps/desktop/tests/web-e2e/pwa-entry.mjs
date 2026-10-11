@@ -33,7 +33,7 @@ export async function openPwaFromHome(adb) {
   await adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
   const homeIcon = attrs => /^(kukuri|kukuri web)$/.test(attrs.text);
   await nativeTap(adb, homeIcon, 'home icon', 5_000).catch(async () => {
-    const size = (await adb('shell', 'wm', 'size')).match(/(\d+)x(\d+)/);
+    const size = [...(await adb('shell', 'wm', 'size')).matchAll(/(\d+)x(\d+)/g)].at(-1);
     assert.ok(size, 'emulator display size');
     const [width, height] = size.slice(1).map(Number);
     await adb('shell', 'input', 'swipe', String(Math.floor(width * .85)), String(Math.floor(height * .5)),
