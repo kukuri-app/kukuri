@@ -71,8 +71,9 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
     await nativeTap(adb, attrs => attrs['resource-id'] === 'com.android.chrome:id/menu_button', 'Chrome menu');
     const installMenu = await nativeTap(adb, attrs => /^(Add to home screen|Install app|Install and create shortcut)$/i.test(attrs.text), 'install menu');
     await nativeState(adb, 'install choices');
-    const installChoice = await nativeTap(adb, attrs => /^(Install|Install app|Add)$/i.test(attrs.text), 'install confirmation');
-    if (installMenu === 'Install and create shortcut' || /^Install app$/i.test(installChoice)) {
+    await nativeTap(adb, attrs => /^(Install|Add)$/i.test(attrs.text) &&
+      /\/(option_text_install|positive_button|button1)$/.test(attrs['resource-id']), 'install confirmation');
+    if (installMenu === 'Install and create shortcut') {
       await nativeTap(adb, attrs => attrs['resource-id'] === 'com.android.chrome:id/positive_button' && /^Install$/i.test(attrs.text), 'app install confirmation');
     }
     await nativeState(adb, 'after Chrome confirmation');
