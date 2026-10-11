@@ -89,9 +89,12 @@ export async function installPwa(browser, adb) {
       const size = [...(await adb('shell', 'wm', 'size')).matchAll(/(\d+)x(\d+)/g)].at(-1);
       assert.ok(size);
       const [width, height] = size.slice(1).map(Number);
-      await adb('shell', 'input', 'swipe', String(Math.floor(width * .7)), String(Math.floor(height * .8)),
-        String(Math.floor(width * .7)), String(Math.floor(height * .3)), '400');
-      return nativeTap(adb, installItem, 'scrolled install menu');
+      for (let step = 0; step < 3; step++) {
+        await adb('shell', 'input', 'swipe', String(Math.floor(width * .7)), String(Math.floor(height * .8)),
+          String(Math.floor(width * .7)), String(Math.floor(height * .3)), '400');
+        try { return await nativeTap(adb, installItem, 'scrolled install menu', 3_000); }
+        catch (error) { if (step === 2) throw error; }
+      }
     });
     await nativeState(adb, 'install choices');
     await nativeTap(adb, attrs => /^(Install|Add)$/i.test(attrs.text) &&
