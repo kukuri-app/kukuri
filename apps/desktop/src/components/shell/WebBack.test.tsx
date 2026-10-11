@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -117,7 +117,7 @@ it.each(['Back', 'Close'])('settings %s closes one routed layer before the compo
         onAttachmentPaste={async () => undefined} onRemoveAttachment={() => undefined} onSubmit={async () => undefined} />
       <button onClick={() => setCenter(true)}>Open center</button>
       {center && <button onClick={() => { setCenter(false); routing.openSettingsSection('appearance', 'replace'); }}>Open settings</button>}
-      {settings && <button onClick={() => routing.setSettingsOpen(false)}>Close settings</button>}
+      {settings && <button onClick={() => routing.setSettingsOpen(false, true)}>Close settings</button>}
     </>;
   }
   render(<View />, { wrapper: harness.wrapper });
@@ -134,4 +134,26 @@ it.each(['Back', 'Close'])('settings %s closes one routed layer before the compo
   await back();
   await waitFor(() => expect(screen.queryByPlaceholderText('Write a post')).not.toBeInTheDocument());
   expect(location.hash).not.toContain('settings=');
+});
+it('settings handoff to profile connections is not undone by delayed history traversal', async () => {
+  const harness = createShellHookHarness({ hash: '#/timeline?topic=kukuri%3Atopic%3Ageneral', router: true });
+  const api = createDesktopMockApi();
+  const settingsTriggerRef = { current: null };
+  const pendingRouteUrlRef = { current: null as string | null };
+  const view = renderHook(() => useDesktopShellRouting({ api, translate: key => key, loadTopics: async () => {},
+    settingsTriggerRef, pendingRouteUrlRef }), { wrapper: harness.wrapper });
+  act(() => view.result.current.openSettingsSection('account'));
+  await waitFor(() => expect(location.hash).toContain('settings=account'));
+  const traversal = vi.spyOn(history, 'go');
+  act(() => {
+    view.result.current.setSettingsOpen(false);
+    view.result.current.focusPrimarySection('profile');
+    view.result.current.openProfileConnections('following');
+  });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)); });
+  expect(location.hash).toContain('/profile');
+  expect(location.hash).toContain('profileMode=connections');
+  expect(harness.store.getState().shellChromeState.settingsOpen).toBe(false);
+  expect(traversal).not.toHaveBeenCalled();
+  traversal.mockRestore();
 });

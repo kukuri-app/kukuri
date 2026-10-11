@@ -40,6 +40,9 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, publ
       await adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', 'com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService');
       await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '1');
       await eventually('SDK TalkBack service binds', async () => (await adb('shell', 'dumpsys', 'accessibility')).includes('TalkBackService'));
+      const accessibility = await adb('shell', 'dumpsys', 'accessibility');
+      console.log('PWA SDK accessibility state', accessibility.split('\n').filter(line => /TalkBack|boundServices|bindingServices|touchExploration|FocusedWindow/.test(line)).join('\n'));
+      console.log('PWA SDK touch exploration', (await adb('shell', 'settings', 'get', 'secure', 'touch_exploration_enabled')).trim());
       await nativeSnapshot(adb, 'talkback-start');
       for (let step = 1; step <= 3; step += 1) {
         await adb('shell', 'input', 'swipe', '200', '700', '600', '700', '150');
@@ -49,8 +52,8 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, publ
       const tree = await adb('shell', 'cat', '/sdcard/kukuri-input-accessibility.xml');
       console.log('PWA SDK TalkBack native labels', JSON.stringify([...tree.matchAll(/(?:text|content-desc)="([^"]+)"/g)].map(match => match[1]).slice(0, 45)));
     } finally {
-      await adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', '');
       await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '0');
+      await adb('shell', 'settings', 'delete', 'secure', 'enabled_accessibility_services');
     }
     await browser.$('#shell-settings-drawer .shell-settings-close').click();
   }
@@ -173,6 +176,12 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, publ
     assert.equal(await publicColumn(browser).$('img[alt^="draft preview"]').isExisting(), false);
     console.log('PWA native file picker cancellation retains the text: PASS');
   }
+  await openSettings(browser, 'safety');
+  await browser.$('#shell-settings-drawer').$('button=Open muted users').click();
+  await eventually('settings handoff reaches muted connections', async () => (await browser.getUrl()).includes('connectionsView=muted'));
+  await browser.executeAsync(done => setTimeout(done, 200));
+  assert.ok((await browser.getUrl()).includes('connectionsView=muted'));
+  assert.equal(await browser.$('#shell-settings-drawer').getAttribute('data-open'), 'false');
   console.log('PWA input composer/control center back and retained draft: PASS');
   } finally {
     if (browserName === 'android') await nativeSnapshot(adb, 'final-state');

@@ -241,7 +241,7 @@ export function useDesktopShellRouting({
           settingsTriggerRef.current?.focus();
         });
       }
-      if (!open && settingsEntry.current) {
+      if (!open && restoreToTrigger && settingsEntry.current) {
         settingsEntry.current = false;
         navigate(-1);
         return;
