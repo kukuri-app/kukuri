@@ -20,9 +20,11 @@ if [ -n "$apk_url" ]; then
   "$tools/apksigner" verify --verbose --print-certs "$apk_dir/chrome.apk"
   badging=$("$tools/aapt" dump badging "$apk_dir/chrome.apk")
   grep -q "^package: name='com.android.chrome' " <<< "$badging"
-  stable=$(curl -sf https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json | jq -r '.channels.Stable.version')
   incoming=$(sed -n "s/^package: .*versionName='\([^']*\)'.*/\1/p" <<< "$badging")
-  [ "${incoming%%.*}" = "${stable%%.*}" ] || { echo 'Chrome APK is not the current stable milestone'; exit 1; }
+  # desktopのChrome for Testingではなく、Android Stableの現在の配布を照合する。
+  curl -sf "https://versionhistory.googleapis.com/v1/chrome/platforms/android/channels/stable/versions/$incoming/releases" |
+    jq -e --arg version "$incoming" '.releases | any(.version == $version and .serving.endTime == null and .fraction > 0)' >/dev/null ||
+    { echo 'Chrome APK is not an actively served Android Stable release'; exit 1; }
   adb install -r "$apk_dir/chrome.apk"
   echo "Verified Google Chrome APK $incoming; sha256 $(sha256sum "$apk_dir/chrome.apk" | cut -d' ' -f1)"
 fi
