@@ -75,8 +75,43 @@ async function reviewTalkBack(browser, openSettings, adb) {
     await browser.$('#shell-settings-drawer .shell-settings-close').click();
 }
 
+async function typeJapanese(browser, field, adb) {
+  if (!(await browser.execute(element => document.activeElement === element && visualViewport.height < innerHeight * .8, field))) {
+    await field.click();
+    const point = await browser.execute(element => {
+      const { left, top, width, height } = element.getBoundingClientRect();
+      return { x: (left + width / 2) * devicePixelRatio, y: (top + height / 2) * devicePixelRatio + 106 };
+    }, field);
+    // 同じAPI35/320px/200%画像で確認したstatus barの106pxを含む実field位置。
+    await adb('shell', 'input', 'tap', String(Math.round(point.x)), String(Math.round(point.y)));
+    await eventually('Japanese editor keyboard is visible', () => browser.execute(() => visualViewport.height < innerHeight * .8));
+  }
+  await browser.execute(element => {
+    window.__pwaImeEvents = [];
+    for (const type of ['compositionstart', 'compositionupdate', 'compositionend', 'keydown']) {
+      element.addEventListener(type, event => window.__pwaImeEvents.push({ type, key: event.key, composing: event.isComposing, data: event.data }));
+    }
+  }, field);
+  await adb('shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A');
+  await adb('shell', 'input', 'keyevent', 'KEYCODE_DEL');
+  // 実QWERTY画面の N I H O N N。変換eventや文字列をpageへ注入しない。
+  for (const [x, y] of [[585, 1570], [630, 1320], [502, 1440], [710, 1320], [585, 1570], [585, 1570]]) {
+    await adb('shell', 'input', 'tap', String(x), String(y));
+  }
+  await nativeSnapshot(adb, 'japanese-composing');
+  await adb('shell', 'input', 'tap', '450', '1700');
+  await adb('shell', 'input', 'keyevent', 'KEYCODE_ENTER');
+  const text = await field.getProperty('value');
+  assert.equal(text.trim(), '日本');
+  const events = await browser.execute(() => window.__pwaImeEvents);
+  assert.ok(events.some(event => event.type === 'compositionstart'));
+  assert.ok(events.some(event => event.type === 'compositionend'));
+  await nativeSnapshot(adb, 'japanese-converted');
+  return text.trim();
+}
+
 export async function pwaInputFlow({ openClient, greetNative, openSettings, openChannelDialog, dialogWith, nativeCreatesChannel, native,
-  nativeLinkPost, sees, enableDeveloperMode, publicColumn, openComposer, replaceValue, browserName, adb, origin, topic, phase, unconfirmed }) {
+  nativeLinkPost, sees, enableDeveloperMode, openDirectMessage, fixture, publicColumn, openComposer, replaceValue, browserName, adb, origin, topic, phase, unconfirmed }) {
   const browser = await openClient('pwa-input', { ice: true, beforeConsent: browserName === 'android' ? async browser => {
     const age = browser.$('[data-testid="age-attestation-checkbox"]');
     await age.waitForDisplayed({ timeout: 90_000 });
@@ -105,7 +140,7 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
     await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
   };
   try {
-  await greetNative(browser, 'pwa-input');
+  const hello = await greetNative(browser, 'pwa-input');
   if (browserName === 'android') {
     await installPwa(browser, adb);
     console.log('PWA input emulator IMEs', await adb('shell', 'ime', 'list', '-s'));
@@ -124,7 +159,40 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
     const ime = await openComposer(publicColumn(browser));
     await ime.waitForDisplayed();
     await configureJapanese(browser, ime, adb);
-    throw new Error('Japanese conversion Enter contracts are not yet evaluated');
+    // 追加だけではEnglishのままなので、実globe keyで日本語へ切り替える。
+    await adb('shell', 'input', 'tap', '250', '1700');
+    await nativeSnapshot(adb, 'japanese-keyboard');
+    const { pubkey: peer } = await fixture('/fixture/info');
+    const list = kind => webInvoke(browser, kind === 'dm' ? 'list_direct_message_messages' : kind === 'reply' ? 'list_thread' : 'list_timeline', {
+      request: { cursor: null, limit: 50, ...(kind === 'dm' ? { pubkey: peer } : kind === 'reply'
+        ? { topic, thread_id: hello.webPost.object_id } : { topic, scope: { kind: 'public' } }) },
+    });
+    for (const kind of ['post', 'reply', 'dm']) {
+      let field;
+      let submit;
+      if (kind === 'post') { field = ime; submit = publicColumn(browser).$('button=Post'); }
+      else if (kind === 'reply') {
+        await browser.$(`article*=${hello.fromWeb}`).$('button[aria-label="Reply"]').click();
+        field = browser.$('textarea[placeholder="Write a reply"]');
+        submit = browser.$('button=Reply');
+      } else {
+        await native('follow_author', { request: { pubkey: hello.webPost.author_pubkey } });
+        await openDirectMessage(browser, hello.fromNative, peer);
+        const column = browser.$(`section[data-column-id^="column:conversation:"][data-column-id$="${peer}"]`);
+        await column.$('button[aria-label^="Message to "]').click();
+        field = column.$('textarea[placeholder="Write a message"]');
+        submit = column.$('button=Send');
+      }
+      await field.waitForDisplayed();
+      const before = (await list(kind)).items.map(item => item.object_id ?? item.message_id);
+      const text = await typeJapanese(browser, field, adb);
+      assert.deepEqual((await list(kind)).items.map(item => item.object_id ?? item.message_id), before, `${kind}: conversion Enter does not send`);
+      await submit.click();
+      await eventually(`${kind}: explicit button sends the Japanese text`, async () => (await list(kind)).items.some(item =>
+        !before.includes(item.object_id ?? item.message_id) && (item.content ?? item.text).trim() === text));
+      console.log(`PWA real Japanese ${kind}: composition/Enter non-send/explicit submission PASS`);
+    }
+    return;
   }
   const field = await openComposer(publicColumn(browser));
   await field.waitForDisplayed();
@@ -273,7 +341,10 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
     await adb('shell', 'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', `file:///sdcard/Download/${name}`);
     const choose = async () => {
       await publicColumn(browser).$('button=Choose files').click();
-      await nativeTap(adb, attrs => attrs.text === 'Files', 'file provider');
+      await nativeTap(adb, attrs => attrs.text === 'Files', 'file provider', 3_000).catch(async () => {
+        await nativeTap(adb, attrs => attrs['content-desc'] === 'More options', 'photo picker options');
+        await nativeTap(adb, attrs => /^Browse/.test(attrs.text), 'browse files from the photo picker');
+      });
       await nativeTap(adb, attrs => attrs.text === name, 'image file', 5_000).catch(async () => {
         await nativeTap(adb, attrs => attrs['content-desc'] === 'Show roots', 'file locations');
         await nativeTap(adb, attrs => attrs.text === 'Downloads', 'Downloads folder');

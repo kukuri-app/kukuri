@@ -1919,7 +1919,7 @@ async function sameAccount() {
 }
 
 const inputProbe = phase => () => pwaInputFlow({ openClient, greetNative, openSettings, openChannelDialog, dialogWith, nativeCreatesChannel, native,
-    nativeLinkPost, sees, enableDeveloperMode, publicColumn, openComposer, replaceValue, browserName: BROWSER, adb, origin: ORIGIN, topic: TOPIC, phase, unconfirmed });
+    nativeLinkPost, sees, enableDeveloperMode, openDirectMessage, fixture, publicColumn, openComposer, replaceValue, browserName: BROWSER, adb, origin: ORIGIN, topic: TOPIC, phase, unconfirmed });
 
 /** scenario（`cargo xtask web-e2e` と CI の matrix は、`--list` でこの一覧を読む）。 */
 const scenarios = {
