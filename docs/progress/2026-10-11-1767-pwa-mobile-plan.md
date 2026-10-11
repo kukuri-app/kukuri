@@ -61,3 +61,23 @@ D1〜D5/M0〜M6の採用調査は終了。技術調査は該当ACの入口と結
 JS draft/snapshotにFile/Blobそのものを所有させ、共通invokeの期間だけaccount・host世代に束縛した入力参照へ変換する。共有raw-byte helperで1MiB以下ずつ読み、既存PendingAttachment・原本/poster/private/DM保存へ渡す。カスタムリアクションの独自decodeも統合する。選択時は同じchunk単位で読取りと原本hashを確認し、初回profileのretry判定を一時参照IDへ依存させない。
 
 永続stagingは追加しない。取消/失敗/切替で操作参照を失効させ、ページ終了/次回起動に残る仮入力は0件。既存JS全量base64をWeb File/Blob経路から撤去し、nativeと旧requestのbase64は維持する。Rustの既存原本Vecは維持し、全量メモリ回避の成果とは扱わない。終了判定は本表ACとT5のまま、追加製品上限なし。
+
+## 最終統合の確認（AC-INTEGRATE）
+
+main基準 `5537ca6da79cf19b62986fbd4fe81554d77a064d` から、以下の完成済みPWA統合を採用する。本番配備・公開URL/DNS・稼働CN設定は変更しない。mainへの反映と最終判定は統合PR・Issue #1767へ記録する。
+
+| AC | 統合merge / 検証head | 証拠 |
+| --- | --- | --- |
+| PLAN | `d495332a935e1706fbc0aaa1210960630ba74291` | [#1768](https://github.com/kukuri-app/kukuri/pull/1768)、ユーザー回答と正本の照合、tree一致 |
+| ENTRY | `a76d6e866b90727904285c7c248e5620dc76ecfe` / `068194480af0cc7871b2f300a25741cfea4628a3` | [#1769](https://github.com/kukuri-app/kukuri/pull/1769)、実API35 installed Chrome124/155のlauncher・standalone・同公開鍵・lock引継ぎと必須CI PASS |
+| SHELL | `a186f6c90f3f6188c5f7ff9c52a0ec02e9f57ca5` / `2b6c003d3623f839b88890864b9061f093e47529` | [#1770](https://github.com/kukuri-app/kukuri/pull/1770)、[独立監査PASS](https://github.com/kukuri-app/kukuri/pull/1770#issuecomment-6110238754)、両版のoffline受付/同ID配送・明示更新・cache回収、実必須CIとtree一致 |
+| INPUT | `aba52afff92ff2c6c4801911c88f6908bb34fd98` / `aaa8476ca4ad0616e5c7a52e5e7f3ef14cd0a615` | [#1771](https://github.com/kukuri-app/kukuri/pull/1771)、[独立監査PASS](https://github.com/kukuri-app/kukuri/pull/1771#issuecomment-6113915636)、[UI record](../ui-reviews/2026-10-12-1767-pwa-input.md)、両版の実IME3用途/TalkBack/Back/回転/file/鍵復元/確認前取消、実必須CIとtree一致 |
+| ATTACHMENT | `d00cfefe2bea26039cea84addc836d0c0dfb52eb` / `f02d859f8b5434bdd2e1dc2fff694c32ec4a1d1f` | [#1772](https://github.com/kukuri-app/kukuri/pull/1772)、[独立監査PASS](https://github.com/kukuri-app/kukuri/pull/1772#issuecomment-6114531549)、[124](https://github.com/kukuri-app/kukuri/actions/runs/38178751756/job/114588130933)/[155](https://github.com/kukuri-app/kukuri/actions/runs/38178781519/job/114588231397)の原本/8媒体組/共有caller/hash/失敗・切替・中断reload・参照失効、両版新source OSfile確認、実必須CIとtree一致 |
+
+#1766が引き継いだ11資産は同じmainの祖先から保持する。既存の同意/年齢申告/成人表示/private/通知/鍵移行/通信の意味を変更しない。変更した共有境界は各固定ACの監査と実測で判定済みで、未変更の資産の再実装・コピーはない。
+
+完成形はorigin内の既存1runtime/IndexedDB/WebCrypto/host/outboxへ接続する。Service Workerは静的shellだけ。Web入力は操作所有のBlobを共通raw-byte helperへ渡し、既存native/旧requestのbase64は互換性のため保持する。別の送信queue・永続staging・全履歴復旧・不要な新旧Web経路はない。一時CIのartifact再利用と調査用診断表示を撤去した。
+
+コード量は基準と候補の同じ変更pathで比較した。`apps/`・`crates/`・`scripts/`・`.github/`の実行可能なtext拡張子を対象にし、生成DTO・文書・binary assetを除く54ファイル。実装34ファイル10,322→11,026行、テスト16ファイル2,586→4,208行、補助4ファイル368→547行（合計13,276→15,781行）。追加の大半は合意したPWAの有限条件の試験であり、全件探索や未接続基盤を含めていない。判定には増減だけを使わず、共有Back/既存routing・host・cache・blob保存への集約と、同じ結果に不要な経路の撤去を照合する。
+
+実機接続0回。iPhone保証、漢字辞書候補、TalkBack音声録音/ADB swipeは成果へ加えない。INPUTのfreeze後Direct P2P区間はrelay混在で未確認として記録し、既存の通信契約を変更していない。各モバイル成功はinstalled PWA/実OS操作の証拠で、desktopの結果で代替していない。
