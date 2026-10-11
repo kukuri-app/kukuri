@@ -35,6 +35,7 @@ import { SettingsActionRow } from './SettingsActionRow';
 import { SettingsDiagnosticList } from './SettingsDiagnosticList';
 import { formatUpdateStatus } from './releasePanelCopy';
 import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
+import { PwaShellNotice } from './PwaShellNotice';
 
 function updateErrorTranslationKey(errorMessage?: string | null): string {
   return `settings:release.update.errors.${classifyUpdateError(errorMessage)}`;
@@ -195,8 +196,7 @@ export function ReleasePanel({
       {externalLink.pending ? <Notice role='status'>{t('common:externalLink.opening')}</Notice> : null}
       {externalLink.failed ? <Notice tone='destructive' role='alert'>{t('common:externalLink.failed')}</Notice> : null}
 
-      {/* Web は配信元から最新を読むので、アプリの更新は無い（ADR 0060 §3）。 */}
-      {IS_WEB_RUNTIME ? null : <section className='min-w-0 space-y-3'>
+      {IS_WEB_RUNTIME ? <PwaShellNotice /> : <section className='min-w-0 space-y-3'>
         <h4 className='text-base font-semibold text-foreground'>
           {t('settings:release.update.title')}
         </h4>
@@ -319,7 +319,7 @@ export function ReleasePanel({
         </p>
         <div className='grid gap-3 lg:grid-cols-2'>
           {[
-            // Web は更新を確かめず（配信元から最新を読む）、DHT を使わない。代わりに配信元から取得する（ADR 0060 §6）。
+            // Webは画面と更新用の固定資源を同originから取得する（ADR0066）。DHTは使わない。
             ...(IS_WEB_RUNTIME ? [{
               key: 'origin',
               destination: t('settings:release.externalTransmission.webOriginDestination'),

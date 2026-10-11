@@ -225,6 +225,7 @@ export type CreateAttachmentInput = {
   mime: string;
   byte_size: number;
   data_base64: string;
+  web_source?: { blob: Blob; owner: string; hash: string };
   role?: string | null;
 };
 

@@ -4,6 +4,10 @@
 
 Accepted（Issue #1220 W8 AC-1。実装と検証は同 Issue の AC-2〜6）
 
+Android Chrome の installed PWA・オフライン操作・更新の追加判断は
+[ADR 0066](./0066-pwa-mobile-install-offline-update.md)（#1767）を参照する。
+本 ADR の browser tab の結果は installed PWA の検証結果ではない。
+
 ## Context
 
 Web クライアントは、既存の React の UI と共通の domain・API を使い、ブラウザ内の Rust/WASM（`crates/web-runtime`、ADR 0056）を本人の client として動かす。

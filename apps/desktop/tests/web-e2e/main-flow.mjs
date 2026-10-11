@@ -22,6 +22,10 @@ import path from 'node:path';
 import { Key, remote } from 'webdriverio';
 import { androidClick } from './android-click.mjs';
 import { eventually } from './wait.mjs';
+import { installPwa, openPwaFromHome, pwaEntry } from './pwa-entry.mjs';
+import { pwaShellFlow } from './pwa-shell-flow.mjs';
+import { pwaInputFlow } from './pwa-input-flow.mjs';
+import { pwaAttachmentFlow } from './pwa-attachment-flow.mjs';
 
 const ORIGIN = process.env.KUKURI_WEB_E2E_ORIGIN ?? 'http://127.0.0.1:4180';
 const TOPIC = 'kukuri:topic:general';
@@ -70,7 +74,7 @@ const SELECT_ALL = process.platform === 'darwin' ? Key.Command : Key.Ctrl;
 const unconfirmed = [];
 
 const adb = (...args) =>
-  new Promise((resolve, reject) => execFile('adb', args, (error) => (error ? reject(error) : resolve())));
+  new Promise((resolve, reject) => execFile('adb', args, (error, stdout) => (error ? reject(error) : resolve(stdout))));
 
 async function fixture(route, body) {
   const response = await fetch(`${ORIGIN}${route}`, body === undefined ? undefined : {
@@ -109,7 +113,7 @@ const nativeReact = (target, emoji) =>
 const clients = [];
 
 /** 新しい profile のブラウザを開き、初回同意 → Community Node の同意まで進める（profile の dialog が出ている）。 */
-async function startClient(name, { ice }) {
+async function startClient(name, { ice, beforeConsent }) {
   const kind = SINGLE && clients.length > 0 ? 'chrome' : BROWSER;
   const paired = `${SINGLE} with ${SINGLE} (the driver opens one session at a time)`;
   if (kind !== BROWSER && !unconfirmed.includes(paired)) unconfirmed.push(paired);
@@ -197,13 +201,14 @@ async function startClient(name, { ice }) {
     });
   }
   await browser.url(ORIGIN);
+  await beforeConsent?.(browser);
   await acceptFirstRun(browser);
   return browser;
 }
 
 /** 新しい profile のブラウザを開き、初回同意 → Community Node の同意 → アカウントの profile まで進める。 */
-async function openClient(name, { ice }) {
-  const browser = await startClient(name, { ice });
+async function openClient(name, { ice, beforeConsent }) {
+  const browser = await startClient(name, { ice, beforeConsent });
   const profile = await dialogWith(browser, 'Set up your profile');
   const displayName = profile.$('input');
   await displayName.waitForClickable({ timeout: WAIT });
@@ -820,6 +825,16 @@ async function acceptFirstRun(browser) {
  */
 async function siteData() {
   const browser = await openClient('web-a', { ice: true });
+  if (BROWSER === 'android') {
+    await greetNative(browser, 'key-recovery');
+    const oldTab = await installPwa(browser, adb);
+    const pwa = await browser.getWindowHandle();
+    // deleteDatabaseは開いているoriginのDB connectionを待つ。試験自身の元tabを閉じる。
+    await browser.switchToWindow(oldTab);
+    await browser.closeWindow();
+    await browser.switchToWindow(pwa);
+    await openPwaFromHome(adb);
+  }
   const passphrase = `recovery-${RUN}`;
   await openSettings(browser, 'account');
   // 保存の状態を偽らない: 示す状態は browser の答えと同じ。
@@ -835,6 +850,11 @@ async function siteData() {
   // 値は page で読む（Android の chromedriver の getValue は textarea の値を空で返す）。
   const exported = await browser.execute((element) => element.value, await envelope);
   const [publicKey] = (await browser.$('[data-testid="export-result"]').getText()).match(/[0-9a-f]{64}/);
+  if (BROWSER === 'android') {
+    // headless用clipboard mockを外し、実Android clipboardへ暗号化JSONだけをコピーする。
+    await browser.execute(() => { delete navigator.clipboard.writeText; });
+    await browser.$('[data-testid="export-result"]').$('button=Copy').click();
+  }
   // 鍵の導出の Worker（export）が CSP の下で動いた。
   await assertNoCspViolations(browser);
 
@@ -846,6 +866,7 @@ async function siteData() {
         const request = indexedDB.deleteDatabase(name);
         request.onsuccess = resolve;
         request.onerror = () => reject(request.error);
+        request.onblocked = () => reject(new Error('site-data deletion is blocked by an open document'));
       });
     }
     localStorage.clear();
@@ -857,7 +878,13 @@ async function siteData() {
   await acceptFirstRun(browser);
   await (await dialogWith(browser, 'Set up your profile')).$('button=Restore a previous account').click();
   const add = await dialogWith(browser, 'Import an encrypted account key');
-  await add.$('[data-testid="import-input"]').setValue(exported);
+  const importInput = add.$('[data-testid="import-input"]');
+  if (BROWSER === 'android') {
+    await importInput.click();
+    await adb('shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_V');
+    await eventually('encrypted key pastes from the Android clipboard', async () => await importInput.getProperty('value') === exported);
+    await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+  } else await importInput.setValue(exported);
   await add.$('[data-testid="import-preview-button"]').click();
   await add.$('[data-testid="import-passphrase"]').setValue(passphrase);
   await add.$('[data-testid="import-submit"]').click();
@@ -1307,6 +1334,7 @@ async function lifecycle() {
   const { endpoint_id: nativeEndpoint, pubkey: nativePubkey } = await fixture('/fixture/info');
   const a = await openClient('web-a', { ice: true });
   const withA = await greetNative(a, 'web-a');
+  if (BROWSER === 'android') await installPwa(a, adb);
   const aPubkey = withA.webPost.author_pubkey;
   const aEndpoint = await assertConnected(a, [nativeEndpoint], nativeEndpoint);
   // 前提: native と相互に follow する（回線全断の段の DM）。成人向け表示（runtime が保存し、既定は無効）を有効にする。a は native
@@ -1891,8 +1919,20 @@ async function sameAccount() {
   assert.ok(afterLoss.archived - beforeLoss.archived <= 1, 'one request advances the epoch at most once');
 }
 
+const inputProbe = phase => () => pwaInputFlow({ openClient, greetNative, openSettings, openChannelDialog, dialogWith, nativeCreatesChannel, native,
+    nativeLinkPost, sees, enableDeveloperMode, openDirectMessage, fixture, publicColumn, openComposer, replaceValue, browserName: BROWSER, adb, origin: ORIGIN, topic: TOPIC, phase, unconfirmed });
+
 /** scenario（`cargo xtask web-e2e` と CI の matrix は、`--list` でこの一覧を読む）。 */
 const scenarios = {
+  'pwa-attachment': () => pwaAttachmentFlow({ openClient, greetNative, native, fixture, nativeCreatesChannel, joinChannel,
+    publicColumn, openComposer, replaceValue, topic: TOPIC, origin: ORIGIN, run: RUN, browserName: BROWSER, adb }),
+  'pwa-input': inputProbe('input'),
+  'pwa-ime': inputProbe('ime'),
+  'pwa-accessibility': inputProbe('accessibility'),
+  'pwa-shell': () => pwaShellFlow({ openClient, greetNative, native, fixture, openDirectMessage,
+    nativeCreatesChannel, joinChannel, openSettings, publicColumn, channelColumn, openComposer, replaceValue, openChannelDialog, channelDialogClosed, seesInChannel,
+    origin: ORIGIN, topic: TOPIC, run: RUN, browserName: BROWSER, adb }),
+  'pwa-entry': () => pwaEntry({ openClient, openSettings, browserName: BROWSER, origin: ORIGIN, adb, unconfirmed }),
   direct,
   fallback,
   settings,

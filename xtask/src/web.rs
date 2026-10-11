@@ -79,18 +79,32 @@ fn web_build(test_community_node: Option<&str>) -> Result<()> {
         wasm.display().to_string(),
     ]);
     run("wasm-bindgen", args, &root)?;
-    run_pnpm_with_env(
-        ["exec", "vite", "build"],
-        &desktop_dir(),
-        &[
-            ("VITE_KUKURI_TARGET", "web"),
-            // 空なら配布の設定（`webRuntime.ts`）。手元の環境の値を配信の build に持ち込まない。
-            (
-                "VITE_KUKURI_COMMUNITY_NODE_BASE_URL",
-                test_community_node.unwrap_or(""),
-            ),
-        ],
-    )
+    let frontend_env = [
+        ("VITE_KUKURI_TARGET", "web"),
+        (
+            "KUKURI_WEB_E2E",
+            if test_community_node.is_some() {
+                "1"
+            } else {
+                ""
+            },
+        ),
+        // 空なら配布の設定（`webRuntime.ts`）。手元の環境の値を配信の build に持ち込まない。
+        (
+            "VITE_KUKURI_COMMUNITY_NODE_BASE_URL",
+            test_community_node.unwrap_or(""),
+        ),
+    ];
+    run_pnpm_with_env(["exec", "vite", "build"], &desktop_dir(), &frontend_env)?;
+    if test_community_node.is_some() {
+        run_with_env(
+            "node",
+            ["tests/web-e2e/prepare-shell-build.mjs"],
+            &desktop_dir(),
+            &frontend_env,
+        )?;
+    }
+    Ok(())
 }
 
 /// 配信の artifact（`apps/desktop/dist-web`。ADR 0060 §1・§2、#1220 AC-6）。上限を超える file があれば失敗にする。

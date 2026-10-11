@@ -33,6 +33,8 @@ pub use accounts::{
     AccountsSnapshot, account_db_path, add_account_from_env, ensure_accounts_initialized_from_env,
     import_account_key_from_env, list_accounts, preview_account_key_import, set_active_account,
 };
+#[cfg(target_family = "wasm")]
+pub use attachments::{WebAttachmentInput, install_web_attachment_input};
 #[cfg(not(target_family = "wasm"))]
 pub use backup::{
     CreateDeviceBackupRequest, DeviceBackupCancellation, DeviceBackupPhase, DeviceBackupPreview,
@@ -122,6 +124,8 @@ pub use kukuri_app_api::{
 };
 pub use kukuri_transport::{ConnectivityPeerKind, PeerPage};
 pub use requests::CreateAccountRequest;
+#[cfg(target_family = "wasm")]
+pub use requests::WebAttachmentRef;
 pub use stack::{NodeSource, StackStore};
 #[cfg(target_family = "wasm")]
 pub use storage::install_platform_storage;

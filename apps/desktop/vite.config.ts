@@ -1,8 +1,11 @@
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
+import type { Plugin } from 'vite';
+import { webPwaShell } from './scripts/webPwaShell.mjs';
 
 const env = (
   globalThis as typeof globalThis & {
@@ -25,7 +28,24 @@ const webTarget = env?.VITE_KUKURI_TARGET === 'web';
 const webRuntimePkg = env?.KUKURI_WEB_RUNTIME_PKG ?? path.resolve(import.meta.dirname, './web-runtime-pkg');
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), ...(webTarget ? [{
+    name: 'web-pwa-entry',
+    transformIndexHtml() {
+      return [
+        { tag: 'link', attrs: { rel: 'manifest', href: '/manifest.webmanifest' }, injectTo: 'head' as const },
+        { tag: 'meta', attrs: { name: 'theme-color', content: '#121212' }, injectTo: 'head' as const },
+      ];
+    },
+    generateBundle() {
+      // 既存ロゴをbuildへ出す。Web用のロゴコピーをrepositoryに持たない。
+      for (const [size, file] of [
+        [192, 'android/mipmap-xxxhdpi/ic_launcher.png'], [512, 'icon.png'],
+      ] as const) {
+        this.emitFile({ type: 'asset', fileName: `icons/kukuri-${size}.png`,
+          source: readFileSync(path.resolve(import.meta.dirname, 'src-tauri/icons', file)) });
+      }
+    },
+  } satisfies Plugin, webPwaShell()] : [])],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),

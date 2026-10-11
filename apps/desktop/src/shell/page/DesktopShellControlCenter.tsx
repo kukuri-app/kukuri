@@ -6,6 +6,7 @@ import {
   type RefObject,
 } from 'react';
 import { AccountMenu } from './AccountMenu';
+import { useWebBackLayer } from '@/lib/useWebBackLayer';
 import { useTranslation } from 'react-i18next';
 import {
   Bell,
@@ -64,6 +65,7 @@ import { applySavedWorkspaceLayout } from '@/shell/savedWorkspaceLayouts';
 import { ColumnScopeLeases } from '@/shell/page/ColumnScopeLeases';
 import { ControllerPendingNotice } from '@/shell/page/ControllerPendingNotice';
 import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
+import { usePwaShellStore } from '@/lib/pwaShell';
 
 export const CONTROL_CENTER_ID = 'shell-control-center';
 
@@ -87,7 +89,7 @@ type DesktopShellControlCenterProps = TopicListProps & {
   // 「場所」の未参加 topic から作成・参加 Dialog を開く。topic を選択してから開く(Issue #966)。
   onOpenChannelManagerForTopic: (topic: string) => void;
   onActivateColumn: (column: ColumnState) => void | Promise<void>;
-  onOpenSettings: (section: SettingsSection) => void;
+  onOpenSettings: (section: SettingsSection, mode?: 'push' | 'replace') => void;
   onOpenProfile: () => void;
   onOpenTesterFeedback: () => void;
 };
@@ -109,7 +111,7 @@ export function DesktopShellControlCenter({
   topicItems,
   topicInput,
   titles,
-  updateAvailable,
+  updateAvailable: desktopUpdateAvailable,
   onTopicInputChange,
   onAddTopic,
   onOpenChannelManager,
@@ -128,6 +130,8 @@ export function DesktopShellControlCenter({
   onToggleTopicGossip,
   onToggleChannelGossip,
 }: DesktopShellControlCenterProps) {
+  const webUpdateAvailable = usePwaShellStore(state => state.available);
+  const updateAvailable = IS_WEB_RUNTIME ? webUpdateAvailable : desktopUpdateAvailable;
   const { t } = useTranslation(['shell', 'common', 'settings', 'channels']);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const {
@@ -203,6 +207,7 @@ export function DesktopShellControlCenter({
     },
     [setWorkspaceState]
   );
+  useWebBackLayer(workspaceState.controlCenterOpen, () => setOpen(false, true));
 
   useEffect(() => {
     if (!workspaceState.controlCenterOpen) return;
@@ -269,7 +274,7 @@ export function DesktopShellControlCenter({
 
   const openSettings = (section: SettingsSection) => {
     setOpen(false);
-    onOpenSettings(section);
+    onOpenSettings(section, IS_WEB_RUNTIME ? 'replace' : 'push');
   };
 
   const selectTopic = (topic: string) => {
