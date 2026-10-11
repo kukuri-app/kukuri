@@ -389,6 +389,10 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
     }
     await choose();
     await publicColumn(browser).$(`img[alt="draft preview ${name}"]`).waitForDisplayed();
+    assert.equal(await browser.execute(() => {
+      const form = document.querySelector('.shell-column-composer .composer');
+      return form.scrollWidth > form.clientWidth + 1;
+    }), false, '320px/200% composer keeps text and attachment controls within its width');
     assert.equal(await composer.getProperty('value'), before);
     await browser.execute(element => element.scrollIntoView({ block: 'center', inline: 'center' }), await publicColumn(browser).$(`img[alt="draft preview ${name}"]`));
     await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 700))));

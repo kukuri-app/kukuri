@@ -74,6 +74,7 @@
 
 .draft-attachment-item {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: var(--space-md);
   align-items: center;
@@ -87,6 +88,8 @@
   align-items: center;
   gap: var(--space-md);
   min-width: 0;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
 }
 
 .draft-preview-frame {
@@ -113,6 +116,7 @@
 
 .composer {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-sm);
   min-width: 0;
 }
