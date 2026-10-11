@@ -7,10 +7,6 @@ scenario="$1"
 trap 'status=$?; if [ "$status" -ne 0 ]; then adb logcat -d -b crash -t 150 || true; adb shell dumpsys meminfo | head -60 || true; fi; exit "$status"' EXIT
 
 adb wait-for-device
-echo 'SDK TalkBack package diagnostics'
-adb shell pm list packages -u | grep 'talkback' || true
-adb shell pm path com.google.android.marvin.talkback || true
-adb shell dumpsys package com.google.android.marvin.talkback | grep -E 'codePath=|versionName=|primaryCpuAbi=|User 0:|flags=' || true
 if [[ "$scenario" =~ ^pwa-(input|ime|accessibility)$ ]]; then
   density=$(adb shell wm density | sed -n 's/.*density: \([0-9]*\).*/\1/p' | tail -1)
   adb shell wm size "$((320 * density / 160))x$((720 * density / 160))"
