@@ -5,8 +5,22 @@ import { useTranslation } from 'react-i18next';
 
 import { IconButtonTooltip } from '@/components/ui/icon-button';
 import { cn } from '@/lib/utils';
+import { useWebBackLayer } from '@/lib/useWebBackLayer';
+import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
-export const Dialog = DialogPrimitive.Root;
+const DialogOpen = React.createContext<{ open: boolean; close: () => void }>({ open: false, close: () => undefined });
+function WebDialog({ open: controlled, defaultOpen = false, onOpenChange, ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
+  const [open, setOpen] = React.useState(defaultOpen);
+  const current = controlled ?? open;
+  const change = (next: boolean) => {
+    setOpen(next);
+    onOpenChange?.(next);
+  };
+  return <DialogOpen.Provider value={{ open: current, close: () => change(false) }}>
+    <DialogPrimitive.Root {...props} open={current} onOpenChange={change} />
+  </DialogOpen.Provider>;
+}
+export const Dialog = IS_WEB_RUNTIME ? WebDialog : DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
 export const DialogPortal = DialogPrimitive.Portal;
 export const DialogClose = DialogPrimitive.Close;
@@ -33,6 +47,12 @@ export const DialogContent = React.forwardRef<
 >(({ className, children, hideClose = false, closeLabel, ...props }, ref) => {
   const { t } = useTranslation('common');
   const resolvedCloseLabel = closeLabel ?? t('actions.closeDialog');
+  const dialog = React.useContext(DialogOpen);
+  useWebBackLayer(dialog.open, () => {
+    const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    props.onEscapeKeyDown?.(event);
+    if (!event.defaultPrevented) dialog.close();
+  });
   return (
     <DialogPortal>
       <DialogOverlay />

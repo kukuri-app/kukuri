@@ -15,6 +15,7 @@ import {
   type ColumnDraftTarget,
 } from '@/shell/slices/columnDrafts';
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
+import { useWebBackLayer } from '@/lib/useWebBackLayer';
 
 type ColumnComposerFooterProps = {
   active: boolean;
@@ -94,6 +95,7 @@ export function ColumnComposerFooter({
     restoreFocusRef.current = true;
     updateDraft((current) => ({ ...current, expanded: false }));
   };
+  useWebBackLayer(active && draft.expanded, collapse);
   // #964: Esc は投稿作成を閉じる。メンション候補が消費した Escape(defaultPrevented)と
   // IME 変換中は扱わず、消費した場合は global の Escape cascade(#765)が pane を閉じないよう
   // preventDefault する。下書き・返信先・投稿先は store に残す。

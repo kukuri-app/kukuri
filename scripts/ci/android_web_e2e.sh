@@ -7,6 +7,25 @@ scenario="$1"
 trap 'status=$?; if [ "$status" -ne 0 ]; then adb logcat -d -b crash -t 150 || true; adb shell dumpsys meminfo | head -60 || true; fi; exit "$status"' EXIT
 
 adb wait-for-device
+if [[ "$scenario" =~ ^pwa-(input|ime|accessibility)$ ]]; then
+  density=$(adb shell wm density | sed -n 's/.*density: \([0-9]*\).*/\1/p' | tail -1)
+  adb shell wm size "$((320 * density / 160))x$((720 * density / 160))"
+  adb shell settings put system font_scale 2.0
+fi
+if [ "$scenario" = pwa-accessibility ]; then
+  # UiAutomationの通常dumpはTalkBackを抑制するため、focusだけを非抑制のinstrumentationで読む。
+  focus_dir=$(mktemp -d)
+  platform="$ANDROID_HOME/platforms/android-35/android.jar"
+  [ -f "$platform" ] || sdkmanager 'platforms;android-35'
+  build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+  javac -source 8 -target 8 -cp "$platform" -d "$focus_dir" apps/desktop/tests/web-e2e/android-focus/FocusProbe.java
+  "$build_tools/d8" --lib "$platform" --output "$focus_dir" "$focus_dir/app/kukuri/focusprobe/FocusProbe.class"
+  "$build_tools/aapt" package -f -M apps/desktop/tests/web-e2e/android-focus/AndroidManifest.xml -I "$platform" -F "$focus_dir/probe.apk"
+  (cd "$focus_dir" && "$build_tools/aapt" add probe.apk classes.dex)
+  keytool -genkeypair -keystore "$focus_dir/probe.keystore" -storepass android -keypass android -alias probe -keyalg RSA -dname 'CN=kukuri test' -validity 3650
+  "$build_tools/apksigner" sign --ks "$focus_dir/probe.keystore" --ks-pass pass:android --key-pass pass:android --ks-key-alias probe "$focus_dir/probe.apk"
+  adb install "$focus_dir/probe.apk"
+fi
 # 現行stableの検証も隔離CIで自動準備する。通常のlaneは既存imageのChromeを使う。
 apk_url=$(jq -r '.inputs.android_chrome_apk_url // ""' "${GITHUB_EVENT_PATH:-/dev/null}")
 if [ -n "$apk_url" ]; then

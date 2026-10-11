@@ -3,7 +3,7 @@ import { eventually } from './wait.mjs';
 import { webInvoke } from './web-invoke.mjs';
 
 // OS操作は隔離されたCIのemulatorだけ。手元の端末でこのhelperを使わない。
-async function nativeTap(adb, matches, what, timeout = 30_000) {
+export async function nativeTap(adb, matches, what, timeout = 30_000) {
   assert.equal(process.env.CI, 'true', 'PWA OS actions require the isolated CI emulator');
   let lastXml = '';
   const node = await eventually(`PWA Android ${what}`, async () => {
@@ -29,11 +29,11 @@ async function accounts(browser) {
   return webInvoke(browser, 'list_accounts');
 }
 
-async function openPwaFromHome(adb) {
+export async function openPwaFromHome(adb) {
   await adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
   const homeIcon = attrs => /^(kukuri|kukuri web)$/.test(attrs.text);
   await nativeTap(adb, homeIcon, 'home icon', 5_000).catch(async () => {
-    const size = (await adb('shell', 'wm', 'size')).match(/(\d+)x(\d+)/);
+    const size = [...(await adb('shell', 'wm', 'size')).matchAll(/(\d+)x(\d+)/g)].at(-1);
     assert.ok(size, 'emulator display size');
     const [width, height] = size.slice(1).map(Number);
     await adb('shell', 'input', 'swipe', String(Math.floor(width * .85)), String(Math.floor(height * .5)),
@@ -83,7 +83,19 @@ export async function installPwa(browser, adb) {
   assert.equal(process.env.CI, 'true', 'installed PWA verification requires the CI emulator');
   try {
     await nativeTap(adb, attrs => attrs['resource-id'] === 'com.android.chrome:id/menu_button', 'Chrome menu');
-    const installMenu = await nativeTap(adb, attrs => /^(Add to home screen|Install app|Install and create shortcut)$/i.test(attrs.text), 'install menu');
+    const installItem = attrs => /^(Add to home screen|Install app|Install and create shortcut)$/i.test(attrs.text);
+    const installMenu = await nativeTap(adb, installItem, 'install menu', 5_000).catch(async () => {
+      // 200%文字ではChrome155のmenu下部がviewport外になる。実menuをscrollする。
+      const size = [...(await adb('shell', 'wm', 'size')).matchAll(/(\d+)x(\d+)/g)].at(-1);
+      assert.ok(size);
+      const [width, height] = size.slice(1).map(Number);
+      for (let step = 0; step < 3; step++) {
+        await adb('shell', 'input', 'swipe', String(Math.floor(width * .7)), String(Math.floor(height * .8)),
+          String(Math.floor(width * .7)), String(Math.floor(height * .3)), '400');
+        try { return await nativeTap(adb, installItem, 'scrolled install menu', 3_000); }
+        catch (error) { if (step === 2) throw error; }
+      }
+    });
     await nativeState(adb, 'install choices');
     await nativeTap(adb, attrs => /^(Install|Add)$/i.test(attrs.text) &&
       /\/(option_text_install|positive_button|button1)$/.test(attrs['resource-id']), 'install confirmation');
