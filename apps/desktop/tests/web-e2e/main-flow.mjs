@@ -1896,7 +1896,7 @@ async function sameAccount() {
 /** scenario（`cargo xtask web-e2e` と CI の matrix は、`--list` でこの一覧を読む）。 */
 const scenarios = {
   'pwa-shell': () => pwaShellFlow({ openClient, greetNative, native, fixture, openDirectMessage,
-    nativeCreatesChannel, joinChannel, openSettings, publicColumn, openComposer, replaceValue, openChannelDialog, channelDialogClosed, seesInChannel,
+    nativeCreatesChannel, joinChannel, openSettings, publicColumn, channelColumn, openComposer, replaceValue, openChannelDialog, channelDialogClosed, seesInChannel,
     origin: ORIGIN, topic: TOPIC, run: RUN, browserName: BROWSER, adb }),
   'pwa-entry': () => pwaEntry({ openClient, openSettings, browserName: BROWSER, origin: ORIGIN, adb, unconfirmed }),
   direct,

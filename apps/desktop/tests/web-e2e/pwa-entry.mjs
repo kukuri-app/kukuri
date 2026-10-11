@@ -122,10 +122,9 @@ export async function installPwa(browser, adb) {
     const after = await accounts(browser);
     assert.equal(after.active_account_id, before.active_account_id);
     assert.equal(after.accounts[0].pubkey, before.accounts[0].pubkey);
-    console.log('PWA driver focus before native foreground', await browser.execute(() => ({ visibility: document.visibilityState, focus: document.hasFocus() })));
     await openPwaFromHome(adb);
-    console.log('PWA native foreground', await browser.execute(() => ({ visibility: document.visibilityState, focus: document.hasFocus() })));
     await eventually('PWA document is visible', () => browser.execute(() => document.visibilityState === 'visible'));
+    console.log('PWA native foreground', await browser.execute(() => ({ visibility: document.visibilityState, focus: document.hasFocus() })));
     const activity = (await adb('shell', 'dumpsys', 'activity', 'activities')).split('\n').find(line => /mResumedActivity|topResumedActivity/.test(line));
     console.log(`PWA launcher/standalone/account: PASS; ${activity?.trim()}`);
     return tab;

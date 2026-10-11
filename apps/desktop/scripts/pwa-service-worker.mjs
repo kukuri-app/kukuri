@@ -65,13 +65,13 @@ globalThis.addEventListener('fetch', event => {
   if (event.request.method !== 'GET' || url.origin !== globalThis.location.origin) return;
   event.respondWith((async () => {
     if (event.request.mode === 'navigate' && url.pathname === '/') {
-      const html = await (await caches.open(CACHE)).match('/');
+      const html = await caches.match('/', { cacheName: CACHE });
       if (html) return html;
     }
     // 旧tabの遅延assetも、使用中の固定buildのcacheから読む。
     if (!url.search) {
       for (const name of (await caches.keys()).filter(name => name.startsWith(PREFIX))) {
-        const hit = await (await caches.open(name)).match(event.request);
+        const hit = await caches.match(event.request, { cacheName: name });
         if (hit) return hit;
       }
     }
