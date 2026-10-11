@@ -6,6 +6,7 @@ import { browserDesktopMockSeed } from '@/mocks/browserSeed';
 import { type DesktopMockApiOptions } from '@/mocks/desktopApiMock';
 import { installWindowDesktopMock } from '@/mocks/installWindowDesktopMock';
 import { IS_WEB_RUNTIME, startWebRuntime } from '@/lib/webRuntime';
+import { startPwaInstall } from '@/lib/pwaInstall';
 import { App } from './App';
 import '@/styles/index.css';
 
@@ -23,6 +24,7 @@ if (import.meta.env.DEV) {
 
 // Web の build は、描画の前に WASM を読み込んで runtime の起動を始める（起動の終わりは待たず、起動の状態の画面で待つ）。
 // 失敗しても描画し、起動の状態の画面で示す。
+if (IS_WEB_RUNTIME) startPwaInstall();
 const webRuntimeReady = IS_WEB_RUNTIME ? startWebRuntime().catch(() => undefined) : Promise.resolve();
 
 void Promise.all([webRuntimeReady, initializeDesktopLocale()]).then(() => {
