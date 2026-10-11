@@ -1897,7 +1897,7 @@ async function sameAccount() {
 const scenarios = {
   'pwa-shell': () => pwaShellFlow({ openClient, greetNative, native, fixture, openDirectMessage,
     nativeCreatesChannel, joinChannel, openSettings, publicColumn, openComposer, post, sendDirectMessage,
-    nativeSees, nativeSeesInChannel, origin: ORIGIN, topic: TOPIC, run: RUN, browserName: BROWSER }),
+    origin: ORIGIN, topic: TOPIC, run: RUN, browserName: BROWSER, adb }),
   'pwa-entry': () => pwaEntry({ openClient, openSettings, browserName: BROWSER, origin: ORIGIN, adb, unconfirmed }),
   direct,
   fallback,

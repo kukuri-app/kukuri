@@ -54,7 +54,6 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
   assert.equal(manifest.value.start_url, '/');
   assert.equal(manifest.value.scope, '/');
   assert.equal(manifest.value.display, 'standalone');
-  const before = await accounts(browser);
   await openSettings(browser, 'about');
   await browser.$('section[aria-label="Home screen"]').waitForDisplayed();
   await browser.$('#shell-settings-drawer .shell-settings-close').click();
@@ -62,6 +61,11 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
     unconfirmed.push('installed Android PWA: OS actions run only in the Android CI emulator');
     return;
   }
+  await installPwa(browser, adb);
+}
+
+export async function installPwa(browser, adb) {
+  const before = await accounts(browser);
   assert.equal(process.env.CI, 'true', 'installed PWA verification requires the CI emulator');
   try {
     await nativeTap(adb, attrs => attrs['resource-id'] === 'com.android.chrome:id/menu_button', 'Chrome menu');
