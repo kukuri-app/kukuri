@@ -235,6 +235,7 @@ export function DesktopShellPage({
   const {
     syncRoute,
     setSettingsOpen,
+    openSettingsSection,
     focusPrimarySection,
     focusTimelineView,
     openDirectMessageList,
@@ -480,18 +481,10 @@ export function DesktopShellPage({
       ),
     [communityNodeConfig, communityNodeManifests, communityNodeStatuses]
   );
-  const handleOpenSettingsSection = useCallback((section: SettingsSection) => {
+  const handleOpenSettingsSection = useCallback((section: SettingsSection, mode: 'push' | 'replace' = 'push') => {
     if (section === 'community-node') setIndexingTarget(null);
-    setShellChromeState((current) => ({
-      ...current,
-      settingsOpen: true,
-      activeSettingsSection: section,
-    }));
-    syncRoute('push', {
-      settingsOpen: true,
-      settingsSection: section,
-    });
-  }, [setShellChromeState, syncRoute]);
+    openSettingsSection(section, mode);
+  }, [openSettingsSection]);
   const handleOpenCommunityNodeSettings = useCallback(() => handleOpenSettingsSection('community-node'), [handleOpenSettingsSection]);
   const handleOpenConnectivitySettings = useCallback(() => handleOpenSettingsSection('connectivity'), [handleOpenSettingsSection]);
   const handleOpenTimelineSection = useCallback(() => focusPrimarySection('timeline'), [focusPrimarySection]);

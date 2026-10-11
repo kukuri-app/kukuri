@@ -35,6 +35,24 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, publ
     await installPwa(browser, adb);
     console.log('PWA input emulator IMEs', await adb('shell', 'ime', 'list', '-s'));
     console.log('PWA input emulator accessibility', await adb('shell', 'pm', 'list', 'packages', 'com.google.android.marvin.talkback'));
+    await openSettings(browser, 'appearance');
+    try {
+      await adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', 'com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService');
+      await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '1');
+      await eventually('SDK TalkBack service binds', async () => (await adb('shell', 'dumpsys', 'accessibility')).includes('TalkBackService'));
+      await nativeSnapshot(adb, 'talkback-start');
+      for (let step = 1; step <= 3; step += 1) {
+        await adb('shell', 'input', 'swipe', '200', '700', '600', '700', '150');
+        await nativeSnapshot(adb, `talkback-focus-${step}`);
+      }
+      await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-input-accessibility.xml');
+      const tree = await adb('shell', 'cat', '/sdcard/kukuri-input-accessibility.xml');
+      console.log('PWA SDK TalkBack native labels', JSON.stringify([...tree.matchAll(/(?:text|content-desc)="([^"]+)"/g)].map(match => match[1]).slice(0, 45)));
+    } finally {
+      await adb('shell', 'settings', 'put', 'secure', 'enabled_accessibility_services', '');
+      await adb('shell', 'settings', 'put', 'secure', 'accessibility_enabled', '0');
+    }
+    await browser.$('#shell-settings-drawer .shell-settings-close').click();
   }
   const field = await openComposer(publicColumn(browser));
   const text = 'retained native back draft';
@@ -58,6 +76,8 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, publ
       throw error;
     }
     await nativeSnapshot(adb, 'gboard-language-list');
+    await nativeTap(adb, attrs => attrs['content-desc'] === 'Search language', 'search Gboard languages');
+    await adb('shell', 'input', 'text', 'Japanese');
     await nativeTap(adb, attrs => attrs.text === 'Japanese', 'Japanese language');
     await nativeTap(adb, attrs => attrs.text === 'QWERTY', 'Japanese QWERTY');
     await nativeTap(adb, attrs => attrs.text === 'Done', 'save Japanese keyboard');
@@ -83,8 +103,26 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, publ
   await eventually('back collapses only the composer', async () => !(await publicColumn(browser).$('textarea[placeholder="Write a post"]').isExisting()));
   assert.equal(new URL(await browser.getUrl()).origin, origin);
   assert.equal(await (await openComposer(publicColumn(browser))).getProperty('value'), text);
+  await openSettings(browser, 'appearance');
+  await browser.$('#shell-settings-drawer .shell-settings-close').click();
+  await eventually('settings manual close', async () => await browser.$('#shell-settings-drawer').getAttribute('data-open') === 'false');
+  if (browserName === 'android') await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+  else await browser.back();
+  await eventually('manual settings close leaves no disposed route layer', async () => !(await publicColumn(browser).$('textarea[placeholder="Write a post"]').isExisting()));
+  assert.equal(await browser.$('#shell-settings-drawer').getAttribute('data-open'), 'false');
+  console.log('PWA input manual settings close leaves no history step: PASS');
+  assert.equal(await (await openComposer(publicColumn(browser))).getProperty('value'), text);
+  await openSettings(browser, 'appearance');
+  if (browserName === 'android') await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+  else await browser.back();
+  await eventually('back closes settings before the composer', async () => await browser.$('#shell-settings-drawer').getAttribute('data-open') === 'false');
+  assert.equal(await publicColumn(browser).$('textarea[placeholder="Write a post"]').getProperty('value'), text);
+  if (browserName === 'android') await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+  else await browser.back();
+  await eventually('the next back closes the composer without an extra settings step', async () => !(await publicColumn(browser).$('textarea[placeholder="Write a post"]').isExisting()));
+  console.log('PWA input real settings Back then composer Back: PASS');
+  assert.equal(await (await openComposer(publicColumn(browser))).getProperty('value'), text);
   if (browserName === 'android') {
-    await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
     const url = await browser.getUrl();
     await adb('shell', 'settings', 'put', 'system', 'accelerometer_rotation', '0');
     try {

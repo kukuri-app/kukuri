@@ -89,7 +89,7 @@ type DesktopShellControlCenterProps = TopicListProps & {
   // 「場所」の未参加 topic から作成・参加 Dialog を開く。topic を選択してから開く(Issue #966)。
   onOpenChannelManagerForTopic: (topic: string) => void;
   onActivateColumn: (column: ColumnState) => void | Promise<void>;
-  onOpenSettings: (section: SettingsSection) => void;
+  onOpenSettings: (section: SettingsSection, mode?: 'push' | 'replace') => void;
   onOpenProfile: () => void;
   onOpenTesterFeedback: () => void;
 };
@@ -274,7 +274,7 @@ export function DesktopShellControlCenter({
 
   const openSettings = (section: SettingsSection) => {
     setOpen(false);
-    onOpenSettings(section);
+    onOpenSettings(section, IS_WEB_RUNTIME ? 'replace' : 'push');
   };
 
   const selectTopic = (topic: string) => {

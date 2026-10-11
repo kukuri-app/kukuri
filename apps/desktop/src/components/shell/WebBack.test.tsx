@@ -6,7 +6,11 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { createDesktopShellStore, DesktopShellStoreContext } from '@/shell/store';
 import { columnDraftKey, type ColumnDraftTarget } from '@/shell/slices/columnDrafts';
 import { ColumnComposerFooter } from './ColumnComposerFooter';
-import { SettingsDrawer } from './SettingsDrawer';
+import { useWebBackLayer } from '@/lib/useWebBackLayer';
+import { useDesktopShellRouting } from '@/shell/useDesktopShellRouting';
+import { useDesktopShellStore } from '@/shell/store';
+import { createShellHookHarness } from '@/shell/testSupport/renderShellHook';
+import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 
 vi.mock('@/lib/webRuntime', () => ({ IS_WEB_RUNTIME: true }));
 const target: ColumnDraftTarget = { columnId: 'public', action: 'post', scope: { topicId: 'general', channelId: null } };
@@ -22,16 +26,11 @@ function setup(preventDismiss = false) {
   const submit = vi.fn(async () => undefined);
   function View() {
     const [open, setOpen] = useState(false);
-    const [settingsOpen, setSettingsOpen] = useState(false);
     return <DesktopShellStoreContext.Provider value={store}>
       <ColumnComposerFooter active destinationLabel='general' locale='en' target={target}
         onActivate={() => undefined} onAttachmentSelection={async () => undefined}
         onAttachmentPaste={async () => undefined} onRemoveAttachment={() => undefined} onSubmit={submit} />
       <button onClick={() => setOpen(true)}>Open overlay</button>
-      <button onClick={() => setSettingsOpen(true)}>Open settings</button>
-      <SettingsDrawer drawerId='settings' open={settingsOpen} onOpenChange={setSettingsOpen}
-        activeSection='appearance' onSectionChange={() => undefined}
-        sections={[{ id: 'appearance', label: 'Appearance', description: '', content: <p>Appearance settings</p> }]} />
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent hideClose={preventDismiss} onEscapeKeyDown={event => { if (preventDismiss) event.preventDefault(); }}
           aria-describedby={undefined}><DialogTitle>Overlay</DialogTitle></DialogContent>
@@ -74,19 +73,6 @@ it('a confirmation that refuses dismissal remains open on back', async () => {
   expect(location.hash).toBe('#/timeline');
   expect(submit).not.toHaveBeenCalled();
 });
-it('back closes the settings drawer before its underlying composer', async () => {
-  const { user, submit } = setup();
-  await user.click(screen.getByRole('button', { name: 'Post to general' }));
-  await user.type(screen.getByPlaceholderText('Write a post'), 'settings draft');
-  await user.click(screen.getByRole('button', { name: 'Open settings' }));
-  await back();
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-  expect(screen.getByDisplayValue('settings draft')).toBeVisible();
-  expect(location.hash).toBe('#/timeline');
-  expect(submit).not.toHaveBeenCalled();
-  await back();
-  await waitFor(() => expect(screen.queryByPlaceholderText('Write a post')).not.toBeInTheDocument());
-});
 it('closing the composer normally leaves no extra back step', async () => {
   const { user } = setup();
   await user.click(screen.getByRole('button', { name: 'Post to general' }));
@@ -113,4 +99,39 @@ it('a dialog handoff leaves no disposed layer in the screen history', async () =
   await waitFor(() => expect(history.state?.kukuriBackLayer).toBeUndefined());
   await back();
   expect(location.hash).toBe('#/profile');
+});
+it.each(['Back', 'Close'])('settings %s closes one routed layer before the composer', async dismissal => {
+  const harness = createShellHookHarness({ hash: '#/timeline?topic=kukuri%3Atopic%3Ageneral', router: true });
+  const api = createDesktopMockApi();
+  const settingsTriggerRef = { current: null };
+  const pendingRouteUrlRef = { current: null as string | null };
+  function View() {
+    const [center, setCenter] = useState(false);
+    useWebBackLayer(center, () => setCenter(false));
+    const routing = useDesktopShellRouting({ api, translate: key => key, loadTopics: async () => {},
+      settingsTriggerRef, pendingRouteUrlRef });
+    const settings = useDesktopShellStore(state => state.shellChromeState.settingsOpen);
+    return <>
+      <ColumnComposerFooter active destinationLabel='general' locale='en' target={target}
+        onActivate={() => undefined} onAttachmentSelection={async () => undefined}
+        onAttachmentPaste={async () => undefined} onRemoveAttachment={() => undefined} onSubmit={async () => undefined} />
+      <button onClick={() => setCenter(true)}>Open center</button>
+      {center && <button onClick={() => { setCenter(false); routing.openSettingsSection('appearance', 'replace'); }}>Open settings</button>}
+      {settings && <button onClick={() => routing.setSettingsOpen(false)}>Close settings</button>}
+    </>;
+  }
+  render(<View />, { wrapper: harness.wrapper });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'Post to general' }));
+  await user.type(screen.getByPlaceholderText('Write a post'), 'routed settings draft');
+  await user.click(screen.getByRole('button', { name: 'Open center' }));
+  await user.click(screen.getByRole('button', { name: 'Open settings' }));
+  if (dismissal === 'Back') await back();
+  else await user.click(screen.getByRole('button', { name: 'Close settings' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Close settings' })).not.toBeInTheDocument());
+  await waitFor(() => expect(location.hash).not.toContain('settings='));
+  expect(screen.getByDisplayValue('routed settings draft')).toBeVisible();
+  await back();
+  await waitFor(() => expect(screen.queryByPlaceholderText('Write a post')).not.toBeInTheDocument());
+  expect(location.hash).not.toContain('settings=');
 });

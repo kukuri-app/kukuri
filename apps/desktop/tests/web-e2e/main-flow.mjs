@@ -824,7 +824,10 @@ async function acceptFirstRun(browser) {
  */
 async function siteData() {
   const browser = await openClient('web-a', { ice: true });
-  if (BROWSER === 'android') await installPwa(browser, adb);
+  if (BROWSER === 'android') {
+    await greetNative(browser, 'key-recovery');
+    await installPwa(browser, adb);
+  }
   const passphrase = `recovery-${RUN}`;
   await openSettings(browser, 'account');
   // 保存の状態を偽らない: 示す状態は browser の答えと同じ。

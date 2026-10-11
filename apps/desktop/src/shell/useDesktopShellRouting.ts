@@ -13,6 +13,7 @@ import type { DesktopApi } from '@/lib/api';
 
 import type {
   PrimarySection,
+  SettingsSection,
   ProfileConnectionsView,
   TimelineWorkspaceView,
 } from '@/components/shell/types';
@@ -222,6 +223,13 @@ export function useDesktopShellRouting({
     [setWorkspaceState]
   );
 
+  const settingsEntry = useRef(false);
+  useEffect(() => { if (!shellChromeState.settingsOpen) settingsEntry.current = false; }, [shellChromeState.settingsOpen]);
+  const openSettingsSection = useCallback((section: SettingsSection, mode: 'push' | 'replace' = 'push') => {
+    settingsEntry.current = IS_WEB_RUNTIME;
+    setShellChromeState(current => ({ ...current, settingsOpen: true, activeSettingsSection: section }));
+    syncRoute(mode, { settingsOpen: true, settingsSection: section });
+  }, [setShellChromeState, syncRoute]);
   const setSettingsOpen = useCallback(
     (open: boolean, restoreToTrigger = false) => {
       setShellChromeState((current) => ({
@@ -233,11 +241,16 @@ export function useDesktopShellRouting({
           settingsTriggerRef.current?.focus();
         });
       }
+      if (!open && settingsEntry.current) {
+        settingsEntry.current = false;
+        navigate(-1);
+        return;
+      }
       syncRoute(open ? 'push' : 'replace', {
         settingsOpen: open,
       });
     },
-    [scheduleAnimationFrame, setShellChromeState, settingsTriggerRef, syncRoute]
+    [navigate, scheduleAnimationFrame, setShellChromeState, settingsTriggerRef, syncRoute]
   );
 
   const openDirectMessagePane = useCallback(
@@ -943,6 +956,7 @@ export function useDesktopShellRouting({
     routeSection,
     syncRoute,
     setSettingsOpen,
+    openSettingsSection,
     focusPrimarySection,
     toggleNotificationsSection,
     focusTimelineView,
