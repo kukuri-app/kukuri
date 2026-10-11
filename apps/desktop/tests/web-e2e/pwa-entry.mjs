@@ -68,7 +68,7 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
     await nativeTap(adb, attrs => /^(Install|Add)$/i.test(attrs.text), 'install confirmation');
     await nativeState(adb, 'after Chrome confirmation');
     // shortcutの場合はlauncherがもう一度確認する。WebAPKの場合はこの確認がない。
-    await nativeTap(adb, attrs => /^(Add automatically)$/i.test(attrs.text) ||
+    await nativeTap(adb, attrs => (/^(Add automatically|Add to home screen)$/i.test(attrs.text) && attrs.clickable === 'true') ||
       /\/(add_button|button1)$/.test(attrs['resource-id']), 'launcher confirmation', 5_000).catch(() => undefined);
     await nativeState(adb, 'after launcher confirmation');
     await adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');

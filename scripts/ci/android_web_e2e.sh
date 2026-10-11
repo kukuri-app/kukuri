@@ -12,15 +12,11 @@ if [ -n "$apk_url" ]; then
   echo "::add-mask::$apk_url"
   apk_dir=$(mktemp -d)
   tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-  installed=$(adb shell pm path com.android.chrome | head -1 | sed 's/^package://;s/\r$//')
-  adb pull "$installed" "$apk_dir/reference.apk" >/dev/null
   curl -sfL "$apk_url" -o "$apk_dir/chrome.apk"
-  signer() { "$tools/apksigner" verify --print-certs "$1" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'; }
-  reference_signer=$(signer "$apk_dir/reference.apk")
-  echo "SDK Chrome signer: $reference_signer"
-  [ -n "$reference_signer" ] && [ "$(signer "$apk_dir/chrome.apk")" = "$reference_signer" ] || {
-    echo 'Chrome APK signer does not match the preinstalled Google Chrome'; exit 1;
-  }
+  # 155.0.8059.39 x86_64はSDKでGoogle署名を照合済みの固定artifact（#1767）。
+  # URLを取得し直しても同一の署名済みbytesだけを導入する。
+  echo '600fa0642ff7141a6ca8e3386bfcace6074d43c6ed7ae1de15ec9622375462c6  '"$apk_dir/chrome.apk" | sha256sum -c -
+  "$tools/apksigner" verify --verbose --print-certs "$apk_dir/chrome.apk"
   badging=$("$tools/aapt" dump badging "$apk_dir/chrome.apk")
   grep -q "^package: name='com.android.chrome' " <<< "$badging"
   stable=$(curl -sf https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json | jq -r '.channels.Stable.version')
