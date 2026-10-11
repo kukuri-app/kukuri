@@ -19,6 +19,7 @@ export async function pwaInputFlow({ openClient, greetNative, publicColumn, open
     console.log('PWA input initial consent font scale', (await adb('shell', 'settings', 'get', 'system', 'font_scale')).trim());
     assert.equal(await browser.execute(() => document.documentElement.scrollWidth > innerWidth), false);
   } : undefined });
+  try {
   await greetNative(browser, 'pwa-input');
   if (browserName === 'android') {
     await installPwa(browser, adb);
@@ -72,6 +73,24 @@ export async function pwaInputFlow({ openClient, greetNative, publicColumn, open
   await eventually('back collapses only the composer', async () => !(await publicColumn(browser).$('textarea[placeholder="Write a post"]').isExisting()));
   assert.equal(new URL(await browser.getUrl()).origin, origin);
   assert.equal(await (await openComposer(publicColumn(browser))).getProperty('value'), text);
+  if (browserName === 'android') {
+    await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+    const url = await browser.getUrl();
+    await adb('shell', 'settings', 'put', 'system', 'accelerometer_rotation', '0');
+    try {
+      await adb('shell', 'settings', 'put', 'system', 'user_rotation', '1');
+      await eventually('phone landscape viewport', () => browser.execute(() => innerWidth > innerHeight));
+      const rotated = publicColumn(browser).$('textarea[placeholder="Write a post"]');
+      assert.equal(await rotated.getProperty('value'), text);
+      assert.equal(await browser.getUrl(), url);
+      await nativeSnapshot(adb, 'composer-landscape-font200');
+    } finally {
+      await adb('shell', 'settings', 'put', 'system', 'user_rotation', '0');
+      await eventually('phone portrait viewport', () => browser.execute(() => innerWidth < innerHeight));
+    }
+    assert.equal(await publicColumn(browser).$('textarea[placeholder="Write a post"]').getProperty('value'), text);
+    console.log('PWA native rotation preserves composer scope and draft: PASS');
+  }
   await publicColumn(browser).$('button=Close').click();
   await browser.$('[data-testid="control-center-trigger"]').click();
   await browser.$('#shell-control-center').waitForDisplayed();
@@ -91,4 +110,7 @@ export async function pwaInputFlow({ openClient, greetNative, publicColumn, open
     console.log('PWA native file picker cancellation retains the text: PASS');
   }
   console.log('PWA input composer/control center back and retained draft: PASS');
+  } finally {
+    if (browserName === 'android') await nativeSnapshot(adb, 'final-state');
+  }
 }

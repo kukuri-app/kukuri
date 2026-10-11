@@ -83,7 +83,16 @@ export async function installPwa(browser, adb) {
   assert.equal(process.env.CI, 'true', 'installed PWA verification requires the CI emulator');
   try {
     await nativeTap(adb, attrs => attrs['resource-id'] === 'com.android.chrome:id/menu_button', 'Chrome menu');
-    const installMenu = await nativeTap(adb, attrs => /^(Add to home screen|Install app|Install and create shortcut)$/i.test(attrs.text), 'install menu');
+    const installItem = attrs => /^(Add to home screen|Install app|Install and create shortcut)$/i.test(attrs.text);
+    const installMenu = await nativeTap(adb, installItem, 'install menu', 5_000).catch(async () => {
+      // 200%文字ではChrome155のmenu下部がviewport外になる。実menuをscrollする。
+      const size = [...(await adb('shell', 'wm', 'size')).matchAll(/(\d+)x(\d+)/g)].at(-1);
+      assert.ok(size);
+      const [width, height] = size.slice(1).map(Number);
+      await adb('shell', 'input', 'swipe', String(Math.floor(width * .7)), String(Math.floor(height * .8)),
+        String(Math.floor(width * .7)), String(Math.floor(height * .3)), '400');
+      return nativeTap(adb, installItem, 'scrolled install menu');
+    });
     await nativeState(adb, 'install choices');
     await nativeTap(adb, attrs => /^(Install|Add)$/i.test(attrs.text) &&
       /\/(option_text_install|positive_button|button1)$/.test(attrs['resource-id']), 'install confirmation');

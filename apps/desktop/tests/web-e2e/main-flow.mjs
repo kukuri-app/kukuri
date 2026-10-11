@@ -22,7 +22,7 @@ import path from 'node:path';
 import { Key, remote } from 'webdriverio';
 import { androidClick } from './android-click.mjs';
 import { eventually } from './wait.mjs';
-import { pwaEntry } from './pwa-entry.mjs';
+import { installPwa, pwaEntry } from './pwa-entry.mjs';
 import { pwaShellFlow } from './pwa-shell-flow.mjs';
 import { pwaInputFlow } from './pwa-input-flow.mjs';
 
@@ -824,6 +824,7 @@ async function acceptFirstRun(browser) {
  */
 async function siteData() {
   const browser = await openClient('web-a', { ice: true });
+  if (BROWSER === 'android') await installPwa(browser, adb);
   const passphrase = `recovery-${RUN}`;
   await openSettings(browser, 'account');
   // 保存の状態を偽らない: 示す状態は browser の答えと同じ。
@@ -839,6 +840,11 @@ async function siteData() {
   // 値は page で読む（Android の chromedriver の getValue は textarea の値を空で返す）。
   const exported = await browser.execute((element) => element.value, await envelope);
   const [publicKey] = (await browser.$('[data-testid="export-result"]').getText()).match(/[0-9a-f]{64}/);
+  if (BROWSER === 'android') {
+    // headless用clipboard mockを外し、実Android clipboardへ暗号化JSONだけをコピーする。
+    await browser.execute(() => { delete navigator.clipboard.writeText; });
+    await browser.$('[data-testid="export-result"]').$('button=Copy').click();
+  }
   // 鍵の導出の Worker（export）が CSP の下で動いた。
   await assertNoCspViolations(browser);
 
@@ -861,7 +867,13 @@ async function siteData() {
   await acceptFirstRun(browser);
   await (await dialogWith(browser, 'Set up your profile')).$('button=Restore a previous account').click();
   const add = await dialogWith(browser, 'Import an encrypted account key');
-  await add.$('[data-testid="import-input"]').setValue(exported);
+  const importInput = add.$('[data-testid="import-input"]');
+  if (BROWSER === 'android') {
+    await importInput.click();
+    await adb('shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_V');
+    await eventually('encrypted key pastes from the Android clipboard', async () => await importInput.getProperty('value') === exported);
+    await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
+  } else await importInput.setValue(exported);
   await add.$('[data-testid="import-preview-button"]').click();
   await add.$('[data-testid="import-passphrase"]').setValue(passphrase);
   await add.$('[data-testid="import-submit"]').click();
@@ -1311,6 +1323,7 @@ async function lifecycle() {
   const { endpoint_id: nativeEndpoint, pubkey: nativePubkey } = await fixture('/fixture/info');
   const a = await openClient('web-a', { ice: true });
   const withA = await greetNative(a, 'web-a');
+  if (BROWSER === 'android') await installPwa(a, adb);
   const aPubkey = withA.webPost.author_pubkey;
   const aEndpoint = await assertConnected(a, [nativeEndpoint], nativeEndpoint);
   // 前提: native と相互に follow する（回線全断の段の DM）。成人向け表示（runtime が保存し、既定は無効）を有効にする。a は native
