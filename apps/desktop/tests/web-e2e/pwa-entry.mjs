@@ -60,7 +60,16 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
     await nativeTap(adb, attrs => /^(Add automatically)$/i.test(attrs.text) ||
       /\/(add_button|button1)$/.test(attrs['resource-id']), 'launcher confirmation', 5_000).catch(() => undefined);
     await adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
-    await nativeTap(adb, attrs => attrs.text === 'kukuri', 'home icon');
+    const homeIcon = attrs => /^(kukuri|kukuri web)$/.test(attrs.text);
+    await nativeTap(adb, homeIcon, 'home icon', 5_000).catch(async () => {
+      // factory launcherは追加したshortcutを右隣のpageへ置くことがある。
+      const size = (await adb('shell', 'wm', 'size')).match(/(\d+)x(\d+)/);
+      assert.ok(size, 'emulator display size');
+      const [width, height] = size.slice(1).map(Number);
+      await adb('shell', 'input', 'swipe', String(Math.floor(width * .85)), String(Math.floor(height * .5)),
+        String(Math.floor(width * .15)), String(Math.floor(height * .5)), '250');
+      await nativeTap(adb, homeIcon, 'adjacent home icon');
+    });
     await eventually('standalone PWA window', async () => {
       for (const handle of await browser.getWindowHandles()) {
         await browser.switchToWindow(handle);

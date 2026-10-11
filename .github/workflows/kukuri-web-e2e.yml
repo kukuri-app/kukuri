@@ -35,6 +35,10 @@ on:
         type: choice
         options: ['[1]', '[1,2]', '[1,2,3]']
         default: '[1]'
+      android_chrome_apk_url:
+        description: 'Optional signed Chrome APK for the Android emulator; signer and stable version are verified before install'
+        type: string
+        default: ''
   schedule:
     - cron: '30 18 * * *'
     # Safari。
@@ -334,6 +338,7 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_7
+          disk-size: 8G
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash scripts/ci/android_web_e2e.sh ${{ matrix.scenario }}
