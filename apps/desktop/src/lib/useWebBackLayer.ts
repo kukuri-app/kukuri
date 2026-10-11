@@ -6,7 +6,12 @@ const KEY = 'kukuriBackLayer';
 type Layer = { id: number; url: string; popped: boolean; close: () => void };
 const layers: Layer[] = [];
 let serial = 0;
-const retain = (layer: Layer) => history.pushState({ ...history.state, [KEY]: layer.id }, '', layer.url);
+function retain(layer: Layer) {
+  const previous = history.state?.[KEY];
+  const state = { ...history.state, [KEY]: layer.id };
+  if (previous && !layers.some(item => item.id === previous)) history.replaceState(state, '', layer.url);
+  else history.pushState(state, '', layer.url);
+}
 function onBack(event: PopStateEvent) {
   const layer = layers.at(-1);
   if (!layer || event.state?.[KEY] === layer.id) return;

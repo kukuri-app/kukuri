@@ -76,3 +76,22 @@ it('closing the composer normally leaves no extra back step', async () => {
   await back();
   expect(location.hash).toBe('#/profile');
 });
+it('a dialog handoff leaves no disposed layer in the screen history', async () => {
+  function Handoff() {
+    const [stage, setStage] = useState('intro');
+    return stage === 'intro' ? <Dialog key='intro' open onOpenChange={() => setStage('terms')}>
+      <DialogContent aria-describedby={undefined}><DialogTitle>Introduction</DialogTitle>
+        <button onClick={() => setStage('terms')}>Review terms</button>
+      </DialogContent>
+    </Dialog> : <Dialog key='terms' open={stage === 'terms'} onOpenChange={() => setStage('closed')}>
+      <DialogContent aria-describedby={undefined}><DialogTitle>Terms confirmation</DialogTitle></DialogContent>
+    </Dialog>;
+  }
+  render(<Handoff />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'Review terms' }));
+  await user.click(screen.getByRole('button', { name: 'Close dialog' }));
+  await waitFor(() => expect(history.state?.kukuriBackLayer).toBeUndefined());
+  await back();
+  expect(location.hash).toBe('#/profile');
+});
