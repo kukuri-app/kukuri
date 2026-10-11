@@ -342,5 +342,5 @@ jobs:
           cores: 4
           ram-size: 4096M
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu ${{ inputs.android_chrome_apk_url != '' && 'swiftshader' || 'swiftshader_indirect' }} -noaudio -no-boot-anim -camera-back none
           script: bash scripts/ci/android_web_e2e.sh ${{ matrix.scenario }}
