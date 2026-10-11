@@ -7,6 +7,10 @@ scenario="$1"
 trap 'status=$?; if [ "$status" -ne 0 ]; then adb logcat -d -b crash -t 150 || true; adb shell dumpsys meminfo | head -60 || true; fi; exit "$status"' EXIT
 
 adb wait-for-device
+echo 'SDK TalkBack package diagnostics'
+adb shell pm list packages -u | grep 'talkback' || true
+adb shell pm path com.google.android.marvin.talkback || true
+adb shell dumpsys package com.google.android.marvin.talkback | grep -E 'codePath=|versionName=|primaryCpuAbi=|User 0:|flags=' || true
 accessibility_url=$(jq -r '.inputs.android_accessibility_apk_url // ""' "${GITHUB_EVENT_PATH:-/dev/null}")
 if [ -n "$accessibility_url" ]; then
   echo "::add-mask::$accessibility_url"
