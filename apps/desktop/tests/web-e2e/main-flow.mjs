@@ -24,6 +24,7 @@ import { androidClick } from './android-click.mjs';
 import { eventually } from './wait.mjs';
 import { pwaEntry } from './pwa-entry.mjs';
 import { pwaShellFlow } from './pwa-shell-flow.mjs';
+import { pwaInputFlow } from './pwa-input-flow.mjs';
 
 const ORIGIN = process.env.KUKURI_WEB_E2E_ORIGIN ?? 'http://127.0.0.1:4180';
 const TOPIC = 'kukuri:topic:general';
@@ -1895,6 +1896,7 @@ async function sameAccount() {
 
 /** scenario（`cargo xtask web-e2e` と CI の matrix は、`--list` でこの一覧を読む）。 */
 const scenarios = {
+  'pwa-input': () => pwaInputFlow({ openClient, greetNative, publicColumn, openComposer, replaceValue, browserName: BROWSER, adb, origin: ORIGIN }),
   'pwa-shell': () => pwaShellFlow({ openClient, greetNative, native, fixture, openDirectMessage,
     nativeCreatesChannel, joinChannel, openSettings, publicColumn, channelColumn, openComposer, replaceValue, openChannelDialog, channelDialogClosed, seesInChannel,
     origin: ORIGIN, topic: TOPIC, run: RUN, browserName: BROWSER, adb }),

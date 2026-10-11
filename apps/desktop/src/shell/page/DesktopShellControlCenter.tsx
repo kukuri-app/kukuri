@@ -6,6 +6,7 @@ import {
   type RefObject,
 } from 'react';
 import { AccountMenu } from './AccountMenu';
+import { useWebBackLayer } from '@/lib/useWebBackLayer';
 import { useTranslation } from 'react-i18next';
 import {
   Bell,
@@ -206,6 +207,7 @@ export function DesktopShellControlCenter({
     },
     [setWorkspaceState]
   );
+  useWebBackLayer(workspaceState.controlCenterOpen, () => setOpen(false, true));
 
   useEffect(() => {
     if (!workspaceState.controlCenterOpen) return;

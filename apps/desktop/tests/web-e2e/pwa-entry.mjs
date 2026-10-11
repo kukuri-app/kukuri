@@ -3,7 +3,7 @@ import { eventually } from './wait.mjs';
 import { webInvoke } from './web-invoke.mjs';
 
 // OS操作は隔離されたCIのemulatorだけ。手元の端末でこのhelperを使わない。
-async function nativeTap(adb, matches, what, timeout = 30_000) {
+export async function nativeTap(adb, matches, what, timeout = 30_000) {
   assert.equal(process.env.CI, 'true', 'PWA OS actions require the isolated CI emulator');
   let lastXml = '';
   const node = await eventually(`PWA Android ${what}`, async () => {
