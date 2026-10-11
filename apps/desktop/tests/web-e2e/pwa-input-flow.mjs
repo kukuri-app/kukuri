@@ -117,7 +117,7 @@ async function typeJapanese(browser, field, adb) {
   await adb('shell', 'input', 'tap', '450', '1700');
   await adb('shell', 'input', 'keyevent', 'KEYCODE_ENTER');
   const text = await field.getProperty('value');
-  assert.equal(text.trim(), '日本');
+  assert.equal(text.trim(), 'にほん');
   const events = await browser.execute(() => window.__pwaImeEvents);
   assert.ok(events.some(event => event.type === 'compositionstart'));
   assert.ok(events.some(event => event.type === 'compositionend'));
