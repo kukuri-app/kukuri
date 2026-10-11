@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { eventually } from './wait.mjs';
+import { webInvoke } from './web-invoke.mjs';
 
 // OS操作は隔離されたCIのemulatorだけ。手元の端末でこのhelperを使わない。
 async function nativeTap(adb, matches, what, timeout = 30_000) {
@@ -25,11 +26,19 @@ async function nativeTap(adb, matches, what, timeout = 30_000) {
 }
 
 async function accounts(browser) {
-  return browser.execute(async () => {
-    const module = performance.getEntriesByType('resource').find(entry =>
-      entry.name.includes('/kukuri_web_runtime-') && entry.name.endsWith('.js'));
-    if (!module) throw new Error('web-runtime module was not loaded');
-    return (await import(module.name)).invoke('list_accounts', {});
+  return webInvoke(browser, 'list_accounts');
+}
+
+async function openPwaFromHome(adb) {
+  await adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
+  const homeIcon = attrs => /^(kukuri|kukuri web)$/.test(attrs.text);
+  await nativeTap(adb, homeIcon, 'home icon', 5_000).catch(async () => {
+    const size = (await adb('shell', 'wm', 'size')).match(/(\d+)x(\d+)/);
+    assert.ok(size, 'emulator display size');
+    const [width, height] = size.slice(1).map(Number);
+    await adb('shell', 'input', 'swipe', String(Math.floor(width * .85)), String(Math.floor(height * .5)),
+      String(Math.floor(width * .15)), String(Math.floor(height * .5)), '250');
+    await nativeTap(adb, homeIcon, 'adjacent home icon');
   });
 }
 
@@ -58,7 +67,6 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
   assert.equal(manifest.value.start_url, '/');
   assert.equal(manifest.value.scope, '/');
   assert.equal(manifest.value.display, 'standalone');
-  const before = await accounts(browser);
   await openSettings(browser, 'about');
   await browser.$('section[aria-label="Home screen"]').waitForDisplayed();
   await browser.$('#shell-settings-drawer .shell-settings-close').click();
@@ -66,6 +74,12 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
     unconfirmed.push('installed Android PWA: OS actions run only in the Android CI emulator');
     return;
   }
+  await installPwa(browser, adb);
+}
+
+export async function installPwa(browser, adb) {
+  const before = await accounts(browser);
+  const tab = await browser.getWindowHandle();
   assert.equal(process.env.CI, 'true', 'installed PWA verification requires the CI emulator');
   try {
     await nativeTap(adb, attrs => attrs['resource-id'] === 'com.android.chrome:id/menu_button', 'Chrome menu');
@@ -81,17 +95,7 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
     await nativeTap(adb, attrs => (/^(Add automatically|Add to home screen)$/i.test(attrs.text) && attrs.clickable === 'true') ||
       /\/(add_button|button1)$/.test(attrs['resource-id']), 'launcher confirmation', 5_000).catch(() => undefined);
     await nativeState(adb, 'after launcher confirmation');
-    await adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
-    const homeIcon = attrs => /^(kukuri|kukuri web)$/.test(attrs.text);
-    await nativeTap(adb, homeIcon, 'home icon', 5_000).catch(async () => {
-      // factory launcherは追加したshortcutを右隣のpageへ置くことがある。
-      const size = (await adb('shell', 'wm', 'size')).match(/(\d+)x(\d+)/);
-      assert.ok(size, 'emulator display size');
-      const [width, height] = size.slice(1).map(Number);
-      await adb('shell', 'input', 'swipe', String(Math.floor(width * .85)), String(Math.floor(height * .5)),
-        String(Math.floor(width * .15)), String(Math.floor(height * .5)), '250');
-      await nativeTap(adb, homeIcon, 'adjacent home icon');
-    });
+    await openPwaFromHome(adb);
     await nativeState(adb, 'after home icon');
     await eventually('standalone PWA window', async () => {
       for (const handle of await browser.getWindowHandles()) {
@@ -118,8 +122,12 @@ export async function pwaEntry({ openClient, openSettings, browserName, origin, 
     const after = await accounts(browser);
     assert.equal(after.active_account_id, before.active_account_id);
     assert.equal(after.accounts[0].pubkey, before.accounts[0].pubkey);
+    await openPwaFromHome(adb);
+    await eventually('PWA document is visible', () => browser.execute(() => document.visibilityState === 'visible'));
+    console.log('PWA native foreground', await browser.execute(() => ({ visibility: document.visibilityState, focus: document.hasFocus() })));
     const activity = (await adb('shell', 'dumpsys', 'activity', 'activities')).split('\n').find(line => /mResumedActivity|topResumedActivity/.test(line));
     console.log(`PWA launcher/standalone/account: PASS; ${activity?.trim()}`);
+    return tab;
   } finally {
     await adb('shell', 'rm', '-f', '/sdcard/kukuri-pwa-entry.xml').catch(() => undefined);
   }

@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 import type { Plugin } from 'vite';
+import { webPwaShell } from './scripts/webPwaShell.mjs';
 
 const env = (
   globalThis as typeof globalThis & {
@@ -44,7 +45,7 @@ export default defineConfig({
           source: readFileSync(path.resolve(import.meta.dirname, 'src-tauri/icons', file)) });
       }
     },
-  } satisfies Plugin] : [])],
+  } satisfies Plugin, webPwaShell()] : [])],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),

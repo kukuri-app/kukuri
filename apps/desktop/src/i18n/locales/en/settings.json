@@ -922,6 +922,19 @@
       "requestPermission": "Check notification availability"
     }
   },
+  "pwaShell": {
+    "title": "Offline startup and updates",
+    "preparing": "Preparing offline startup. You can keep using this page.",
+    "ready": "Ready to start offline. Saved content is available; missing content can be fetched after reconnecting.",
+    "available": "An update is ready. Your text drafts will be saved before applying it.",
+    "applying": "Applying the update…",
+    "check": "Check for updates",
+    "checking": "Checking…",
+    "apply": "Save drafts and update",
+    "prepareFailed": "Could not prepare or check for updates. Reconnect and try again. A previously saved version remains available.",
+    "applyFailed": "Could not apply the update. Your input and current page have been kept. Check your storage and try again.",
+    "checkedAt": "Check completed at {{time}}"
+  },
   "pwa": {
     "title": "Home screen",
     "summary": "Open kukuri from your home screen. You can also keep using this browser tab.",

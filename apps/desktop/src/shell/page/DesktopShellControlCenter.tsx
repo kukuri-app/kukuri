@@ -64,6 +64,7 @@ import { applySavedWorkspaceLayout } from '@/shell/savedWorkspaceLayouts';
 import { ColumnScopeLeases } from '@/shell/page/ColumnScopeLeases';
 import { ControllerPendingNotice } from '@/shell/page/ControllerPendingNotice';
 import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
+import { usePwaShellStore } from '@/lib/pwaShell';
 
 export const CONTROL_CENTER_ID = 'shell-control-center';
 
@@ -109,7 +110,7 @@ export function DesktopShellControlCenter({
   topicItems,
   topicInput,
   titles,
-  updateAvailable,
+  updateAvailable: desktopUpdateAvailable,
   onTopicInputChange,
   onAddTopic,
   onOpenChannelManager,
@@ -128,6 +129,8 @@ export function DesktopShellControlCenter({
   onToggleTopicGossip,
   onToggleChannelGossip,
 }: DesktopShellControlCenterProps) {
+  const webUpdateAvailable = usePwaShellStore(state => state.available);
+  const updateAvailable = IS_WEB_RUNTIME ? webUpdateAvailable : desktopUpdateAvailable;
   const { t } = useTranslation(['shell', 'common', 'settings', 'channels']);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const {
