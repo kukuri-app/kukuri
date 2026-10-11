@@ -4,9 +4,14 @@
 (() => {
   localStorage.setItem('kukuri:media-debug', '1');
   window.__kukuriMediaEvents = [];
+  window.__kukuriPrivateReadEvents = [];
   for (const level of ['info', 'warn']) {
     const log = console[level];
     console[level] = (...args) => {
+      if (String(args[0]).startsWith('[kukuri.private-read]')) {
+        window.__kukuriPrivateReadEvents.push(args);
+        if (window.__kukuriPrivateReadEvents.length > 20) window.__kukuriPrivateReadEvents.shift();
+      }
       if (String(args[0]).startsWith('[kukuri.media]')) {
         window.__kukuriMediaEvents.push(args);
         if (window.__kukuriMediaEvents.length > 32) window.__kukuriMediaEvents.shift();

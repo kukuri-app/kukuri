@@ -316,6 +316,7 @@ impl DocReadProtocol {
         let (mut send, mut recv) = connection.accept_bi().await?;
         let bytes = recv.read_to_end(MAX_REQUEST_BYTES).await?;
         let request: Request = serde_json::from_slice(&bytes)?;
+        let private_diagnostic = private_replica(&request.replica);
         request.check_budget()?;
         let namespace = NamespaceId::from_str(&request.namespace)?;
         // R5-H: 書き手の docs handle は上限(128)で閉じるので、提供する namespace は読む間だけ開く。
@@ -324,6 +325,17 @@ impl DocReadProtocol {
         // (書き手本人)へ進めるようにする。
         let opened = self.sync.open(namespace, OpenOpts::default()).await;
         let response = self.respond(request, namespace, opened.is_ok()).await;
+        #[cfg(target_family = "wasm")]
+        if private_diagnostic && let Err(error) = &response {
+            #[wasm_bindgen::prelude::wasm_bindgen]
+            extern "C" {
+                #[wasm_bindgen(js_namespace = console, js_name = warn)]
+                fn private_read_warning(value: &str);
+            }
+            private_read_warning(&format!("[kukuri.private-read] {error:#}"));
+        }
+        #[cfg(not(target_family = "wasm"))]
+        let _ = private_diagnostic;
         if opened.is_ok() {
             let _ = self.sync.close(namespace).await;
         }

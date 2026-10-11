@@ -196,15 +196,32 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
     await openComposer(channelColumn(browser, channel.channelId));
     await seesInChannel(browser, channel.channelId, accepted.find(item => item.kind === 'private').text);
     const privateDiagnostic = async () => {
+      console.log('private read errors', JSON.stringify(await browser.execute(() => window.__kukuriPrivateReadEvents)));
       for (const [name, endpoint] of [['web', invoke], ['native', native]]) {
         const sync = await endpoint('get_sync_status');
         const peers = await endpoint('list_connectivity_peers', { request: { kind: 'connected', topic: `private/${channel.channelId}`, cursor: null, limit: 4 } });
         const timeline = await page(endpoint, 'private');
+        const memberships = await endpoint('list_joined_private_channels', { request: { topic, cursor: null } });
         console.log('private delivery diagnostic', JSON.stringify({ name, channelId: channel.channelId,
           endpoint: sync.discovery.local_endpoint_id,
+          epoch: memberships.items.find(item => item.channel_id === channel.channelId)?.current_epoch_id,
           topics: sync.topic_diagnostics.filter(item => item.topic.includes(channel.channelId)), peers,
           unavailable: timeline.unavailable_count, ids: timeline.items.map(item => item.object_id) }));
       }
+      console.log('private owned records', JSON.stringify(await browser.execute(async channelId => {
+        const name = (await indexedDB.databases()).find(item => item.name.startsWith('kukuri-cache-v1-')).name;
+        const db = await new Promise((resolve, reject) => { const request = indexedDB.open(name); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+        try {
+          const prefix = `bucket::v1::channel::${Array.from(new TextEncoder().encode(channelId), byte => byte.toString(16).padStart(2, '0')).join('')}::`;
+          return await new Promise((resolve, reject) => {
+            const request = db.transaction('contents').objectStore('contents').index('own').openCursor(IDBKeyRange.bound([prefix], [prefix.slice(0, -1) + ';']));
+            const rows = [];
+            request.onsuccess = () => { const cursor = request.result; if (!cursor || rows.length === 20) return resolve(rows);
+              const row = cursor.value; rows.push({ replica: row.replica, key: row.rkey, own: row.own, bytes: row.hlen }); cursor.continue(); };
+            request.onerror = () => reject(request.error);
+          });
+        } finally { db.close(); }
+      }, channel.channelId)));
     };
     await privateDiagnostic();
     for (const item of accepted) {
