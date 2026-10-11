@@ -39,10 +39,6 @@ on:
         description: 'Optional signed Chrome APK for the Android emulator; signer and stable version are verified before install'
         type: string
         default: ''
-      reuse_build_run:
-        description: 'Temporary #1767 emulator probe: reuse a run with identical product code'
-        type: string
-        default: ''
   schedule:
     - cron: '30 18 * * *'
     # Safari。
@@ -76,18 +72,15 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install build dependencies
-        if: ${{ !inputs.reuse_build_run }}
         run: sudo apt-get update && sudo apt-get install -y clang llvm pkg-config libdbus-1-dev
 
       # #1413: key は job id ごと（kukuri-fast.yml 参照）。build の内容は browser に依らないので共有する。
       - name: Cache Rust
-        if: ${{ !inputs.reuse_build_run }}
         uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Install wasm-bindgen
-        if: ${{ !inputs.reuse_build_run }}
         uses: taiki-e/install-action@v2
         with:
           tool: wasm-bindgen@0.2.129
@@ -110,29 +103,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        if: ${{ !inputs.reuse_build_run }}
         run: cargo xtask-lite web-e2e --build-only
-
-      - name: Verify identical product code for the temporary probe
-        if: ${{ inputs.reuse_build_run }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BUILD_RUN: ${{ inputs.reuse_build_run }}
-        run: |
-          [[ "$BUILD_RUN" =~ ^[0-9]+$ ]]
-          test "$KUKURI_WEB_E2E_BROWSER" = android
-          build_head=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN" --jq .head_sha)
-          git fetch --no-tags origin "$build_head" --depth=1
-          test -z "$(git diff --name-only "$build_head" HEAD -- . ':!docs/**' ':!.github/**' ':!apps/desktop/tests/web-e2e/main-flow.mjs' ':!apps/desktop/tests/web-e2e/pwa-input-flow.mjs' ':!apps/desktop/tests/web-e2e/pwa-entry.mjs' ':!apps/desktop/tests/web-e2e/android-focus/**' ':!scripts/ci/android_web_e2e.sh')"
-          echo "Reuse build from $BUILD_RUN ($build_head); product code equals $GITHUB_SHA"
-
-      - name: Reuse the verified build
-        if: ${{ inputs.reuse_build_run }}
-        uses: actions/download-artifact@v4
-        with:
-          name: web-e2e-build
-          run-id: ${{ inputs.reuse_build_run }}
-          github-token: ${{ github.token }}
 
       - name: List scenarios
         id: scenarios
