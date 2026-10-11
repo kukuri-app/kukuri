@@ -121,6 +121,30 @@ EU の領域に含まれる[最遠隔地域](https://eur-lex.europa.eu/EN/legal-
 - Google の API（Maps、OAuth、Firebase など）を使わず、App Links も採用しない（#1197）ので、API の提供元への登録と `assetlinks.json` は要らない。
 - upload 鍵を失ったか漏れたときは、Console の Play app signing の画面から upload 鍵の再設定を依頼する。
 
+## upload 鍵と署名 lane（#1199 AC-1）
+
+`Kukuri Android Package`は、固定SHAからarm64-v8aのrelease AAB・検証APK・native debug symbolsを作る。ビルドと署名は別のGitHub-hosted runnerで動き、依存のinstall/buildへupload鍵を渡さない。PRは一時鍵の`test`だけで、用途をreceiptへ明記する。`upload`はworkflowとsourceが同じrelease tagの実行だけで、公開certificate SHA-256との一致を必須にする。Playへの提出・公開は行わない。検証APKはupload鍵のものでもGoogle管理の配布署名とは別なので、Play版のinstallerとして配布しない。
+
+新しいupload鍵を作りCIへ登録する対話入口は `scripts/release/create-android-upload-key.ps1`。実行する本人がpasswordを端末内の非表示promptへ入力し、チャットやIssueへ書かない。秘密は標準入力でGitHubへ渡し、公開のaliasとfingerprintだけをvariableへ登録する。
+
+Windows PowerShell 5.1 と PowerShell 7 の両方で実行できる。keytool の正常な標準エラー出力を失敗扱いにせず、終了コードで判定する。非 ASCII の password は JKS へ保存し、GitHub には BOM・改行なしの UTF-8 で渡す。
+
+```powershell
+$env:JAVA_HOME = 'C:/Program Files/Android/Android Studio/jbr'
+./scripts/release/create-android-upload-key.ps1
+```
+
+既定の保存先は利用者のhomeの`.kukuri-signing/android-upload.jks`（暗号化したJKSの鍵、alias `upload`、certificateの名前は個人の氏名を使わない`CN=kukuri upload`）。repositoryやappのdata/cacheへ保存しない。既存fileは置き換えず、登録のやり直しは同じfileとpasswordで`-RegisterExisting`を使う。保存先は`-KeystorePath`でrepo外へ指定できる。鍵の保管とpasswordは実行する本人が管理する。
+
+| GitHub設定 | 値・用途 |
+| --- | --- |
+| secret `ANDROID_UPLOAD_KEYSTORE_BASE64` | 暗号化keystoreのbase64。配布app signing keyやTauri updater keyは入れない |
+| secret `ANDROID_UPLOAD_KEYSTORE_PASSWORD` | keystoreとkeyで同じpassword |
+| variable `ANDROID_UPLOAD_KEY_ALIAS` | `upload` |
+| variable `ANDROID_UPLOAD_CERT_SHA256` | 作ったupload certificateのSHA-256。公開値、personal DNは記録しない |
+
+登録後は候補の既存release tagをworkflow refとtag inputに同じ値で指定し、`signing=upload`を実行する。branch ref・PR・異なるSHA・欠落/誤certificateは失敗する。`test`の成功、unsigned生成、upload-key署名、Playの配布署名、実機upgradeは別の判定である。checksum、receiptのsource/toolchain/package/SDK/ABI/version/certificateとnative symbolsを候補に対応付け、#1199 AC-1の実鍵証跡を残す。
+
 ## versionCode
 
 Play へ出す AAB の versionCode は、その候補の release tag（`vX.Y.Z-preview.N`）から 1 つの規則で作る（#1199 AC-2）。versionName は app の版（`tauri.conf.json` の `version`）のままで、Tauri が設定する。
