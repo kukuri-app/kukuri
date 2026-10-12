@@ -156,7 +156,7 @@ impl DomeSessionConnections {
 }
 
 /// 接続の候補。relay URL を含まない直接の IP 候補(Direct P2P)を先に、relay を含む候補(Relay Supported P2P)を後に置く。
-pub(crate) fn dome_host_candidates(
+pub(crate) fn direct_first_candidates(
     id: EndpointId,
     known: Option<&EndpointAddr>,
     relay_urls: &[RelayUrl],
@@ -191,7 +191,10 @@ impl IrohDocsNode {
         let connection = match self.dome_session_connections.get(id).await {
             Some(connection) => connection,
             None => {
-                let connection = self.connect_dome_host(id).await.map_err(unreachable)?;
+                let connection = self
+                    .connect_direct_first(id, DOME_SESSION_ALPN, "Dome session")
+                    .await
+                    .map_err(unreachable)?;
                 self.dome_session_connections.insert(id, connection).await
             }
         };
@@ -210,13 +213,21 @@ impl IrohDocsNode {
         response.map_err(unreachable)
     }
 
-    async fn connect_dome_host(&self, id: EndpointId) -> Result<Connection> {
+    /// `id` の端末へ `alpn` で接続する。relay URL を含まない直接の候補(Direct P2P)を先に 5 秒まで、
+    /// relay URL を含む候補(Relay Supported P2P)を後に試し、全体を 10 秒で打ち切る(ADR 0038、ADR 0067 §5)。
+    /// `purpose` は経路の分類の診断 log の見出し(「<purpose> connection established」)。
+    pub(crate) async fn connect_direct_first(
+        &self,
+        id: EndpointId,
+        alpn: &[u8],
+        purpose: &'static str,
+    ) -> Result<Connection> {
         let deadline = Instant::now() + CONNECT_TIMEOUT;
         let known = self.endpoint().remote_info(id).await.map(|info| {
             EndpointAddr::from_parts(id, info.into_addrs().map(|addr| addr.into_addr()))
         });
-        let candidates = dome_host_candidates(id, known.as_ref(), &self.relay_urls().await);
-        let mut last_error = anyhow!("no Dome host candidate");
+        let candidates = direct_first_candidates(id, known.as_ref(), &self.relay_urls().await);
+        let mut last_error = anyhow!("no {purpose} candidate");
         for candidate in candidates {
             let relay_supported = candidate.relay_urls().next().is_some();
             let limit = if candidate.ip_addrs().next().is_some() && !relay_supported {
@@ -226,16 +237,16 @@ impl IrohDocsNode {
             };
             match timeout(
                 limit.saturating_duration_since(Instant::now()),
-                self.endpoint().connect(candidate, DOME_SESSION_ALPN),
+                self.endpoint().connect(candidate, alpn),
             )
             .await
             {
                 Ok(Ok(connection)) => {
-                    self.log_dome_host_path(id, relay_supported).await;
+                    self.log_connection_path(id, relay_supported, purpose).await;
                     return Ok(connection);
                 }
                 Ok(Err(error)) => last_error = error.into(),
-                Err(_) => last_error = anyhow!("timed out connecting to the Dome host"),
+                Err(_) => last_error = anyhow!("timed out connecting for {purpose}"),
             }
             if Instant::now() >= deadline {
                 break;
@@ -244,8 +255,8 @@ impl IrohDocsNode {
         Err(last_error)
     }
 
-    /// 成立した経路の分類を診断に残す(ADR 0038。access proof と input の本文は出さない)。
-    async fn log_dome_host_path(&self, id: EndpointId, relay_supported: bool) {
+    /// 成立した経路の分類を診断に残す(ADR 0038、ADR 0067 §2。要求と media の本文は出さない)。
+    async fn log_connection_path(&self, id: EndpointId, relay_supported: bool, purpose: &str) {
         let active = self
             .endpoint()
             .remote_info(id)
@@ -263,7 +274,7 @@ impl IrohDocsNode {
             (true, _) => "relay_supported_p2p",
             (false, _) => "direct_p2p",
         };
-        info!(target: "kukuri_connectivity", host = %id, path, "Dome session connection established");
+        info!(target: "kukuri_connectivity", host = %id, path, "{purpose} connection established");
     }
 }
 
@@ -278,14 +289,14 @@ mod tests {
         let known = EndpointAddr::new(id)
             .with_ip_addr("127.0.0.1:4433".parse().expect("socket addr"))
             .with_relay_url(relay.clone());
-        let candidates = dome_host_candidates(id, Some(&known), std::slice::from_ref(&relay));
+        let candidates = direct_first_candidates(id, Some(&known), std::slice::from_ref(&relay));
         assert_eq!(candidates.len(), 2);
         assert!(candidates[0].relay_urls().next().is_none(), "direct first");
         assert!(candidates[0].ip_addrs().next().is_some());
         assert_eq!(candidates[1].relay_urls().next(), Some(&relay));
         assert!(candidates[1].ip_addrs().next().is_none());
 
-        let unknown = dome_host_candidates(id, None, &[]);
+        let unknown = direct_first_candidates(id, None, &[]);
         assert_eq!(unknown, vec![EndpointAddr::new(id)], "address lookup only");
     }
 }
