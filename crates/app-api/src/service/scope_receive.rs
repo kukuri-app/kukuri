@@ -11,6 +11,7 @@ use super::replica_window::RANGE_CHECK_REACTIONS_PER_OBJECT;
 use super::subscription_catch_up::REPLICA_WINDOW_ENTRIES;
 use super::*;
 use kukuri_docs_sync::{BUCKET_SECONDS_V1, DocKeyOrder, DocKeyQuery};
+use std::sync::atomic::Ordering;
 use tracing::debug;
 
 /// account 同期の scope の holder。
@@ -98,7 +99,8 @@ impl AppService {
         };
         let context = scope_context(topic_id, &scope);
         let generation = if scope == TimelineScope::Public {
-            let generation = self.next_subscription_generation(topic_id).await;
+            let counter = &self.subscription_registry.generation;
+            let generation = counter.fetch_add(1, Ordering::Relaxed);
             self.reset_public_topic_delivery_generation(topic_id, generation)
                 .await;
             Some(generation)

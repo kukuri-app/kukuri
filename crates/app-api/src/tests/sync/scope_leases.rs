@@ -460,8 +460,28 @@ async fn endpoint_rebuild_recreates_only_leased_tasks_and_peer_changes_do_not() 
     app.import_peer_ticket("peer-ticket").await.expect("ticket");
     assert_eq!(*tracked.hints.subscribe_count.lock().await, 2);
 
+    let handle = app.account_handle();
+    let delivery = &app.public_topic_delivery;
+    for index in 0..10_000 {
+        let topic = format!("history:{index}");
+        display(&handle, "history", timeline(&topic))
+            .await
+            .expect("replace a topic");
+        assert!(delivery.lock().await[&topic].generation > index);
+    }
+    close(&handle, "history").await;
+    let old = delivery.lock().await["kukuri:topic:leased"].generation;
+    let subscriptions = *tracked.hints.subscribe_count.lock().await;
     app.rebuild_scope_subscriptions().await.expect("rebuild");
-    assert_eq!(*tracked.hints.subscribe_count.lock().await, 4);
+    assert_eq!(
+        *tracked.hints.subscribe_count.lock().await,
+        subscriptions + 2
+    );
+    record_public_topic_docs_activity_if_current(delivery, "kukuri:topic:leased", old, 1).await;
+    assert_eq!(
+        delivery.lock().await["kukuri:topic:leased"].last_docs_activity_at,
+        None
+    );
     assert_eq!(counts(&tracked).await, (3, 3, 2, 0));
 }
 

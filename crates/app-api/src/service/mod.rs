@@ -860,21 +860,6 @@ impl AppService {
         self.services.blob_service.assist_peer_ids().await
     }
 
-    pub(crate) async fn next_subscription_generation(&self, key: &str) -> u64 {
-        let mut generations = self
-            .subscription_registry
-            .subscription_generations
-            .lock()
-            .await;
-        let generation = generations
-            .get(key)
-            .copied()
-            .unwrap_or_default()
-            .saturating_add(1);
-        generations.insert(key.to_string(), generation);
-        generation
-    }
-
     pub(crate) async fn reset_public_topic_delivery_generation(
         &self,
         topic_id: &str,
