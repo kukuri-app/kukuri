@@ -1,15 +1,7 @@
 use super::*;
 
-/// 購読タスクの台帳(WP-H5 PR5)。
-///
-/// かつて AppService に生のまま並んでいた購読管理 8 フィールド(task map ×5 +
-/// 世代番号 + 復旧 deadline ×2)の置き場所。守るべき不変条件はここに集約する:
-/// - task を張り替えるときは必ず旧 task を abort してから登録する(取り残し防止)
-/// - 世代番号(generations)は購読の張り替え毎に進み、旧世代の task が古い状態を
-///   書き戻さないためのフェンスになる
-/// - 復旧 deadline は「同じ対象への再起動が短時間に連打されない」ためのクールダウン
-///
-/// フィールドは従来と同じ粒度の Mutex map のまま(スケジューリングの挙動は不変)。
+/// account の購読taskと世代fence。張り替える前に旧taskをabortする。
+/// 世代はaccountのhandle間で共有し、過去のtopic名を保持しない(#1778)。
 #[derive(Clone, Default)]
 pub(crate) struct SubscriptionRegistry {
     /// Accountごとに一つの暗号化offer受信task。dropでも実行中の取得を中止する。
@@ -33,8 +25,8 @@ pub(crate) struct SubscriptionRegistry {
     pub(crate) dome_heartbeats: Arc<Mutex<HashMap<String, AbortOnDropTask>>>,
     /// live presence の期限管理 task(key = live_presence_task_key)。
     pub(crate) live_presence_tasks: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
-    /// 購読の世代番号(key = topic_id)。
-    pub(crate) subscription_generations: Arc<Mutex<HashMap<String, u64>>>,
+    /// public購読の世代を採番する単一counter。
+    pub(crate) generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 pub(crate) struct AbortOnDropTask(Option<JoinHandle<()>>);
