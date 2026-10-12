@@ -3,29 +3,30 @@
   "schema_version": 1,
   "record_kind": "refactoring-campaign-completion",
   "completed_campaign_baseline": true,
-  "tracking_issue": 872,
-  "scope_revision": "2026-09-04-issue-872-refactoring-campaign-v1",
-  "audit_date": "2026-09-08",
-  "baseline_commit": "e98d2025e01332a6dbd4b13f5f4712654a931c65",
-  "audit_start_commit": "ac9946d66aaf197204f669a10701fac8a13877e9",
-  "commit_semantics": "baseline_commitはmain祖先の製品実装完了・比較起点。baseline自身を含むdocs/config merge SHAはIssue #872のComplete evidenceで別記し、未監査の後続変更を消費しない。",
-  "completion_record": "docs/progress/2026-09-08-872-refactoring-campaign-phase-4.md",
+  "tracking_issue": 1777,
+  "scope_revision": "2026-10-12-refactor-r2-cn-build",
+  "audit_date": "2026-10-12",
+  "baseline_commit": "cffa5eddd3bb378c5f2f6717109574a7ba38b7d8",
+  "audit_start_commit": "1f77dd4e3252b37fc944446544b901435c04063f",
+  "commit_semantics": "baseline_commitはmain祖先の承認済み製品・現状文書完了commit。baseline公開merge SHAは#1783/#1777 Complete evidenceで別記。自己参照hashや未監査後続変更を含めない。",
+  "completion_record": "docs/progress/2026-10-12-1783-refactoring-completion.md",
   "update_policy": "監査完了後の独立review付きPRだけで更新。#873のcheck自身による前進は禁止。",
   "code_tree_oids": {
-    "crates": "9dd9733d9155fa022b77310399ecebfee73f792c",
-    "apps": "c28f81a1f7b89a225d0358bb810c4bea4a2abc21",
-    "harness": "7189d5600f14a7a02285e40234daf0d9b6dc95fc",
-    "xtask/src": "5ef814d6e4fb63ae927d0857fd84794e3fd028f2",
-    "xtask/Cargo.toml": "adf7ad5abac7582a2145d9d97a227e6dfa6fce3a",
-    "Cargo.toml": "7fd70d5d0ffab5a6592547e6d5f4780adb84ccee",
-    "Cargo.lock": "0053565d6a571db8547757dd10586c442fd6b93b",
-    "rust-toolchain.toml": "5dd88652da3b5f1496d2097252905e7346bc7984",
-    ".cargo": "0c4075fefb8e5cf974a5fdd2614125de1331ee58",
-    ".config": "d2d3f686f9889d8f570a8a19931b21387ecfe838"
+    "crates": "f66aa5e94ed2fda44cc8514eaa9ea6c88cb8df1c",
+    "apps": "614d72d8893abd99b5a05bf0cec1bbff5b22976b",
+    "harness": "d37e45025db8e3d2bf6a0704912031a6e2cd174b",
+    "xtask/src": "e02bcfe4e94c2d85e1fdcceda58183aac3e53a59",
+    "xtask/Cargo.toml": "d9803d22df88cf862d841831f03c01bab86d2754",
+    "Cargo.toml": "06af9de73f3c762084325af686e370f46b96b725",
+    "Cargo.lock": "cfe2926a5d4a5da0020fb3cc480545c02c865876",
+    "rust-toolchain.toml": "77d99b52b6614e783a44e831d4b77e4414a2f802",
+    ".cargo": "7c24ae766842d98df0623a5b595e5d1882ed5635",
+    ".config": "d0efa29deac6e09ed9b2dee85f0a99b0f4df637b",
+    "docker/cn/Dockerfile": "ef77862e8782d89a5e0c0cc7d958a2452febaaf1"
   },
   "scope": {
     "source_policy": "xtask/src/oversized.rs::should_scan_oversized_file",
-    "source_policy_blob": "f21996601e488a5ce26a5ff66d50ca7c637c256b",
+    "source_policy_blob": "d259fd3b50c2fd1e4533b7c5db47209572df0594",
     "extensions": [
       "css",
       "html",
@@ -54,99 +55,66 @@
       "apps/desktop/src-tauri/gen/",
       "apps/desktop/src-tauri/icons/"
     ],
-    "tracked_candidate_count": 1556,
-    "tracked_candidate_paths_sha256": "b102979575231b39bad2885af6ed414c9e9b0b3dfecb3e472933f51580c5ddcc",
+    "tracked_candidate_count": 2793,
+    "tracked_candidate_paths_sha256": "4bafec435e2c018b13ea52b164f573a9223557595714baaae855cef2be4a9e58",
     "population_semantics": "baseline_commitのgit ls-tree -r --name-onlyを既存oversized scannerのextension/exclusionへ適用した集合。実行時の未追跡filesはbaselineへ含めない。",
     "groups": [
       {
         "id": "INV-1",
         "selector_regex": "^crates/(core|store|transport|docs-sync|blob-service|iroh-node)/",
-        "before_count": 177,
-        "member_count": 177,
-        "member_paths_sha256": "ed77b4ca85efc7b9d16c757233318864a4c8bee6e3e4dd8c4e8887fbe4d1d19f",
+        "before_count": 358,
+        "member_count": 358,
+        "member_paths_sha256": "511c4f5ee2f8eabef0e5f6d561f11cb13e22ddb85957b76deac1ab50138cf9c8",
         "added_paths": [],
         "removed_paths": []
       },
       {
         "id": "INV-2",
         "selector_regex": "^(crates/(app-api|desktop-runtime|kukuri-cli)/|apps/desktop/src-tauri/)",
-        "before_count": 309,
-        "member_count": 311,
-        "member_paths_sha256": "679e6f0f4ad0c3e95a3b11240a969e657790390f5f15d935c32ced4d6b32b953",
-        "added_paths": [
-          "crates/app-api/src/tests/dome_listing.rs",
-          "crates/desktop-runtime/src/tests/community_node/dome_hosting/transfer_contract.rs"
-        ],
+        "before_count": 485,
+        "member_count": 485,
+        "member_paths_sha256": "15bb098e41bad4d7f1ac876ea91c92dba0e0a923ba8428315cc8b77b01804c4d",
+        "added_paths": [],
         "removed_paths": []
       },
       {
         "id": "INV-3",
         "selector_regex": "^apps/desktop/(?!src-tauri/)",
-        "before_count": 539,
-        "member_count": 542,
-        "member_paths_sha256": "91a96c5d5fe32e53d836ee8d2a6e63c815047f0d567a28ce5b0155c51b2c88f3",
-        "added_paths": [
-          "apps/desktop/src/components/extended/metaverse/useDomeTransitionAttempt.ts",
-          "apps/desktop/src/shell/data/loaders/useNotificationLoaders.ts",
-          "apps/desktop/src/shell/data/notificationLoaders.contract.test.tsx"
-        ],
+        "before_count": 968,
+        "member_count": 968,
+        "member_paths_sha256": "3bbe9ba513bd9d5f32e4beae301ed23516ca68a2e4417d2a244b3737c00fa784",
+        "added_paths": [],
         "removed_paths": []
       },
       {
         "id": "INV-4",
         "selector_regex": "^crates/metaverse-host/|^(crates/(app-api|desktop-runtime)/|apps/desktop/src/).*([Mm]etaverse|[Dd]ome)",
-        "before_count": 65,
-        "member_count": 68,
-        "member_paths_sha256": "e230bb394e0aa07f3037469b4c1b9dce7dc73887456a836efd41df49040f5c03",
-        "added_paths": [
-          "apps/desktop/src/components/extended/metaverse/useDomeTransitionAttempt.ts",
-          "crates/app-api/src/tests/dome_listing.rs",
-          "crates/desktop-runtime/src/tests/community_node/dome_hosting/transfer_contract.rs"
-        ],
+        "before_count": 112,
+        "member_count": 112,
+        "member_paths_sha256": "9afc6fbf5a74c1e14d7648d83efddbee2f3bcd668ea5ff2b10af7b1a4a2c20a3",
+        "added_paths": [],
         "removed_paths": []
       },
       {
         "id": "INV-5",
         "selector_regex": "^crates/cn-[^/]+/",
-        "before_count": 262,
-        "member_count": 265,
-        "member_paths_sha256": "66c0d9fcd9c9e6b4753ac4538b333d1819165a79ded6e87f6665c6aba3570de8",
-        "added_paths": [
-          "crates/cn-indexer/src/ingest/source.rs",
-          "crates/cn-indexer/tests/source_resolution_contracts.rs",
-          "crates/cn-indexer/tests/source_resolution_contracts/support.rs"
-        ],
+        "before_count": 402,
+        "member_count": 402,
+        "member_paths_sha256": "909ea6c9ff767c13bc2188e92d4136b76b7220d3f40ae3bf1b185bdae4ebaa31",
+        "added_paths": [],
         "removed_paths": []
       },
       {
         "id": "INV-6",
         "selector_regex": "^(crates/(harness|test-support)/|harness/|xtask/|docs/|scripts/|\\.github/|\\.config/)|^(AGENTS\\.md|PLANS\\.md|REFACTORING\\.md|DESIGN\\.md|Cargo\\.(toml|lock)|rust-toolchain\\.toml)$",
-        "before_count": 402,
-        "member_count": 424,
-        "member_paths_sha256": "4cf84b621b8a7441f74e9d8c559706ff1542621759f384aa360a841c926d21e2",
+        "before_count": 1269,
+        "member_count": 1273,
+        "member_paths_sha256": "564adb6cfc53f9d4dd1abdb99794f7c5dee9d8b9067b40f7c04bca0dc0c738b9",
         "added_paths": [
-          "docs/progress/2026-09-08-872-audit-baseline.json",
-          "docs/progress/2026-09-08-872-audit-core-cn.md",
-          "docs/progress/2026-09-08-872-audit-frontend.md",
-          "docs/progress/2026-09-08-872-audit-harness.md",
-          "docs/progress/2026-09-08-872-audit-runtime-metaverse.md",
-          "docs/progress/2026-09-08-872-refactoring-campaign-phase-2.md",
-          "docs/progress/2026-09-08-872-refactoring-campaign-phase-3.md",
-          "docs/progress/2026-09-08-919-notification-contract.md",
-          "docs/progress/2026-09-08-920-notification-loader.md",
-          "docs/progress/2026-09-08-921-dome-transfer-contract.md",
-          "docs/progress/2026-09-08-922-dome-transfer-extract.md",
-          "docs/progress/2026-09-08-923-dome-transition-contract.md",
-          "docs/progress/2026-09-08-924-dome-transition-attempt.md",
-          "docs/progress/2026-09-08-925-indexer-source-contract.md",
-          "docs/progress/2026-09-08-926-indexer-source-resolver.md",
-          "docs/progress/2026-09-08-927-dome-preset-listing.md",
-          "docs/progress/2026-09-08-928-capability-freeze-docs.md",
-          "docs/ui-reviews/2026-09-08-issue-924-transition-owner.md",
-          "docs/ui-reviews/assets/issue-924/after-exit.jpg",
-          "docs/ui-reviews/assets/issue-924/after-input.jpg",
-          "docs/ui-reviews/assets/issue-924/before-exit.jpg",
-          "docs/ui-reviews/assets/issue-924/before-fullscreen-flags.jpg"
+          "docs/progress/2026-10-12-1778-subscription-generation.md",
+          "docs/progress/2026-10-12-1779-author-timeline.md",
+          "docs/progress/2026-10-12-1780-content-command-table.md",
+          "docs/progress/2026-10-12-1781-index-query-response.md"
         ],
         "removed_paths": []
       }
@@ -155,106 +123,136 @@
   },
   "oversized": {
     "line_limit": 1000,
-    "count": 16,
+    "count": 21,
     "ratchet_path": "xtask/oversized-baseline.json",
-    "ratchet_blob": "cb37a553c18486c500abec2609ae26102344153d",
+    "ratchet_blob": "4b554cca5e48129615c573ce577b72e9512487a8",
     "line_count_semantics": "UTF-8 blobのLF区切り、末尾LFを追加空行に数えない。Rust str::linesと同じ対象。",
     "files": [
       {
         "path": "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts",
-        "before_lines": 1272,
-        "observed_lines": 1086,
-        "ratchet_lines": 1272
+        "before_lines": 1131,
+        "observed_lines": 1131,
+        "ratchet_lines": 1131
       },
       {
         "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts",
-        "before_lines": 1035,
-        "observed_lines": 1035,
+        "before_lines": 1151,
+        "observed_lines": 1151,
+        "ratchet_lines": 1151
+      },
+      {
+        "path": "apps/desktop/src/lib/api/types.generated.ts",
+        "before_lines": 1020,
+        "observed_lines": 1020,
+        "ratchet_lines": 1020
+      },
+      {
+        "path": "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx",
+        "before_lines": 1031,
+        "observed_lines": 1027,
+        "ratchet_lines": 1031
+      },
+      {
+        "path": "apps/desktop/src/shell/useDesktopShellData.ts",
+        "before_lines": 1117,
+        "observed_lines": 1117,
+        "ratchet_lines": 1117
+      },
+      {
+        "path": "apps/desktop/src/styles/shell-scoped-overrides.css",
+        "before_lines": 1042,
+        "observed_lines": 1042,
         "ratchet_lines": 1042
       },
       {
-        "path": "apps/desktop/src/shell/presentation.test.ts",
-        "before_lines": 1018,
-        "observed_lines": 1018,
-        "ratchet_lines": 1018
+        "path": "apps/desktop/tests/playwright/shell.smoke.spec.ts",
+        "before_lines": 1000,
+        "observed_lines": 1000,
+        "ratchet_lines": 1000
       },
       {
         "path": "crates/app-api/src/dome_hosting.rs",
-        "before_lines": 1096,
-        "observed_lines": 1096,
-        "ratchet_lines": 1096
+        "before_lines": 1044,
+        "observed_lines": 1044,
+        "ratchet_lines": 1044
       },
       {
-        "path": "crates/app-api/src/private_channels.rs",
-        "before_lines": 1129,
-        "observed_lines": 1129,
-        "ratchet_lines": 1129
+        "path": "crates/app-api/src/service/replica_window.rs",
+        "before_lines": 1033,
+        "observed_lines": 1033,
+        "ratchet_lines": 1033
       },
       {
-        "path": "crates/app-api/src/service/private_channels_support.rs",
-        "before_lines": 1097,
-        "observed_lines": 1097,
-        "ratchet_lines": 1097
+        "path": "crates/app-api/src/views.rs",
+        "before_lines": 1002,
+        "observed_lines": 1002,
+        "ratchet_lines": 1002
       },
       {
         "path": "crates/cn-operator/src/config.rs",
-        "before_lines": 1287,
-        "observed_lines": 1287,
-        "ratchet_lines": 1287
+        "before_lines": 1340,
+        "observed_lines": 1340,
+        "ratchet_lines": 1340
       },
       {
         "path": "crates/cn-operator/src/docs.rs",
-        "before_lines": 1191,
-        "observed_lines": 1191,
-        "ratchet_lines": 1191
+        "before_lines": 1152,
+        "observed_lines": 1152,
+        "ratchet_lines": 1152
       },
       {
-        "path": "crates/cn-operator/tests/generate.rs",
-        "before_lines": 1027,
-        "observed_lines": 1027,
-        "ratchet_lines": 1027
-      },
-      {
-        "path": "crates/desktop-runtime/src/identity.rs",
-        "before_lines": 1004,
-        "observed_lines": 1004,
-        "ratchet_lines": 1004
+        "path": "crates/cn-user-api/tests/trust_relation.rs",
+        "before_lines": 1045,
+        "observed_lines": 1045,
+        "ratchet_lines": 1045
       },
       {
         "path": "crates/desktop-runtime/src/runtime/private_channels_game_api.rs",
-        "before_lines": 1100,
-        "observed_lines": 1093,
-        "ratchet_lines": 1100
+        "before_lines": 1132,
+        "observed_lines": 1132,
+        "ratchet_lines": 1132
+      },
+      {
+        "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs",
+        "before_lines": 1051,
+        "observed_lines": 1051,
+        "ratchet_lines": 1051
       },
       {
         "path": "crates/harness/src/scenarios/community_node.rs",
-        "before_lines": 1228,
-        "observed_lines": 1228,
-        "ratchet_lines": 1228
+        "before_lines": 1218,
+        "observed_lines": 1218,
+        "ratchet_lines": 1218
       },
       {
         "path": "crates/harness/src/scenarios/desktop_smoke.rs",
-        "before_lines": 1016,
-        "observed_lines": 1016,
-        "ratchet_lines": 1016
+        "before_lines": 1043,
+        "observed_lines": 1043,
+        "ratchet_lines": 1043
       },
       {
         "path": "crates/metaverse-host/src/lib.rs",
-        "before_lines": 1191,
-        "observed_lines": 1191,
-        "ratchet_lines": 1191
+        "before_lines": 1187,
+        "observed_lines": 1187,
+        "ratchet_lines": 1187
       },
       {
         "path": "crates/metaverse-host/src/tests.rs",
-        "before_lines": 1056,
-        "observed_lines": 1056,
-        "ratchet_lines": 1056
+        "before_lines": 1054,
+        "observed_lines": 1054,
+        "ratchet_lines": 1054
+      },
+      {
+        "path": "crates/store/src/parity/lists.rs",
+        "before_lines": 1026,
+        "observed_lines": 1026,
+        "ratchet_lines": 1026
       },
       {
         "path": "docs/THIRD_PARTY_NOTICES.md",
-        "before_lines": 1276,
-        "observed_lines": 1276,
-        "ratchet_lines": 1276
+        "before_lines": 1226,
+        "observed_lines": 1226,
+        "ratchet_lines": 1226
       }
     ]
   },
@@ -282,16 +280,14 @@
     "max_path_change_commits": 0,
     "days_since_audit": 0,
     "historical_context": {
-      "since": "2026-05-29T00:00:00Z",
+      "since": "2026-09-08T00:00:00Z",
       "method": "git rev-list --count --since=<since> <commit> -- <path>; rename追跡なし、commit数のみで自動発火しない",
-      "commits": 566,
+      "commits": 759,
       "path_change_commits": {
-        "apps/desktop/src/shell/data/useDesktopShellDataEffects.ts": 16,
-        "apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.ts": 13,
-        "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts": 15,
-        "crates/desktop-runtime/src/runtime/private_channels_game_api.rs": 16,
-        "crates/cn-indexer/src/ingest.rs": 12,
-        "apps/desktop/src/lib/api/commands/runtimeApi.ts": 25
+        "crates/app-api/src/service/subscription_registry.rs": 15,
+        "apps/desktop/src/shell/slices/profileSocial.ts": 5,
+        "crates/kukuri-cli/src/commands/content_social.rs": 4,
+        "crates/cn-user-api/src/handlers/indexing.rs": 10
       }
     }
   },
@@ -305,22 +301,26 @@
   ],
   "structural_metrics": [
     {
-      "id": "notification_owner_files",
-      "before": 2,
-      "after": 1,
+      "id": "retained_code_lines_1778",
+      "before": 2358,
+      "after": 2357,
       "before_paths": [
-        "apps/desktop/src/shell/data/useDesktopShellDataEffects.ts",
-        "apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.ts"
+        "crates/app-api/src/service/mod.rs",
+        "crates/app-api/src/service/scope_receive.rs",
+        "crates/app-api/src/service/subscription_registry.rs",
+        "crates/app-api/src/tests/sync/scope_leases.rs"
       ],
       "after_paths": [
-        "apps/desktop/src/shell/data/loaders/useNotificationLoaders.ts"
+        "crates/app-api/src/service/mod.rs",
+        "crates/app-api/src/service/scope_receive.rs",
+        "crates/app-api/src/service/subscription_registry.rs",
+        "crates/app-api/src/tests/sync/scope_leases.rs"
       ],
-      "measurement_regex": "(?s)\\A(?=.*api\\.getNotificationStatus\\().*\\Z",
+      "measurement_regex": "^[^\\n]*\\n",
       "issues": [
-        919,
-        920
+        1778
       ],
-      "meaning": "status/list取得を所有するmodule数。badge/inboxの2policyと2callは保持。",
+      "meaning": "同一path集合の実装・test・補助コード物理行。全対象は末尾LFあり。文書別計測。",
       "measurement_scope": {
         "kind": "whole_file",
         "before_symbol": null,
@@ -328,21 +328,52 @@
       }
     },
     {
-      "id": "build_dome_hosting_assignment_request_sites",
-      "before": 2,
-      "after": 1,
+      "id": "retained_code_lines_1779",
+      "before": 9938,
+      "after": 9882,
       "before_paths": [
-        "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
+        "apps/desktop/src/shell/actions/messageReactionSocial.ts",
+        "apps/desktop/src/shell/actions/optimisticPosts.ts",
+        "apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.test.tsx",
+        "apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.ts",
+        "apps/desktop/src/shell/data/usePreviewableMediaAttachments.test.ts",
+        "apps/desktop/src/shell/data/usePreviewableMediaAttachments.ts",
+        "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx",
+        "apps/desktop/src/shell/page/DesktopShellPrimaryWorkspace.tsx",
+        "apps/desktop/src/shell/slices/profileSocial.ts",
+        "apps/desktop/src/shell/store.ts",
+        "apps/desktop/src/shell/storeSelectors.ts",
+        "apps/desktop/src/shell/useDesktopShellActions.test.tsx",
+        "apps/desktop/src/shell/useDesktopShellActions.ts",
+        "apps/desktop/src/shell/useDesktopShellData.ts",
+        "apps/desktop/src/shell/useDesktopShellRouting.ts",
+        "apps/desktop/src/shell/useDesktopShellViewModels.ts",
+        "apps/desktop/src/shell/viewModels/useTimelineViewModels.ts"
       ],
       "after_paths": [
-        "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
+        "apps/desktop/src/shell/actions/messageReactionSocial.ts",
+        "apps/desktop/src/shell/actions/optimisticPosts.ts",
+        "apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.test.tsx",
+        "apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.ts",
+        "apps/desktop/src/shell/data/usePreviewableMediaAttachments.test.ts",
+        "apps/desktop/src/shell/data/usePreviewableMediaAttachments.ts",
+        "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx",
+        "apps/desktop/src/shell/page/DesktopShellPrimaryWorkspace.tsx",
+        "apps/desktop/src/shell/slices/profileSocial.ts",
+        "apps/desktop/src/shell/store.ts",
+        "apps/desktop/src/shell/storeSelectors.ts",
+        "apps/desktop/src/shell/useDesktopShellActions.test.tsx",
+        "apps/desktop/src/shell/useDesktopShellActions.ts",
+        "apps/desktop/src/shell/useDesktopShellData.ts",
+        "apps/desktop/src/shell/useDesktopShellRouting.ts",
+        "apps/desktop/src/shell/useDesktopShellViewModels.ts",
+        "apps/desktop/src/shell/viewModels/useTimelineViewModels.ts"
       ],
-      "measurement_regex": "\\.\\s*build_dome_hosting_assignment_request\\(",
+      "measurement_regex": "^[^\\n]*\\n",
       "issues": [
-        921,
-        922
+        1779
       ],
-      "meaning": "両入口から1 private ownerへ集約した副作用callsite数。",
+      "meaning": "同一path集合の実装・test・補助コード物理行。全対象は末尾LFあり。文書別計測。",
       "measurement_scope": {
         "kind": "whole_file",
         "before_symbol": null,
@@ -350,21 +381,20 @@
       }
     },
     {
-      "id": "assign_dome_hosting_to_community_node_sites",
-      "before": 2,
-      "after": 1,
+      "id": "retained_code_lines_1780",
+      "before": 353,
+      "after": 243,
       "before_paths": [
-        "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
+        "crates/kukuri-cli/src/commands/content_social.rs"
       ],
       "after_paths": [
-        "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
+        "crates/kukuri-cli/src/commands/content_social.rs"
       ],
-      "measurement_regex": "\\.\\s*assign_dome_hosting_to_community_node\\(",
+      "measurement_regex": "^[^\\n]*\\n",
       "issues": [
-        921,
-        922
+        1780
       ],
-      "meaning": "両入口から1 private ownerへ集約した副作用callsite数。",
+      "meaning": "同一path集合の実装・test・補助コード物理行。全対象は末尾LFあり。文書別計測。",
       "measurement_scope": {
         "kind": "whole_file",
         "before_symbol": null,
@@ -372,21 +402,22 @@
       }
     },
     {
-      "id": "activate_dome_hosting_on_community_node_sites",
-      "before": 2,
-      "after": 1,
+      "id": "retained_code_lines_1781",
+      "before": 824,
+      "after": 807,
       "before_paths": [
-        "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
+        "crates/cn-user-api/src/handlers/indexing.rs",
+        "docker/cn/Dockerfile"
       ],
       "after_paths": [
-        "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
+        "crates/cn-user-api/src/handlers/indexing.rs",
+        "docker/cn/Dockerfile"
       ],
-      "measurement_regex": "\\.\\s*activate_dome_hosting_on_community_node\\(",
+      "measurement_regex": "^[^\\n]*\\n",
       "issues": [
-        921,
-        922
+        1781
       ],
-      "meaning": "両入口から1 private ownerへ集約した副作用callsite数。",
+      "meaning": "同一path集合の実装・test・補助コード物理行。全対象は末尾LFあり。文書別計測。",
       "measurement_scope": {
         "kind": "whole_file",
         "before_symbol": null,
@@ -394,21 +425,20 @@
       }
     },
     {
-      "id": "session_attempt_mutations",
-      "before": 9,
+      "id": "topic_generation_history_sites",
+      "before": 1,
       "after": 0,
       "before_paths": [
-        "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts"
+        "crates/app-api/src/service/subscription_registry.rs"
       ],
       "after_paths": [
-        "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts"
+        "crates/app-api/src/service/subscription_registry.rs"
       ],
-      "measurement_regex": "^\\s*(?:attempt\\.(?:phase|cancelled|ticket)|transitionAttemptRef\\.current)\\s*=(?!=)",
+      "measurement_regex": "\\bsubscription_generations\\b",
       "issues": [
-        923,
-        924
+        1778
       ],
-      "meaning": "sessionからmutable attemptの直接所有を除去。",
+      "meaning": "topic名を保持する履歴mapの宣言参照1箇所を撤去。単一counterの保持量は固定。",
       "measurement_scope": {
         "kind": "whole_file",
         "before_symbol": null,
@@ -416,193 +446,220 @@
       }
     },
     {
-      "id": "source_service_dependencies",
-      "before": 6,
-      "after": 2,
+      "id": "selected_author_duplicate_references",
+      "before": 43,
+      "after": 0,
       "before_paths": [
-        "crates/cn-indexer/src/ingest.rs"
+        "apps/desktop/src/shell/actions/messageReactionSocial.ts",
+        "apps/desktop/src/shell/actions/optimisticPosts.ts",
+        "apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.test.tsx",
+        "apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.ts",
+        "apps/desktop/src/shell/data/usePreviewableMediaAttachments.test.ts",
+        "apps/desktop/src/shell/data/usePreviewableMediaAttachments.ts",
+        "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx",
+        "apps/desktop/src/shell/page/DesktopShellPrimaryWorkspace.tsx",
+        "apps/desktop/src/shell/slices/profileSocial.ts",
+        "apps/desktop/src/shell/store.ts",
+        "apps/desktop/src/shell/storeSelectors.ts",
+        "apps/desktop/src/shell/useDesktopShellActions.test.tsx",
+        "apps/desktop/src/shell/useDesktopShellActions.ts",
+        "apps/desktop/src/shell/useDesktopShellData.ts",
+        "apps/desktop/src/shell/useDesktopShellRouting.ts",
+        "apps/desktop/src/shell/useDesktopShellViewModels.ts",
+        "apps/desktop/src/shell/viewModels/useTimelineViewModels.ts"
       ],
       "after_paths": [
-        "crates/cn-indexer/src/ingest/source.rs"
+        "apps/desktop/src/shell/actions/messageReactionSocial.ts",
+        "apps/desktop/src/shell/actions/optimisticPosts.ts",
+        "apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.test.tsx",
+        "apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.ts",
+        "apps/desktop/src/shell/data/usePreviewableMediaAttachments.test.ts",
+        "apps/desktop/src/shell/data/usePreviewableMediaAttachments.ts",
+        "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx",
+        "apps/desktop/src/shell/page/DesktopShellPrimaryWorkspace.tsx",
+        "apps/desktop/src/shell/slices/profileSocial.ts",
+        "apps/desktop/src/shell/store.ts",
+        "apps/desktop/src/shell/storeSelectors.ts",
+        "apps/desktop/src/shell/useDesktopShellActions.test.tsx",
+        "apps/desktop/src/shell/useDesktopShellActions.ts",
+        "apps/desktop/src/shell/useDesktopShellData.ts",
+        "apps/desktop/src/shell/useDesktopShellRouting.ts",
+        "apps/desktop/src/shell/useDesktopShellViewModels.ts",
+        "apps/desktop/src/shell/viewModels/useTimelineViewModels.ts"
       ],
-      "measurement_regex": "^\\s*(docs_sync|safety|entries|projection|blob_service|metrics):",
+      "measurement_regex": "\\bselectedAuthorTimeline(?:NextCursor|LoadingMore)?\\b",
       "issues": [
-        925,
-        926
+        1779
       ],
-      "meaning": "struct IngestPipelineの6service fieldからSourceResolverのDocsSync/optional BlobServiceの2borrowだけへ制限。",
+      "meaning": "行/cursor/loadingの選択コピーとcaller参照を撤去し、著者mapから直接派生。",
       "measurement_scope": {
-        "kind": "struct_fields",
-        "before_symbol": "IngestPipeline",
-        "after_symbol": "SourceResolver"
+        "kind": "whole_file",
+        "before_symbol": null,
+        "after_symbol": null
+      }
+    },
+    {
+      "id": "cli_concrete_operation_references",
+      "before": 38,
+      "after": 0,
+      "before_paths": [
+        "crates/kukuri-cli/src/commands/content_social.rs"
+      ],
+      "after_paths": [
+        "crates/kukuri-cli/src/commands/content_social.rs"
+      ],
+      "measurement_regex": "\\bOperation::[A-Z][A-Za-z0-9_]*",
+      "issues": [
+        1780
+      ],
+      "meaning": "具体的Operation参照38箇所を局所宣言表に置換。生成器はOperation::$operationを使用。手書きenum/execute/登録の3正本→1表は別途固定source監査で確認。",
+      "measurement_scope": {
+        "kind": "whole_file",
+        "before_symbol": null,
+        "after_symbol": null
+      }
+    },
+    {
+      "id": "cn_query_preparation_calls",
+      "before": 3,
+      "after": 1,
+      "before_paths": [
+        "crates/cn-user-api/src/handlers/indexing.rs"
+      ],
+      "after_paths": [
+        "crates/cn-user-api/src/handlers/indexing.rs"
+      ],
+      "measurement_regex": "^\\s*require_index_query\\(&state",
+      "issues": [
+        1781
+      ],
+      "meaning": "3 HTTP入口から認証後の要求準備を1責務へ集約。",
+      "measurement_scope": {
+        "kind": "whole_file",
+        "before_symbol": null,
+        "after_symbol": null
+      }
+    },
+    {
+      "id": "cn_relation_result_calls",
+      "before": 3,
+      "after": 1,
+      "before_paths": [
+        "crates/cn-user-api/src/handlers/indexing.rs"
+      ],
+      "after_paths": [
+        "crates/cn-user-api/src/handlers/indexing.rs"
+      ],
+      "measurement_regex": "^\\s*let entries = filter_index_entries\\(",
+      "issues": [
+        1781
+      ],
+      "meaning": "3応答のrelation visibility/DTO組立てを一つに集約。",
+      "measurement_scope": {
+        "kind": "whole_file",
+        "before_symbol": null,
+        "after_symbol": null
+      }
+    },
+    {
+      "id": "cn_demand_record_calls",
+      "before": 2,
+      "after": 1,
+      "before_paths": [
+        "crates/cn-user-api/src/handlers/indexing.rs"
+      ],
+      "after_paths": [
+        "crates/cn-user-api/src/handlers/indexing.rs"
+      ],
+      "measurement_regex": "\\bmark_index_demand\\(&state",
+      "issues": [
+        1781
+      ],
+      "meaning": "所属確認後の需要記録2経路を1経路へ統合。推薦は無scopeで記録しない。",
+      "measurement_scope": {
+        "kind": "whole_file",
+        "before_symbol": null,
+        "after_symbol": null
       }
     }
   ],
   "children": [
     {
-      "issue": 919,
-      "pr": 929,
-      "audit_head": "f68baddce8fca68242fea1d8d8f9b97c7d2da966",
-      "merge_commit": "0410261bb8091829db6b5cd8f1feb66791aaf327",
-      "check_count": 11,
+      "issue": 1778,
+      "pr": 1784,
+      "audit_head": "ec83ed283849f268a8d859fbec8c6c750ba38f89",
+      "merge_commit": "7d14682b47d53af46ddbaa4fd9450f52c06b2f3f",
+      "check_count": 32,
       "all_checks_success": true,
-      "fast_run_id": 34143593820,
+      "fast_run_id": 38215408570,
       "target_paths": [
-        "apps/desktop/src/shell/data/notificationLoaders.contract.test.tsx",
-        "docs/progress/2026-09-08-919-notification-contract.md"
+        "crates/app-api/src/service/mod.rs",
+        "crates/app-api/src/service/scope_receive.rs",
+        "crates/app-api/src/service/subscription_registry.rs",
+        "crates/app-api/src/tests/sync/scope_leases.rs",
+        "docs/progress/2026-10-12-1778-subscription-generation.md"
       ],
       "audited_head_matches_merge": true,
-      "post_merge_changed_paths": [
-        "apps/desktop/src/shell/data/notificationLoaders.contract.test.tsx"
-      ]
+      "post_merge_changed_paths": []
     },
     {
-      "issue": 920,
-      "pr": 933,
-      "audit_head": "0884e85a5bffbecaa4d27f042f54859c3f8633fc",
-      "merge_commit": "4e833af8cbdb7263a75ad17f54ee64be6e263471",
-      "check_count": 11,
+      "issue": 1779,
+      "pr": 1785,
+      "audit_head": "db21f50d1651d9a2f227030da371fbb57781a28e",
+      "merge_commit": "23dd5cf10c445713688ea30284b8179a1bea75eb",
+      "check_count": 30,
       "all_checks_success": true,
-      "fast_run_id": 34148811673,
+      "fast_run_id": 38218310184,
       "target_paths": [
+        "apps/desktop/src/shell/actions/messageReactionSocial.ts",
+        "apps/desktop/src/shell/actions/optimisticPosts.ts",
         "apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.test.tsx",
         "apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.ts",
-        "apps/desktop/src/shell/data/loaders/useNotificationLoaders.ts",
-        "apps/desktop/src/shell/data/notificationLoaders.contract.test.tsx",
-        "apps/desktop/src/shell/data/useDesktopShellDataEffects.ts",
+        "apps/desktop/src/shell/data/usePreviewableMediaAttachments.test.ts",
+        "apps/desktop/src/shell/data/usePreviewableMediaAttachments.ts",
+        "apps/desktop/src/shell/page/DesktopShellAuxiliaryPanels.tsx",
+        "apps/desktop/src/shell/page/DesktopShellPrimaryWorkspace.tsx",
+        "apps/desktop/src/shell/slices/profileSocial.ts",
+        "apps/desktop/src/shell/store.ts",
+        "apps/desktop/src/shell/storeSelectors.ts",
+        "apps/desktop/src/shell/useDesktopShellActions.test.tsx",
+        "apps/desktop/src/shell/useDesktopShellActions.ts",
         "apps/desktop/src/shell/useDesktopShellData.ts",
-        "docs/progress/2026-09-08-920-notification-loader.md"
+        "apps/desktop/src/shell/useDesktopShellRouting.ts",
+        "apps/desktop/src/shell/useDesktopShellViewModels.ts",
+        "apps/desktop/src/shell/viewModels/useTimelineViewModels.ts",
+        "docs/progress/2026-10-12-1779-author-timeline.md"
       ],
       "audited_head_matches_merge": true,
       "post_merge_changed_paths": []
     },
     {
-      "issue": 921,
-      "pr": 932,
-      "audit_head": "54c001d2f6fa944083cffc48da5912094d6f4128",
-      "merge_commit": "d5c7769a9c73c76ccfeabb8b0b0453d495b1e1b6",
-      "check_count": 13,
+      "issue": 1780,
+      "pr": 1786,
+      "audit_head": "f5ce7a62b25a1d2f2a349b057b36c0e6c79c513e",
+      "merge_commit": "f9dbba35c873b9e3183a82d5183b71749b795768",
+      "check_count": 32,
       "all_checks_success": true,
-      "fast_run_id": 34149099066,
+      "fast_run_id": 38222798285,
       "target_paths": [
-        "crates/desktop-runtime/src/tests/community_node/dome_hosting.rs",
-        "crates/desktop-runtime/src/tests/community_node/dome_hosting/transfer_contract.rs",
-        "crates/desktop-runtime/src/tests/support/lock_contract.rs",
-        "docs/progress/2026-09-08-921-dome-transfer-contract.md"
+        "crates/kukuri-cli/src/commands/content_social.rs",
+        "docs/progress/2026-10-12-1780-content-command-table.md"
       ],
       "audited_head_matches_merge": true,
       "post_merge_changed_paths": []
     },
     {
-      "issue": 922,
-      "pr": 936,
-      "audit_head": "bec17adb73f6eb5de1e7f56bc01b3918dbf0dacf",
-      "merge_commit": "f90d28fb5c5b0f87fd30233250ba786c3938eba0",
-      "check_count": 13,
+      "issue": 1781,
+      "pr": 1787,
+      "audit_head": "ab85827801c10f383104619a7870c5096fd0ea63",
+      "merge_commit": "5595018f8306ca9722fae032920431d4fd2f0af3",
+      "check_count": 33,
       "all_checks_success": true,
-      "fast_run_id": 34152916868,
+      "fast_run_id": 38228582709,
       "target_paths": [
-        "crates/desktop-runtime/src/runtime/private_channels_game_api.rs",
-        "docs/progress/2026-09-08-922-dome-transfer-extract.md"
-      ],
-      "audited_head_matches_merge": true,
-      "post_merge_changed_paths": []
-    },
-    {
-      "issue": 923,
-      "pr": 934,
-      "audit_head": "6dfb95a1e6ace5a3190e28ddc6a97c5b9b57ddd5",
-      "merge_commit": "d9ea79be4fe03e3d97032b53bef2747760652908",
-      "check_count": 11,
-      "all_checks_success": true,
-      "fast_run_id": 34148920694,
-      "target_paths": [
-        "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.test.tsx",
-        "docs/progress/2026-09-08-923-dome-transition-contract.md"
-      ],
-      "audited_head_matches_merge": true,
-      "post_merge_changed_paths": []
-    },
-    {
-      "issue": 924,
-      "pr": 937,
-      "audit_head": "e647f318fab49b5f3fed079055a4cc1823e572d6",
-      "merge_commit": "3971fba25a8d6034e16623aefc5a5b7b51d02bd6",
-      "check_count": 11,
-      "all_checks_success": true,
-      "fast_run_id": 34153376771,
-      "target_paths": [
-        "apps/desktop/src/components/extended/metaverse/useDomeTransitionAttempt.ts",
-        "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts",
-        "docs/progress/2026-09-08-924-dome-transition-attempt.md"
-      ],
-      "audited_head_matches_merge": true,
-      "post_merge_changed_paths": []
-    },
-    {
-      "issue": 925,
-      "pr": 935,
-      "audit_head": "a2dbe8e2ebd701e5d3531456943f51846ab0e822",
-      "merge_commit": "7c9cba850d572c8d358d5f529798a89c3c84eb06",
-      "check_count": 17,
-      "all_checks_success": true,
-      "fast_run_id": 34153130599,
-      "target_paths": [
-        "crates/cn-indexer/tests/source_resolution_contracts.rs",
-        "crates/cn-indexer/tests/source_resolution_contracts/support.rs",
-        "docs/progress/2026-09-08-925-indexer-source-contract.md"
-      ],
-      "audited_head_matches_merge": true,
-      "post_merge_changed_paths": []
-    },
-    {
-      "issue": 926,
-      "pr": 939,
-      "audit_head": "cedfad649f1c13e48be523d356a39eb210595cc1",
-      "merge_commit": "5c61680c82607ae96ebcce78496e62e2f457ecb5",
-      "check_count": 17,
-      "all_checks_success": true,
-      "fast_run_id": 34156245820,
-      "target_paths": [
-        "crates/cn-indexer/src/ingest.rs",
-        "crates/cn-indexer/src/ingest/source.rs",
-        "docs/progress/2026-09-08-926-indexer-source-resolver.md"
-      ],
-      "audited_head_matches_merge": true,
-      "post_merge_changed_paths": []
-    },
-    {
-      "issue": 927,
-      "pr": 931,
-      "audit_head": "de3dec2a2d24699aa54be232d57fc645a7242b50",
-      "merge_commit": "2229fefaa479064bf8080bc55e2984acf025fc66",
-      "check_count": 13,
-      "all_checks_success": true,
-      "fast_run_id": 34146075496,
-      "target_paths": [
-        "crates/app-api/src/dome_hosting.rs",
-        "crates/app-api/src/game.rs",
-        "crates/app-api/src/service/live_game_support.rs",
-        "crates/app-api/src/service/mod.rs",
-        "crates/app-api/src/tests/dome_listing.rs",
-        "crates/app-api/src/tests/mod.rs",
-        "docs/progress/2026-09-08-927-dome-preset-listing.md"
-      ],
-      "audited_head_matches_merge": true,
-      "post_merge_changed_paths": []
-    },
-    {
-      "issue": 928,
-      "pr": 930,
-      "audit_head": "c1670fdb164dd442639b4bef61a02cc254e049d0",
-      "merge_commit": "36e3732edfb68e0637a60e7badf4c778d0530e4d",
-      "check_count": 1,
-      "all_checks_success": true,
-      "fast_run_id": null,
-      "target_paths": [
-        "REFACTORING.md",
-        "docs/adr/0027-deterministic-moderation-critical-safety.md",
-        "docs/progress/2026-09-08-928-capability-freeze-docs.md"
+        "crates/cn-user-api/src/handlers/indexing.rs",
+        "docker/cn/Dockerfile",
+        "docs/progress/2026-10-12-1781-index-query-response.md"
       ],
       "audited_head_matches_merge": true,
       "post_merge_changed_paths": []
@@ -610,177 +667,156 @@
   ],
   "candidate_counts": {
     "selected": 4,
-    "deferred": 9,
-    "rejected": 5,
-    "other_type": 2,
+    "deferred": 2,
+    "rejected": 3,
+    "other_type": 8,
     "unclassified": 0
   },
   "candidates": [
     {
-      "id": "F-1",
-      "label": "F-1 通知取得/state反映",
+      "id": "R1",
+      "label": "[購読世代map](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/crates/app-api/src/service/subscription_registry.rs#L37)、[insert-only採番](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/crates/app-api/src/service/mod.rs#L863)。異なるtopicへ移るたびに世代履歴が残る",
       "classification": "実施",
-      "reason": "2 owner、background inbox修正が4製品fileへ波及。modeを保ちowner2→1",
-      "followup": "[#919](https://github.com/KingYoSun/kukuri/issues/919) → [#920](https://github.com/KingYoSun/kukuri/issues/920)"
+      "reason": "**実施/P1**。#1778。account共有の単一counterへ縮約",
+      "followup": "今回の対応Issue/完了記録を参照"
     },
     {
-      "id": "RT-1",
-      "label": "RT-1 CN Dome transfer",
+      "id": "R2",
+      "label": "[著者state](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/apps/desktop/src/shell/slices/profileSocial.ts#L38)、[二重更新](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/apps/desktop/src/shell/data/loaders/useDesktopShellSectionLoaders.ts#L295)。著者別mapと選択コピーの正本が並行する",
       "classification": "実施",
-      "reason": "assignment→owner activation→CN activateが2入口で重複。各3 helper callsite2→1",
-      "followup": "[#921](https://github.com/KingYoSun/kukuri/issues/921) → [#922](https://github.com/KingYoSun/kukuri/issues/922)"
+      "reason": "**実施/P1**。#1779。行/cursor/loadingの正本を著者別mapへ",
+      "followup": "今回の対応Issue/完了記録を参照"
     },
     {
-      "id": "MV-1",
-      "label": "MV-1 Dome transition attempt",
+      "id": "R3",
+      "label": "[38 command](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/crates/kukuri-cli/src/commands/content_social.rs#L27)のenum・実行match・登録表が手書き3正本",
       "classification": "実施",
-      "reason": "ack喪失fixの波及。元hookのprotocol state直接更新9→0、専用owner1",
-      "followup": "[#923](https://github.com/KingYoSun/kukuri/issues/923) → [#924](https://github.com/KingYoSun/kukuri/issues/924)"
+      "reason": "**実施/P2**。#1780。module内の1宣言表へ",
+      "followup": "今回の対応Issue/完了記録を参照"
     },
     {
-      "id": "C-CN-1",
-      "label": "C-CN-1 indexer source解決",
+      "id": "R4",
+      "label": "[index_search](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/crates/cn-user-api/src/handlers/indexing.rs#L564)、discovery、recommendationが共通結果処理を重複構築",
       "classification": "実施",
-      "reason": "source検証とscan/metrics/2storeを同ownerが所有。source依存6→2",
-      "followup": "[#925](https://github.com/KingYoSun/kukuri/issues/925) → [#926](https://github.com/KingYoSun/kukuri/issues/926)"
+      "reason": "**実施/P2**。#1781。意味が同じ要求準備/公開結果処理だけ統合",
+      "followup": "今回の対応Issue/完了記録を参照"
     },
     {
-      "id": "F-2",
-      "label": "F-2 route/Column再抽出",
-      "classification": "延期",
-      "reason": "既存分離からさらに縮める正本/依存を未立証",
-      "followup": "新たな具体的変更圧力で再評価"
-    },
-    {
-      "id": "F-4",
-      "label": "F-4 runtimeApi全面分割",
-      "classification": "延期",
-      "reason": "25変更commitだけで取り違え/契約漏れとの因果を示せない",
-      "followup": "domain単位の必要性を確認後"
-    },
-    {
-      "id": "RT-2",
-      "label": "RT-2 startup全面集約",
-      "classification": "延期",
-      "reason": "ClientHost/同意/復元の抽出は実施済み",
-      "followup": "新しい共通判断の重複発生時"
-    },
-    {
-      "id": "MV-2",
-      "label": "MV-2 physics/budget分割",
-      "classification": "延期",
-      "reason": "同じauthority stateを分ける成果が未立証",
-      "followup": "state依存による変更阻害時"
-    },
-    {
-      "id": "C-DATA-1",
-      "label": "C-DATA-1 blob cache policy",
-      "classification": "延期",
-      "reason": "policy同居は観測、変更摩擦の独立証拠不足",
-      "followup": "次回cache policy変更時"
-    },
-    {
-      "id": "C-DATA-3",
-      "label": "C-DATA-3 row mapping",
-      "classification": "延期",
-      "reason": "parity/subtrait既設、NULL不具合が同居に起因する証拠なし",
-      "followup": "domain mappingの具体的摩擦時"
-    },
-    {
-      "id": "C-CN-2",
-      "label": "C-CN-2 admin guard",
-      "classification": "延期",
-      "reason": "HTTP否定経路保護不足、現行error/検証順に意味の差",
-      "followup": "admin変更時のcharacterizationから"
-    },
-    {
-      "id": "H-01",
-      "label": "H-01 CN connectivity runner",
-      "classification": "延期",
-      "reason": "同意変更圧力はあるが2 identity modeとcleanupを保つ成果未確定",
-      "followup": "次のCN scenario変更時"
-    },
-    {
-      "id": "H-02",
-      "label": "H-02 desktop smoke runner",
-      "classification": "延期",
-      "reason": "Dome step増加、現行DSL集約による具体的漏れ未観測",
-      "followup": "次のDome scenario変更時"
-    },
-    {
-      "id": "F-3",
-      "label": "F-3 旧test/mock/store/view分割",
-      "classification": "却下",
-      "reason": "既に実施済み。旧follow-upを再起票しない",
-      "followup": "現行境界維持"
-    },
-    {
-      "id": "RT-3",
-      "label": "RT-3 legacy identity撤去",
-      "classification": "却下",
-      "reason": "sunset条件と鍵保持契約に反する",
-      "followup": "任意cleanupにしない"
-    },
-    {
-      "id": "MV-3",
-      "label": "MV-3 client/host guard統合",
-      "classification": "却下",
-      "reason": "preflightとauthority再検証は別責務",
-      "followup": "両側guard維持"
-    },
-    {
-      "id": "C-DATA-2",
-      "label": "C-DATA-2 core/peer再整理",
-      "classification": "却下",
-      "reason": "既済の境界整理、secret/fetch policyの差を保持",
-      "followup": "再抽象化しない"
-    },
-    {
-      "id": "H-03",
-      "label": "H-03 waiter/test/slow再分割",
-      "classification": "却下",
-      "reason": "domain分割/poll共通化/slow laneは実施済み",
-      "followup": "現行検証網維持"
-    },
-    {
-      "id": "H-04",
-      "label": "H-04 Metaverse実iroh失敗",
+      "id": "D1",
+      "label": "network/replica inventory・ADR0054/55入口・READMEと3CN runbookに完了済み経路の旧「未解消」説明",
       "classification": "別種別",
-      "reason": "2 Nightlyと現行Windowsで同じmanifest未取得を再現",
-      "followup": "fix #927 / PR #931 完了。欠落だけをtyped outcomeへ分類し、不正参照・署名errorは伝播。"
+      "reason": "**別種別/docsとして実施/P1**。#1782。採用範囲/後継先の現状同期",
+      "followup": "今回の対応Issue/完了記録を参照"
     },
     {
-      "id": "C-CN-3",
-      "label": "C-CN-3 capability文書",
+      "id": "J1",
+      "label": "[public_topic_delivery](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/crates/app-api/src/service/mod.rs#L878)は列closeで回収されない。短期publish16件も診断consumer",
+      "classification": "延期",
+      "reason": "**延期/判断待ち**。稼働診断と保持意味を確定してから回収設計。R1には含めない",
+      "followup": "#1777に固定した判断点を記録済み。将来の明示依頼時だけ着手する"
+    },
+    {
+      "id": "J2",
+      "label": "[advisory_media_hashes](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/crates/app-api/src/media.rs#L54)はinsert-only、安全な成人添付の取得/保存gateへ効く",
       "classification": "別種別",
-      "reason": "既にAvailableへ昇格したcapabilityを規範がPlanned3件と記載",
-      "followup": "docs #928 / PR #930 完了。Availableと配備readinessを区別。製品状態変更なし。"
+      "reason": "**別種別/fix・判断待ち**。単純TTL/LRUで拒否根拠を失うため保持/満杯時の意味を先に確定",
+      "followup": "#1777に固定した判断点を記録済み。将来の明示依頼時だけ着手する"
+    },
+    {
+      "id": "J3",
+      "label": "[author trust gate cache](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/crates/desktop-runtime/src/community_node/trust_gate_support.rs#L184)は採否で期限確認するが期限切れ行を削除しない",
+      "classification": "別種別",
+      "reason": "**別種別/cache方針・判断待ち**。共通予算への統合可能性と再照会/期限/満杯時の結果を確定",
+      "followup": "#1777に固定した判断点を記録済み。将来の明示依頼時だけ着手する"
+    },
+    {
+      "id": "J4",
+      "label": "[gossip停止設定](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/crates/app-api/src/service/gossip_subscription_support.rs#L26)を全集合sort、毎toggle全JSON書換え、SyncStatusへ全一覧",
+      "classification": "別種別",
+      "reason": "**別種別/migration・判断待ち**。点読/行保存と既存file・backup・一覧出力の互換条件を確定",
+      "followup": "#1777に固定した判断点を記録済み。将来の明示依頼時だけ着手する"
+    },
+    {
+      "id": "J5",
+      "label": "[空窓key/cursor保持](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/apps/desktop/src/shell/store.ts#L223)とrequest id台帳が訪問履歴を保持。閉じた列の継続cursor保持は既存testの契約",
+      "classification": "別種別",
+      "reason": "**別種別/回収方針・判断待ち**。保持したまま有界化できるかを確定。再表示体験の変更をR2へ混ぜない",
+      "followup": "#1777に固定した判断点を記録済み。将来の明示依頼時だけ着手する"
+    },
+    {
+      "id": "J6",
+      "label": "[social edges](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/crates/web-runtime/src/account/envelopes.rs#L92)とmuted一覧はusize::MAX取得→全sort、profile loaderは4全一覧を保持",
+      "classification": "別種別",
+      "reason": "**別種別/API・UI移行・判断待ち**。native/Web/store/runtime/UI/CLIのfull-list契約とページ化の影響を一つの案件として確定",
+      "followup": "#1777に固定した判断点を記録済み。将来の明示依頼時だけ着手する"
+    },
+    {
+      "id": "J7",
+      "label": "[restore_retained_trust_signals](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/crates/cn-core/src/trust_inputs.rs#L272)は期間内全signalを1取引で復元、[rebuild_trust_totals](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/crates/cn-core/src/trust_inputs.rs#L326)は対象数100でも対象内全signalを集計",
+      "classification": "別種別",
+      "reason": "**別種別/fix・判断待ち**。#1702/#1704/#1732の既存契約と、保持延長後/半減期変更中の値の意味を確認",
+      "followup": "#1777に固定した判断点を記録済み。将来の明示依頼時だけ着手する"
+    },
+    {
+      "id": "J8",
+      "label": "[観測提供取消](https://github.com/kukuri-app/kukuri/blob/1f77dd4e3252b37fc944446544b901435c04063f/crates/cn-core/src/trust_observations.rs#L195)はobserver全観測DELETEをHTTP返却前に実行、応答はdeleted件数",
+      "classification": "別種別",
+      "reason": "**別種別/fix/migration・判断待ち**。#1061/#1699/#1704の契約、取消応答/物理削除/直後の再同意を確定",
+      "followup": "#1777に固定した判断点を記録済み。将来の明示依頼時だけ着手する"
+    },
+    {
+      "id": "N1",
+      "label": "CN adminとrights requestのguardに重複はあるがerror本文・検証順が異なる",
+      "classification": "延期",
+      "reason": "**延期**。前回C-CN-2を再評価。差を維持した統合のコード削減根拠が不足",
+      "followup": "#1777に固定した判断点を記録済み。将来の明示依頼時だけ着手する"
+    },
+    {
+      "id": "N2",
+      "label": "大型fileやCSS番号分割",
+      "classification": "却下",
+      "reason": "**却下**。責務改善の根拠がなく、CSS cascadeの実効差を行数だけで変えない",
+      "followup": "今回の実装対象外。新たな具体的依頼と成果の根拠がある場合だけ再評価"
+    },
+    {
+      "id": "N3",
+      "label": "CLIをTauri/Webの共有dispatchへ直接接続",
+      "classification": "却下",
+      "reason": "**却下**。flat payload、validation、redaction、file適応の意味が異なる。R3は局所宣言だけ",
+      "followup": "今回の実装対象外。新たな具体的依頼と成果の根拠がある場合だけ再評価"
+    },
+    {
+      "id": "N4",
+      "label": "harness/CN Compose runnerやmetaverse/WebRTC ownerのさらなる分割",
+      "classification": "却下",
+      "reason": "**却下**。既存の共有入口/予算/TTL/解放contractから新たな成果を立証できない",
+      "followup": "今回の実装対象外。新たな具体的依頼と成果の根拠がある場合だけ再評価"
     }
   ],
   "known_limitations": [
     {
-      "id": "native-long-press",
-      "status": "not_measured",
-      "description": "方向キー到達と姿勢入力/通常input ownershipは確認。長押し変位、fullmode中移動、実audio/他peer/CPU-GPU定量は未測定。",
-      "evidence": "docs/ui-reviews/2026-09-08-issue-924-transition-owner.md"
-    },
-    {
-      "id": "native-fullscreen-suspension",
-      "status": "pre_existing",
-      "description": "fullmode開始でvisible=false/suspended=trueとなる状態はbefore元session cold restartでも再現。今回のRegressionではなく、修正済みとしない。",
-      "evidence": "docs/ui-reviews/2026-09-08-issue-924-transition-owner.md"
-    },
-    {
-      "id": "ratchet-stale-caps",
+      "id": "finite-audit-scope",
       "status": "recorded",
-      "description": "縮小note3件は実測と許容上限を別々に保存。既存ratchetの値を変更せず、未使用容量を今回の構造成果と混同しない。",
-      "evidence": "docs/progress/2026-09-08-872-refactoring-campaign-phase-4.md"
+      "description": "17候補を分類した有限監査。全branch/全OS/全DB実行計画や全経路の件数非依存は証明しない。未選定判断待ち候補は実装しない。",
+      "evidence": "docs/progress/2026-10-12-1783-refactoring-completion.md"
     },
     {
-      "id": "score-game-projection-ci-failure",
+      "id": "docs-pr-without-ci",
       "status": "recorded",
-      "description": "Phase4 CIで無効roster拒否後のreadが古いprojectionへ戻る1失敗を観測。該当writer/validator/CLIはac9946から同一。実行順は未確定、local1+20回はPASS。製品差分によるRegressionの根拠はなく、元20候補の外の別fix #942へ追跡する。",
-      "evidence": "docs/progress/2026-09-08-872-refactoring-campaign-phase-4.md"
+      "description": "#1782/PR1788は8文書reviewとmerge一致で完了、path filterでCI check0。schemaのchild.check_countは1以上なので製品4PRだけをchildrenに記録し、文書成果は完了記録へ対応付ける。0を成功1へ水増ししない。",
+      "evidence": "docs/progress/2026-10-12-1783-refactoring-completion.md"
+    },
+    {
+      "id": "ci-retries",
+      "status": "recorded",
+      "description": "#1778は不変PWA cache assertionを同headの失敗jobだけ再実行して成功。#1781は辞書cache欠落2失敗後、ユーザー承認済みDockerfile最小修正を同じPRへ追加。旧失敗を成功扱いしない。",
+      "evidence": "docs/progress/2026-10-12-1783-refactoring-completion.md"
+    },
+    {
+      "id": "tantivy-exception",
+      "status": "recorded",
+      "description": "ADR0025§10/#1724の検索一致件数に比例する索引走査は明示ユーザー例外を維持。今回の4責務だけをコード量・構造で判定し、新しい全アプリbenchmarkを追加しない。",
+      "evidence": "docs/adr/0025-community-node-indexing-foundation.md"
     }
   ],
   "activation_policy": "reviewed baselineがmainに存在し、tracking_issueのCurrent statusがCompleteになって初めて後続checkの確定入力として採用する。未mergeのbranch上の内容は候補である。"
