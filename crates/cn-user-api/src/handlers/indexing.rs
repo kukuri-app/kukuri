@@ -566,62 +566,7 @@ pub(crate) async fn index_search(
     headers: HeaderMap,
     Query(params): Query<IndexQueryParams>,
 ) -> ApiResult<Json<IndexQueryResponse>> {
-    let (index_query, relation_visibility, viewer_pubkey) =
-        require_index_query(&state, &headers).await?;
-    let query = params
-        .q
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "INVALID_INDEX_QUERY",
-                "q is required",
-            )
-        })?;
-    let limit = index_query_limit(&params);
-    let mut private_epoch = None;
-    let scope = parse_index_scope_params(&params)?;
-    let private_scoped = matches!(scope.as_ref(), Some((IndexScopeKind::PrivateChannel, _)));
-    let entries = match scope {
-        Some((scope_kind, scope_id)) => {
-            if scope_kind == IndexScopeKind::PrivateChannel {
-                private_epoch = require_channel_membership(&state, &headers, scope_id.as_str())
-                    .await?
-                    .map(|epoch| (scope_id.clone(), epoch));
-            }
-            if let Err(error) = mark_index_demand(&state.pool, scope_kind, &scope_id).await {
-                tracing::warn!(scope_id = %scope_id, %error, "failed to mark index demand");
-            }
-            index_query
-                .search_scope(scope_kind, scope_id.as_str(), query, limit)
-                .await
-                .map_err(|source| {
-                    IndexingError::infrastructure(IndexingOperation::SearchScope, source)
-                })
-                .map_err(indexing_error)?
-        }
-        None => index_query
-            .search_all(query, limit)
-            .await
-            .map_err(|source| IndexingError::infrastructure(IndexingOperation::SearchAll, source))
-            .map_err(indexing_error)?,
-    };
-    let entries = retain_current_private_epoch(
-        entries,
-        private_epoch
-            .as_ref()
-            .map(|(channel, epoch)| (channel.as_str(), epoch.as_str())),
-    );
-    let entries = filter_index_entries(
-        &state,
-        relation_visibility.as_ref(),
-        viewer_pubkey.as_str(),
-        entries,
-    )
-    .await?;
-    Ok(Json(index_query_response(entries, private_scoped)))
+    run_index_query(state, headers, params, IndexQuerySurface::Search).await
 }
 
 /// discovery(新着列挙。#404)。scope 指定で topic 内、無指定で supported set 横断。
@@ -633,10 +578,57 @@ pub(crate) async fn index_discovery(
     headers: HeaderMap,
     Query(params): Query<IndexQueryParams>,
 ) -> ApiResult<Json<IndexQueryResponse>> {
+    run_index_query(state, headers, params, IndexQuerySurface::Discovery).await
+}
+
+/// recommendation(#404)。supported set 横断の新着列挙を最小 surface として返す。
+///
+/// ranking アルゴリズムの具体は ADR 0025 §4 でスコープ外。critical verdict が recommendation に
+/// 入らないことは fail-closed gate(真実源 + 最新 verdict 突合)が保証する。
+pub(crate) async fn index_recommendations(
+    State(state): State<UserApiState>,
+    headers: HeaderMap,
+    Query(params): Query<IndexQueryParams>,
+) -> ApiResult<Json<IndexQueryResponse>> {
+    run_index_query(state, headers, params, IndexQuerySurface::Recommendations).await
+}
+
+enum IndexQuerySurface {
+    Search,
+    Discovery,
+    Recommendations,
+}
+
+async fn run_index_query(
+    state: UserApiState,
+    headers: HeaderMap,
+    params: IndexQueryParams,
+    surface: IndexQuerySurface,
+) -> ApiResult<Json<IndexQueryResponse>> {
     let (index_query, relation_visibility, viewer_pubkey) =
         require_index_query(&state, &headers).await?;
+    let query = if matches!(surface, IndexQuerySurface::Search) {
+        params
+            .q
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_INDEX_QUERY",
+                    "q is required",
+                )
+            })?
+    } else {
+        ""
+    };
     let limit = index_query_limit(&params);
-    let scope = parse_index_scope_params(&params)?;
+    let scope = if matches!(surface, IndexQuerySurface::Recommendations) {
+        None
+    } else {
+        parse_index_scope_params(&params)?
+    };
     let private_scoped = matches!(scope.as_ref(), Some((IndexScopeKind::PrivateChannel, _)));
     let private_epoch = if let Some((IndexScopeKind::PrivateChannel, scope_id)) = scope.as_ref() {
         require_channel_membership(&state, &headers, scope_id.as_str())
@@ -650,10 +642,30 @@ pub(crate) async fn index_discovery(
     {
         tracing::warn!(scope_id = %scope_id, %error, "failed to mark index demand");
     }
-    let entries = index_query
-        .list_recent(scope.as_ref().map(|(kind, id)| (*kind, id.as_str())), limit)
-        .await
-        .map_err(|source| IndexingError::infrastructure(IndexingOperation::Discovery, source))
+    let (result, operation) = match surface {
+        IndexQuerySurface::Search => match scope.as_ref() {
+            Some((kind, id)) => (
+                index_query.search_scope(*kind, id, query, limit).await,
+                IndexingOperation::SearchScope,
+            ),
+            None => (
+                index_query.search_all(query, limit).await,
+                IndexingOperation::SearchAll,
+            ),
+        },
+        IndexQuerySurface::Discovery => (
+            index_query
+                .list_recent(scope.as_ref().map(|(kind, id)| (*kind, id.as_str())), limit)
+                .await,
+            IndexingOperation::Discovery,
+        ),
+        IndexQuerySurface::Recommendations => (
+            index_query.list_recent(None, limit).await,
+            IndexingOperation::Recommendations,
+        ),
+    };
+    let entries = result
+        .map_err(|source| IndexingError::infrastructure(operation, source))
         .map_err(indexing_error)?;
     let entries = retain_current_private_epoch(
         entries,
@@ -669,33 +681,6 @@ pub(crate) async fn index_discovery(
     )
     .await?;
     Ok(Json(index_query_response(entries, private_scoped)))
-}
-
-/// recommendation(#404)。supported set 横断の新着列挙を最小 surface として返す。
-///
-/// ranking アルゴリズムの具体は ADR 0025 §4 でスコープ外。critical verdict が recommendation に
-/// 入らないことは fail-closed gate(真実源 + 最新 verdict 突合)が保証する。
-pub(crate) async fn index_recommendations(
-    State(state): State<UserApiState>,
-    headers: HeaderMap,
-    Query(params): Query<IndexQueryParams>,
-) -> ApiResult<Json<IndexQueryResponse>> {
-    let (index_query, relation_visibility, viewer_pubkey) =
-        require_index_query(&state, &headers).await?;
-    let limit = index_query_limit(&params);
-    let entries = index_query
-        .list_recent(None, limit)
-        .await
-        .map_err(|source| IndexingError::infrastructure(IndexingOperation::Recommendations, source))
-        .map_err(indexing_error)?;
-    let entries = filter_index_entries(
-        &state,
-        relation_visibility.as_ref(),
-        viewer_pubkey.as_str(),
-        entries,
-    )
-    .await?;
-    Ok(Json(index_query_response(entries, false)))
 }
 
 /// channel secret 登録失敗を HTTP 応答へマップする。
