@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-29
 - Issue: #795
-- 後継: 音声の搬送と形式（「Presence and audio」の音声を `MetaverseRoomEventV1` で presence と共用する点、16 kHz・mono・PCM16・1 frame 最大 320 sample）は [ADR 0067](0067-media-transport-moq.md) に移り、#1033 の merge で失効する。presence、距離減衰、mute、block、access の規則は本 ADR のまま。
+- 後継: 音声の搬送と形式は #1033 で [ADR 0067](0067-media-transport-moq.md) に置き換えた（旧: `MetaverseRoomEventV1` を presence と共用、16 kHz・mono・PCM16・1 frame 最大 320 sample）。presence、距離減衰、mute、block、access の規則は本 ADR のまま。
 
 ## Context
 
@@ -27,9 +27,9 @@ Domeは独自のmember、role、moderatorを持たず、配置先のpublic topic
 
 ### Presence and audio
 
-- `MetaverseRoomEventV1`の署名付きephemeral hintをpresenceと音声で共用する。Chatだけをroom historyへ保存し、presence/audio frameはdocs、blob、SQLiteへ保存しない。
-- Presence/audioのTTLは10秒、presence heartbeatは5秒とする。Clientはcurrent Domeとactiveかつaccess可能な最大4隣接Domeだけをpollし、Connection/access/session変更時にcursor、presence、queued audio nodeを破棄する。
-- 音声は16 kHz、mono、PCM16、1 frame最大320 sampleとする。Micは明示操作とOS permission成功後だけ開始する。
+- `MetaverseRoomEventV1`の署名付きephemeral hintはpresenceとchatに使う。音声は[ADR 0067](0067-media-transport-moq.md)のmoq-liteの専用ALPNで、話者と聞き手の端末の間を直接送る。Chatだけをroom historyへ保存し、presenceと音声はdocs、blob、SQLiteへ保存しない。
+- Presence/audioのTTLは10秒、presence heartbeatは5秒とする。Clientはcurrent Domeとactiveかつaccess可能な最大4隣接Domeだけをpollし、Connection/access/session変更時にcursor、presence、音声の購読と再生を破棄する。
+- 音声は48 kHz、mono、20 msのOpusとする（ADR 0067）。Micは明示操作と、機器を開けた（OS permissionを含む）後だけ開始する。
 - Current Domeは話者とlistenerの直線距離、隣接Domeは「話者→隣接側opening + 現在側opening→listener」の合成距離を使う。Gainは1m以内を1、それ以遠を`1m / distance`として減衰する。
 - Audio budgetはplayerのframe rate/byte rateとclientの同時stream/jitter frame上限へ含める。完全JSON設定のため追加fieldを省略したoverrideは拒否する。
 

@@ -60,6 +60,7 @@ function presenceJoin(seq: number, hash = 'avatar-a'): MetaverseRoomEventView {
           avatar_asset_ref: { kind: 'vrm', blob_hash: hash, mime_type: 'model/vrm' },
           joined_at: 1,
           last_seen_at: Date.now(),
+          microphone_enabled: false,
         },
       },
     },
@@ -100,7 +101,6 @@ function renderBackendEvents(
   initialProps = { avatarFetchActive: true, remoteTransforms: visibleRemoteTransforms }
 ) {
   const transitionNeighbors: DomeNeighborTransitionView[] = [];
-  const playSpatialAudioFrame = vi.fn();
   const setRemoteTransforms = vi.fn();
   return renderHook(
     ({ avatarFetchActive, remoteTransforms }) => useMetaverseBackendEvents({
@@ -110,7 +110,6 @@ function renderBackendEvents(
       localPeerId: 'local-peer',
       avatarFetchActive,
       remoteTransforms,
-      playSpatialAudioFrame,
       setRemoteTransforms,
     }),
     { initialProps }

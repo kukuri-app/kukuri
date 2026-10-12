@@ -404,6 +404,30 @@ describe('useMetaverseRoomSession', () => {
     await waitFor(() => expect(session.result.current.admittedRoom?.room_id).toBe(room.room_id));
   });
 
+  test('stops spatial audio while the Dome host is in its offline grace', async () => {
+    const base = createDesktopMockApi();
+    let hostingKind: 'owner_hosted' | 'grace_period' = 'owner_hosted';
+    const setMetaverseAudio = vi.fn(base.setMetaverseAudio);
+    const api: DesktopApi = {
+      ...base,
+      setMetaverseAudio,
+      getDomeHosting: vi.fn(async (context: SpatialContextV1, instanceId: string) => {
+        const hosting = await base.getDomeHosting(context, instanceId);
+        return { ...hosting, state: { ...hosting.state, kind: hostingKind, last_heartbeat_at: Date.now() } };
+      }),
+    };
+    const session = renderSession({ api, initialSelectedRoomId: room.room_id });
+    await waitFor(() => expect(setMetaverseAudio).toHaveBeenLastCalledWith(
+      expect.objectContaining({ room: expect.objectContaining({ instance_id: room.metaverse!.instance_id }) })
+    ));
+
+    hostingKind = 'grace_period';
+    await waitFor(() => expect(session.result.current.domeRecovery.state).toBe('offline'), { timeout: 3_000 });
+    await waitFor(() => expect(setMetaverseAudio).toHaveBeenLastCalledWith(
+      expect.objectContaining({ room: null, microphone_enabled: false })
+    ));
+  });
+
   test('Return Home keeps the source scene until the destination avatar is confirmed', async () => {
     const target = {
       ...room,

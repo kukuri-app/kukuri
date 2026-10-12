@@ -60,6 +60,10 @@ export type PeerPresence = {
   avatarAssetUrl?: string | null;
   joinedAt: number;
   lastSeenAt: number;
+  /** 署名した account の公開鍵・presence の Dome・音声を送っているか(空間音声の候補。ADR 0067)。 */
+  authorPubkey?: string;
+  roomId?: string;
+  microphoneEnabled?: boolean;
 };
 
 export type RoomChatMessage = {

@@ -63,14 +63,13 @@ fn session_input() -> Value {
 }
 pub(super) fn event() -> Value {
     object(
-        json!({"type": {"enum": ["presence_join", "presence_leave", "chat_message", "spatial_audio_frame"]},
+        json!({"type": {"enum": ["presence_join", "presence_leave", "chat_message"]},
             "presence": view(json!({"room_id": string(), "peer_id": string(), "display_name": nullable(string()),
-                "avatar_asset_ref": nullable(game_views::asset()), "joined_at": integer(), "last_seen_at": integer()})),
+                "avatar_asset_ref": nullable(game_views::asset()), "joined_at": integer(), "last_seen_at": integer(),
+                "microphone_enabled": {"type": "boolean"}})),
             "room_id": string(), "peer_id": string(), "left_at": integer(),
             "message": view(json!({"room_id": string(), "message_id": string(), "author_peer_id": string(),
-                "display_name": nullable(string()), "body": string(), "created_at": integer()})),
-            "frame": view(json!({"room_id": string(), "peer_id": string(), "position": vector(), "sample_rate_hz": unsigned(),
-                "samples": array(json!({"type": "integer", "minimum": -32768, "maximum": 32767})), "captured_at": integer()}))
+                "display_name": nullable(string()), "body": string(), "created_at": integer()}))
         }),
         &["type"],
     )

@@ -155,6 +155,11 @@ impl DomeSessionConnections {
     }
 }
 
+/// 経路の log に相手の endpoint id を載せる用途(Dome session の host だけ)。
+fn alpn_logs_peer(purpose: &str) -> bool {
+    purpose == "Dome session"
+}
+
 /// 接続の候補。relay URL を含まない直接の IP 候補(Direct P2P)を先に、relay を含む候補(Relay Supported P2P)を後に置く。
 pub(crate) fn direct_first_candidates(
     id: EndpointId,
@@ -274,7 +279,12 @@ impl IrohDocsNode {
             (true, _) => "relay_supported_p2p",
             (false, _) => "direct_p2p",
         };
-        info!(target: "kukuri_connectivity", host = %id, path, "{purpose} connection established");
+        // media は話者の識別子を log に出さない(ADR 0067 §2)。Dome session は host id を診断に使う(ADR 0038)。
+        if alpn_logs_peer(purpose) {
+            info!(target: "kukuri_connectivity", host = %id, path, "{purpose} connection established");
+        } else {
+            info!(target: "kukuri_connectivity", path, "{purpose} connection established");
+        }
     }
 }
 

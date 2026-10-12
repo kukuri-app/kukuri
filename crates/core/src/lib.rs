@@ -175,10 +175,10 @@ pub use media::{
 };
 pub use metaverse_audio::{
     METAVERSE_AUDIO_MAX_LISTENERS, METAVERSE_AUDIO_POSITION_TRACK, METAVERSE_AUDIO_TRACK,
-    METAVERSE_MEDIA_TTL_MILLIS, MetaverseAudioAccessRequestV1, connection_opening_audio_distance_cm,
-    metaverse_audio_broadcast_path, metaverse_room_event_is_live, spatial_audio_distance_cm,
-    spatial_audio_gain_milli, validate_metaverse_room_event_content,
-    validate_metaverse_room_event_for_instance,
+    METAVERSE_MEDIA_TTL_MILLIS, MetaverseAudioAccessRequestV1,
+    connection_opening_audio_distance_cm, metaverse_audio_broadcast_path,
+    metaverse_room_event_is_live, spatial_audio_distance_cm, spatial_audio_gain_milli,
+    validate_metaverse_room_event_content, validate_metaverse_room_event_for_instance,
 };
 pub use metaverse_resource_budget::{
     ClientResourceBudget, DomeResourceBudget, HostResourceBudget, MetaverseAssetBudgetMetadataV1,

@@ -3,9 +3,7 @@ use std::collections::HashSet;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ChannelId, EnvelopeId, ManifestBlobRef, Pubkey, TopicId,
-};
+use crate::{ChannelId, EnvelopeId, ManifestBlobRef, Pubkey, TopicId};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

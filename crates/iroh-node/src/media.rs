@@ -203,7 +203,10 @@ impl ProtocolHandler for MediaSlot {
 }
 
 /// 認可要求を読み、許可なら `ok` を返す。拒否なら理由の code を返して `None`。
-async fn authorize(connection: &Connection, authorizer: &MediaAuthorizer) -> Result<Option<MediaGrant>> {
+async fn authorize(
+    connection: &Connection,
+    authorizer: &MediaAuthorizer,
+) -> Result<Option<MediaGrant>> {
     let (mut send, mut recv) = connection.accept_bi().await?;
     let request = recv.read_to_end(MEDIA_ACCESS_REQUEST_MAX_BYTES).await?;
     match authorizer(connection.remote_id(), request).await {

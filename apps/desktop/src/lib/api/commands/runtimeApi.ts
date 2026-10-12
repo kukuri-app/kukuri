@@ -54,6 +54,7 @@ import type {
   RelationReadResponse,
   LiveSessionView,
   MetaverseAssetRef,
+  MetaverseAudioStatus,
   MetaverseRoomEventView,
   SpatialContextV1,
   NotificationStatusView,
@@ -862,6 +863,9 @@ export const runtimeApi: DesktopApi = {
         limit,
       } satisfies ListMetaverseRoomEventsRequest,
     });
+  }),
+  setMetaverseAudio: command('setMetaverseAudio', async (request) => {
+    return invokeDesktop<MetaverseAudioStatus>('set_metaverse_audio', { request });
   }),
   importMetaverseRoomAsset: command('importMetaverseRoomAsset', async (topic, roomId, kind, mimeType, name, dataBase64) => {
     return invokeDesktop<MetaverseAssetRef>('import_metaverse_room_asset', {

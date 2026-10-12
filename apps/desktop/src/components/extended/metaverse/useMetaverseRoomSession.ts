@@ -196,20 +196,6 @@ export function useMetaverseRoomSession({
   );
 
   const {
-    microphoneEnabled,
-    toggleMicrophone,
-    disableMicrophone,
-    playSpatialAudioFrame,
-    stopSpatialAudio,
-  } = useSpatialAudio({
-    actions,
-    selectedRoom: admittedRoom,
-    localPeerId,
-    listenerTransformRef: lastSentTransformRef,
-    mutedAuthorPubkeys,
-    transitionNeighbors,
-  });
-  const {
     peerPresence,
     setPeerPresence,
     messages,
@@ -226,8 +212,20 @@ export function useMetaverseRoomSession({
     selectedRoom: admittedRoom,
     transitionNeighbors,
     localPeerId, avatarFetchActive, remoteTransforms,
-    playSpatialAudioFrame,
     setRemoteTransforms,
+  });
+  const {
+    microphoneEnabled,
+    toggleMicrophone,
+    disableMicrophone,
+  } = useSpatialAudio({
+    actions,
+    selectedRoom: domeRecovery.state === 'online' ? admittedRoom : null,
+    listenerTransformRef: lastSentTransformRef,
+    mutedAuthorPubkeys,
+    transitionNeighbors,
+    peerPresence,
+    remoteTransforms,
   });
   const selectedRoomRoomId = admittedRoom?.room_id ?? null;
   const selectedRoomSharedObject = admittedRoom?.metaverse
@@ -550,6 +548,7 @@ export function useMetaverseRoomSession({
         avatarAssetUrl: localAvatarAssetUrl,
         joinedAt,
         lastSeenAt: now,
+        microphoneEnabled,
       };
       emit({ type: 'presence.join', presence });
       void actions.publishRoomEvent(admittedRoom.room_id, localPeerId, now, {
@@ -561,6 +560,7 @@ export function useMetaverseRoomSession({
           avatar_asset_ref: localAvatarAssetRef,
           joined_at: joinedAt,
           last_seen_at: now,
+          microphone_enabled: microphoneEnabled,
         },
       }).catch(() => {
         // Browser-only fallback is handled by the local scene.
@@ -580,16 +580,14 @@ export function useMetaverseRoomSession({
     localPeerId,
     admittedRoom,
     domeRecovery.state,
+    microphoneEnabled,
     submitAuthoritativeInput,
   ]);
 
   useEffect(() => {
     if (domeRecovery.state === 'online') return;
     disableMicrophone();
-    stopSpatialAudio();
-  }, [disableMicrophone, domeRecovery.state, stopSpatialAudio]);
-
-  useEffect(() => stopSpatialAudio(), [admittedRoom?.room_id, stopSpatialAudio, transitionNeighbors]);
+  }, [disableMicrophone, domeRecovery.state]);
 
   useEffect(() => {
     if (!admittedRoom || (roomConnectionState !== 'stale' && roomConnectionState !== 'offline')) {
@@ -781,7 +779,6 @@ export function useMetaverseRoomSession({
       setAdmissionStatus('selection');
       entryAutoDisabledRef.current = true;
       disableMicrophone();
-      stopSpatialAudio();
       setDomeRecovery({ state: 'no_candidate', secondsRemaining: null, reason, targetTitle: null });
       onError(t('recovery.noCandidate'));
       return false;
@@ -794,7 +791,6 @@ export function useMetaverseRoomSession({
     entryCandidates,
     joinRoom,
     onError,
-    stopSpatialAudio,
     submitInputForRoom,
     t,
     transitionNeighbors,
@@ -921,7 +917,6 @@ export function useMetaverseRoomSession({
     setAdmissionStatus('selection');
     entryAutoDisabledRef.current = true;
     disableMicrophone();
-    stopSpatialAudio();
     resetRoomRuntimeState();
   }
 

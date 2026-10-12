@@ -270,15 +270,17 @@ export type DomeConnectionView = { record: DomeConnectionRecordV1, };
 
 export type DomeConnectionTopologyView = { proposals: Array<DomeConnectionProposalView>, connections: Array<DomeConnectionView>, resolution: DomeTopologyResolutionV1, };
 
-export type MetaverseRoomPresenceV1 = { room_id: string, peer_id: string, display_name?: string | null, avatar_asset_ref?: MetaverseAssetRef | null, joined_at: number, last_seen_at: number, };
-
-export type MetaverseSpatialAudioFrameV1 = { room_id: string, peer_id: string, position: [number, number, number], sample_rate_hz: number, samples: Array<number>, captured_at: number, };
+export type MetaverseRoomPresenceV1 = { room_id: string, peer_id: string, display_name?: string | null, avatar_asset_ref?: MetaverseAssetRef | null, joined_at: number, last_seen_at: number, 
+/**
+ * 音声を送っている(聞き手はこの話者だけを購読の候補にする。ADR 0067 §2)。
+ */
+microphone_enabled: boolean, };
 
 export type MetaverseRoomChatMessageV1 = { room_id: string, message_id: string, author_peer_id: string, display_name?: string | null, body: string, created_at: number, };
 
 export type SharedRoomObjectV1 = { object_id: string, asset_ref?: MetaverseAssetRef | null, primitive_fallback: MetaversePrimitive, position: [number, number, number], rotation: [number, number, number], scale: [number, number, number], updated_by: string, updated_at: number, };
 
-export type MetaverseRoomEventV1 = { "type": "presence_join", presence: MetaverseRoomPresenceV1, } | { "type": "presence_leave", room_id: string, peer_id: string, left_at: number, } | { "type": "chat_message", message: MetaverseRoomChatMessageV1, } | { "type": "spatial_audio_frame", frame: MetaverseSpatialAudioFrameV1, };
+export type MetaverseRoomEventV1 = { "type": "presence_join", presence: MetaverseRoomPresenceV1, } | { "type": "presence_leave", room_id: string, peer_id: string, left_at: number, } | { "type": "chat_message", message: MetaverseRoomChatMessageV1, };
 
 export type MetaverseRoomEventEnvelopeContentV1 = { event_id: string, topic_id: string, channel_id?: string | null, room_id: string, spatial_context: SpatialContextV1, instance_generation: number, session_id: string, peer_id: string, seq: number, sent_at: number, event: MetaverseRoomEventV1, };
 
@@ -935,6 +937,26 @@ export type AbortDomeTransitionRequest = { ticket: DomeTransitionAdmissionTicket
 export type CommitDomeLayoutRequest = { spatial_context: SpatialContextV1, instance_id: string, operation_id: string, };
 
 export type ResyncDomeSnapshotsRequest = { spatial_context: SpatialContextV1, instance_id: string, after_sequence: number, };
+
+export type MetaverseAudioRoom = { spatial_context: SpatialContextV1, owner_pubkey: string, instance_id: string, instance_generation: number, session_id: string, };
+
+export type MetaverseAudioNeighbor = { room: MetaverseAudioRoom, speaker_opening: [number, number, number], listener_opening: [number, number, number], };
+
+export type MetaverseAudioSpeaker = { endpoint_id: string, instance_id: string, };
+
+export type SetMetaverseAudioRequest = { room: MetaverseAudioRoom | null, microphone_enabled: boolean, listener_position: [number, number, number], neighbors: Array<MetaverseAudioNeighbor>, speakers: Array<MetaverseAudioSpeaker>, };
+
+export type MetaverseMicrophoneStatus = "off" | "on" | "unavailable";
+
+export type MetaverseAudioStatus = { microphone: MetaverseMicrophoneStatus, 
+/**
+ * 購読中の話者の数。
+ */
+listening: number, 
+/**
+ * 送信量の上限を超えて捨てた frame の数(この端末が起動してから)。
+ */
+rejected_frames: number, };
 
 export type MoveDomeRequest = { source_topic: string, move_id: string, source_instance_id: string, target_context: SpatialContextV1, };
 

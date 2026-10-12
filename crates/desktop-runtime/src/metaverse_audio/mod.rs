@@ -286,7 +286,9 @@ impl RoomAudio {
                 .position
                 .lock()
                 .expect("speaker position poisoned")
-                .map_or(0.0, |position| listener.gain(&speaker.instance_id, position));
+                .map_or(0.0, |position| {
+                    listener.gain(&speaker.instance_id, position)
+                });
             speaker.volume.set(gain);
         }
     }
@@ -384,7 +386,9 @@ impl MetaverseAudio {
             });
             if changed {
                 let payload = serde_json::to_vec(&request.listener_position).unwrap_or_default();
-                let elapsed = now.saturating_duration_since(microphone.started).as_micros();
+                let elapsed = now
+                    .saturating_duration_since(microphone.started)
+                    .as_micros();
                 let timestamp = Timestamp::from_micros(u64::try_from(elapsed).unwrap_or(u64::MAX))
                     .unwrap_or(Timestamp::ZERO);
                 if microphone.position.write_frame(timestamp, payload).is_ok() {
@@ -586,11 +590,33 @@ async fn listen(
     rejected: Arc<AtomicU64>,
 ) {
     if let Err(error) = play(
-        &app, &node, &endpoint_id, &room, output, &listener, &position, &rejected,
+        &app,
+        &node,
+        &endpoint_id,
+        &room,
+        output,
+        &listener,
+        &position,
+        &rejected,
     )
     .await
     {
-        tracing::debug!(%error, "spatial audio subscription ended");
+        // 話者の識別子・音声を log に出さない(ADR 0067 §2)。拒否は固定の code だけを出す。
+        match error.downcast_ref::<kukuri_iroh_node::MediaDenied>() {
+            Some(denied) => {
+                let code = [
+                    DENIED_ACCESS,
+                    DENIED_NOT_IN_DOME,
+                    DENIED_INVALID,
+                    DENIED_UNAVAILABLE,
+                ]
+                .into_iter()
+                .find(|known| *known == denied.0)
+                .unwrap_or("unknown");
+                tracing::debug!(code, "spatial audio subscription denied");
+            }
+            None => tracing::debug!("spatial audio subscription ended"),
+        }
     }
     finished.store(true, Ordering::Release);
 }

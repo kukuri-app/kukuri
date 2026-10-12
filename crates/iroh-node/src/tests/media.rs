@@ -5,9 +5,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
+use iroh::endpoint::TransportAddrUsage;
+use kukuri_transport::TransportRelayConfig;
 use moq_net::{Timestamp, origin, track};
 
-use crate::{IrohDocsNode, MediaAuthorizer, MediaDenied, MediaGrant};
+use crate::dome_session::direct_first_candidates;
+use crate::{IrohDocsNode, MediaAuthorizer, MediaDenied, MediaGrant, NodeOptions};
 
 const PATH: &str = "media-test";
 
@@ -51,11 +54,10 @@ async fn media_reaches_only_an_authorized_subscriber_until_access_is_revoked() -
     let publisher_id = publisher.endpoint().id().to_string();
 
     let (origin, origin_driver) = origin::Producer::new(origin::Config::default());
-    let _origin_driver = n0_future::task::AbortOnDropHandle::new(n0_future::task::spawn(
-        async move {
+    let _origin_driver =
+        n0_future::task::AbortOnDropHandle::new(n0_future::task::spawn(async move {
             moq_net::time::run(origin_driver).await;
-        },
-    ));
+        }));
     let broadcast = origin.publish(PATH, origin::Route::default())?;
     let mut track = broadcast.create_track("frames", None)?;
     let allowed = Arc::new(AtomicBool::new(true));
@@ -104,7 +106,84 @@ async fn a_publisher_without_an_authorizer_serves_nothing() -> Result<()> {
     let result = listener
         .media_subscribe(&publisher.endpoint().id().to_string(), b"allow")
         .await;
-    assert!(result.is_err(), "no session without an installed authorizer");
+    assert!(
+        result.is_err(),
+        "no session without an installed authorizer"
+    );
+    listener.shutdown().await?;
+    publisher.shutdown().await?;
+    Ok(())
+}
+
+/// Relay Fallback の試験(relay だけで届く。ADR 0067 §5): 聞き手に IP の transport が無く Direct P2P が成り立たない
+/// とき、media は relay を通って届く。接続の候補は、relay URL を含まない Direct の候補を先に置く。
+#[tokio::test]
+async fn metaverse_audio_relay_fallback_keeps_direct_candidates_relay_free() -> Result<()> {
+    let (relay, _relay_server) = kukuri_webrtc_transport::signaling_fixture::spawn_relay().await?;
+    let options = |browser_like| NodeOptions {
+        relay_config: TransportRelayConfig {
+            iroh_relay_urls: vec![relay.to_string()],
+        },
+        browser_like,
+        ..NodeOptions::default()
+    };
+    let publisher = IrohDocsNode::memory_with(options(false)).await?;
+    let listener = IrohDocsNode::memory_with(options(true)).await?;
+    publisher.endpoint().online().await;
+    listener.endpoint().online().await;
+    let publisher_addr = publisher.endpoint().addr();
+    let candidates = direct_first_candidates(
+        publisher_addr.id,
+        Some(&publisher_addr),
+        &listener.relay_urls().await,
+    );
+    assert!(
+        candidates[0].relay_urls().next().is_none(),
+        "the direct candidate has no relay URL"
+    );
+    assert!(candidates[0].ip_addrs().next().is_some());
+    assert!(candidates[1].relay_urls().next().is_some());
+    listener.discovery().add_endpoint_info(publisher_addr);
+
+    let (origin, origin_driver) = origin::Producer::new(origin::Config::default());
+    let _origin_driver =
+        n0_future::task::AbortOnDropHandle::new(n0_future::task::spawn(async move {
+            moq_net::time::run(origin_driver).await;
+        }));
+    let broadcast = origin.publish(PATH, origin::Route::default())?;
+    let mut track = broadcast.create_track("frames", None)?;
+    publisher.install_media_authorizer(Some(authorizer(
+        origin.consume(),
+        Arc::new(AtomicBool::new(true)),
+    )));
+
+    let subscription = listener
+        .media_subscribe(&publisher.endpoint().id().to_string(), b"allow")
+        .await?;
+    let consumer = subscription.broadcast(PATH).await?;
+    let mut frames = consumer
+        .track("frames")?
+        .subscribe(track::Subscription::default())
+        .await?;
+    track.write_frame(Timestamp::from_micros(20_000)?, b"relayed".as_slice())?;
+    assert_eq!(read_one_frame(&mut frames).await?, b"relayed");
+    let info = listener
+        .endpoint()
+        .remote_info(publisher.endpoint().id())
+        .await
+        .expect("the publisher is known");
+    let active: Vec<bool> = info
+        .addrs()
+        .filter(|addr| matches!(addr.usage(), TransportAddrUsage::Active))
+        .map(|addr| addr.addr().is_relay())
+        .collect();
+    assert!(
+        !active.is_empty() && active.iter().all(|relay| *relay),
+        "the media path is the relay"
+    );
+
+    drop(subscription);
+    publisher.install_media_authorizer(None);
     listener.shutdown().await?;
     publisher.shutdown().await?;
     Ok(())

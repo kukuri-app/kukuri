@@ -50,11 +50,6 @@ pub use backup::{
     preview_device_backup, recover_interrupted_restore, rollback_device_restore,
     rollback_pending_device_restore, validate_prepared_device_restore,
 };
-#[cfg(not(target_family = "wasm"))]
-pub use metaverse_audio::{
-    MetaverseAudioNeighbor, MetaverseAudioRoom, MetaverseAudioSpeaker, MetaverseAudioStatus,
-    MetaverseMicrophoneStatus, SetMetaverseAudioRequest,
-};
 pub use command::{
     COMMAND_FAILED_CODE, ClientGate, CommandError, DispatchContext,
     PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE, PostRetryView, SCOPE_LIMIT_REACHED_CODE,
@@ -130,6 +125,11 @@ pub use kukuri_app_api::{
     ScopeDisplayRequest, ScopeDisplayTarget, ScopeLimitReached,
 };
 pub use kukuri_transport::{ConnectivityPeerKind, PeerPage};
+#[cfg(not(target_family = "wasm"))]
+pub use metaverse_audio::{
+    MetaverseAudioNeighbor, MetaverseAudioRoom, MetaverseAudioSpeaker, MetaverseAudioStatus,
+    MetaverseMicrophoneStatus, SetMetaverseAudioRequest,
+};
 pub use requests::CreateAccountRequest;
 #[cfg(target_family = "wasm")]
 pub use requests::WebAttachmentRef;

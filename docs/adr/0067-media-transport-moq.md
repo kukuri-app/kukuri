@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証の完了は #1033（metaverse の空間音声）と #1034（live の映像・音声）の各 AC で判定する。
+Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証の完了は #1033（metaverse の空間音声）と #1034（live の映像・音声）の各 AC で判定する。#1033 の実装で §1・§3・§4・§7・§9 の実装の形を補った（判断は変えていない）。
 
 - D1: live の映像・音声は、配信者が数人へ直接送り、受け取った視聴者が次の視聴者へ転送する（§8）。
 - D2: 音声の取り込み・圧縮・再生は Rust 側で行う（§9）。
@@ -54,11 +54,11 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 
 - protocol は moq-lite（`moq-net`）、形式は `hang` を使う。`iroh-moq` crate は使わない。理由は、peer ごとの認可が無いこと、crates.io に無く API の全面改修が未 merge であること、Windows で実行されていないこと。同じ働き（iroh の接続を moq-net の session にする部分）は kukuri の受け口が持つ。
 - 専用の ALPN `/kukuri/media/1` を既存の `Router` に 1 つ登録する（moq の 15 個の ALPN は登録しない）。接続の上で使う moq-lite の版は kukuri の版ごとに固定し（`moq-net` の版の明示）、版の違う kukuri の間では media が届かない。旧版との互換は設けない。
-- iroh の接続は `web-transport-iroh` の raw session で moq-net の transport へ渡す。受け口は相手ごとに moq-net の session を作り、その session の公開範囲（origin）には、認可した対象の broadcast だけを置く（§3）。
+- iroh の接続は `web-transport-iroh` の raw session を、`moq-tokio` の `transport::Session`（moq-net が要求する poll 型への変換。web-transport-iroh は async 型だけを実装する）で moq-net の transport へ渡す。kukuri の ALPN では moq-net が版を選べないため、session は moq-net の moq-lite の版の名前を protocol として返す。認可要求は moq-lite の handshake の前に、接続の最初の双方向 stream で送る（moq-lite の SETUP は token を運ばない）。受け口は相手ごとに moq-net の session を作り、その session の公開範囲（origin）には、認可した対象の broadcast だけを置く（§3）。
 - 置き場所: 受け口・接続・上限は `kukuri-iroh-node`、認可要求と descriptor の型は `kukuri-core`、access 判定は既存の `kukuri-app-api`、機器と codec は `kukuri-desktop-runtime`（native だけ）。新しい crate・trait は作らない。
-- broadcast は送る端末ごと・対象ごとに 1 つ。metaverse は話者の音声 track と、話者の位置の data track（hang の JSON、最新値だけを読む形）。live は配信の映像 track と音声 track。
+- broadcast は送る端末ごと・対象ごとに 1 つ。metaverse は話者の音声 track（hang の catalog つき）と、話者の位置の track（JSON の frame、最新の group だけを読む）。live は配信の映像 track と音声 track。
 - 時刻: 送る側は取り込み時刻（単調時計、μs）を `hang` の frame の timestamp に入れる。受ける側は話者ごと（metaverse）、または broadcast ごと（live。音声の再生時刻を基準に映像を合わせる）に再生時刻を決める。
-- 揺れの吸収: 受ける側は再生前に保持する量を話者ごとに既定 50 ms、上限 160 ms（ADR 0041 の jitter 8 frame × 20 ms）とし、上限を超えた分は古いものから捨てる。順序の入れ替わりは moq-net の group の順と timestamp で並べ直し、購読の最大遅延（160 ms）を超えた group は捨てる。
+- 揺れの吸収: 受ける側は再生前に保持する量を話者ごとに既定 50 ms、上限 160 ms（ADR 0041 の jitter 8 frame × 20 ms）とし、上限を超える分は書かずに捨てる。順序の入れ替わりは moq-net の group の順と timestamp で並べ直し、購読の最大遅延（160 ms）を超えた group は捨てる。
 
 ### 2. データの扱い（固定項目 2）
 
@@ -71,7 +71,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - 送る側（live では転送する視聴者も）が受け口で相手の認可要求を検証してから、その session の公開範囲に対象の broadcast を置く。拒否は理由の code だけを返して接続を閉じ、音声・映像・他の参加者の識別子を返さない。
   - metaverse: 要求は参加者が署名した `DomeSpatialAccessProofV1`（Spatial Context と話者の Dome の owner に束縛、10 秒）と、対象の Dome（instance・generation・session）。送る側は署名と期限を確かめ、自分の状態で `evaluate_dome_room_access`（owner から visitor への block、公開 topic は gossip を止めていないこと、private は current epoch の active な参加者）を評価し、自分がその Dome の session に参加中であることを確かめる。
   - live: 要求は視聴者が署名した、live session と scope に束縛した 10 秒の proof。送る側は session が終了していないこと（検証済みの state）と、private なら current epoch の active な参加者であることを確かめる。公開 live の事前の topic 購読 lease を条件にしない。
-- 継続: 受ける側は 5 秒ごとに新しい proof を送り、送る側はその都度評価する。拒否、または 10 秒更新が無ければ接続を閉じる（ADR 0045 の KeepAlive と同じ間隔）。moq-lite では announce を取り消しても進行中の購読は止まらないため、止めるときは session を閉じる。
+- 継続: 送る側は 5 秒ごとに、接続の初めに proof で確かめた相手の公開鍵について、自分の状態（block、公開 topic の gossip、private の参加者）で access を評価し直し、自分がまだ同じ Dome の session に居ることを確かめる。拒否なら session を閉じる（ADR 0045 の KeepAlive と同じ間隔）。送る側は Spatial Context の状態を持つ参加者なので、proof を送り直させない。moq-lite では announce を取り消しても進行中の購読は止まらないため、止めるときは session を閉じる。
 - mute・block した author は購読しない（decode・再生の前に捨てる）。topology・参加・presence は変えない。
 - mic・camera・screen は利用者の操作の後、機器を開けた（OS の許可を含む）場合だけ送る。開けなければ送信は 0 で、開始を成功と表示しない。再起動後は自動で開始しない。Windows で OS の設定が mic を拒否しているときの見え方は #1033 が実機で確かめ、送信 0 と表示を合わせる。
 - 停止: 退出、Dome・session・generation の変更、access の失効、host の offline grace（ADR 0045）、live の終了・退出、account の切替、shutdown で、取り込み・送信・転送・購読・再生を止め、接続と保持中の media を捨てる。古い世代の遅れた結果は適用しない。
@@ -84,7 +84,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 | 聞く話者（metaverse） | 聞き手の端末 | 16（ADR 0041 client の同時 stream） | 音声を送っている話者のうち、既存の距離関数で近い順に 16 人だけ購読する | 退出・順位の外・mute で購読を解除 |
 | 話者が送る相手（metaverse） | 話者の端末 | 64（固定） | 新しい購読を `busy` で拒否する。その聞き手は空きができるまで聞こえない | 相手の退出・失効・購読の解除・30 秒無通信で解除 |
 | 音声の送信量 | 話者ごと | 50 frame/s・32 KiB/s（ADR 0041 player） | 受ける側が捨てて拒否の件数に数える | 1 秒ごとの窓 |
-| 再生前の保持 | 話者ごと | 既定 50 ms、上限 160 ms | 古いものから捨てる | 再生と同時 |
+| 再生前の保持 | 話者ごと | 既定 50 ms、上限 160 ms | 上限を超える分は書かずに捨てる。それより古い group は並べ直しの段階で飛ばす | 再生と同時 |
 | 配信者が直接送る視聴者（live） | 配信者の端末 | 4（#1034 AC-1 が bitrate の計測で見直す） | 直接の子の一覧を返し、転送の参加へ回す（§8） | 子の退出・失効・30 秒無通信で解除 |
 | 視聴者が転送する相手（live） | 視聴者の端末 | 2（同上） | 自分の子の一覧を返す | 同上 |
 | 転送の参加の問い合わせ（live） | 1 回の参加 | 16 段、1 段 5 秒 | 参加できないと表示する | 参加の終了で破棄 |
@@ -111,7 +111,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 ### 7. 依存（固定項目 7）
 
 - #1032 の構成（iroh・iroh-base・iroh-dns・iroh-relay の fork `eef6af69364b5df1aa33c30e4c5731aad9d32046`、iroh-docs `e7233d14853cb4db9966e30050bac1e689cdeec8`、iroh-gossip の fork `23cd6cc76d51582b3678b3b743db72d51ce296d4`）を変えない。
-- 追加は `moq-net` 0.3 系・`hang` 0.21 系・`web-transport-iroh` 0.7.0（web-transport-trait 0.4 系）・`moq-audio` 0.1 系（feature は `capture`・`playback`・`aec`。`aac` は使わない）。版は #1033 の PR で root と `apps/desktop/src-tauri` の両方の workspace を build し、`Cargo.lock` に固定した値を記録する。映像の crate は #1034 AC-1 で決める。
+- 追加（#1033 で両方の workspace の `Cargo.lock` に固定）: `moq-net` 0.3.11・`hang` 0.21.12・`moq-mux` 0.10.12・`web-transport-iroh` 0.7.0（既定の feature を外し `ring`。web-transport-trait 0.4 系）・`moq-tokio` 0.19.24（既定の feature を外し `iroh`。増える crate は 8 個）・`moq-audio` 0.1.11（既定の feature を外す。機器の `capture`・`playback`・`aec` は desktop-runtime の `audio-devices` で Tauri の app だけが有効にし、CLI・harness は codec だけを使う）。映像の crate は #1034 AC-1 で決める。
 - Linux の build は libasound の開発 package、配布物は libasound を要する。
 - aws-lc は既に desktop の build に入っている（str0m 経由）ため、web-transport-iroh の既定の TLS で新しい C の build は増えない。
 - 輻輳制御と QUIC の stream 数の上限は endpoint の既定のままとし、変える必要は #1033・#1034 の計測で示す。
@@ -131,7 +131,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 ### 9. 処理の場所（D2）
 
 - 音声は Rust 側（`moq-audio`）で取り込み・圧縮（Opus、20 ms）・decode・mix・再生を行い、echo cancellation（`sonora`）は再生中の音を参照に使う。画面側の音声の取り込み・再生（`getUserMedia`・WebAudio）は削除する。live の音声も同じ経路を使う。
-- metaverse の距離減衰: 聞き手の端末の Rust が、話者の位置の data track と、画面から受ける聞き手の位置・ready な隣接 Dome の opening の位置から既存の距離関数で gain を求め、話者ごとの音量に反映する。距離関数は Rust の 1 か所に残し、TypeScript の重複は #1033 で削除する。
+- metaverse の距離減衰: 聞き手の端末の Rust が、話者の位置の track と、画面から受ける聞き手の位置・ready な隣接 Dome の opening の位置から既存の距離関数で gain を求め、話者ごとの音量に反映する。gain の関数は Rust の 1 か所に残し、TypeScript の gain の関数は #1033 で削除した（画面は話者を近い順に並べるための距離と opening の位置だけを持つ）。
 - 映像の取り込み・圧縮の場所と codec は #1034 AC-1 が Linux と Windows の試作で決める。比べる案は、(a) Rust で取り込み・圧縮し、画面の WebCodecs で decode・描画、(b) 画面の `getUserMedia`・`getDisplayMedia`・WebCodecs で取り込み・圧縮・描画。どちらも描画は画面で行い、映像は Rust の音声の再生時刻に合わせる。H.264 の特許の扱いと、Linux の webview で使える codec（VP8/VP9 は既定の package、H.264 は追加の package）を判断に含める。
 
 ### 10. builder preview（D3）
@@ -152,7 +152,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - Blob 必要有無: No
 - SQLite projection 必要有無: No
 - 必須 contract: 「対象別の contract」の #1033 の行
-- 必須 scenario: Linux と Windows の実機 2 台で、同時発話・隣接 Dome・mute・退出を確かめる（手順は #1033 が runbook に置く）
+- 必須 scenario: Linux と Windows の実機 2 台で、同時発話・隣接 Dome・mute・退出を確かめる（手順は [runbook](../runbooks/metaverse-spatial-audio.md)）
 
 ### live 配信の映像・音声
 

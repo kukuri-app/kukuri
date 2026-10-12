@@ -54,11 +54,15 @@ mod real {
 
         /// 再生前の保持が上限(160 ms)を超える分は書かずに捨てる(ADR 0067 §4)。
         pub(crate) fn write(&mut self, samples: &[f32]) -> Result<()> {
-            let duration = Duration::from_secs_f64(samples.len() as f64 / f64::from(OPUS_SAMPLE_RATE));
+            let duration =
+                Duration::from_secs_f64(samples.len() as f64 / f64::from(OPUS_SAMPLE_RATE));
             if self.sink.buffered() + duration > MAX_PLAYOUT_BUFFER {
                 return Ok(());
             }
-            let bytes: Vec<u8> = samples.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+            let bytes: Vec<u8> = samples
+                .iter()
+                .flat_map(|sample| sample.to_le_bytes())
+                .collect();
             let _ = self.sink.write(&bytes)?;
             Ok(())
         }
@@ -75,7 +79,8 @@ mod real {
             broadcast: &mut moq_net::broadcast::Producer,
             playback: Option<&Playback>,
         ) -> Result<Self> {
-            let catalog = moq_mux::catalog::Producer::new(broadcast, moq_mux::catalog::Config::default())?;
+            let catalog =
+                moq_mux::catalog::Producer::new(broadcast, moq_mux::catalog::Config::default())?;
             let mut options = encode::PublicationOptions::default();
             options.capture.aec = playback.and_then(Playback::canceller);
             options.encode.track = Some(METAVERSE_AUDIO_TRACK.to_string());

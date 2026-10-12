@@ -15,15 +15,17 @@ fn app(keys: KukuriKeys, network: &FakeNetwork) -> (Arc<AppService>, Pubkey) {
     let pubkey = keys.public_key();
     let store = Arc::new(MemoryStore::default());
     let transport = Arc::new(FakeTransport::new(pubkey.as_str(), network.clone()));
-    let app = Arc::new(AppService::from_handles(kukuri_app_api::ServiceHandles::new(
-        store.clone(),
-        store,
-        transport.clone(),
-        transport,
-        Arc::new(MemoryDocsSync::default()),
-        Arc::new(MemoryBlobService::default()),
-        keys,
-    )));
+    let app = Arc::new(AppService::from_handles(
+        kukuri_app_api::ServiceHandles::new(
+            store.clone(),
+            store,
+            transport.clone(),
+            transport,
+            Arc::new(MemoryDocsSync::default()),
+            Arc::new(MemoryBlobService::default()),
+            keys,
+        ),
+    ));
     (app, pubkey)
 }
 
@@ -39,7 +41,10 @@ fn room(owner: &Pubkey, generation: u64) -> MetaverseAudioRoom {
     }
 }
 
-fn request(room: Option<MetaverseAudioRoom>, speakers: &[(&str, &str)]) -> SetMetaverseAudioRequest {
+fn request(
+    room: Option<MetaverseAudioRoom>,
+    speakers: &[(&str, &str)],
+) -> SetMetaverseAudioRequest {
     SetMetaverseAudioRequest {
         room,
         microphone_enabled: false,
@@ -85,8 +90,10 @@ async fn speak(audio: &MetaverseAudio, position: [i64; 3]) -> AbortOnDropHandle<
     AbortOnDropHandle::new(n0_future::task::spawn(async move {
         let _broadcast = broadcast;
         let mut tick = n0_future::time::interval(Duration::from_millis(20));
-        for frame in 0_u64.. {
+        let mut frame = 0_u64;
+        loop {
             tick.tick().await;
+            frame += 1;
             let _ = position_track.write_frame(
                 Timestamp::from_micros(frame * 20_000).expect("timestamp"),
                 serde_json::to_vec(&position).expect("position"),
@@ -136,6 +143,22 @@ async fn eventually(mut condition: impl AsyncFnMut() -> bool) -> bool {
     false
 }
 
+/// 聞き手の(最初の)話者の購読が終わったか(拒否・切断・公開の終了)。
+async fn subscription_ended(audio: &MetaverseAudio) -> bool {
+    let state = audio.state.lock().await;
+    state
+        .as_ref()
+        .and_then(|room| room.speakers.values().next())
+        .is_some_and(|speaker| speaker.finished.load(Ordering::Acquire))
+}
+
+/// 以後の再生が無い(300 ms の間に書いた sample が増えない)。
+async fn stays_silent(audio: &MetaverseAudio) -> bool {
+    let before = written(audio).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    written(audio).await == before
+}
+
 struct Pair {
     speaker_node: Arc<IrohDocsNode>,
     listener_node: Arc<IrohDocsNode>,
@@ -178,6 +201,55 @@ impl Pair {
         self.speaker_node.endpoint().id().to_string()
     }
 
+    /// 話者が世代 1 の Dome に入り、聞き手(原点)から 400 cm の位置で話す。
+    async fn speaker_speaks(&self) -> AbortOnDropHandle<()> {
+        self.speaker
+            .set(
+                &self.speaker_app,
+                Some(self.speaker_node.clone()),
+                request(Some(room(&self.owner, 1)), &[]),
+            )
+            .await;
+        speak(&self.speaker, [0, 0, 400]).await
+    }
+
+    /// 聞き手が `generation` の Dome で話者を聞く。
+    async fn listen(&self, generation: u64) -> MetaverseAudioStatus {
+        let speaker_id = self.speaker_id();
+        self.listener
+            .set(
+                &self.listener_app,
+                Some(self.listener_node.clone()),
+                request(
+                    Some(room(&self.owner, generation)),
+                    &[(&speaker_id, "dome-a")],
+                ),
+            )
+            .await
+    }
+
+    /// 聞き手の退出(購読・再生・試行の記録をすべて捨てる)。
+    async fn listener_leaves(&self) -> MetaverseAudioStatus {
+        self.listener
+            .set(&self.listener_app, None, request(None, &[]))
+            .await
+    }
+
+    /// 聞き手の proof つきの認可要求(話者の世代 1 の Dome)。
+    async fn access_request(&self) -> Vec<u8> {
+        serde_json::to_vec(&MetaverseAudioAccessRequestV1 {
+            proof: self
+                .listener_app
+                .build_dome_access_proof(room(&self.owner, 1).spatial_context, self.owner.clone())
+                .await
+                .expect("proof"),
+            instance_id: "dome-a".into(),
+            instance_generation: 1,
+            session_id: "dome-a".into(),
+        })
+        .expect("request")
+    }
+
     async fn shutdown(self) {
         let _ = self.listener_node.shutdown().await;
         let _ = self.speaker_node.shutdown().await;
@@ -208,20 +280,30 @@ fn metaverse_audio_frame_budget_rejects_excess_frames_and_bytes() {
     for _ in 0..50 {
         budget.admit(start, 100).expect("within the frame budget");
     }
-    let rejection = budget.admit(start, 100).expect_err("the 51st frame in one second");
-    assert_eq!(rejection.code(), "METAVERSE_PLAYER_AUDIO_FRAME_RATE_RATE_EXCEEDED");
+    let rejection = budget
+        .admit(start, 100)
+        .expect_err("the 51st frame in one second");
+    assert_eq!(
+        rejection.code(),
+        "METAVERSE_PLAYER_AUDIO_FRAME_RATE_RATE_EXCEEDED"
+    );
     // 窓が進めば受け付ける。bytes の上限も同じ窓で数える。
     let later = start + Duration::from_secs(1);
-    budget.admit(later, 32 * 1024).expect("a full window of bytes");
+    budget
+        .admit(later, 32 * 1024)
+        .expect("a full window of bytes");
     let rejection = budget.admit(later, 1).expect_err("over the byte budget");
-    assert_eq!(rejection.code(), "METAVERSE_PLAYER_AUDIO_BANDWIDTH_RATE_EXCEEDED");
+    assert_eq!(
+        rejection.code(),
+        "METAVERSE_PLAYER_AUDIO_BANDWIDTH_RATE_EXCEEDED"
+    );
 }
 
 /// 同じ話者の frame がまとめて・順序を入れ替えて届いても、上限(160 ms)の中なら時刻順に並べ直して読む。
 /// 旧経路(届いた順の即時再生)では到着順に再生していた(修正前の再現は PR に記録)。
 #[tokio::test]
 async fn metaverse_audio_plays_bursty_and_reordered_frames_in_timestamp_order() {
-    let mut broadcast = moq_net::broadcast::Info::new().produce();
+    let broadcast = moq_net::broadcast::Info::new().produce();
     let track = broadcast
         .create_track(METAVERSE_AUDIO_TRACK, None)
         .expect("audio track");
@@ -230,9 +312,7 @@ async fn metaverse_audio_plays_bursty_and_reordered_frames_in_timestamp_order() 
     let mut frames = audio_frames(&consumer, container).await.expect("frames");
     // 180 ms 相当(9 frame)をまとめて、group の順を入れ替えて書く。
     for sequence in [0_u64, 2, 1, 4, 3, 5, 8, 6, 7] {
-        let mut group = track
-            .create_group(group::Info { sequence })
-            .expect("group");
+        let mut group = track.create_group(group::Info { sequence }).expect("group");
         hang::container::Frame {
             timestamp: Timestamp::from_micros(sequence * 20_000).expect("timestamp"),
             payload: vec![u8::try_from(sequence).expect("small")].into(),
@@ -259,7 +339,9 @@ async fn metaverse_audio_starts_only_after_explicit_toggle_and_device_open() {
     let (app, owner) = app(generate_keys(), &network);
     let audio = MetaverseAudio::default();
     // 操作の前は off。
-    let status = audio.set(&app, None, request(Some(room(&owner, 1)), &[])).await;
+    let status = audio
+        .set(&app, None, request(Some(room(&owner, 1)), &[]))
+        .await;
     assert_eq!(status.microphone, MetaverseMicrophoneStatus::Off);
     // 機器を開けない build では、mic を on にしても開始を表示せず、broadcast を公開しない(送信 0)。
     let mut on = request(Some(room(&owner, 1)), &[]);
@@ -271,38 +353,33 @@ async fn metaverse_audio_starts_only_after_explicit_toggle_and_device_open() {
     assert!(room_audio.microphone.is_none());
     let path = room_audio.broadcast_path();
     assert!(
-        timeout(Duration::from_millis(300), room_audio.origin.consume().routed(path.as_str()))
-            .await
-            .ok()
-            .flatten()
-            .is_none(),
+        timeout(
+            Duration::from_millis(300),
+            room_audio.origin.consume().routed(path.as_str())
+        )
+        .await
+        .ok()
+        .flatten()
+        .is_none(),
         "nothing is published without an open device"
     );
     drop(state);
     // 再起動の後(新しい状態)は off から始まる。
     let restarted = MetaverseAudio::default();
-    let status = restarted.set(&app, None, request(Some(room(&owner, 1)), &[])).await;
+    let status = restarted
+        .set(&app, None, request(Some(room(&owner, 1)), &[]))
+        .await;
     assert_eq!(status.microphone, MetaverseMicrophoneStatus::Off);
 }
 
+/// 退出・失効・世代の変更で購読と再生が止まり、前の世代の音声を新しい世代へ書かない。offline grace は画面が room を
+/// 外す(`useMetaverseRoomSession` の試験)ので、ここでは退出と同じ入力になる。再起動の後に mic が off から始まる
+/// ことは `metaverse_audio_starts_only_after_explicit_toggle_and_device_open` が確かめる。
 #[tokio::test]
-async fn metaverse_audio_reaches_an_allowed_listener_and_stops_on_leave() {
+async fn metaverse_audio_stops_on_leave_access_change_and_restart() {
     let pair = pair().await;
-    let owner = pair.owner.clone();
-    let speaker_id = pair.speaker_id();
-    pair.speaker
-        .set(&pair.speaker_app, Some(pair.speaker_node.clone()), request(Some(room(&owner, 1)), &[]))
-        .await;
-    let _voice = speak(&pair.speaker, [0, 0, 400]).await;
-    let status = pair
-        .listener
-        .set(
-            &pair.listener_app,
-            Some(pair.listener_node.clone()),
-            request(Some(room(&owner, 1)), &[(&speaker_id, "dome-a")]),
-        )
-        .await;
-    assert_eq!(status.listening, 1);
+    let voice = pair.speaker_speaks().await;
+    assert_eq!(pair.listen(1).await.listening, 1);
     assert!(
         eventually(async || written(&pair.listener).await > 0).await,
         "the allowed listener plays the speaker"
@@ -310,25 +387,51 @@ async fn metaverse_audio_reaches_an_allowed_listener_and_stops_on_leave() {
     // 距離減衰: 聞き手(原点)から 400 cm → 0.25。
     assert!(eventually(async || volume(&pair.listener).await == Some(0.25)).await);
 
-    // 話者が退出すると、送る側の評価し直しで閉じ、聞き手の再生が止まる。
-    pair.speaker.set(&pair.speaker_app, None, request(None, &[])).await;
+    // 世代の変更: 前の世代の購読と再生を捨てる。話者は新しい世代に居ないので拒否され、新しい世代には何も書かない。
+    pair.listen(2).await;
+    assert!(eventually(async || subscription_ended(&pair.listener).await).await);
+    assert_eq!(
+        written(&pair.listener).await,
+        0,
+        "nothing from generation 1 plays in generation 2"
+    );
+
+    // 話者の退出: 送る側が閉じ、聞き手の再生が止まる。
+    pair.listen(1).await;
+    assert!(eventually(async || written(&pair.listener).await > 0).await);
+    pair.speaker
+        .set(&pair.speaker_app, None, request(None, &[]))
+        .await;
     assert!(
-        eventually(async || {
-            let state = pair.listener.state.lock().await;
-            state
-                .as_ref()
-                .and_then(|room| room.speakers.values().next())
-                .is_some_and(|speaker| speaker.finished.load(Ordering::Acquire))
-        })
-        .await,
+        eventually(async || subscription_ended(&pair.listener).await).await,
         "the subscription ends after the speaker leaves"
     );
-    let stopped = written(&pair.listener).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(written(&pair.listener).await, stopped, "no playback after the stop");
+    assert!(
+        stays_silent(&pair.listener).await,
+        "no playback after the speaker leaves"
+    );
+    drop(voice);
+
+    // 失効: owner(ここでは話者)が聞き手を block すると、送る側の評価し直し(5 秒ごと)で閉じる。
+    let _voice = pair.speaker_speaks().await;
+    pair.listener_leaves().await;
+    pair.listen(1).await;
+    assert!(eventually(async || written(&pair.listener).await > 0).await);
+    pair.speaker_app
+        .block_author(pair.listener_pubkey.as_str())
+        .await
+        .expect("block");
+    assert!(
+        eventually(async || subscription_ended(&pair.listener).await).await,
+        "the speaker closes the revoked listener"
+    );
+    assert!(
+        stays_silent(&pair.listener).await,
+        "no playback after the access is revoked"
+    );
+
     // 聞き手の退出で、購読と再生をすべて回収する。
-    let status = pair.listener.set(&pair.listener_app, None, request(None, &[])).await;
-    assert_eq!(status.listening, 0);
+    assert_eq!(pair.listener_leaves().await.listening, 0);
     assert!(pair.listener.state.lock().await.is_none());
     pair.shutdown().await;
 }
@@ -338,10 +441,7 @@ async fn metaverse_audio_subscribe_is_denied_without_dome_access() {
     let pair = pair().await;
     let owner = pair.owner.clone();
     let speaker_id = pair.speaker_id();
-    pair.speaker
-        .set(&pair.speaker_app, Some(pair.speaker_node.clone()), request(Some(room(&owner, 1)), &[]))
-        .await;
-    let _voice = speak(&pair.speaker, [0, 0, 100]).await;
+    let _voice = pair.speaker_speaks().await;
 
     // 話者が参加していない世代の Dome への要求は拒否する。
     let stale = MetaverseAudioAccessRequestV1 {
@@ -361,7 +461,9 @@ async fn metaverse_audio_subscribe_is_denied_without_dome_access() {
         .err()
         .expect("denied");
     assert_eq!(
-        denied.downcast_ref::<kukuri_iroh_node::MediaDenied>().map(|denied| denied.0.as_str()),
+        denied
+            .downcast_ref::<kukuri_iroh_node::MediaDenied>()
+            .map(|denied| denied.0.as_str()),
         Some(DENIED_NOT_IN_DOME)
     );
 
@@ -384,7 +486,9 @@ async fn metaverse_audio_subscribe_is_denied_without_dome_access() {
         .err()
         .expect("denied");
     assert_eq!(
-        denied.downcast_ref::<kukuri_iroh_node::MediaDenied>().map(|denied| denied.0.as_str()),
+        denied
+            .downcast_ref::<kukuri_iroh_node::MediaDenied>()
+            .map(|denied| denied.0.as_str()),
         Some(DENIED_ACCESS)
     );
 
@@ -393,84 +497,109 @@ async fn metaverse_audio_subscribe_is_denied_without_dome_access() {
         .block_author(pair.listener_pubkey.as_str())
         .await
         .expect("block");
-    pair.listener
-        .set(
-            &pair.listener_app,
-            Some(pair.listener_node.clone()),
-            request(Some(room(&owner, 1)), &[(&speaker_id, "dome-a")]),
-        )
-        .await;
-    assert!(
-        eventually(async || {
-            let state = pair.listener.state.lock().await;
-            state
-                .as_ref()
-                .and_then(|room| room.speakers.values().next())
-                .is_some_and(|speaker| speaker.finished.load(Ordering::Acquire))
-        })
-        .await
+    pair.listen(1).await;
+    assert!(eventually(async || subscription_ended(&pair.listener).await).await);
+    assert_eq!(
+        written(&pair.listener).await,
+        0,
+        "a blocked listener hears nothing"
     );
-    assert_eq!(written(&pair.listener).await, 0, "a blocked listener hears nothing");
     pair.shutdown().await;
 }
 
 #[tokio::test]
 async fn metaverse_audio_budget_rejects_and_bounds_ledgers() {
-    let network = FakeNetwork::default();
-    let (app, owner) = app(generate_keys(), &network);
-    let node = IrohDocsNode::memory().await.expect("node");
-    let audio = MetaverseAudio::default();
-    // 画面が 20 人を渡しても、同時に購読するのは client budget の 16 人まで(近い順の先頭)。
-    let endpoints: Vec<String> = (0..20_u8)
-        .map(|index| iroh::SecretKey::from_bytes(&[index + 1; 32]).public().to_string())
+    let pair = pair().await;
+    // 聞き手: 画面が近い順に 16 人の 10 倍を渡しても、同時に購読・接続を試すのは client budget の 16 人まで(先頭から)。
+    let endpoints: Vec<String> = (0..160_u8)
+        .map(|index| {
+            iroh::SecretKey::from_bytes(&[index + 1; 32])
+                .public()
+                .to_string()
+        })
         .collect();
     let speakers: Vec<(&str, &str)> = endpoints
         .iter()
         .map(|endpoint| (endpoint.as_str(), "dome-a"))
         .collect();
-    let status = audio
-        .set(&app, Some(node.clone()), request(Some(room(&owner, 1)), &speakers))
+    let status = pair
+        .listener
+        .set(
+            &pair.listener_app,
+            Some(pair.listener_node.clone()),
+            request(Some(room(&pair.owner, 1)), &speakers),
+        )
         .await;
     assert_eq!(status.listening, 16);
     {
-        let state = audio.state.lock().await;
+        let state = pair.listener.state.lock().await;
         let room_audio = state.as_ref().expect("room");
-        assert!(room_audio
-            .speakers
-            .keys()
-            .all(|endpoint| endpoints[..16].contains(endpoint)));
+        assert!(
+            room_audio
+                .speakers
+                .keys()
+                .all(|endpoint| endpoints[..16].contains(endpoint))
+        );
         assert_eq!(room_audio.attempts.len(), 16);
     }
     // 同じ話者へは 5 秒に 1 回まで、試行の記録は 64 件まで。
-    let mut state = audio.state.lock().await;
-    let room_audio = state.as_mut().expect("room");
-    let now = Instant::now();
-    assert!(!room_audio.may_attempt(&endpoints[0], now));
-    for index in 0..100 {
-        room_audio.may_attempt(&format!("peer-{index}"), now);
+    {
+        let mut state = pair.listener.state.lock().await;
+        let room_audio = state.as_mut().expect("room");
+        let now = Instant::now();
+        assert!(!room_audio.may_attempt(&endpoints[0], now));
+        for index in 0..100 {
+            room_audio.may_attempt(&format!("peer-{index}"), now);
+        }
+        assert_eq!(room_audio.attempts.len(), ATTEMPT_LEDGER_LIMIT);
+        assert!(room_audio.may_attempt(&endpoints[0], now + RETRY_INTERVAL));
     }
-    assert_eq!(room_audio.attempts.len(), ATTEMPT_LEDGER_LIMIT);
-    assert!(room_audio.may_attempt(&endpoints[0], now + RETRY_INTERVAL));
-    drop(state);
-    let _ = node.shutdown().await;
+    pair.listener_leaves().await;
+
+    // 話者: 同時に送る相手は 64 まで。65 番目は busy で断り(access の拒否ではない)、空きができれば受ける。
+    let _voice = pair.speaker_speaks().await;
+    let speaker_id = pair.speaker_id();
+    let access = pair.access_request().await;
+    let mut sessions = Vec::new();
+    for _ in 0..kukuri_iroh_node::MEDIA_MAX_INBOUND_SESSIONS {
+        sessions.push(
+            pair.listener_node
+                .media_subscribe(&speaker_id, &access)
+                .await
+                .expect("within the limit"),
+        );
+    }
+    let busy = pair
+        .listener_node
+        .media_subscribe(&speaker_id, &access)
+        .await
+        .err()
+        .expect("busy over the limit");
+    assert!(
+        busy.downcast_ref::<kukuri_iroh_node::MediaDenied>()
+            .is_none()
+    );
+    sessions.pop();
+    assert!(
+        eventually(async || {
+            let access = pair.access_request().await;
+            pair.listener_node
+                .media_subscribe(&speaker_id, &access)
+                .await
+                .is_ok()
+        })
+        .await,
+        "a freed slot accepts the next listener"
+    );
+    drop(sessions);
+    pair.shutdown().await;
 }
 
 #[tokio::test]
 async fn metaverse_audio_mute_drops_before_decode() {
     let pair = pair().await;
-    let owner = pair.owner.clone();
-    let speaker_id = pair.speaker_id();
-    pair.speaker
-        .set(&pair.speaker_app, Some(pair.speaker_node.clone()), request(Some(room(&owner, 1)), &[]))
-        .await;
-    let _voice = speak(&pair.speaker, [0, 0, 100]).await;
-    pair.listener
-        .set(
-            &pair.listener_app,
-            Some(pair.listener_node.clone()),
-            request(Some(room(&owner, 1)), &[(&speaker_id, "dome-a")]),
-        )
-        .await;
+    let _voice = pair.speaker_speaks().await;
+    pair.listen(1).await;
     assert!(eventually(async || written(&pair.listener).await > 0).await);
     // mute した話者は画面が候補から外す。購読を止め、以後の decode・再生は 0(参加・presence は変えない)。
     let status = pair
@@ -478,12 +607,10 @@ async fn metaverse_audio_mute_drops_before_decode() {
         .set(
             &pair.listener_app,
             Some(pair.listener_node.clone()),
-            request(Some(room(&owner, 1)), &[]),
+            request(Some(room(&pair.owner, 1)), &[]),
         )
         .await;
     assert_eq!(status.listening, 0);
-    let muted = written(&pair.listener).await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_eq!(written(&pair.listener).await, muted);
+    assert!(stays_silent(&pair.listener).await);
     pair.shutdown().await;
 }

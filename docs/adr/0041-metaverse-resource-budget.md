@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-28
 - Issue: #794
-- 後継: Player と Client の spatial audio の行の測り方（signed PCM16 frame）と超えたときの扱いは [ADR 0067](0067-media-transport-moq.md) §4 に移り、#1033 の merge で失効する。
+- 後継: Player と Client の spatial audio の行の測り方と超えたときの扱いは、#1033 で [ADR 0067](0067-media-transport-moq.md) §4 に合わせて置き換えた（旧: signed PCM16 frame、mute/drop oldest）。
 
 ## Context
 
@@ -38,7 +38,7 @@ Metaverse は実験機能であり、asset inspection metadata の追加に伴�
 | Player | input bandwidth | 256 KiB/s | signed input JSON bytes | rate reject |
 | Player | connection proposal | 8 | proposer owner × receiver instance/slot per 10 min | rate reject |
 | Player | impulse | 5000 | maximum absolute component, cm | mutation reject |
-| Player | spatial audio | 50 frames/s, 32 KiB/s | signed PCM16 frame | frame reject |
+| Player | spatial audio | 50 frames/s, 32 KiB/s | received Opus frames per speaker, 1 s window (listener side) | frame drop, counted as rejection |
 | Host | participants | 64 | active participant count | join reject |
 | Host | simulated rigid bodies | 512 | active host physics bodies | mutation reject |
 | Host | snapshot bandwidth | 4 MiB/s | signed snapshot JSON bytes | reuse latest snapshot |
@@ -49,7 +49,7 @@ Metaverse は実験機能であり、asset inspection metadata の追加に伴�
 | Client | interpolated bodies | 256 | sorted visible body count | stop low-priority interpolation |
 | Client | neighbor Domes | 4 | adjacent Dome count | reduce, fallback, then hide |
 | Client | metaverse cache | 1 GiB desktop / 10 GiB CN | content-addressed manifest/asset bytes | unpinned LRU GC or stage reject |
-| Client | spatial audio | 16 streams, 8 jitter frames | active decoded stream/frame count | mute/drop oldest |
+| Client | spatial audio | 16 streams, 8 jitter frames | subscribed speakers (nearest first) / playout buffer (8 × 20 ms) | no subscription beyond the nearest 16 / drop writes over 160 ms |
 
 ### Asset and physics validation
 
