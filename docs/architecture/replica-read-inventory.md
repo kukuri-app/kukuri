@@ -1,13 +1,14 @@
 # replica の読み出しの inventory（総件数への依存）
 
-Issue #1239 の inventory。docs の replica を prefix で全件読みしている箇所（`DocQuery::Prefix` / `DocQuery::All`）を全件列挙し、
-処理量が何の総数に比例するかと、解消する段階を記録する。設計の正本は [ADR 0052](../adr/0052-scale-independent-timeline-sync.md)、
+Issue #1239 の完了inventory。以下は当時の全件読み・比例する総数と解消段階の記録。現行参照基準は `1f77dd4e3252b37fc944446544b901435c04063f`。全件走査入口（`hydrate_author_state`を含む）は撤去済み。完了の証拠は [#1239作業記録](../progress/2026-09-20-1239-scale-independent-timeline-sync.md)、後継は [#1221 client reader](../progress/2026-09-26-1221-r5b-client-reader.md)・[author/private reader](../progress/2026-09-26-1221-r5c-author-private-control.md)・[writer切替](../progress/2026-09-26-1221-r5h-writer-cutover.md)。後半の時間分割を#1243残件とする記述も当時の状態で、現行の指示ではない。
+
+設計の正本は [ADR 0052](../adr/0052-scale-independent-timeline-sync.md)、
 原則は `AGENTS.md` の「設計原則: 件数に依存しない処理」。
 
 - 基準 commit: `117af820`
 - 列挙方法: `grep -rn "DocQuery::Prefix\|DocQuery::All" crates --include=*.rs` から test と `docs-sync` の実装を除く。全件走査の入口は
   `hydrate_subscription_state` / `hydrate_topic_state` / `hydrate_scope_projection` / `hydrate_author_state` の caller を逆引きした
-  （前の 3 つは T5b-1 で削除済み。残る入口は `hydrate_author_state`）。
+  （前の3つはT5b-1、author入口は後続段階で撤去済み）。
 - 未分類: 0
 
 ## 前提: query の実行計画

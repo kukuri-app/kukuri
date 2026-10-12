@@ -441,7 +441,7 @@ docker volume rm community-node_cn-arcadedb-data   # volume 名は docker volume
 # cn-indexerはschemaを作成する。復旧結果は事前に固定した対象で確認する。
 ```
 
-現行indexerには起動時・周期的な全件見直しが残る。これは設計原則上の未解消点であり、全件再同期を正当化したり、文書変更だけで有界な復旧を実装済みとしたりしない。対象を絞った復旧が現行入口でできない場合は未完了として記録し、完了範囲を再定義する。
+現行indexerは `worker::run → BucketReader::poll_once` のcursor巡回（最大64物理scope、同時8、scopeごと20/4件）を使い、旧全件見直し/再同期は撤去済み（[R5-H](../progress/2026-09-26-1221-r5h-writer-cutover.md)）。周期の `full` も有界巡回であり、全履歴復旧の保証ではない。対象を固定した復旧の確認方法は [production rollout §5.5](community-node-production-rollout.md#55-blobtext-本文の再投影と検索確認)を使う。Tantivy検索の明示承認済み例外は [ADR 0025 §10](../adr/0025-community-node-indexing-foundation.md#10-cn-の全文検索を-tantivy-に移す17242026-10-10) に従う。
 
 ### rollback（API / relay のみ構成へ戻す）
 

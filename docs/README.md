@@ -91,9 +91,9 @@ Issue・PR・セッションの記述だけで「実装済み」「検証成功�
 - desktop の blob キャッシュと取得の再試行: `docs/architecture/blob-cache.md`（保持範囲、取得経路と I/O、自動再試行の回数・リセット条件、既知の欠落）
 - タイムラインの反映と復旧を総件数に依存させない設計: `docs/adr/0052-scale-independent-timeline-sync.md`（#1239。同期は best effort、反映は個別反映・窓の追いつき・遡りの取得の 3 つ、docs の読み出しは key の索引と上限つき、replica の時間分割の方向）
 - アカウントの署名鍵から docs author を導出し、著者の record を docs author と key の組で読む: `docs/adr/0053-account-derived-docs-author.md`（#1258。同じ key に不正な record を積まれても、著者の投稿と取り下げを定数の読み出しで反映する）
-- docs replica の時間分割: `docs/adr/0054-time-bucketed-docs-replicas.md`（#1243、Proposed。ID・同期停止の基盤から段階実装し、writer切替とCN追従は作業記録で管理する）
-- replica の読み出しの inventory: `docs/architecture/replica-read-inventory.md`（prefix の全件読みの全 caller、比例する総数、解消する段階）
-- 通信の需要・容量・停止の統合設計: `docs/adr/0055-demand-owned-network-work.md`（#1221、Proposed。画面外の通知対象を維持する受信経路と移行を含む）。調査中の入口・連鎖・上流APIは `docs/architecture/network-work-inventory.md`。
+- docs replica の時間分割: `docs/adr/0054-time-bucketed-docs-replicas.md`（#1221でreader・writer切替・旧store退役を実装。採用範囲と旧常時同期案の失効はStatus、段階の証拠は後継記録を参照）
+- replica の読み出しの inventory: `docs/architecture/replica-read-inventory.md`（#1239の全件読み解消記録と#1221の後継reader。表は当時の観測と段階の証拠）
+- 通信の需要・容量・停止の統合設計: `docs/adr/0055-demand-owned-network-work.md`（#1221でscope lease・account受信・有界readerを実装）。入口・連鎖・上流APIの調査履歴と後継参照は `docs/architecture/network-work-inventory.md`。未決範囲は#1777の候補分類を参照。
 - Web クライアント（ブラウザ内の Rust/WASM）の実行境界: `docs/adr/0056-web-client-execution-boundary.md`（#1214。main thread の単一 WASM instance、既存 crate の target 別共用、保存の境界、JS への公開 API と command の dispatch 表）
 - iroh の QUIC を WebRTC DataChannel で運ぶ transport: `docs/adr/0057-quic-over-webrtc-datachannel-transport.md`（#1421。str0m と web-sys の backend、session の上限、custom path の追加、STUN は Community Node の基盤で自前運用）
 - Web の blob と docs の保存（上流の memory store と kukuri 層の保存 trait。fork しない）: `docs/adr/0058-web-blob-and-docs-storage.md`（#1215・#1216。保存 trait の操作、IndexedDB の形、容量・回収・予約）

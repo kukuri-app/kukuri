@@ -1,7 +1,14 @@
 # #1221 通信作業のinventory
 
-基準: `984a491a3430f1da105bfe8ff49a877cbab4690f`。設計: [ADR 0055](../adr/0055-demand-owned-network-work.md)。
-状態: **P2調査中**。以下はコードを読んで確認したgroup。NET-AC-1の全件列挙完了とはまだ扱わない。
+## 現状と調査履歴（2026-10-12）
+
+#1221は完了済み。現行参照基準は `1f77dd4e3252b37fc944446544b901435c04063f`。設計は [ADR 0055](../adr/0055-demand-owned-network-work.md)。以下のgroup表・P2/P3記述は当時の観測と段階的な実装証拠で、現在の残件台帳ではない。旧同期・全購読復元・author常時購読・pairwise DM task・CN full_passを再実装する指示として使わない。
+
+後継は [scope lease R2-C](../progress/2026-09-26-1221-r2c-active-scopes.md)、[private通知 R4-C](../progress/2026-09-26-1221-r4c-private-notifications.md)、[account DM R4-D](../progress/2026-09-26-1221-r4d-dm-account-route.md)、[client reader R5-B](../progress/2026-09-26-1221-r5b-client-reader.md)、[author/private R5-C](../progress/2026-09-26-1221-r5c-author-private-control.md)、[writer切替 R5-H](../progress/2026-09-26-1221-r5h-writer-cutover.md)、[旧store退役 R5-I](../progress/2026-09-27-1221-r5i-legacy-store-retirement.md)。CNは `worker::run → BucketReader::poll_once` のcursor巡回（最大64物理scope、同時8、scopeごと20/4件）と [W/B/T回収 R5-F](../progress/2026-09-26-1221-r5f-cn-retention.md)へ移った。周期の `full` は有界巡回であり全件syncではない。
+
+現在も製品判断を要するdelivery診断・安全cache・social一覧等は [#1777の分類](https://github.com/kukuri-app/kukuri/issues/1777)を参照。本書の完了は、それらの解消や全履歴の復旧を意味しない。
+
+調査時の基準: `984a491a3430f1da105bfe8ff49a877cbab4690f`。当初のP2調査方法:
 `.codegraph/` は存在するが `codegraph explore` は「indexなし」を返したため、索引を作成せずrgとsource読みに切り替えた。
 全件検索の途中にある `#[cfg(test)]` でファイル後半を捨てない。productionの後にtestがある場合も、
 testの後にproductionが続く場合もあるため、module境界とcallerを確認する。
@@ -9,8 +16,7 @@ testの後にproductionが続く場合もあるため、module境界とcallerを
 ## 確認したgroup
 
 pathの `service/` は `crates/app-api/src/service/`、`cn-runtime/` は
-`crates/desktop-runtime/src/community_node/` を指す。全memberの逆引きはP3差分を入れる前に固定する。
-intervalは現行値であり新設計の推奨値ではない。
+`crates/desktop-runtime/src/community_node/` を指す。全memberの逆引きとintervalは各段階の観測値であり、現行の残件や推奨値ではない。
 
 | ID / memberと場所 | trigger・間隔・対象 | 現行の停止 / 連鎖 | 総数への依存 / 配置 | guard・検証 |
 | --- | --- | --- | --- | --- |

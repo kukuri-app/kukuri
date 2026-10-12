@@ -2,9 +2,11 @@
 
 ## Status
 
-Proposed。#1221のP2。基準は `984a491a3430f1da105bfe8ff49a877cbab4690f`。
-実装済みの仕様は参照先ADRとコードで確認する。R3-Aのnode共通受付、R3-Bの表示再試行、R3-Cのapp-api保存境界は本番経路へ接続済みである。通知/DM・reader・旧同期の移行は後続条件として残る。
-作業状態・AC・INVAR・採用判断の台帳は [#1221](https://github.com/kukuri-app/kukuri/issues/1221) に集約する。
+実装済みの採用範囲（2026-10-12確認、基準 `1f77dd4e3252b37fc944446544b901435c04063f`）: 共通受付・表示再試行・保存guard、scope lease、画面外通知を保つaccount受信、DM再送owner、有界reader、旧同期の撤去。#1221は完了済み。
+
+後継の証拠は [R2-C scope lease](../progress/2026-09-26-1221-r2c-active-scopes.md)、[R4-C private通知](../progress/2026-09-26-1221-r4c-private-notifications.md)、[R4-D account DM](../progress/2026-09-26-1221-r4d-dm-account-route.md)、[R5-B reader](../progress/2026-09-26-1221-r5b-client-reader.md)、[R5-H writer切替](../progress/2026-09-26-1221-r5h-writer-cutover.md)、[R5-I旧store退役](../progress/2026-09-27-1221-r5i-legacy-store-retirement.md)。
+
+当初のStatusはProposed（P2、`984a491a3430f1da105bfe8ff49a877cbab4690f`）。以下のContextの旧状態と段階的な「未完了/後続」記録は履歴で、通知/DM・reader・旧同期を改めて移行する指示ではない。採用判断は [#1221](https://github.com/kukuri-app/kukuri/issues/1221) と各節の更新を参照する。本ADR全体の一括採用を宣言せず、現在の未決の別課題は [#1777の分類](https://github.com/kukuri-app/kukuri/issues/1777)で区別する。
 
 ## Contextと決定の境界
 
