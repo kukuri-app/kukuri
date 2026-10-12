@@ -26,14 +26,12 @@ ENV LINDERA_BUILD_DICTIONARY_CACHE_DIR=/opt/lindera-cache
 RUN test -n "$TARGET_PACKAGES"
 COPY rust-toolchain.toml ./
 COPY --from=planner /workspace/recipe.json recipe.json
-RUN --mount=type=cache,target=/opt/lindera-cache \
-    set -eu; for package in $TARGET_PACKAGES; do cargo chef cook --release --recipe-path recipe.json -p "$package"; done
+RUN set -eu; for package in $TARGET_PACKAGES; do cargo chef cook --release --recipe-path recipe.json -p "$package"; done
 
 COPY Cargo.toml Cargo.lock ./
 COPY xtask ./xtask
 COPY crates ./crates
-RUN --mount=type=cache,target=/opt/lindera-cache \
-    set -eu; for package in $TARGET_PACKAGES; do cargo build --release -p "$package"; done
+RUN set -eu; for package in $TARGET_PACKAGES; do cargo build --release -p "$package"; done
 
 # #1657: kukuri が運用する署名つき一覧の publisher。fork の同じ固定 revision を使う。
 RUN case " $TARGET_PACKAGES " in *" kukuri-cn-addr-index "*) \
