@@ -1,8 +1,7 @@
 use super::*;
 use kukuri_core::{
-    DomeCustomizationV1, FIXED_DOME_SPEC_ID, METAVERSE_AUDIO_SAMPLE_RATE_HZ,
-    METAVERSE_WORLD_VERSION, MetaverseAssetKind, MetaverseRoomChatMessageV1, MetaverseRoomEventV1,
-    MetaverseRoomPresenceV1, MetaverseSpatialAudioFrameV1,
+    DomeCustomizationV1, FIXED_DOME_SPEC_ID, METAVERSE_WORLD_VERSION, MetaverseAssetKind,
+    MetaverseRoomChatMessageV1, MetaverseRoomEventV1, MetaverseRoomPresenceV1,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -408,6 +407,7 @@ async fn metaverse_room_events_are_signed_and_delivered_over_hint_transport() {
                         avatar_asset_ref: None,
                         joined_at: Utc::now().timestamp_millis(),
                         last_seen_at: Utc::now().timestamp_millis(),
+                        microphone_enabled: false,
                     },
                 },
             },
@@ -635,6 +635,7 @@ async fn metaverse_room_event_rejects_mismatched_payload_identity() {
                         avatar_asset_ref: None,
                         joined_at: Utc::now().timestamp_millis(),
                         last_seen_at: Utc::now().timestamp_millis(),
+                        microphone_enabled: false,
                     },
                 },
             },
@@ -647,81 +648,6 @@ async fn metaverse_room_event_rejects_mismatched_payload_identity() {
             .to_string()
             .contains("metaverse presence event identity")
     );
-}
-
-#[tokio::test]
-async fn metaverse_audio_is_ephemeral_and_enforces_the_player_frame_budget() {
-    let store = Arc::new(MemoryStore::default());
-    let transport = Arc::new(FakeTransport::new("self", FakeNetwork::default()));
-    let app = AppService::new(store, transport);
-    let topic = "kukuri:topic:metaverse-audio-budget";
-    let room_id = app
-        .create_metaverse_room(
-            topic,
-            CreateMetaverseRoomInput {
-                title: "audio".into(),
-                description: "ephemeral frames".into(),
-                max_peers: Some(4),
-            },
-        )
-        .await
-        .expect("create metaverse room");
-
-    for seq in 0..50_u64 {
-        let now = Utc::now().timestamp_millis();
-        app.publish_metaverse_room_event(
-            topic,
-            PublishMetaverseRoomEventInput {
-                room_id: room_id.clone(),
-                peer_id: "peer-a".into(),
-                seq,
-                event: MetaverseRoomEventV1::SpatialAudioFrame {
-                    frame: MetaverseSpatialAudioFrameV1 {
-                        room_id: room_id.clone(),
-                        peer_id: "peer-a".into(),
-                        position: [0, 100, 0],
-                        sample_rate_hz: METAVERSE_AUDIO_SAMPLE_RATE_HZ,
-                        samples: vec![0; 320],
-                        captured_at: now,
-                    },
-                },
-            },
-        )
-        .await
-        .expect("audio frame within budget");
-    }
-    let now = Utc::now().timestamp_millis();
-    let error = app
-        .publish_metaverse_room_event(
-            topic,
-            PublishMetaverseRoomEventInput {
-                room_id: room_id.clone(),
-                peer_id: "peer-a".into(),
-                seq: 50,
-                event: MetaverseRoomEventV1::SpatialAudioFrame {
-                    frame: MetaverseSpatialAudioFrameV1 {
-                        room_id: room_id.clone(),
-                        peer_id: "peer-a".into(),
-                        position: [0, 100, 0],
-                        sample_rate_hz: METAVERSE_AUDIO_SAMPLE_RATE_HZ,
-                        samples: vec![0; 320],
-                        captured_at: now,
-                    },
-                },
-            },
-        )
-        .await
-        .expect_err("audio frame rate must be bounded");
-    assert!(error.to_string().contains("AUDIO_FRAME_RATE_RATE_EXCEEDED"));
-
-    let room = app
-        .list_game_rooms(topic)
-        .await
-        .expect("list room")
-        .into_iter()
-        .find(|room| room.room_id == room_id)
-        .expect("audio room");
-    assert!(room.metaverse.expect("metaverse").chat_history.is_empty());
 }
 
 #[tokio::test]

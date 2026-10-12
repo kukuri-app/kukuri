@@ -16,6 +16,8 @@ mod identity;
 #[cfg(feature = "ts")]
 mod ipc_ts_export;
 mod kdf;
+#[cfg(not(target_family = "wasm"))]
+mod metaverse_audio;
 mod paths;
 mod requests;
 mod runtime;
@@ -47,6 +49,11 @@ pub use backup::{
     pending_device_restore_frontend_state, pending_device_restore_phase, prepare_device_restore,
     preview_device_backup, recover_interrupted_restore, rollback_device_restore,
     rollback_pending_device_restore, validate_prepared_device_restore,
+};
+#[cfg(not(target_family = "wasm"))]
+pub use metaverse_audio::{
+    MetaverseAudioNeighbor, MetaverseAudioRoom, MetaverseAudioSpeaker, MetaverseAudioStatus,
+    MetaverseMicrophoneStatus, SetMetaverseAudioRequest,
 };
 pub use command::{
     COMMAND_FAILED_CODE, ClientGate, CommandError, DispatchContext,

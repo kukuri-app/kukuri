@@ -28,6 +28,19 @@ pub(crate) fn dome_session_handler(app: Weak<AppService>) -> DomeSessionHandler 
 }
 
 impl DesktopRuntime {
+    /// 空間音声の状態を画面に合わせる(ADR 0067、#1033)。room が無ければすべて止める。
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn set_metaverse_audio(
+        &self,
+        request: crate::SetMetaverseAudioRequest,
+    ) -> Result<crate::MetaverseAudioStatus> {
+        let node = self.iroh_stack.current_node().await;
+        Ok(self
+            .metaverse_audio
+            .set(&self.app_service, node, request)
+            .await)
+    }
+
     pub async fn resync_dome_snapshots(
         &self,
         request: ResyncDomeSnapshotsRequest,

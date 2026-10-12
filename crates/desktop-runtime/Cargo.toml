@@ -54,8 +54,11 @@ audio-devices = ["moq-audio/capture", "moq-audio/playback", "moq-audio/aec"]
 keyring = { workspace = true, features = ["v1"] }
 sqlx.workspace = true
 tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
-# 空間音声の Opus・mix（ADR 0067）。Web は metaverse を扱わない（ADR 0060）。
+# 空間音声の Opus・mix と moq-lite の broadcast（ADR 0067）。Web は metaverse を扱わない（ADR 0060）。
 moq-audio.workspace = true
+moq-mux.workspace = true
+moq-net.workspace = true
+hang.workspace = true
 
 # 通報の送信（ブラウザの fetch の転送の拒否。ADR 0056 §2）と、passphrase の鍵の導出の Worker（src/kdf.rs）。
 [target.'cfg(target_family = "wasm")'.dependencies]

@@ -84,6 +84,7 @@ web-transport-iroh = { version = "0.7.0", default-features = false, features = [
 moq-tokio = { version = "0.19.24", default-features = false, features = ["iroh"] }
 # 機器（cpal。Linux は libasound）は desktop-runtime の `audio-devices` feature で Tauri の app だけが有効にする。
 moq-audio = { version = "0.1.11", default-features = false }
+moq-mux = { version = "0.10.12", default-features = false }
 chacha20poly1305 = "0.11.0"
 n0-future = "0.3.2"
 n0-mainline = "0.7.0"

@@ -29,7 +29,7 @@ pub(crate) use kukuri_core::{
     KukuriProfileRepostEnvelopeContentV1, LIVE_MANIFEST_MIME, LiveSessionManifestBlobV1,
     LiveSessionStateDocV1, LiveSessionStatus, METAVERSE_WORLD_VERSION, ManifestBlobRef,
     MediaManifestItem, MetaverseAssetRef, MetaverseDomeV1, MetaverseRoomEventEnvelopeContentV1,
-    MetaverseRoomEventV1, MetaverseRoomSpawnV1, MetaverseRoomStateV1, ObjectStatus,
+    MetaverseRoomSpawnV1, MetaverseRoomStateV1, ObjectStatus,
     ObjectVisibility, PayloadRef, PostWithdrawalReason, PostWithdrawalV1,
     PrivateChannelEpochHandoffGrantDocV1, PrivateChannelEpochHandoffGrantPayloadV1,
     PrivateChannelInvitePreview, PrivateChannelInviteTokenParams, PrivateChannelJoinMode,

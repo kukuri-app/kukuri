@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ChannelId, EnvelopeId, ManifestBlobRef, MetaverseSpatialAudioFrameV1, Pubkey, TopicId,
+    ChannelId, EnvelopeId, ManifestBlobRef, Pubkey, TopicId,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +71,9 @@ pub struct MetaverseRoomPresenceV1 {
     pub avatar_asset_ref: Option<MetaverseAssetRef>,
     pub joined_at: i64,
     pub last_seen_at: i64,
+    /// 音声を送っている(聞き手はこの話者だけを購読の候補にする。ADR 0067 §2)。
+    #[serde(default)]
+    pub microphone_enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -600,9 +603,6 @@ pub enum MetaverseRoomEventV1 {
     },
     ChatMessage {
         message: MetaverseRoomChatMessageV1,
-    },
-    SpatialAudioFrame {
-        frame: MetaverseSpatialAudioFrameV1,
     },
 }
 

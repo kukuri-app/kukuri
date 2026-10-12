@@ -114,6 +114,47 @@ impl AppService {
         )
     }
 
+    /// 話者の端末で、聞き手の音声の購読の要求を確かめる(ADR 0067 §3)。proof の署名・期限と、話者の Dome の
+    /// Spatial Context・owner への束縛を確かめ、owner から聞き手への block と Spatial Context の資格を自分の状態で
+    /// 評価する。許されたら聞き手の公開鍵を返す。
+    pub async fn authorize_spatial_audio_listener(
+        &self,
+        proof: &DomeSpatialAccessProofV1,
+        spatial_context: &SpatialContextV1,
+        owner_pubkey: &Pubkey,
+    ) -> Result<Option<Pubkey>> {
+        let listener = proof.statement.participant_pubkey.clone();
+        if proof
+            .verify_for(
+                &listener,
+                spatial_context,
+                owner_pubkey,
+                Utc::now().timestamp_millis(),
+            )
+            .is_err()
+        {
+            return Ok(None);
+        }
+        Ok(self
+            .spatial_audio_listener_allowed(spatial_context, owner_pubkey, &listener)
+            .await?
+            .then_some(listener))
+    }
+
+    /// 話者の端末が 5 秒ごとに評価し直す(聞き手の公開鍵は接続の初めの proof で確かめた)。
+    pub async fn spatial_audio_listener_allowed(
+        &self,
+        spatial_context: &SpatialContextV1,
+        owner_pubkey: &Pubkey,
+        listener_pubkey: &Pubkey,
+    ) -> Result<bool> {
+        Ok(matches!(
+            self.evaluate_dome_room_access(spatial_context, owner_pubkey, listener_pubkey)
+                .await?,
+            DomeTransitionAccessDecisionV1::Allowed
+        ))
+    }
+
     pub(crate) async fn evaluate_spatial_context_access(
         &self,
         spatial_context: &SpatialContextV1,
