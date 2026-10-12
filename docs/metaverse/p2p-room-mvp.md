@@ -102,7 +102,7 @@ persistent propの初期定義はownerだけが`update_metaverse_room`でmanifes
 `desktop_smoke_metaverse_dome_connections`は3 ownerでA–B / B–Cを接続し、cycleとなるA–Cを拒否し、restart後の同一topologyとrevoke後のcomponent分割を確認する。
 
 ## 既知の制約
-- 大規模同時接続、voice、WebRTC/SFU、ワールドエディタ、UGC scripting、asset safety scanning は goal の non-goal。
+- 大規模同時接続、voice、WebRTC/SFU、ワールドエディタ、UGC scripting、asset safety scanning は goal の non-goal。voice のうち空間音声は後に ADR 0043（#795）で追加され、その搬送は [ADR 0067](../adr/0067-media-transport-moq.md) が正本となる。
 - Connection proposalは1 Domeあたりopen outbound 32件、同一peer slot 4件、receiver slot queue 32件、local createは10分間に8件を上限とする。
 - owner blockをConnection失効へ結線する入力元はIssue #795、隣接Dome sceneのprefetchとtransitionはIssue #790で実装する。
 - chat は room-scoped signed event として扱う。topic timeline post として永続表示しないため、長期履歴 UI はこの MVP の対象外。
