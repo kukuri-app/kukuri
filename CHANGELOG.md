@@ -18,6 +18,110 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.4.4-preview.1] - 2026-10-12
+
+### Features
+
+- bind original Blob inputs to account operations and read finite chunks
+- expose explicit shell updates and preserve live draft persistence
+- prepare static shell caching and browser retention contract
+- 任意のホーム画面追加とmanifestを実装 (#1767 AC-ENTRY) ([#1769](https://github.com/kukuri-app/kukuri/pull/1769))
+- topic内と横断の検索をTantivyのreaderで返す（#1724 AC-3） ([#1741](https://github.com/kukuri-app/kukuri/pull/1741))
+- 既存投影を128件ずつ検索の索引へ写して再開する（#1724 AC-2） ([#1740](https://github.com/kukuri-app/kukuri/pull/1740))
+- 検索の索引へ取込と有界な回収を反映する（#1724 AC-1） ([#1739](https://github.com/kukuri-app/kukuri/pull/1739))
+- 信頼評価情報の根拠の続きを、助言パネルの「さらに表示」と CLI の cursor で読む（#1702 AC-2） ([#1727](https://github.com/kukuri-app/kukuri/pull/1727))
+- フィードを相互フォロー・フォローのみに絞るフィルターを追加 ([#1689](https://github.com/kukuri-app/kukuri/pull/1689), [#1692](https://github.com/kukuri-app/kukuri/pull/1692))
+- kukuri.app で NIP-05 の nostr.json を配る ([#1687](https://github.com/kukuri-app/kukuri/pull/1687))
+
+### Fixes
+
+- keep composer attachment controls within the mobile text reflow
+- preserve settings handoffs and restore emulator accessibility state
+- keep a single routed settings entry when handing off overlays
+- close settings before the underlying composer on back
+- reuse retired history entries across dialog handoff
+- keep dialog handoff ahead of history cleanup
+- keep layered back navigation inside the PWA
+- preserve held private reads and reclaim concurrent shell caches
+- avoid recreating a reclaimed cache during asset lookup
+- keep settings actions readable at 320px (#1198 AC-3a) ([#1762](https://github.com/kukuri-app/kukuri/pull/1762))
+- 前回と別の項目で設定を開くと履歴が 2 つ積まれ、戻ると前回の項目へ移る不具合を直す ([#1734](https://github.com/kukuri-app/kukuri/pull/1734))
+- resolve OS taps outside the inbox page ([#1756](https://github.com/kukuri-app/kukuri/pull/1756))
+- keep channel link confirmation tied to its current token ([#1753](https://github.com/kukuri-app/kukuri/pull/1753))
+- WebViewの動画poster生成とtimeout回収を直す ([#1746](https://github.com/kukuri-app/kukuri/pull/1746))
+- CN fixture imageを同一digestのcacheから取得する ([#1742](https://github.com/kukuri-app/kukuri/pull/1742), [#1743](https://github.com/kukuri-app/kukuri/pull/1743))
+- 観測の期限削除を索引から128件ずつ進める (#1704 AC-3) ([#1738](https://github.com/kukuri-app/kukuri/pull/1738))
+- 索引の回収が選んだ行だけを読むようにする（#1736 AC-1） ([#1737](https://github.com/kukuri-app/kukuri/pull/1737))
+- 信頼値の集計の掃除が、選んだ行を ctid で消し、満杯の回に表の全行を読まないようにする（#1732 AC-1） ([#1735](https://github.com/kukuri-app/kukuri/pull/1735))
+- 期限削除を上限つきの小分けにし、起動を待たせない（#1704 AC-2） ([#1731](https://github.com/kukuri-app/kukuri/pull/1731))
+- 案件保持の期限を行に持たず、起算点と保持日数で判定する（#1704 AC-1） ([#1713](https://github.com/kukuri-app/kukuri/pull/1713))
+- ArcadeDB を 26.10.1 に上げ、索引の圧縮の後も scope の回収が投影の文書をすべて消すようにする（#1726 AC-1） ([#1729](https://github.com/kukuri-app/kukuri/pull/1729))
+- 信頼値の照会を対象ごとの集計と basis のページで返し、risk signal の全行の読取りをやめる（#1702 AC-1） ([#1720](https://github.com/kukuri-app/kukuri/pull/1720))
+- scope を指定した発見の新着の列挙が、scope の全件を読まず返す件数だけ読むようにする（#1719 AC-1） ([#1722](https://github.com/kukuri-app/kukuri/pull/1722))
+- readiness の索引の整合検査が索引と判定の表を全行読まないようにする（#1714 AC-1） ([#1718](https://github.com/kukuri-app/kukuri/pull/1718))
+- 観測の revision と観測提供の取消の表を廃止する（#1699 AC-2） ([#1717](https://github.com/kukuri-app/kukuri/pull/1717))
+- 起動時の機微データの処理を、暗号文 1 行の鍵の照合と migration の旧平文の確認にする（#1705 AC-1） ([#1710](https://github.com/kukuri-app/kukuri/pull/1710))
+- legal hold を解除で行ごと消し、解除済みの行を残さない（#1706 AC-2） ([#1716](https://github.com/kukuri-app/kukuri/pull/1716))
+- 反映の途中で止まった edge の item を、同じ item の再受信で反映し直す（#1707） ([#1712](https://github.com/kukuri-app/kukuri/pull/1712))
+- 索引の真実源に投稿 id の hash の索引を足し、申出の受付と送信防止の適用が全行を読まないようにする（#1708 AC-1） ([#1711](https://github.com/kukuri-app/kukuri/pull/1711))
+- 却下等の権利侵害申出の本体を、履歴の保持を待たずに区分の期限で物理削除する（#1706 AC-1） ([#1709](https://github.com/kukuri-app/kukuri/pull/1709))
+- risk signal の著者の対応を、参照する risk signal の削除と同じ取引で消す（#1699 AC-1） ([#1703](https://github.com/kukuri-app/kukuri/pull/1703))
+- 送信防止を適用した投稿の ArcadeDB の写しを、消し待ちから indexer の巡回で消す（#1698 AC-2） ([#1701](https://github.com/kukuri-app/kukuri/pull/1701))
+- 自分が作ったリアクションを、同じアカウントの別の端末でセット・投稿から保存できるようにする ([#1688](https://github.com/kukuri-app/kukuri/pull/1688))
+- 複数枚の画像の投稿で先頭 4 枚を並べて取得し、5 枚目以降を拡大表示で取得する（#1690） ([#1693](https://github.com/kukuri-app/kukuri/pull/1693))
+
+### Other
+
+- リリースの版を 0.4.4 にする ([#1774](https://github.com/kukuri-app/kukuri/pull/1774))
+- record fixed PWA integration evidence and final code boundaries
+- return rejected input as evidence without the WebDriver error key
+- expose structured source preparation errors in emulator evidence
+- finalize Android PWA input evidence and remove temporary build reuse
+- reach the Chrome install action through the enlarged native menu
+- use the emulator override size for launcher page swipes
+- retain native input contracts and remove setup diagnostics
+- remove temporary artifact reuse after native PWA input probes
+- resolve reply and message fields before native input observation
+- verify Enter commits an active native IME composition
+- assert actual Japanese preedit confirmation independently of the IME dictionary
+- wait for rendered UI evidence and select the localized layout
+- select the intended Japanese layout and measure touch-exploration focus
+- classify the focus inspector as emulator test code
+- read actual TalkBack focus without suppressing the service
+- exercise native Japanese conversion and photo-picker file browsing
+- wait for native keyboard and reacquire dismissed dialog controls
+- isolate native input, Japanese IME, and TalkBack probes
+- select the Japanese language result rather than its query
+- reuse identical product builds for the mobile input probe
+- match the native language field and separate TalkBack readiness
+- verify native file IO and confirmation guards in the installed PWA
+- remove the unused moved settings setter
+- verify installed PWA rotation and encrypted clipboard recovery
+- operate observed Gboard toolbar and cancel native picker
+- use SDK TalkBack and configure the viewport before Chrome
+- inspect the SDK TalkBack package before activation
+- exercise first consent at mobile width and enlarged text
+- match TalkBack to the emulator ABI and capture native UI
+- avoid closing the APK verification pipe early
+- prepare Japanese Gboard and signed TalkBack emulator checks
+- record verified installed PWA offline and update flow
+- remove unused private read fixture import
+- capture private DocRead rejection on offline restart
+- diagnose remaining PWA delivery and cache failures
+- foreground the installed app and display private scope
+- read live textarea values and restore private demand
+- type through Android input in installed windows
+- use actual text entry and observe update navigation
+- verify installed offline data and retained drafts
+- supply the video poster and satisfy frontend checks
+- report structured runtime errors at the browser boundary
+- exercise offline receipts and explicit updates with real Web builds
+- preserve offline instrumentation and verify draft failure boundaries
+- fix Android Chrome scope and acceptance plan for #1767 ([#1768](https://github.com/kukuri-app/kukuri/pull/1768))
+- 未ACKのDMをoptimistic表示で配送完了にしない ([#1750](https://github.com/kukuri-app/kukuri/pull/1750))
+- 送信防止の状態を認証なしで返し、判断記録に著者を持たないと ADR 0032 を改訂する（#1698 AC-1） ([#1700](https://github.com/kukuri-app/kukuri/pull/1700))
+- 0.4.3 preview の公開と LP・運用記録 ([#1686](https://github.com/kukuri-app/kukuri/pull/1686))
+
 ## [v0.4.3-preview.1] - 2026-10-09
 
 ### Features
