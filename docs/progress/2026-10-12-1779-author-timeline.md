@@ -44,6 +44,6 @@ Vitestの既存THREE CJS deprecation、browser buildの既存chunk-size/NO_COLOR
 
 ## コード量・終了
 
-変更した同じ17 TS/TSX pathの物理行を、比較起点と完成sourceで集計した。実装9,938行等の部分集計と混同せず、testを含む合計は **9,938→9,882（56行減）**。内訳は実装62行減、既存test6行増、新しい補助実装fileは0。本文の証跡doc追加は別計測する。
+変更した同じ17 TS/TSX pathの物理行を、比較起点と完成sourceで集計した。testを含む合計は **9,938→9,882（56行減）**。内訳は実装62行減、既存test6行増、新しい補助実装fileは0。本文の証跡doc追加は別計測する。
 
 旧3state・setter・fallback・選択著者の再変換の参照は0。著者の正本はmapに一つだけで、新旧row cacheの併存はない。固定head独立review・実必須CI・merge後一致はIssue/PRへ集約し、揃うまでCompleteとしない。差し戻しは本PR単独revertで可能（永続移行なし）。
