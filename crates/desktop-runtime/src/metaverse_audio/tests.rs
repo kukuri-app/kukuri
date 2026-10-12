@@ -276,31 +276,46 @@ fn metaverse_audio_gain_uses_opening_distance_for_ready_neighbors() {
 #[test]
 fn metaverse_audio_frame_budget_rejects_excess_frames_and_bytes() {
     let start = Instant::now();
+    let at = |micros: u64| start + Duration::from_micros(micros);
+    // 正規の 20 ms の frame は、到着の揺れ(最大 2 ms 早い)と 180 ms 分のまとめ到着があっても 10 秒間捨てない。
     let mut budget = FrameBudget::new(50, 32 * 1024);
-    for _ in 0..50 {
-        budget.admit(start, 100).expect("within the frame budget");
+    for index in 0..500_u64 {
+        let arrival = if (100..109).contains(&index) {
+            108 * 20_000
+        } else {
+            index * 20_000 + 2_000 - index % 3 * 1_000
+        };
+        budget.admit(at(arrival), 100).expect("a regular frame");
     }
-    let rejection = budget
-        .admit(start, 100)
-        .expect_err("the 51st frame in one second");
+    // 上限を超え続ける送り手(60 frame/s を 10 秒)は、1 秒分の枠と毎秒 50 frame を超える分だけ捨てる。
+    let mut budget = FrameBudget::new(50, 32 * 1024);
+    let mut admitted = 0;
+    let mut rejection = None;
+    for index in 0..600_u64 {
+        match budget.admit(at(index * 16_667), 100) {
+            Ok(()) => admitted += 1,
+            Err(error) => rejection = Some(error),
+        }
+    }
+    assert!((545..=551).contains(&admitted), "admitted {admitted}");
     assert_eq!(
-        rejection.code(),
+        rejection.expect("excess frames").code(),
         "METAVERSE_PLAYER_AUDIO_FRAME_RATE_RATE_EXCEEDED"
     );
-    // 窓が進めば受け付ける。bytes の上限も同じ窓で数える。
-    let later = start + Duration::from_secs(1);
+    // bytes も同じ: 1 秒分(32 KiB)を使い切った直後の frame は捨てる。
+    let mut budget = FrameBudget::new(50, 32 * 1024);
     budget
-        .admit(later, 32 * 1024)
-        .expect("a full window of bytes");
-    let rejection = budget.admit(later, 1).expect_err("over the byte budget");
+        .admit(start, 32 * 1024)
+        .expect("a full second of bytes");
+    let rejection = budget.admit(start, 1).expect_err("over the byte budget");
     assert_eq!(
         rejection.code(),
         "METAVERSE_PLAYER_AUDIO_BANDWIDTH_RATE_EXCEEDED"
     );
 }
 
-/// 同じ話者の frame がまとめて・順序を入れ替えて届いても、上限(160 ms)の中なら時刻順に並べ直して読む。
-/// 旧経路(届いた順の即時再生)では到着順に再生していた(修正前の再現は PR に記録)。
+/// 同じ話者の frame がまとめて・順序を入れ替えて届いても、上限(160 ms)の中なら時刻順に並べ直して読み、上限より
+/// 遅れた分は捨てる。旧経路(届いた順の即時再生)では到着順に再生していた(修正前の再現は PR に記録)。
 #[tokio::test]
 async fn metaverse_audio_plays_bursty_and_reordered_frames_in_timestamp_order() {
     let broadcast = moq_net::broadcast::Info::new().produce();
@@ -309,9 +324,10 @@ async fn metaverse_audio_plays_bursty_and_reordered_frames_in_timestamp_order() 
         .expect("audio track");
     let consumer = broadcast.consume();
     let container = moq_mux::catalog::hang::Container::Legacy(moq_mux::container::Kind::Audio);
-    let mut frames = audio_frames(&consumer, container).await.expect("frames");
-    // 180 ms 相当(9 frame)をまとめて、group の順を入れ替えて書く。
-    for sequence in [0_u64, 2, 1, 4, 3, 5, 8, 6, 7] {
+    let mut frames = audio_frames(&consumer, container, OPUS_FRAME * 8)
+        .await
+        .expect("frames");
+    let write = |sequence: u64| {
         let mut group = track.create_group(group::Info { sequence }).expect("group");
         hang::container::Frame {
             timestamp: Timestamp::from_micros(sequence * 20_000).expect("timestamp"),
@@ -320,17 +336,47 @@ async fn metaverse_audio_plays_bursty_and_reordered_frames_in_timestamp_order() 
         .write_to(&mut group)
         .expect("frame");
         group.finish().expect("finish");
+    };
+    let mut read = async |count: usize| {
+        let mut order = Vec::new();
+        for _ in 0..count {
+            let frame = timeout(Duration::from_secs(5), frames.read())
+                .await
+                .expect("frame in time")
+                .expect("read")
+                .expect("frame");
+            order.push(frame.payload[0]);
+        }
+        order
+    };
+    // 180 ms 相当(9 frame)をまとめて、group の順を入れ替えて書く。
+    for sequence in [0_u64, 2, 1, 4, 3, 5, 8, 6, 7] {
+        write(sequence);
     }
+    assert_eq!(read(9).await, vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    // group 9〜19 が届かないまま 160 ms より先(group 20〜30)へ進むと、待たずに先へ進み(上限より遅れた group は
+    // 古いものから飛ばす)、後から届いた古い group 10 は読まない。
+    for sequence in 20..=30 {
+        write(sequence);
+    }
+    let mut latest = Vec::new();
+    while latest.last() != Some(&30) {
+        latest.extend(read(1).await);
+    }
+    assert!(
+        latest[0] >= 20 && latest.windows(2).all(|pair| pair[0] < pair[1]),
+        "{latest:?}"
+    );
+    write(10);
     track.finish().expect("finish track");
-    let mut order = Vec::new();
-    while let Some(frame) = timeout(Duration::from_secs(5), frames.read())
-        .await
-        .expect("frame in time")
-        .expect("read")
-    {
-        order.push(frame.payload[0]);
-    }
-    assert_eq!(order, vec![0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    assert!(
+        timeout(Duration::from_secs(5), frames.read())
+            .await
+            .expect("end in time")
+            .expect("read")
+            .is_none(),
+        "the late group is dropped"
+    );
 }
 
 #[tokio::test]
@@ -412,11 +458,19 @@ async fn metaverse_audio_stops_on_leave_access_change_and_restart() {
     );
     drop(voice);
 
-    // 失効: owner(ここでは話者)が聞き手を block すると、送る側の評価し直し(5 秒ごと)で閉じる。
+    // 話者が戻ると、聞き手の同じ要求の送り直し(画面は 5 秒ごと)で、終わった購読を試し直す。
     let _voice = pair.speaker_speaks().await;
-    pair.listener_leaves().await;
-    pair.listen(1).await;
-    assert!(eventually(async || written(&pair.listener).await > 0).await);
+    let stopped = written(&pair.listener).await;
+    assert!(
+        eventually(async || {
+            pair.listen(1).await;
+            written(&pair.listener).await > stopped
+        })
+        .await,
+        "the same request retries the ended subscription"
+    );
+
+    // 失効: owner(ここでは話者)が聞き手を block すると、送る側の評価し直し(5 秒ごと)で閉じる。
     pair.speaker_app
         .block_author(pair.listener_pubkey.as_str())
         .await
@@ -542,7 +596,7 @@ async fn metaverse_audio_budget_rejects_and_bounds_ledgers() {
         );
         assert_eq!(room_audio.attempts.len(), 16);
     }
-    // 同じ話者へは 5 秒に 1 回まで、試行の記録は 64 件まで。
+    // 同じ話者へは 5 秒に 1 回まで、試行の記録は 64 件・30 秒まで。
     {
         let mut state = pair.listener.state.lock().await;
         let room_audio = state.as_mut().expect("room");
@@ -553,6 +607,9 @@ async fn metaverse_audio_budget_rejects_and_bounds_ledgers() {
         }
         assert_eq!(room_audio.attempts.len(), ATTEMPT_LEDGER_LIMIT);
         assert!(room_audio.may_attempt(&endpoints[0], now + RETRY_INTERVAL));
+        // 30 秒たつと、`now` の 64 件は消え、5 秒後の 1 件と新しい 1 件だけが残る。
+        assert!(room_audio.may_attempt("late", now + ATTEMPT_LEDGER_TTL));
+        assert_eq!(room_audio.attempts.len(), 2);
     }
     pair.listener_leaves().await;
 

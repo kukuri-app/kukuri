@@ -8,8 +8,6 @@ use crate::{
 };
 
 pub const METAVERSE_MEDIA_TTL_MILLIS: i64 = 10_000;
-/// 話者 1 人が同時に音声を送る聞き手の上限(ADR 0067 §4、D4)。
-pub const METAVERSE_AUDIO_MAX_LISTENERS: usize = 64;
 /// 音声の broadcast の track 名(Opus)と、話者の位置の track 名。
 pub const METAVERSE_AUDIO_TRACK: &str = "audio";
 pub const METAVERSE_AUDIO_POSITION_TRACK: &str = "position";

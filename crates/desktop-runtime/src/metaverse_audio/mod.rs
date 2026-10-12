@@ -28,8 +28,9 @@ use tokio::sync::Mutex;
 
 mod devices;
 
-/// 再生前に保持する量の上限(ADR 0041 client の jitter 8 frame × 20 ms。ADR 0067 §4)。
-const MAX_PLAYOUT_BUFFER: Duration = Duration::from_millis(160);
+/// Opus の 1 frame の長さ。再生前の保持の上限は client budget の jitter frame の数を掛ける(既定 8 で 160 ms。
+/// ADR 0041、ADR 0067 §4)。
+const OPUS_FRAME: Duration = Duration::from_millis(20);
 /// 同じ話者への接続の試行の間隔と、試行の記録の上限・期限(ADR 0067 §4)。
 const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const ATTEMPT_LEDGER_LIMIT: usize = 64;
@@ -141,11 +142,12 @@ impl Listener {
     }
 }
 
-/// 1 秒ごとの窓の送信量の検査(ADR 0041 player の 50 frame/s・32 KiB/s)。
+/// 送信量の検査(ADR 0041 player の 50 frame/s・32 KiB/s)。1 秒分の枠を経過時間に比例して補充するので、正規の
+/// 20 ms の frame の到着の揺れとまとめ到着(1 秒分まで)は捨てず、上限を超え続ける分だけを捨てる。
 struct FrameBudget {
-    window: Option<Instant>,
-    frames: u64,
-    bytes: u64,
+    at: Option<Instant>,
+    frames: f64,
+    bytes: f64,
     max_frames: u64,
     max_bytes: u64,
 }
@@ -153,9 +155,9 @@ struct FrameBudget {
 impl FrameBudget {
     fn new(max_frames: u64, max_bytes: u64) -> Self {
         Self {
-            window: None,
-            frames: 0,
-            bytes: 0,
+            at: None,
+            frames: max_frames as f64,
+            bytes: max_bytes as f64,
             max_frames,
             max_bytes,
         }
@@ -166,41 +168,36 @@ impl FrameBudget {
         now: Instant,
         bytes: usize,
     ) -> std::result::Result<(), MetaverseResourceRejection> {
-        if self
-            .window
-            .is_none_or(|start| now.saturating_duration_since(start) >= Duration::from_secs(1))
-        {
-            self.window = Some(now);
-            self.frames = 0;
-            self.bytes = 0;
-        }
-        let frames = self.frames + 1;
-        let total = self.bytes.saturating_add(bytes as u64);
-        let rejection = |resource, observed, limit| {
+        let elapsed = self
+            .at
+            .map_or(0.0, |at| now.saturating_duration_since(at).as_secs_f64());
+        self.at = Some(now);
+        self.frames = (self.frames + elapsed * self.max_frames as f64).min(self.max_frames as f64);
+        self.bytes = (self.bytes + elapsed * self.max_bytes as f64).min(self.max_bytes as f64);
+        // observed は上限を超えたことだけを示す(1 秒分の枠を使い切った)。
+        let rejection = |resource, limit: u64| {
             MetaverseResourceRejection::new(
                 MetaverseBudgetScope::Player,
                 resource,
                 MetaverseResourceRejectionReason::RateExceeded,
-                observed,
+                limit.saturating_add(1),
                 limit,
             )
         };
-        if frames > self.max_frames {
+        if self.frames < 1.0 {
             return Err(rejection(
                 MetaverseBudgetResource::AudioFrameRate,
-                frames,
                 self.max_frames,
             ));
         }
-        if total > self.max_bytes {
+        if self.bytes < bytes as f64 {
             return Err(rejection(
                 MetaverseBudgetResource::AudioBandwidth,
-                total,
                 self.max_bytes,
             ));
         }
-        self.frames = frames;
-        self.bytes = total;
+        self.frames -= 1.0;
+        self.bytes -= bytes as f64;
         Ok(())
     }
 }
@@ -675,29 +672,30 @@ async fn play(
     }
     let container = moq_mux::catalog::hang::Container::try_from(&config)
         .map_err(|error| anyhow!("unsupported audio container: {error}"))?;
-    let mut frames = audio_frames(&broadcast, container).await?;
+    let budget = app.metaverse_resource_budget();
+    let playout = OPUS_FRAME * budget.client.max_audio_jitter_frames;
+    let mut frames = audio_frames(&broadcast, container, playout).await?;
     let mut decoder = moq_audio::decode::Decoder::new(&config, &moq_audio::decode::Config::new())?;
     let mut positions = broadcast
         .track(METAVERSE_AUDIO_POSITION_TRACK)?
         .subscribe(track::Subscription::default())
         .await?;
-    let budget = app.metaverse_resource_budget().player.clone();
-    let mut budget = FrameBudget::new(
-        u64::from(budget.max_audio_frames_per_second),
-        budget.max_audio_bytes_per_second,
+    let mut admission = FrameBudget::new(
+        u64::from(budget.player.max_audio_frames_per_second),
+        budget.player.max_audio_bytes_per_second,
     );
     let volume = output.volume();
     loop {
         tokio::select! {
             frame = frames.read() => {
                 let Some(frame) = frame? else { return Ok(()) };
-                if let Err(rejection) = budget.admit(Instant::now(), frame.payload.len()) {
+                if let Err(rejection) = admission.admit(Instant::now(), frame.payload.len()) {
                     rejected.fetch_add(1, Ordering::Relaxed);
                     tracing::debug!(code = %rejection.code(), "spatial audio frame rejected");
                     continue;
                 }
                 let decoded = decoder.decode(&frame.payload)?;
-                output.write(&decoded.samples)?;
+                output.write(&decoded.samples, playout)?;
             }
             group = positions.recv_group() => {
                 let Some(mut group) = group? else { continue };
@@ -717,17 +715,19 @@ async fn play(
     }
 }
 
-/// 話者の音声の track を、group の順を並べ直して(最大遅延 160 ms)時刻順の frame として読む。
+/// 話者の音声の track を、group の順を並べ直して時刻順の frame として読む。`playout`(再生前の保持の上限)より
+/// 遅れた group は古いものから飛ばす。
 async fn audio_frames(
     broadcast: &moq_net::broadcast::Consumer,
     container: moq_mux::catalog::hang::Container,
+    playout: Duration,
 ) -> Result<moq_mux::container::Consumer<moq_mux::catalog::hang::Container>> {
     let track = broadcast
         .track(METAVERSE_AUDIO_TRACK)?
         .subscribe(
             track::Subscription::default()
                 .with_priority(hang::catalog::PRIORITY.audio)
-                .with_max_age(MAX_PLAYOUT_BUFFER),
+                .with_max_age(playout),
         )
         .await?;
     Ok(moq_mux::container::Consumer::new(track, container))

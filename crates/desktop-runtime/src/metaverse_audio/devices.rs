@@ -52,11 +52,11 @@ mod real {
             Volume(self.sink.control())
         }
 
-        /// 再生前の保持が上限(160 ms)を超える分は書かずに捨てる(ADR 0067 §4)。
-        pub(crate) fn write(&mut self, samples: &[f32]) -> Result<()> {
+        /// 再生前の保持が上限(`max_buffered`)を超える分は書かずに捨てる(ADR 0067 §4)。
+        pub(crate) fn write(&mut self, samples: &[f32], max_buffered: Duration) -> Result<()> {
             let duration =
                 Duration::from_secs_f64(samples.len() as f64 / f64::from(OPUS_SAMPLE_RATE));
-            if self.sink.buffered() + duration > MAX_PLAYOUT_BUFFER {
+            if self.sink.buffered() + duration > max_buffered {
                 return Ok(());
             }
             let bytes: Vec<u8> = samples
@@ -71,6 +71,8 @@ mod real {
     /// mic の取り込み・echo cancellation・Opus の圧縮と公開。落とすと止まる。
     pub(crate) struct Capture {
         _publication: encode::Publication,
+        /// moq-audio は購読者がいる間だけ機器を開く。mic が on の間はこの端末も購読し、機器を開いたままにする。
+        _demand: track::Subscriber,
         _driver: AbortOnDropHandle<()>,
     }
 
@@ -94,19 +96,25 @@ mod real {
                     tracing::debug!(%error, "microphone publication ended");
                 }
             });
-            // 機器を開けたか(OS の許可を含む)を、開始を表示する前に確かめる。
+            let demand = broadcast
+                .consume()
+                .track(METAVERSE_AUDIO_TRACK)?
+                .subscribe(track::Subscription::default())
+                .await?;
+            // 機器を開いて最初の音が届いたか(OS の許可を含む)を、開始を表示する前に確かめる。
             let mut status = publication.state().status();
-            while status == encode::Status::Starting {
+            while status != encode::Status::Live {
+                if !matches!(status, encode::Status::Starting | encode::Status::Waiting) {
+                    bail!("the microphone could not be opened");
+                }
                 status = match timeout(SUBSCRIBE_TIMEOUT, publication.changed()).await {
                     Ok(Some(state)) => state.status(),
                     _ => encode::Status::Failed,
                 };
             }
-            if matches!(status, encode::Status::Failed | encode::Status::Ended) {
-                bail!("the microphone could not be opened");
-            }
             Ok(Self {
                 _publication: publication,
+                _demand: demand,
                 _driver: AbortOnDropHandle::new(driver),
             })
         }
@@ -159,7 +167,7 @@ mod null {
             self.volume.clone()
         }
 
-        pub(crate) fn write(&mut self, samples: &[f32]) -> Result<()> {
+        pub(crate) fn write(&mut self, samples: &[f32], _max_buffered: Duration) -> Result<()> {
             self.written
                 .lock()
                 .expect("written samples poisoned")

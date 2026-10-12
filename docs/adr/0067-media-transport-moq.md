@@ -58,7 +58,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - 置き場所: 受け口・接続・上限は `kukuri-iroh-node`、認可要求と descriptor の型は `kukuri-core`、access 判定は既存の `kukuri-app-api`、機器と codec は `kukuri-desktop-runtime`（native だけ）。新しい crate・trait は作らない。
 - broadcast は送る端末ごと・対象ごとに 1 つ。metaverse は話者の音声 track（hang の catalog つき）と、話者の位置の track（JSON の frame、最新の group だけを読む）。live は配信の映像 track と音声 track。
 - 時刻: 送る側は取り込み時刻（単調時計、μs）を `hang` の frame の timestamp に入れる。受ける側は話者ごと（metaverse）、または broadcast ごと（live。音声の再生時刻を基準に映像を合わせる）に再生時刻を決める。
-- 揺れの吸収: 受ける側は再生前に保持する量を話者ごとに既定 50 ms、上限 160 ms（ADR 0041 の jitter 8 frame × 20 ms）とし、上限を超える分は書かずに捨てる。順序の入れ替わりは moq-net の group の順と timestamp で並べ直し、購読の最大遅延（160 ms）を超えた group は捨てる。
+- 揺れの吸収: 受ける側は再生前に保持する量を話者ごとに既定 50 ms、上限は ADR 0041 client の jitter frame の数 × 20 ms（既定 8 で 160 ms）とする。順序の入れ替わりは moq-net の group の順と timestamp で並べ直し、上限より遅れた group は古いものから飛ばす。それでも再生前の保持が上限を超える分は書かずに捨てる。
 
 ### 2. データの扱い（固定項目 2）
 
@@ -73,7 +73,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
   - live: 要求は視聴者が署名した、live session と scope に束縛した 10 秒の proof。送る側は session が終了していないこと（検証済みの state）と、private なら current epoch の active な参加者であることを確かめる。公開 live の事前の topic 購読 lease を条件にしない。
 - 継続: 送る側は 5 秒ごとに、接続の初めに proof で確かめた相手の公開鍵について、自分の状態（block、公開 topic の gossip、private の参加者）で access を評価し直し、自分がまだ同じ Dome の session に居ることを確かめる。拒否なら session を閉じる（ADR 0045 の KeepAlive と同じ間隔）。送る側は Spatial Context の状態を持つ参加者なので、proof を送り直させない。moq-lite では announce を取り消しても進行中の購読は止まらないため、止めるときは session を閉じる。
 - mute・block した author は購読しない（decode・再生の前に捨てる）。topology・参加・presence は変えない。
-- mic・camera・screen は利用者の操作の後、機器を開けた（OS の許可を含む）場合だけ送る。開けなければ送信は 0 で、開始を成功と表示しない。再起動後は自動で開始しない。Windows で OS の設定が mic を拒否しているときの見え方は #1033 が実機で確かめ、送信 0 と表示を合わせる。
+- mic・camera・screen は利用者の操作の後、機器を開けた（OS の許可を含む）場合だけ送る。開けなければ送信は 0 で、開始を成功と表示しない。`moq-audio` は購読者がいる間だけ機器を開くため、mic が on の間は自分の端末も購読して機器を開いたままにし、最初の音が届いてから on と示す。再起動後は自動で開始しない。Windows で OS の設定が mic を拒否しているときの見え方は #1033 が実機で確かめ、送信 0 と表示を合わせる。
 - 停止: 退出、Dome・session・generation の変更、access の失効、host の offline grace（ADR 0045）、live の終了・退出、account の切替、shutdown で、取り込み・送信・転送・購読・再生を止め、接続と保持中の media を捨てる。古い世代の遅れた結果は適用しない。
 - 既存の owner との接続: media の需要は ADR 0055 §1 の「参加中の live/game/Dome」に属し、参加の終了で止まる。media の接続・購読・接続の試行は §4 の上限で数え、docs・blob の取得の受付（remote 取得 8 等）とは別に持つ。再生時刻は通信の再試行を決めない。接続の試行は需要（聞く話者の選択・視聴）がある間だけ、相手ごとに 5 秒に 1 回まで行う。
 
@@ -83,8 +83,8 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 | --- | --- | --- | --- | --- |
 | 聞く話者（metaverse） | 聞き手の端末 | 16（ADR 0041 client の同時 stream） | 音声を送っている話者のうち、既存の距離関数で近い順に 16 人だけ購読する | 退出・順位の外・mute で購読を解除 |
 | 話者が送る相手（metaverse） | 話者の端末 | 64（固定） | 新しい購読を `busy` で拒否する。その聞き手は空きができるまで聞こえない | 相手の退出・失効・購読の解除・30 秒無通信で解除 |
-| 音声の送信量 | 話者ごと | 50 frame/s・32 KiB/s（ADR 0041 player） | 受ける側が捨てて拒否の件数に数える | 1 秒ごとの窓 |
-| 再生前の保持 | 話者ごと | 既定 50 ms、上限 160 ms | 上限を超える分は書かずに捨てる。それより古い group は並べ直しの段階で飛ばす | 再生と同時 |
+| 音声の送信量 | 話者ごと | 50 frame/s・32 KiB/s（ADR 0041 player） | 受ける側が捨てて拒否の件数に数える | 1 秒分の枠を経過時間に比例して補充する（正規の 20 ms の frame の到着の揺れとまとめ到着は捨てない） |
+| 再生前の保持 | 話者ごと | 既定 50 ms、上限は client の jitter frame × 20 ms（既定 160 ms） | 上限より遅れた group は古いものから飛ばし、保持が上限を超える分は書かずに捨てる | 再生と同時 |
 | 配信者が直接送る視聴者（live） | 配信者の端末 | 4（#1034 AC-1 が bitrate の計測で見直す） | 直接の子の一覧を返し、転送の参加へ回す（§8） | 子の退出・失効・30 秒無通信で解除 |
 | 視聴者が転送する相手（live） | 視聴者の端末 | 2（同上） | 自分の子の一覧を返す | 同上 |
 | 転送の参加の問い合わせ（live） | 1 回の参加 | 16 段、1 段 5 秒 | 参加できないと表示する | 参加の終了で破棄 |
