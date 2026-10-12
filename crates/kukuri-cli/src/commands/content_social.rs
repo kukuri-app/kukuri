@@ -23,50 +23,6 @@ use crate::{
     registry::{CommandHandler, CommandOutput, CommandRegistration, HandlerContext},
 };
 
-#[derive(Clone, Copy)]
-enum Operation {
-    CreatePost,
-    WithdrawPost,
-    CreateRepost,
-    ListBookmarkedPosts,
-    ResolveCommunityIndexPosts,
-    BookmarkPost,
-    RemoveBookmarkedPost,
-    ListTimeline,
-    ListThread,
-    ListProfileTimeline,
-    GetBlobPreviewUrl,
-    GetBlobMediaPayload,
-    GetContentDisplaySettings,
-    SetAdultContentDisplayEnabled,
-    ToggleReaction,
-    ListMyCustomReactionAssets,
-    ListRecentReactions,
-    CreateCustomReactionAsset,
-    ListBookmarkedCustomReactions,
-    BookmarkCustomReaction,
-    RemoveBookmarkedCustomReaction,
-    CreateCustomReactionSet,
-    ListMyCustomReactionSets,
-    ImportCustomReactionSet,
-    GetMyProfile,
-    SetMyProfile,
-    FollowAuthor,
-    UnfollowAuthor,
-    GetAuthorSocialView,
-    MuteAuthor,
-    UnmuteAuthor,
-    BlockAuthor,
-    UnblockAuthor,
-    ListSocialConnections,
-    ListNotifications,
-    MarkNotificationRead,
-    MarkAllNotificationsRead,
-    GetNotificationStatus,
-}
-
-struct Handler(Operation);
-
 macro_rules! async_call {
     ($runtime:expr, $payload:expr, $request:ty, $method:ident) => {{
         let request: $request = decode($payload)?;
@@ -84,259 +40,193 @@ struct AdultContentRequest {
     enabled: bool,
 }
 
-#[async_trait]
-impl CommandHandler for Handler {
-    async fn execute(
-        &self,
-        context: HandlerContext<'_>,
-        payload: Value,
-        _secret: Option<&SecretInput>,
-    ) -> Result<CommandOutput, ProtocolError> {
-        let runtime = runtime(&context)?;
-        match self.0 {
-            Operation::CreatePost => encode(
-                runtime
-                    .create_post(
-                        media::decode_with_files::<CreatePostRequest>(payload, "attachments", true)
-                            .await?,
-                    )
-                    .await
-                    .map_err(command_error)?,
-            ),
-            Operation::WithdrawPost => {
-                async_call!(runtime, payload, WithdrawPostRequest, withdraw_post)
+// command名・effect・実行対応の手書き正本は下の一つの表だけ(#1780)。
+macro_rules! content_commands {
+    ($runtime:ident, $context:ident, $payload:ident;
+     $( $operation:ident ($name:literal, $effect:ident) => $execute:expr ),+ $(,)?) => {
+        #[derive(Clone, Copy)]
+        enum Operation { $( $operation ),+ }
+        struct Handler(Operation);
+
+        #[async_trait]
+        impl CommandHandler for Handler {
+            async fn execute(
+                &self,
+                $context: HandlerContext<'_>,
+                $payload: Value,
+                _secret: Option<&SecretInput>,
+            ) -> Result<CommandOutput, ProtocolError> {
+                let $runtime = runtime(&$context)?;
+                match self.0 { $( Operation::$operation => $execute ),+ }
             }
-            Operation::CreateRepost => {
-                async_call!(runtime, payload, CreateRepostRequest, create_repost)
-            }
-            // #1221 R5-G: 全件でなく、cursor の後ろの 1 ページを返す。
-            Operation::ListBookmarkedPosts => async_call!(
-                runtime,
-                payload,
-                ListBookmarkedPostsRequest,
-                list_bookmarked_posts_page
-            ),
-            Operation::ResolveCommunityIndexPosts => async_call!(
-                runtime,
-                payload,
-                ResolveCommunityIndexPostsRequest,
-                resolve_community_index_posts
-            ),
-            Operation::BookmarkPost => {
-                async_call!(runtime, payload, BookmarkPostRequest, bookmark_post)
-            }
-            Operation::RemoveBookmarkedPost => async_call!(
-                runtime,
-                payload,
-                RemoveBookmarkedPostRequest,
-                remove_bookmarked_post
-            ),
-            Operation::ListTimeline => {
-                async_call!(runtime, payload, ListTimelineRequest, list_timeline)
-            }
-            Operation::ListThread => async_call!(runtime, payload, ListThreadRequest, list_thread),
-            Operation::ListProfileTimeline => async_call!(
-                runtime,
-                payload,
-                ListProfileTimelineRequest,
-                list_profile_timeline
-            ),
-            Operation::GetBlobPreviewUrl => media_output::export(&context, payload, true).await,
-            Operation::GetBlobMediaPayload => media_output::export(&context, payload, false).await,
-            Operation::GetContentDisplaySettings => encode(runtime.get_content_display_settings()),
-            Operation::SetAdultContentDisplayEnabled => {
-                let request: AdultContentRequest = decode(payload)?;
-                encode(
-                    runtime
-                        .set_adult_content_display_enabled(request.enabled)
-                        .await
-                        .map_err(command_error)?,
-                )
-            }
-            Operation::ToggleReaction => {
-                async_call!(runtime, payload, ToggleReactionRequest, toggle_reaction)
-            }
-            Operation::ListMyCustomReactionAssets => {
-                async_call0!(runtime, list_my_custom_reaction_assets)
-            }
-            Operation::ListRecentReactions => async_call!(
-                runtime,
-                payload,
-                ListRecentReactionsRequest,
-                list_recent_reactions
-            ),
-            Operation::CreateCustomReactionAsset => encode(
-                runtime
-                    .create_custom_reaction_asset(
-                        media::decode_with_files::<CreateCustomReactionAssetRequest>(
-                            payload, "upload", false,
-                        )
-                        .await?,
-                    )
-                    .await
-                    .map_err(command_error)?,
-            ),
-            Operation::ListBookmarkedCustomReactions => {
-                async_call0!(runtime, list_bookmarked_custom_reactions)
-            }
-            Operation::BookmarkCustomReaction => async_call!(
-                runtime,
-                payload,
-                BookmarkCustomReactionRequest,
-                bookmark_custom_reaction
-            ),
-            Operation::RemoveBookmarkedCustomReaction => async_call!(
-                runtime,
-                payload,
-                RemoveBookmarkedCustomReactionRequest,
-                remove_bookmarked_custom_reaction
-            ),
-            Operation::CreateCustomReactionSet => async_call!(
-                runtime,
-                payload,
-                CreateCustomReactionSetRequest,
-                create_custom_reaction_set
-            ),
-            Operation::ListMyCustomReactionSets => {
-                async_call0!(runtime, list_my_custom_reaction_sets)
-            }
-            Operation::ImportCustomReactionSet => async_call!(
-                runtime,
-                payload,
-                ImportCustomReactionSetRequest,
-                import_custom_reaction_set
-            ),
-            Operation::GetMyProfile => async_call0!(runtime, get_my_profile),
-            Operation::SetMyProfile => encode(
-                runtime
-                    .set_my_profile(
-                        media::decode_with_files::<SetMyProfileRequest>(
-                            payload,
-                            "picture_upload",
-                            false,
-                        )
-                        .await?,
-                    )
-                    .await
-                    .map_err(command_error)?,
-            ),
-            Operation::FollowAuthor => {
-                async_call!(runtime, payload, AuthorRequest, follow_author)
-            }
-            Operation::UnfollowAuthor => {
-                async_call!(runtime, payload, AuthorRequest, unfollow_author)
-            }
-            Operation::GetAuthorSocialView => {
-                async_call!(runtime, payload, AuthorRequest, get_author_social_view)
-            }
-            Operation::MuteAuthor => async_call!(runtime, payload, AuthorRequest, mute_author),
-            Operation::UnmuteAuthor => async_call!(runtime, payload, AuthorRequest, unmute_author),
-            Operation::BlockAuthor => async_call!(runtime, payload, AuthorRequest, block_author),
-            Operation::UnblockAuthor => {
-                async_call!(runtime, payload, AuthorRequest, unblock_author)
-            }
-            Operation::ListSocialConnections => async_call!(
-                runtime,
-                payload,
-                ListSocialConnectionsRequest,
-                list_social_connections
-            ),
-            Operation::ListNotifications => async_call0!(runtime, list_notifications),
-            Operation::MarkNotificationRead => async_call!(
-                runtime,
-                payload,
-                NotificationIdRequest,
-                mark_notification_read
-            ),
-            Operation::MarkAllNotificationsRead => {
-                async_call0!(runtime, mark_all_notifications_read)
-            }
-            Operation::GetNotificationStatus => async_call0!(runtime, get_notification_status),
         }
-    }
+
+        pub(super) fn registrations() -> Vec<CommandRegistration> {
+            vec![$( entry($name, CommandEffect::$effect, Operation::$operation) ),+]
+        }
+    };
 }
 
-pub(super) fn registrations() -> Vec<CommandRegistration> {
-    use CommandEffect::{Destructive, Read, Write};
-    use Operation::*;
-
-    vec![
-        entry("create_post", Write, CreatePost),
-        entry("withdraw_post", Destructive, WithdrawPost),
-        entry("create_repost", Write, CreateRepost),
-        entry("list_bookmarked_posts", Read, ListBookmarkedPosts),
-        entry(
-            "resolve_community_index_posts",
-            Read,
-            ResolveCommunityIndexPosts,
-        ),
-        entry("bookmark_post", Write, BookmarkPost),
-        entry("remove_bookmarked_post", Destructive, RemoveBookmarkedPost),
-        entry("list_timeline", Read, ListTimeline),
-        entry("list_thread", Read, ListThread),
-        entry("list_profile_timeline", Read, ListProfileTimeline),
-        entry("get_blob_preview_url", Read, GetBlobPreviewUrl),
-        entry("get_blob_media_payload", Read, GetBlobMediaPayload),
-        entry(
-            "get_content_display_settings",
-            Read,
-            GetContentDisplaySettings,
-        ),
-        entry(
-            "set_adult_content_display_enabled",
-            Write,
-            SetAdultContentDisplayEnabled,
-        ),
-        entry("toggle_reaction", Write, ToggleReaction),
-        entry(
-            "list_my_custom_reaction_assets",
-            Read,
-            ListMyCustomReactionAssets,
-        ),
-        entry("list_recent_reactions", Read, ListRecentReactions),
-        entry(
-            "create_custom_reaction_asset",
-            Write,
-            CreateCustomReactionAsset,
-        ),
-        entry(
-            "list_bookmarked_custom_reactions",
-            Read,
-            ListBookmarkedCustomReactions,
-        ),
-        entry("bookmark_custom_reaction", Write, BookmarkCustomReaction),
-        entry(
-            "remove_bookmarked_custom_reaction",
-            Destructive,
-            RemoveBookmarkedCustomReaction,
-        ),
-        entry("create_custom_reaction_set", Write, CreateCustomReactionSet),
-        entry(
-            "list_my_custom_reaction_sets",
-            Read,
-            ListMyCustomReactionSets,
-        ),
-        entry("import_custom_reaction_set", Write, ImportCustomReactionSet),
-        entry("get_my_profile", Read, GetMyProfile),
-        entry("set_my_profile", Write, SetMyProfile),
-        entry("follow_author", Write, FollowAuthor),
-        entry("unfollow_author", Destructive, UnfollowAuthor),
-        entry("get_author_social_view", Read, GetAuthorSocialView),
-        entry("mute_author", Write, MuteAuthor),
-        entry("unmute_author", Destructive, UnmuteAuthor),
-        entry("block_author", Write, BlockAuthor),
-        entry("unblock_author", Destructive, UnblockAuthor),
-        entry("list_social_connections", Read, ListSocialConnections),
-        entry("list_notifications", Read, ListNotifications),
-        entry("mark_notification_read", Write, MarkNotificationRead),
-        entry(
-            "mark_all_notifications_read",
-            Write,
-            MarkAllNotificationsRead,
-        ),
-        entry("get_notification_status", Read, GetNotificationStatus),
-    ]
-}
+content_commands!(runtime, context, payload;
+    CreatePost("create_post", Write) => encode(
+        runtime
+            .create_post(
+                media::decode_with_files::<CreatePostRequest>(payload, "attachments", true)
+                    .await?,
+            )
+            .await
+            .map_err(command_error)?,
+    ),
+    WithdrawPost("withdraw_post", Destructive) => {
+        async_call!(runtime, payload, WithdrawPostRequest, withdraw_post)
+    },
+    CreateRepost("create_repost", Write) => {
+        async_call!(runtime, payload, CreateRepostRequest, create_repost)
+    },
+    // #1221 R5-G: cursorの後ろの1ページを返す。
+    ListBookmarkedPosts("list_bookmarked_posts", Read) => async_call!(
+        runtime,
+        payload,
+        ListBookmarkedPostsRequest,
+        list_bookmarked_posts_page
+    ),
+    ResolveCommunityIndexPosts("resolve_community_index_posts", Read) => async_call!(
+        runtime,
+        payload,
+        ResolveCommunityIndexPostsRequest,
+        resolve_community_index_posts
+    ),
+    BookmarkPost("bookmark_post", Write) => {
+        async_call!(runtime, payload, BookmarkPostRequest, bookmark_post)
+    },
+    RemoveBookmarkedPost("remove_bookmarked_post", Destructive) => async_call!(
+        runtime,
+        payload,
+        RemoveBookmarkedPostRequest,
+        remove_bookmarked_post
+    ),
+    ListTimeline("list_timeline", Read) => {
+        async_call!(runtime, payload, ListTimelineRequest, list_timeline)
+    },
+    ListThread("list_thread", Read) => async_call!(runtime, payload, ListThreadRequest, list_thread),
+    ListProfileTimeline("list_profile_timeline", Read) => async_call!(
+        runtime,
+        payload,
+        ListProfileTimelineRequest,
+        list_profile_timeline
+    ),
+    GetBlobPreviewUrl("get_blob_preview_url", Read) => media_output::export(&context, payload, true).await,
+    GetBlobMediaPayload("get_blob_media_payload", Read) => media_output::export(&context, payload, false).await,
+    GetContentDisplaySettings("get_content_display_settings", Read) => encode(runtime.get_content_display_settings()),
+    SetAdultContentDisplayEnabled("set_adult_content_display_enabled", Write) => {
+        let request: AdultContentRequest = decode(payload)?;
+        encode(
+            runtime
+                .set_adult_content_display_enabled(request.enabled)
+                .await
+                .map_err(command_error)?,
+        )
+    },
+    ToggleReaction("toggle_reaction", Write) => {
+        async_call!(runtime, payload, ToggleReactionRequest, toggle_reaction)
+    },
+    ListMyCustomReactionAssets("list_my_custom_reaction_assets", Read) => {
+        async_call0!(runtime, list_my_custom_reaction_assets)
+    },
+    ListRecentReactions("list_recent_reactions", Read) => async_call!(
+        runtime,
+        payload,
+        ListRecentReactionsRequest,
+        list_recent_reactions
+    ),
+    CreateCustomReactionAsset("create_custom_reaction_asset", Write) => encode(
+        runtime
+            .create_custom_reaction_asset(
+                media::decode_with_files::<CreateCustomReactionAssetRequest>(
+                    payload, "upload", false,
+                )
+                .await?,
+            )
+            .await
+            .map_err(command_error)?,
+    ),
+    ListBookmarkedCustomReactions("list_bookmarked_custom_reactions", Read) => {
+        async_call0!(runtime, list_bookmarked_custom_reactions)
+    },
+    BookmarkCustomReaction("bookmark_custom_reaction", Write) => async_call!(
+        runtime,
+        payload,
+        BookmarkCustomReactionRequest,
+        bookmark_custom_reaction
+    ),
+    RemoveBookmarkedCustomReaction("remove_bookmarked_custom_reaction", Destructive) => async_call!(
+        runtime,
+        payload,
+        RemoveBookmarkedCustomReactionRequest,
+        remove_bookmarked_custom_reaction
+    ),
+    CreateCustomReactionSet("create_custom_reaction_set", Write) => async_call!(
+        runtime,
+        payload,
+        CreateCustomReactionSetRequest,
+        create_custom_reaction_set
+    ),
+    ListMyCustomReactionSets("list_my_custom_reaction_sets", Read) => {
+        async_call0!(runtime, list_my_custom_reaction_sets)
+    },
+    ImportCustomReactionSet("import_custom_reaction_set", Write) => async_call!(
+        runtime,
+        payload,
+        ImportCustomReactionSetRequest,
+        import_custom_reaction_set
+    ),
+    GetMyProfile("get_my_profile", Read) => async_call0!(runtime, get_my_profile),
+    SetMyProfile("set_my_profile", Write) => encode(
+        runtime
+            .set_my_profile(
+                media::decode_with_files::<SetMyProfileRequest>(
+                    payload,
+                    "picture_upload",
+                    false,
+                )
+                .await?,
+            )
+            .await
+            .map_err(command_error)?,
+    ),
+    FollowAuthor("follow_author", Write) => {
+        async_call!(runtime, payload, AuthorRequest, follow_author)
+    },
+    UnfollowAuthor("unfollow_author", Destructive) => {
+        async_call!(runtime, payload, AuthorRequest, unfollow_author)
+    },
+    GetAuthorSocialView("get_author_social_view", Read) => {
+        async_call!(runtime, payload, AuthorRequest, get_author_social_view)
+    },
+    MuteAuthor("mute_author", Write) => async_call!(runtime, payload, AuthorRequest, mute_author),
+    UnmuteAuthor("unmute_author", Destructive) => async_call!(runtime, payload, AuthorRequest, unmute_author),
+    BlockAuthor("block_author", Write) => async_call!(runtime, payload, AuthorRequest, block_author),
+    UnblockAuthor("unblock_author", Destructive) => {
+        async_call!(runtime, payload, AuthorRequest, unblock_author)
+    },
+    ListSocialConnections("list_social_connections", Read) => async_call!(
+        runtime,
+        payload,
+        ListSocialConnectionsRequest,
+        list_social_connections
+    ),
+    ListNotifications("list_notifications", Read) => async_call0!(runtime, list_notifications),
+    MarkNotificationRead("mark_notification_read", Write) => async_call!(
+        runtime,
+        payload,
+        NotificationIdRequest,
+        mark_notification_read
+    ),
+    MarkAllNotificationsRead("mark_all_notifications_read", Write) => {
+        async_call0!(runtime, mark_all_notifications_read)
+    },
+    GetNotificationStatus("get_notification_status", Read) => async_call0!(runtime, get_notification_status),
+);
 
 fn entry(name: &'static str, effect: CommandEffect, operation: Operation) -> CommandRegistration {
     command(
