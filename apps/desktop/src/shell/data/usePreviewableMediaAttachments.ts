@@ -47,7 +47,7 @@ type UsePreviewableMediaAttachmentsArgs = {
   timelineContentAdvisories?: TimelineContentAdvisoryIndex;
   timelineAdvisoryLookup?: TimelineAdvisoryLookupState;
   profileTimeline: PostView[];
-  selectedAuthorTimeline: PostView[];
+  selectedAuthorPosts: PostView[];
   thread: PostView[];
   selectedDirectMessageTimeline: DirectMessageMessageView[];
   directMessages: DesktopShellState['directMessages'];
@@ -75,7 +75,7 @@ export function usePreviewableMediaAttachments({
   timelineContentAdvisories = EMPTY_ADVISORIES,
   timelineAdvisoryLookup = INACTIVE_LOOKUP,
   profileTimeline,
-  selectedAuthorTimeline,
+  selectedAuthorPosts,
   thread,
   selectedDirectMessageTimeline,
   directMessages,
@@ -129,7 +129,7 @@ export function usePreviewableMediaAttachments({
       ...activeTimeline,
       ...activePublicTimeline,
       ...profileTimeline,
-      ...selectedAuthorTimeline,
+      ...selectedAuthorPosts,
       ...thread,
       ...additionalTimelinePosts,
       ...communityIndexResolvedPosts,
@@ -246,7 +246,7 @@ export function usePreviewableMediaAttachments({
     profileTimeline,
     recentReactions,
     selectedDirectMessageTimeline,
-    selectedAuthorTimeline,
+    selectedAuthorPosts,
     thread,
   ]);
 }

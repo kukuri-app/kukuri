@@ -29,6 +29,7 @@ import type {
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import i18n from '@/i18n';
 import { columnDraftKey, setColumnDraft } from '@/shell/slices/columnDrafts';
+import { selectSelectedAuthorPosts } from '@/shell/storeSelectors';
 import {
   activeWorkspaceColumn,
   activeWorkspaceScope,
@@ -295,6 +296,8 @@ describe('useDesktopShellActions', () => {
     const view = renderActionsHook({
       api: { toggleReaction, listRecentReactions },
       preset: (current) => ({
+        selectedAuthorPubkey: AUTHOR_A_PUBKEY,
+        authorTimelinesByPubkey: { [AUTHOR_A_PUBKEY]: [post] },
         timelinesByKey: {
           ...current.timelinesByKey,
           'kukuri:topic:general::public': [post],
@@ -355,6 +358,9 @@ describe('useDesktopShellActions', () => {
     ]);
     expect(state.error).toBeNull();
 
+    // #1779: 著者mapのある表示では旧selected-only書込みは上書きされる。fixを混ぜない。
+    expect(selectSelectedAuthorPosts(state)).toEqual([post]);
+
     view.unmount();
   });
 
@@ -365,7 +371,7 @@ describe('useDesktopShellActions', () => {
         selectedThread: 'thread-post-1',
         threadsById: { 'thread-post-1': [threadPost] },
         selectedAuthorPubkey: AUTHOR_A_PUBKEY,
-        selectedAuthorTimeline: [threadPost],
+        authorTimelinesByPubkey: { [AUTHOR_A_PUBKEY]: [threadPost] },
         authorError: 'previous author error',
         // 選択し直した topic の channel 選択と scope は public にリセットされる
         timelineScopeByTopic: {
@@ -397,7 +403,7 @@ describe('useDesktopShellActions', () => {
     expect(state.threadsById['thread-post-1']).toEqual([threadPost]);
     expect(state.selectedAuthorPubkey).toBeNull();
     expect(state.selectedAuthor).toBeNull();
-    expect(state.selectedAuthorTimeline).toEqual([]);
+    expect(selectSelectedAuthorPosts(state)).toEqual([]);
     expect(state.authorError).toBeNull();
     expect(view.mocks.syncRoute).toHaveBeenCalledTimes(1);
     expect(view.mocks.syncRoute).toHaveBeenCalledWith('replace', {
@@ -467,7 +473,7 @@ describe('useDesktopShellActions', () => {
       local_state: 'syncing',
     });
     expect(state.profileTimeline).toEqual([]);
-    expect(state.selectedAuthorTimeline).toEqual([]);
+    expect(Object.values(state.authorTimelinesByPubkey).flat()).toEqual([]);
     expect(view.mocks.refreshVisibleTimelineAfterPublish).toHaveBeenCalledWith(
       'topic-a',
       null,

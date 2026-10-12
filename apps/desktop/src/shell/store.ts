@@ -158,7 +158,7 @@ function boundVisibleLists(
   patch: Partial<DesktopShellState>
 ): Partial<DesktopShellState> {
   const fields = ['timelinesByKey', 'threadsById', 'authorTimelinesByPubkey',
-    'profileTimeline', 'selectedAuthorTimeline', 'bookmarkedPosts'] as const;
+    'profileTimeline', 'bookmarkedPosts'] as const;
   if (!('workspaceState' in patch) && !('visibleListColumnIds' in patch) &&
     !fields.some((field) => field in patch)) return patch;
   const next = { ...current, ...patch };
@@ -210,10 +210,6 @@ function boundVisibleLists(
   for (const [key, rows] of Object.entries(next.authorTimelinesByPubkey)) {
     add(`author:${key}`, rows, next.authorTimelinesByPubkey[key] !== current.authorTimelinesByPubkey[key]);
   }
-  if (next.selectedAuthorPubkey && !next.authorTimelinesByPubkey[next.selectedAuthorPubkey]) {
-    add(`author:${next.selectedAuthorPubkey}`, next.selectedAuthorTimeline,
-      next.selectedAuthorTimeline !== current.selectedAuthorTimeline);
-  }
   add('profile', next.profileTimeline, next.profileTimeline !== current.profileTimeline);
   add('bookmarks', next.bookmarkedPosts, next.bookmarkedPosts !== current.bookmarkedPosts);
   windows.sort((left, right) => right.priority - left.priority);
@@ -223,7 +219,6 @@ function boundVisibleLists(
     Object.entries(rows).filter(([key, value]) => !value.length || kept.has(`${prefix}:${key}`))
       .map(([key, value]) => [key, trim(value)])
   ) as Record<string, T[]>;
-  const authors = record(next.authorTimelinesByPubkey, 'author');
   const pendingTimelineSnapshotsByKey = Object.fromEntries(
     Object.entries(next.pendingTimelineSnapshotsByKey)
       .filter(([key]) => kept.has(`timeline:${key}`))
@@ -234,13 +229,10 @@ function boundVisibleLists(
     timelinesByKey: record(next.timelinesByKey, 'timeline'),
     pendingTimelineSnapshotsByKey,
     threadsById: record(next.threadsById, 'thread'),
-    authorTimelinesByPubkey: authors,
+    authorTimelinesByPubkey: record(next.authorTimelinesByPubkey, 'author'),
     profileTimeline: kept.has('profile') ? trim(next.profileTimeline) : [],
     profileTimelineEvicted: !kept.has('profile') && next.profileTimeline.length > 0
       ? true : 'profileTimeline' in patch ? false : next.profileTimelineEvicted,
-    selectedAuthorTimeline: next.selectedAuthorPubkey
-      ? authors[next.selectedAuthorPubkey] ?? (kept.has(`author:${next.selectedAuthorPubkey}`)
-        ? trim(next.selectedAuthorTimeline) : []) : [],
     bookmarkedPosts: kept.has('bookmarks') ? next.bookmarkedPosts.slice(0, 20) : [],
   };
 }

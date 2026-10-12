@@ -50,7 +50,6 @@ type UseTimelineViewModelsArgs = {
   localProfile: DesktopShellState['localProfile'];
   mediaObjectUrls: DesktopShellState['mediaObjectUrls'];
   profileTimeline: PostView[];
-  selectedAuthorTimeline: PostView[];
   thread: PostView[];
   unsupportedVideoManifests: DesktopShellState['unsupportedVideoManifests'];
   /// #1056: 採用 node への一括照会の結果と照会中の subject。
@@ -82,7 +81,6 @@ export function useTimelineViewModels({
   localProfile,
   mediaObjectUrls,
   profileTimeline,
-  selectedAuthorTimeline,
   thread,
   unsupportedVideoManifests,
   timelineContentAdvisories = EMPTY_ADVISORIES,
@@ -343,10 +341,6 @@ export function useTimelineViewModels({
     profileTimelinePostViews: useMemo(
       () => profileTimeline.map((post) => buildPostCardView(post, 'timeline')),
       [buildPostCardView, profileTimeline]
-    ),
-    selectedAuthorTimelinePostViews: useMemo(
-      () => selectedAuthorTimeline.map((post) => buildPostCardView(post, 'timeline')),
-      [buildPostCardView, selectedAuthorTimeline]
     ),
     threadPostViews: useMemo(
       () => thread.map((post) => buildPostCardView(post, 'thread')),

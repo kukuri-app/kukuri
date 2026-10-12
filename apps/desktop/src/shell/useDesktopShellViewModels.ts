@@ -141,7 +141,6 @@ export function useDesktopShellViewModels({
     bookmarkedReactionAssets,
     bookmarkedPosts,
     profileTimeline,
-    selectedAuthorTimeline,
     unsupportedVideoManifests,
     directMessages,
   } = state;
@@ -150,7 +149,6 @@ export function useDesktopShellViewModels({
     activeTimelinePostViews,
     bookmarkedTimelinePostViews,
     profileTimelinePostViews,
-    selectedAuthorTimelinePostViews,
     threadPostViews,
     buildPostCardView,
   } = useTimelineViewModels({
@@ -165,7 +163,6 @@ export function useDesktopShellViewModels({
     localProfile,
     mediaObjectUrls,
     profileTimeline,
-    selectedAuthorTimeline,
     thread,
     unsupportedVideoManifests,
     timelineContentAdvisories: state.timelineContentAdvisories,
@@ -384,7 +381,6 @@ export function useDesktopShellViewModels({
     activeTimelinePostViews,
     bookmarkedTimelinePostViews,
     profileTimelinePostViews,
-    selectedAuthorTimelinePostViews,
     threadPostViews,
     buildPostCardView,
     gatedMediaHashes,
