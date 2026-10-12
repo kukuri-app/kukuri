@@ -128,7 +128,6 @@ export function useDesktopShellRouting({
   const setThreadUnavailableById = useDesktopShellFieldSetter('threadUnavailableById');
   const setSelectedAuthorPubkey = useDesktopShellFieldSetter('selectedAuthorPubkey');
   const setSelectedAuthor = useDesktopShellFieldSetter('selectedAuthor');
-  const setSelectedAuthorTimeline = useDesktopShellFieldSetter('selectedAuthorTimeline');
   const setAuthorError = useDesktopShellFieldSetter('authorError');
   const setDirectMessagePaneOpen = useDesktopShellFieldSetter('directMessagePaneOpen');
   const setSelectedDirectMessagePeerPubkey = useDesktopShellFieldSetter(
@@ -281,7 +280,6 @@ export function useDesktopShellRouting({
         if (!preserveSelectedAuthor) {
           setSelectedAuthorPubkey(null);
           setSelectedAuthor(null);
-          setSelectedAuthorTimeline([]);
           setAuthorError(null);
         }
         setDirectMessages((current) => {
@@ -348,7 +346,6 @@ export function useDesktopShellRouting({
       setKnownAuthorsByPubkey,
       setSelectedAuthor,
       setSelectedAuthorPubkey,
-      setSelectedAuthorTimeline,
       setSelectedDirectMessagePeerPubkey,
       setSelectedGameRoomId,
       setSelectedLiveSessionId,
@@ -531,7 +528,6 @@ export function useDesktopShellRouting({
         setSelectedAuthorPubkey(authorPubkey);
         setSelectedAuthor(socialView);
         setKnownAuthorsByPubkey((current) => mergeKnownAuthors(current, [socialView]));
-        setSelectedAuthorTimeline([]);
         setAuthorError(null);
         if (options?.preserveDirectMessageContext) {
           setDirectMessagePaneOpen(true);
@@ -583,7 +579,6 @@ export function useDesktopShellRouting({
         if (options?.normalizeOnError) {
           setSelectedAuthorPubkey(null);
           setSelectedAuthor(null);
-          setSelectedAuthorTimeline([]);
           if (!options?.fromThread) {
             setSelectedThread(null);
             setFocusedObjectId(null);
@@ -611,7 +606,6 @@ export function useDesktopShellRouting({
       setKnownAuthorsByPubkey,
       setSelectedAuthor,
       setSelectedAuthorPubkey,
-      setSelectedAuthorTimeline,
       setSelectedDirectMessagePeerPubkey,
       setFocusedObjectId,
       setSelectedThread,
@@ -719,7 +713,6 @@ export function useDesktopShellRouting({
         setFocusedObjectId(null);
         setSelectedAuthorPubkey(null);
         setSelectedAuthor(null);
-        setSelectedAuthorTimeline([]);
         setAuthorError(null);
         setDirectMessagePaneOpen(false);
         setSelectedDirectMessagePeerPubkey(null);
@@ -741,7 +734,6 @@ export function useDesktopShellRouting({
       setFocusedObjectId,
       setSelectedAuthor,
       setSelectedAuthorPubkey,
-      setSelectedAuthorTimeline,
       setSelectedDirectMessagePeerPubkey,
       setSelectedThread,
       setWorkspaceState,
@@ -759,7 +751,6 @@ export function useDesktopShellRouting({
     );
     setSelectedAuthorPubkey(null);
     setSelectedAuthor(null);
-    setSelectedAuthorTimeline([]);
     setAuthorError(null);
     if (profileColumn && currentState.workspaceState.columns.length > 1) {
       setWorkspaceState(closeColumn(currentState.workspaceState, profileColumn.id));
@@ -767,14 +758,13 @@ export function useDesktopShellRouting({
     syncRoute('replace', {
       selectedAuthorPubkey: null,
     });
-  }, [setAuthorError, setSelectedAuthor, setSelectedAuthorTimeline, setSelectedAuthorPubkey, setWorkspaceState, storeApi, syncRoute]);
+  }, [setAuthorError, setSelectedAuthor, setSelectedAuthorPubkey, setWorkspaceState, storeApi, syncRoute]);
 
   const closeThreadPane = useCallback(() => {
     setSelectedThread(null);
     setFocusedObjectId(null);
     setSelectedAuthorPubkey(null);
     setSelectedAuthor(null);
-    setSelectedAuthorTimeline([]);
     setAuthorError(null);
     const currentState = storeApi.getState();
     const activeColumn = activeWorkspaceColumn(currentState.workspaceState);
@@ -791,7 +781,6 @@ export function useDesktopShellRouting({
     setFocusedObjectId,
     setSelectedAuthor,
     setSelectedAuthorPubkey,
-    setSelectedAuthorTimeline,
     setSelectedThread,
     setWorkspaceState,
     storeApi,
@@ -804,7 +793,6 @@ export function useDesktopShellRouting({
       setFocusedObjectId(null);
       setSelectedAuthorPubkey(null);
       setSelectedAuthor(null);
-      setSelectedAuthorTimeline([]);
       setAuthorError(null);
       const currentState = storeApi.getState();
       const scope = activeWorkspaceScope(currentState.workspaceState);
@@ -827,7 +815,6 @@ export function useDesktopShellRouting({
       setFocusedObjectId,
       setSelectedAuthor,
       setSelectedAuthorPubkey,
-      setSelectedAuthorTimeline,
       setSelectedDirectMessagePeerPubkey,
       setSelectedThread,
       openWorkspaceColumn,

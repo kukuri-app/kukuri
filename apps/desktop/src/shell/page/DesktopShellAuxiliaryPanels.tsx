@@ -685,7 +685,6 @@ export type DesktopShellDetailSurfaceStackProps = {
     ViewModels,
     | 'authorDetailView'
     | 'buildPostCardView'
-    | 'selectedAuthorTimelinePostViews'
     | 'threadPanelState'
     | 'threadPostViews'
   >;
@@ -831,14 +830,11 @@ export function DesktopShellDetailSurfaceStack({
   const effectiveAuthorTimelinePostViews = useMemo(
     () => {
       const posts = effectiveAuthorPubkey
-        ? authorTimelinesByPubkey[effectiveAuthorPubkey] ??
-          (effectiveAuthorPubkey === selectedAuthorPubkey
-            ? viewModels.selectedAuthorTimelinePostViews.map((item) => item.post)
-            : [])
+        ? authorTimelinesByPubkey[effectiveAuthorPubkey] ?? []
         : [];
       return posts.map((post) => viewModels.buildPostCardView(post, 'timeline'));
     },
-    [authorTimelinesByPubkey, effectiveAuthorPubkey, selectedAuthorPubkey, viewModels]
+    [authorTimelinesByPubkey, effectiveAuthorPubkey, viewModels]
   );
   const effectiveAuthorDetailView = useMemo<AuthorDetailView>(() => {
     if (!effectiveAuthor) {

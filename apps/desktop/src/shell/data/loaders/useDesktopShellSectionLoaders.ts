@@ -107,10 +107,6 @@ export function useDesktopShellSectionLoaders({
   );
   const setReactionPanelState = useDesktopShellFieldSetter('reactionPanelState');
   const setSelectedAuthor = useDesktopShellFieldSetter('selectedAuthor');
-  const setSelectedAuthorTimeline = useDesktopShellFieldSetter('selectedAuthorTimeline');
-  const setSelectedAuthorTimelineNextCursor = useDesktopShellFieldSetter(
-    'selectedAuthorTimelineNextCursor'
-  );
   const setSocialConnections = useDesktopShellFieldSetter('socialConnections');
   const setSocialConnectionsPanelState = useDesktopShellFieldSetter(
     'socialConnectionsPanelState'
@@ -294,9 +290,6 @@ export function useDesktopShellSectionLoaders({
             : (timeline.next_cursor ?? null);
           if (current.selectedAuthorPubkey === pubkey) {
             setSelectedAuthor(author);
-            setSelectedAuthorTimeline(mergedTimeline);
-            setSelectedAuthorTimelineNextCursor((stored) =>
-              sameTimelineCursor(stored, resolvedCursor) ? stored : resolvedCursor);
             setAuthorError(null);
           }
           setAuthorTimelinesByPubkey(setRecordEntry(pubkey, mergedTimeline));
@@ -335,8 +328,6 @@ export function useDesktopShellSectionLoaders({
       setAuthorTimelineLoadMoreErrorsByPubkey,
       setKnownAuthorsByPubkey,
       setSelectedAuthor,
-      setSelectedAuthorTimeline,
-      setSelectedAuthorTimelineNextCursor,
       storeApi,
       translate,
     ]
@@ -408,11 +399,6 @@ export function useDesktopShellSectionLoaders({
         setAuthorTimelineNextCursorByPubkey(
           setTimelineCursorEntry(pubkey, timeline.next_cursor ?? null)
         );
-        if (current.selectedAuthorPubkey === pubkey) {
-          setSelectedAuthorTimeline(merged);
-          setSelectedAuthorTimelineNextCursor((stored) => sameTimelineCursor(stored, timeline.next_cursor)
-            ? stored : timeline.next_cursor ?? null);
-        }
       });
     } catch (error) {
       if (requestId !== (authorRequestIds.current.get(pubkey) ?? 0)) return;
@@ -434,8 +420,6 @@ export function useDesktopShellSectionLoaders({
     setAuthorTimelineNextCursorByPubkey,
     setAuthorTimelineWindowHeadCursorByPubkey,
     setAuthorTimelinesByPubkey,
-    setSelectedAuthorTimeline,
-    setSelectedAuthorTimelineNextCursor,
     storeApi,
     translate,
   ]);

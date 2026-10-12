@@ -1,4 +1,5 @@
 import type { DesktopShellStore } from '@/shell/store';
+import type { PostView } from '@/lib/api';
 import {
   activeWorkspaceColumn,
   activeWorkspaceScope,
@@ -6,6 +7,11 @@ import {
 } from '@/shell/slices/workspace';
 import type { ShellChromeProjection, ShellChromeState } from '@/components/shell/types';
 import type { WorkspaceState } from '@/shell/slices/workspace';
+
+const EMPTY_AUTHOR_POSTS: PostView[] = [];
+export const selectSelectedAuthorPosts = (s: DesktopShellStore) => s.selectedAuthorPubkey
+  ? s.authorTimelinesByPubkey[s.selectedAuthorPubkey] ?? EMPTY_AUTHOR_POSTS
+  : EMPTY_AUTHOR_POSTS;
 
 const selectedChannelProjectionCache = new WeakMap<
   WorkspaceState,
@@ -105,7 +111,7 @@ export const selectShellDataSlice = (s: DesktopShellStore) => ({
   profileTimeline: s.profileTimeline,
   recentReactions: s.recentReactions,
   selectedAuthorPubkey: s.selectedAuthorPubkey,
-  selectedAuthorTimeline: s.selectedAuthorTimeline,
+  selectedAuthorPosts: selectSelectedAuthorPosts(s),
   selectedChannelIdByTopic: selectedChannelIdByTopic(s),
   selectedDirectMessagePeerPubkey: s.selectedDirectMessagePeerPubkey,
   selectedThread: s.selectedThread,
@@ -190,7 +196,6 @@ export const selectShellViewModelsSlice = (s: DesktopShellStore) => ({
   profileTimeline: s.profileTimeline,
   reactionPanelState: s.reactionPanelState,
   selectedAuthor: s.selectedAuthor,
-  selectedAuthorTimeline: s.selectedAuthorTimeline,
   selectedChannelIdByTopic: selectedChannelIdByTopic(s),
   selectedDirectMessagePeerPubkey: s.selectedDirectMessagePeerPubkey,
   selectedThread: s.selectedThread,

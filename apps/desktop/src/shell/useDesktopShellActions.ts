@@ -225,7 +225,6 @@ export function useDesktopShellActions({
   const setProfileTimeline = useDesktopShellFieldSetter('profileTimeline');
   const setSelectedAuthorPubkey = useDesktopShellFieldSetter('selectedAuthorPubkey');
   const setSelectedAuthor = useDesktopShellFieldSetter('selectedAuthor');
-  const setSelectedAuthorTimeline = useDesktopShellFieldSetter('selectedAuthorTimeline');
   const setAuthorError = useDesktopShellFieldSetter('authorError');
   const setDirectMessagePaneOpen = useDesktopShellFieldSetter('directMessagePaneOpen');
   const setSelectedDirectMessagePeerPubkey = useDesktopShellFieldSetter(
@@ -320,7 +319,6 @@ export function useDesktopShellActions({
     storeApi,
     translate,
     setProfileTimeline,
-    setSelectedAuthorTimeline,
     setThreadsById,
     setTimelinesByKey,
   });
@@ -329,7 +327,6 @@ export function useDesktopShellActions({
     setSelectedThread(null);
     setSelectedAuthorPubkey(null);
     setSelectedAuthor(null);
-    setSelectedAuthorTimeline([]);
     setAuthorError(null);
   }
 
@@ -468,7 +465,6 @@ export function useDesktopShellActions({
     setTimelinesByKey,
     setThreadsById,
     setProfileTimeline,
-    setSelectedAuthorTimeline,
     setKnownAuthorsByPubkey,
     setOwnedReactionAssets,
     setBookmarkedReactionAssets,

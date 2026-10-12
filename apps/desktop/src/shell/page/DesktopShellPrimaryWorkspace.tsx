@@ -99,7 +99,6 @@ export type DesktopShellPrimarySurfaceProps = {
     | 'profileEditorHasPicture'
     | 'profileEditorPictureSrc'
     | 'profileTimelinePostViews'
-    | 'selectedAuthorTimelinePostViews'
     | 'timelineViewItems'
   >;
   openCommunityNodeSettings: () => void;

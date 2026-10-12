@@ -42,7 +42,6 @@ type MessageReactionSocialParams = ActionsBaseParams &
     setTimelinesByKey: Setter<'timelinesByKey'>;
     setThreadsById: Setter<'threadsById'>;
     setProfileTimeline: Setter<'profileTimeline'>;
-    setSelectedAuthorTimeline: Setter<'selectedAuthorTimeline'>;
     setKnownAuthorsByPubkey: Setter<'knownAuthorsByPubkey'>;
     setOwnedReactionAssets: Setter<'ownedReactionAssets'>;
     setBookmarkedReactionAssets: Setter<'bookmarkedReactionAssets'>;
@@ -82,7 +81,6 @@ export function createMessageReactionSocialActions({
   setTimelinesByKey,
   setThreadsById,
   setProfileTimeline,
-  setSelectedAuthorTimeline,
   setKnownAuthorsByPubkey,
   setOwnedReactionAssets,
   setBookmarkedReactionAssets,
@@ -214,7 +212,6 @@ export function createMessageReactionSocialActions({
       )
     );
     setProfileTimeline((current) => patchReactionStateIntoPosts(current, reactionState));
-    setSelectedAuthorTimeline((current) => patchReactionStateIntoPosts(current, reactionState));
   }
 
   async function handleToggleReaction(post: PostView, reactionKey: ReactionKeyInput) {

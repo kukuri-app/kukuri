@@ -435,9 +435,9 @@ describe('useDesktopShellSectionLoaders', () => {
     const ownTimeline = await api.listProfileTimeline(profile.pubkey);
     const otherPubkey = 'b'.repeat(64);
     const other = { ...ownTimeline.items[0], object_id: 'other-post', author_pubkey: otherPubkey };
-    store.setState({ selectedAuthorPubkey: otherPubkey, selectedAuthorTimeline: [other] });
+    store.setState({ selectedAuthorPubkey: otherPubkey, authorTimelinesByPubkey: { [otherPubkey]: [other] } });
     await act(async () => hook.result.current.loadAuthorSection(profile.pubkey));
-    expect(store.getState().selectedAuthorTimeline).toEqual([other]);
+    expect(store.getState().authorTimelinesByPubkey[otherPubkey]).toEqual([other]);
     expect(store.getState().authorTimelinesByPubkey[profile.pubkey]).toEqual(ownTimeline.items);
   });
 

@@ -1,3 +1,4 @@
+import { selectSelectedAuthorPosts } from '@/shell/storeSelectors';
 import type {
   AttachmentView,
   DesktopApi,
@@ -35,7 +36,6 @@ type OptimisticPostActionsParams = {
   storeApi: DesktopShellStoreApi;
   translate: Translate;
   setProfileTimeline: Setter<'profileTimeline'>;
-  setSelectedAuthorTimeline: Setter<'selectedAuthorTimeline'>;
   setThreadsById: Setter<'threadsById'>;
   setTimelinesByKey: Setter<'timelinesByKey'>;
 };
@@ -50,7 +50,6 @@ export function createOptimisticPostActions({
   storeApi,
   translate,
   setProfileTimeline,
-  setSelectedAuthorTimeline,
   setThreadsById,
   setTimelinesByKey,
 }: OptimisticPostActionsParams) {
@@ -114,7 +113,6 @@ export function createOptimisticPostActions({
       return changed ? next : current;
     });
     setProfileTimeline((current) => patch(current));
-    setSelectedAuthorTimeline((current) => patch(current));
   }
 
   function findKnownPost(objectId: string): PostView | null {
@@ -127,7 +125,7 @@ export function createOptimisticPostActions({
       ] ?? [],
       ...Object.values(currentState.timelinesByKey),
       currentState.profileTimeline,
-      currentState.selectedAuthorTimeline,
+      selectSelectedAuthorPosts(currentState),
     ];
     for (const posts of lists) {
       const match = posts.find((post) => post.object_id === objectId);

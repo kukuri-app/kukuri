@@ -67,7 +67,7 @@ function renderAttachments(
       timelineAdvisoryLookup: overrides.timelineAdvisoryLookup,
       communityIndexResolvedPosts: overrides.communityIndexResolvedPosts ?? [],
       profileTimeline: overrides.profileTimeline ?? [],
-      selectedAuthorTimeline: [],
+      selectedAuthorPosts: [],
       thread: [],
       selectedDirectMessageTimeline: [],
       directMessages: [],
