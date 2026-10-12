@@ -64,8 +64,10 @@ Dockerfileの2行減はcache mountを外した命令変更の物理差分で、r
 
 ## 次回監査のvalidationと限界
 
-既存checkerのschema/祖先/集合/digest/cap/metric意味検証、変更後fixture14件（実xtask経由）、実repositoryの読み取り専用check、oversized gate、diff/相対リンク検証はPASS。読み取り専用checkはtracking_issue=1777、ratchet新規0/上限増0、audit_required=falseを返した。2793候補path・21大型登録・10構造metricを保存。固定head独立review・実際に発生するPR CI・main一致とbaseline公開SHAの最終結果は#1783 Complete evidenceへ集約する。
+既存checkerのschema/祖先/集合/digest/cap/metric意味検証、変更後fixture14件（実xtask経由）、実repositoryの読み取り専用check、oversized gate、diff/相対リンク検証はPASS。読み取り専用checkはtracking_issue=1777、ratchet新規0/上限増0、audit_required=falseを返した。2791候補path・21大型登録・10構造metricを保存。固定head独立review・実際に発生するPR CI・main一致とbaseline公開SHAの最終結果は#1783 Complete evidenceへ集約する。
 
 発火signalは既存 `ratchet_new_paths > 0 OR ratchet_increased_caps > 0` のまま。schedule、required CI、Issue writer、schemaは無変更。oversized ratchetは#1779で1000→991行となったDesktopShellPageの旧登録だけを、REFACTORING.mdの既存解消手順で除去した（JSON4行減）。他cap・1000行判定・発火閾値は維持し、コード削減へ混ぜない。比較commitをmain祖先へ残すため本PRはmerge commit方式を使い、squash/rebaseしない。commit数・changed path・hotspot・経過日は観測のみで、新しい閾値を追加していない。初期監査signal（新規11/上限増4）は分類の開始理由として記録し、baseline更新でそれまでの承認済み変化を確定した。
 
 候補は実施4、延期2、却下3、別種別8（文書1のみ今回実施）、未分類0。J1〜J8の保持/満杯時/一覧互換/再集計/取消意味などは#1777の有限調査で判断点を記録して終了し、未承認の製品変更は実装していない。ADR0025§10/#1724のTantivy一致数例外を維持。全アプリCPU/RSS/通信benchmark、実機全OS、production DB/deployは今回の完了条件外で未実施。過去campaignの未測定事項を今回測定済みとも主張しない。
+
+独立reviewで、旧snapshotから引き継いだexact除外に現行scannerのCHANGELOG.md・tools/promo/pnpm-lock.yamlが欠けることを指摘された。現行source_policy_blobの17拡張子・2prefix・5exact除外へ同期し、候補集合/digestを2791pathで再計測した。groupは既存の全tracked集合という定義を維持する。初回のschema/意味検証だけでscanner方針との一致を判断せず、この修正を最終headで再確認する。

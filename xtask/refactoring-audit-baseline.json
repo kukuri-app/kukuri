@@ -47,16 +47,18 @@
       "yml"
     ],
     "excluded_exact_paths": [
+      "CHANGELOG.md",
       "Cargo.lock",
       "apps/desktop/pnpm-lock.yaml",
-      "apps/desktop/src-tauri/Cargo.lock"
+      "apps/desktop/src-tauri/Cargo.lock",
+      "tools/promo/pnpm-lock.yaml"
     ],
     "excluded_path_prefixes": [
       "apps/desktop/src-tauri/gen/",
       "apps/desktop/src-tauri/icons/"
     ],
-    "tracked_candidate_count": 2793,
-    "tracked_candidate_paths_sha256": "4bafec435e2c018b13ea52b164f573a9223557595714baaae855cef2be4a9e58",
+    "tracked_candidate_count": 2791,
+    "tracked_candidate_paths_sha256": "d975ee45802c8aa05f3100c6baa6cd6f7db999b5e6edd6e2e67ef6d2dd757c13",
     "population_semantics": "baseline_commitのgit ls-tree -r --name-onlyを既存oversized scannerのextension/exclusionへ適用した集合。実行時の未追跡filesはbaselineへ含めない。",
     "groups": [
       {
