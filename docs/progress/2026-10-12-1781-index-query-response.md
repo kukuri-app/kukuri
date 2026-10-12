@@ -2,7 +2,7 @@
 
 ## 完了境界
 
-条件の正本は [#1781](https://github.com/kukuri-app/kukuri/issues/1781)、親 [#1777](https://github.com/kukuri-app/kukuri/issues/1777)。`AC-CN / PR-CN`、区分C、Scope revision `2026-10-12-refactor-r1`。比較起点は `1f77dd4e3252b37fc944446544b901435c04063f`、実装起点は `23dd5cf10c445713688ea30284b8179a1bea75eb`。対象sourceは両commitで同一。
+条件の正本は [#1781](https://github.com/kukuri-app/kukuri/issues/1781)、親 [#1777](https://github.com/kukuri-app/kukuri/issues/1777)。`AC-CN / PR-CN`、区分C、Scope revision `2026-10-12-refactor-r2-cn-build`。比較起点は `1f77dd4e3252b37fc944446544b901435c04063f`、実装起点は `23dd5cf10c445713688ea30284b8179a1bea75eb`。対象sourceは両commitで同一。
 
 ## 構造と維持条件
 
@@ -31,3 +31,11 @@ HTTPの認証/需要、非設定404、parameter拒否、3surfaceのallow判定�
 ## 同一対象のコード量
 
 UTF-8物理行、空行込み、末尾newlineの空要素を除く。同じ `crates/cn-user-api/src/handlers/indexing.rs` は754→739行（15行減）。実装/test/補助の新規fileはない。commentは元の内容を維持し、移動や行圧縮による削減ではない。本証跡文書はコード量と別計測する。差し戻しは本PR単独revert、永続移行なし。
+
+## 承認済みのビルド修正
+
+2026-10-12にユーザーが同じPRへ最小修正を含めることを承認し、AC-CNをScope r2へ先に更新した。元headのCN image buildはrun38224282308の初回job114727848846と再実行114729451204で、復元したcook層が参照するLindera辞書cache mount内の9file欠落により失敗した（製品処理到達前）。失敗を成功扱いせず記録する。
+
+`docker/cn/Dockerfile` のcook/buildの2 cache mountを外す。既存cache path・辞書・compiler/package・feature・loop・runtime stageは維持し、生成辞書を依存layerへ含める。cold cookで作った辞書は復元したcook層にも残り、source変更後のcompileから参照できる。外部配備・CI必須job・workflow変更はない。初回は辞書生成を伴う。変更済みDockerfileの静的差分と最終headのCN image CIを確認し、固定head独立監査へ渡す。Rust source/testsは元監査headから無変更なので既存成功を再利用する。
+
+同一対象集合にDockerfileを追加して計測する（基準77→75行、2行減）。indexing.rsと合わせて831→814行、17行減。辞書layerの修正は命令継続行を短く見せることが成果ではなく、cache mount外に辞書を保存して欠落を解消することが成果。証跡文書は別計測する。
