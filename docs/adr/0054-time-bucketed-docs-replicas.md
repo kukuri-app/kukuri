@@ -2,11 +2,11 @@
 
 ## Status
 
-Proposed（旧#1243、実装計画承認済み。現在は#1221 P2〜P4へ集約。
-各段階の実装・監査後に採用状態を更新する。2026-09-26 R5-Hで§6の書込み切替・新形式定常を実装）
+実装済みの採用範囲（2026-10-12確認、基準 `1f77dd4e3252b37fc944446544b901435c04063f`）: bucket識別・有界ページ/対象ID取得（#1221 G3-3のB）・writer切替・旧store退役。旧#1243を統合した#1221は完了済み。
 
-2026-09-24の#1221 G3-3で有界ページ/対象ID取得（B）を採用した。以下の旧「常時同期」記述は
-識別・移行時の履歴であり、新bucket readerの完成形ではない。公開CN readerから順に切り替える。
+後継の証拠は [R5-B client reader](../progress/2026-09-26-1221-r5b-client-reader.md)、[R5-C author/private](../progress/2026-09-26-1221-r5c-author-private-control.md)、[R5-H writer切替](../progress/2026-09-26-1221-r5h-writer-cutover.md)、[R5-I旧store退役](../progress/2026-09-27-1221-r5i-legacy-store-retirement.md)。CNは有界bucket readerと [R5-F保持回収](../progress/2026-09-26-1221-r5f-cn-retention.md)を使う。
+
+当初のStatusはProposed。以下に残る「常時同期」、段階移行中の旧reader/同期/保存を残件とする記述は履歴であり、採用した完成形の指示ではない。§1の識別・§6の切替判断と後継記録を使う。旧版との新着相互運用終了は既承認の切替判断であり、今回の変更ではない。未決の別課題は [#1777候補分類](https://github.com/kukuri-app/kukuri/issues/1777)を参照し、本ADR全体を無条件にAcceptedへ昇格させない。
 
 ## Context
 

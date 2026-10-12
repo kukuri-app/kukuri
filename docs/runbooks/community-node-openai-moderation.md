@@ -115,7 +115,7 @@ CNは原メディア・frame・data URL・API生応答を恒久保存しない�
 
 DBの共通cacheは内容hash＋node/provider/model/policy/前処理構成に対応する正規化判定と最小coverageのみ。
 投稿・著者・scope・appealは含めず、参照元の署名・supported scope・撤回・削除・送信防止を再確認して関連付ける。
-現行の完了結果cacheには自動TTLがなく、保存上限・回収は設計原則上の未解消点である。構成世代の更新は判定キーの変更であって旧cacheの回収ではない。本手順のために全件GCを追加・実行せず、保存方式を変更する作業では上限と対象を絞った削除を受入条件に含める。
+完了結果cacheは [#1221 R5-F](../progress/2026-09-26-1221-r5f-cn-retention.md) のW/B/T回収に接続済み。`worker::run → IndexMaintenance::reclaim_retention_pass → reclaim_expired` が受入下限Wと容量B・期間Tに従い、投影と保存物を合わせて1回128件以内、巡回ごと最大16回で回収する。これはworkerによる段階回収で、load時の個別TTL失効ではない。構成世代の更新はキー変更であり、旧cacheの回収自体ではない。法務/運営保存は対象外。保持設定・operator操作は変えず、本手順のために全件GCを追加・実行しない。
 
 カテゴリbooleanで判定し、scoreは同カテゴリのconfidenceとして保持する。動画はカテゴリごとにOR / MAXで集約する。
 画像非対応のカテゴリと音声は未検査。サンプリングの間に短時間だけ現れる内容を見逃し得るため、全フレーム検査や

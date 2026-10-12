@@ -492,7 +492,7 @@ journal archive / container logを保持方針に従ってrotate・vacuumした�
 ### 5.5 `BlobText` 本文の再投影と検索確認
 
 本文取得処理を変更した `cn-indexer` のrolloutでは、ArcadeDBのvolumeやentryを手動削除しない。
-現行workerには起動時・周期的な全件見直しが残るが、これは設計原則上の未解消点である。全件処理の完了を運用上の成功条件にせず、対象objectと確認期限を固定して次を実施する。
+現行workerは `worker::run → BucketReader::poll_once` のcursor巡回を使う（最大64物理scope、同時8、scopeごと20/4件）。起動時・周期の `full` も有界巡回で、旧全件見直し/再同期は撤去済み（[R5-H](../progress/2026-09-26-1221-r5h-writer-cutover.md)）。全履歴復旧や巡回の完了を成功条件にせず、対象objectと確認期限を固定して次を実施する。Tantivy検索の明示承認済み例外は [ADR 0025 §10](../adr/0025-community-node-indexing-foundation.md#10-cn-の全文検索を-tantivy-に移す17242026-10-10) に従う。
 
 1. `cn-indexer` の `/v1/status` と対象期間のlogで、固定した投稿の処理が進み、対象scopeが停止していないことを確認する。期限内に到達しなければ取得不能・待機・処理失敗を区別して記録する。
 2. read-onlyのArcadeDB照会で、対象objectの `text` が空文字でなく、期待する本文を含むことを確認する。
