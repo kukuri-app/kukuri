@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-28
 - Issue: #794
+- 後継: Player と Client の spatial audio の行の測り方（signed PCM16 frame）と超えたときの扱いは [ADR 0067](0067-media-transport-moq.md) §4 に移り、#1033 の merge で失効する。
 
 ## Context
 

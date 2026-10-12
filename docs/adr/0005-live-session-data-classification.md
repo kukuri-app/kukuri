@@ -33,6 +33,7 @@ Accepted
 - viewer presence は `LivePresence` heartbeat と local SQLite projection で扱い、restart 後に自動再 join はしない。
 
 ## Consequences
+- 映像・音声の搬送は [ADR 0067](0067-media-transport-moq.md) に従う。manifest へ足す track の descriptor とその分類は #1034 が本 ADR へ追補する。
 - #1262: state/envelopeの到着による個別反映、表示中だけのmanifest取得、未取得候補と検証済みsessionの区別はADR 0052「Session の個別反映と表示要求」に従う。timerによる反映retryはしない。
 - late joiner と restart 後の復元は `docs state + manifest blob` だけで成立しなければならない。
 - 終了済み session は durable state で `Ended` として復元され、新規 join を拒否しなければならない。

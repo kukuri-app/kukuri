@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-08-29
 - Issue: #795
+- 後継: 音声の搬送と形式（「Presence and audio」の音声を `MetaverseRoomEventV1` で presence と共用する点、16 kHz・mono・PCM16・1 frame 最大 320 sample）は [ADR 0067](0067-media-transport-moq.md) に移り、#1033 の merge で失効する。presence、距離減衰、mute、block、access の規則は本 ADR のまま。
 
 ## Context
 
