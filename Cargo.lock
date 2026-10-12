@@ -3472,7 +3472,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-app-api"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3506,7 +3506,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-blob-service"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3525,7 +3525,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cli"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3547,7 +3547,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-addr-index"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "kukuri-cn-runtime-support",
@@ -3559,7 +3559,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-cli"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3585,7 +3585,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-core"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3621,7 +3621,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-e2e"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3654,7 +3654,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-indexer"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3690,7 +3690,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-iroh-relay"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "iroh-relay",
@@ -3705,7 +3705,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-operator"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "blake3",
@@ -3723,7 +3723,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-protocol"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "kukuri-cn-safety",
@@ -3736,14 +3736,14 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-runtime-support"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "tracing-subscriber",
 ]
 
 [[package]]
 name = "kukuri-cn-safety"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "async-trait",
  "kukuri-cn-safety",
@@ -3756,7 +3756,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-safety-arachnid"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "async-trait",
  "kukuri-cn-safety",
@@ -3771,7 +3771,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-safety-openai"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3789,7 +3789,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-safety-runtime"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3808,7 +3808,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-safety-video"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "async-trait",
  "hex",
@@ -3824,7 +3824,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-safety-vlm"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3840,7 +3840,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-stun"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "kukuri-cn-runtime-support",
@@ -3850,7 +3850,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-trust"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3865,7 +3865,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-user-api"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -3908,7 +3908,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-core"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "argon2",
@@ -3933,7 +3933,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-desktop-runtime"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3981,7 +3981,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-docs-sync"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4009,7 +4009,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-harness"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -4042,7 +4042,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-iroh-node"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4078,7 +4078,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-metaverse-host"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "kukuri-core",
@@ -4089,7 +4089,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-store"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4108,7 +4108,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-test-support"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "async-trait",
  "thiserror 2.0.21",
@@ -4117,7 +4117,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-transport"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4146,7 +4146,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-web-runtime"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4177,7 +4177,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-webrtc-transport"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -9060,7 +9060,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
