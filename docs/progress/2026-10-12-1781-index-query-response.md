@@ -38,4 +38,4 @@ UTF-8物理行、空行込み、末尾newlineの空要素を除く。同じ `cra
 
 `docker/cn/Dockerfile` のcook/buildの2 cache mountを外す。既存cache path・辞書・compiler/package・feature・loop・runtime stageは維持し、生成辞書を依存layerへ含める。cold cookで作った辞書は復元したcook層にも残り、source変更後のcompileから参照できる。外部配備・CI必須job・workflow変更はない。初回は辞書生成を伴う。変更済みDockerfileの静的差分と最終headのCN image CIを確認し、固定head独立監査へ渡す。Rust source/testsは元監査headから無変更なので既存成功を再利用する。
 
-同一対象集合にDockerfileを追加して計測する（基準77→75行、2行減）。indexing.rsと合わせて831→814行、17行減。辞書layerの修正は命令継続行を短く見せることが成果ではなく、cache mount外に辞書を保存して欠落を解消することが成果。証跡文書は別計測する。
+同一対象集合にDockerfileを追加して計測する（基準70→68行、2行減）。indexing.rsと合わせて824→807行、17行減。辞書layerの修正は命令継続行を短く見せることが成果ではなく、cache mount外に辞書を保存して欠落を解消することが成果。証跡文書は別計測する。
