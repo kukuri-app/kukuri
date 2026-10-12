@@ -35,6 +35,9 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const DENIAL_LINGER: Duration = Duration::from_secs(2);
 /// 送る側が access を評価し直す間隔(ADR 0067 §3)。
 pub const MEDIA_REVALIDATE_INTERVAL: Duration = Duration::from_secs(5);
+/// 読み書きの無い group を cache から外すまでの時間。判定は半分の間隔ごとなので、残るのは長くても約 2 倍
+/// (4 秒)で、media の保持を 10 秒以下にする(ADR 0067 §2)。各 track の最新の group は残る。
+const MEDIA_CACHE_IDLE: Duration = Duration::from_secs(2);
 const GRANTED: &[u8] = b"ok";
 const CLOSE_DONE: u32 = 0;
 const CLOSE_BUSY: u32 = 1;
@@ -132,6 +135,14 @@ fn transport(connection: &Connection) -> Transport {
     Transport::new(LiteSession(web_transport_iroh::Session::raw(
         connection.clone(),
     )))
+}
+
+/// media の origin の設定(話者の公開と聞き手の購読で共用)。moq-net の既定(30 秒)より早く cache から外す。
+pub fn media_origin_config() -> origin::Config {
+    let mut config = origin::Config::default();
+    config.pool =
+        moq_net::cache::Pool::new(moq_net::cache::Config::default().with_expiry(MEDIA_CACHE_IDLE));
+    config
 }
 
 /// moq-net の driver は tokio の時計で poll される(`moq_net::time::run`)ので、始点も同じ時計から取る。
@@ -324,7 +335,7 @@ impl IrohDocsNode {
             connection.close(CLOSE_DONE.into(), b"done");
             return Err(MediaDenied(String::from_utf8_lossy(&response).into_owned()).into());
         }
-        let (subscribe, announced_driver) = origin::Producer::new(origin::Config::default());
+        let (subscribe, announced_driver) = origin::Producer::new(media_origin_config());
         let connected = timeout(
             HANDSHAKE_TIMEOUT,
             moq_net::Client::new()

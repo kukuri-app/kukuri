@@ -10,7 +10,9 @@ use kukuri_transport::TransportRelayConfig;
 use moq_net::{Timestamp, origin, track};
 
 use crate::dome_session::direct_first_candidates;
-use crate::{IrohDocsNode, MediaAuthorizer, MediaDenied, MediaGrant, NodeOptions};
+use crate::{
+    IrohDocsNode, MediaAuthorizer, MediaDenied, MediaGrant, NodeOptions, media_origin_config,
+};
 
 const PATH: &str = "media-test";
 
@@ -186,5 +188,34 @@ async fn metaverse_audio_relay_fallback_keeps_direct_candidates_relay_free() -> 
     publisher.install_media_authorizer(None);
     listener.shutdown().await?;
     publisher.shutdown().await?;
+    Ok(())
+}
+
+/// INVAR-3: media の origin は、読み書きの無い group を cache から外し、保持を 10 秒以下にする(ADR 0067 §2)。
+#[tokio::test(start_paused = true)]
+async fn media_origin_keeps_at_most_ten_seconds_of_media() -> Result<()> {
+    let config = media_origin_config();
+    let pool = config.pool.clone();
+    let (origin, origin_driver) = origin::Producer::new(config);
+    let _origin_driver =
+        n0_future::task::AbortOnDropHandle::new(n0_future::task::spawn(async move {
+            moq_net::time::run(origin_driver).await;
+        }));
+    let broadcast = origin.publish(PATH, origin::Route::default())?;
+    let mut track = broadcast.create_track("frames", None)?;
+    // 20 ms ごとに 100 bytes の group を 60 秒書く。cache に残るのは、最初の 1 秒分の使用量の 10 倍まで。
+    let mut first_second = 0;
+    for index in 1..=3_000_u64 {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        track.write_frame(Timestamp::from_micros(index * 20_000)?, vec![0_u8; 100])?;
+        if index == 50 {
+            first_second = pool.used();
+        }
+    }
+    assert!(
+        pool.used() <= 10 * first_second,
+        "{} bytes cached ({first_second} bytes per second)",
+        pool.used()
+    );
     Ok(())
 }

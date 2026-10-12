@@ -233,7 +233,7 @@ struct RoomAudio {
 
 impl RoomAudio {
     fn new(room: MetaverseAudioRoom) -> Self {
-        let (origin, driver) = origin::Producer::new(origin::Config::default());
+        let (origin, driver) = origin::Producer::new(kukuri_iroh_node::media_origin_config());
         let driver = n0_future::task::spawn(async move {
             moq_net::time::run(driver).await;
         });

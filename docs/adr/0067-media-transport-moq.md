@@ -62,7 +62,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 
 ### 2. データの扱い（固定項目 2）
 
-- 音声・映像の bytes は Transient とし、docs・blob・SQLite に保存しない。保持は再生前の保持（最大 160 ms）と、送信・転送待ち（購読の最大遅延と、live は最新 1 group）だけで、いずれも 10 秒以下。
+- 音声・映像の bytes は Transient とし、docs・blob・SQLite に保存しない。保持は再生前の保持（jitter frame × 20 ms、既定 160 ms）と、送信・転送待ち（購読の最大遅延と、live は最新 1 group）と、moq-net の cache（読み書きの無い group を 2 秒で外し、判定の間隔を含めて長くても約 4 秒。各 track の最新の group は残る）だけで、いずれも 10 秒以下。
 - gossip は既存の小さな hint（presence、`LiveSignal`、`SessionChanged`）に限る。音声を送っているかは presence に載せる（#1033）。
 - log・metrics に音声・映像の bytes、話者・視聴者の識別子、block の一覧を出さない。出してよいのは拒否の code と件数、接続経路の分類（Direct P2P / Relay Supported P2P / Relay Fallback）。
 

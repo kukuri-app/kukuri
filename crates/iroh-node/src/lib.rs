@@ -44,6 +44,7 @@ pub use legacy::{LegacyStore, adopt_endpoint_secret, remove_dir_step, retire_leg
 pub use media::{
     MEDIA_ACCESS_REQUEST_MAX_BYTES, MEDIA_MAX_INBOUND_SESSIONS, MEDIA_REVALIDATE_INTERVAL,
     MediaAuthorizer, MediaDenied, MediaGrant, MediaRevalidate, MediaSubscription,
+    media_origin_config,
 };
 pub use network_work::NetworkAdmissionError;
 pub type DisplayAdmissionError = NetworkAdmissionError;
