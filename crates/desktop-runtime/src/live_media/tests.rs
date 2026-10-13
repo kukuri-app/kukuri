@@ -72,7 +72,7 @@ async fn pair() -> Pair {
         Arc::downgrade(&broadcaster_app),
     )));
     let session_id = broadcaster_app
-        .create_live_session_with_media(
+        .create_live_session_in_channel(
             TOPIC,
             ChannelRef::Public,
             CreateLiveSessionInput {
@@ -321,6 +321,22 @@ async fn ended_live_session_rejects_media_subscribe() {
     let (state, _) = pair.collect_until(|chunks| !chunks.is_empty()).await;
     assert_eq!(state, LiveWatchState::Watching.code());
 
+    // 配信の停止: 見ている視聴者の購読は閉じ、新しい購読は拒否する(停止後の送信 0)。
+    pair.broadcaster.stop_broadcast(&pair.session_id).await;
+    let (state, _) = pair.collect_until(|_| false).await;
+    assert_eq!(
+        state,
+        LiveWatchState::Ended.code(),
+        "stopping the broadcast closes its viewers"
+    );
+    let denied = pair.subscribe().await.err().expect("stopped");
+    assert_eq!(denial_code(&denied), Some(DENIED_NOT_LIVE));
+    pair.start().await;
+    pair.push(2, true).await;
+    pair.watch().await;
+    let (state, _) = pair.collect_until(|chunks| !chunks.is_empty()).await;
+    assert_eq!(state, LiveWatchState::Watching.code());
+
     // 資格の失効: owner が視聴者を block すると、5 秒ごとの評価し直しで閉じ、新しい購読も拒否する。
     pair.broadcaster_app
         .block_author(pair.viewer_pubkey.as_str())
@@ -341,7 +357,7 @@ async fn ended_live_session_rejects_media_subscribe() {
 
     // session の終了: 配信を止める前でも、見ている視聴者は評価し直しで閉じ、新しい購読は拒否する。
     pair.watch().await;
-    pair.push(2, true).await;
+    pair.push(3, true).await;
     let (state, _) = pair.collect_until(|chunks| !chunks.is_empty()).await;
     assert_eq!(state, LiveWatchState::Watching.code());
     pair.broadcaster_app
@@ -539,4 +555,16 @@ fn live_media_bounds_frames_waiting_for_the_screen() {
         (vec![42, 43], false),
         "the stale backlog is dropped at the next keyframe"
     );
+    // 受ける側の上限は、catalog の source の frame 数と bitrate の 1.25 倍。
+    for source in [LiveVideoSource::Camera, LiveVideoSource::Screen] {
+        let limits = source.limits();
+        let budget = video_budget(&video_config(limits));
+        assert_eq!(
+            (budget.max_frames(), budget.max_bytes()),
+            (
+                u64::from(limits.framerate),
+                u64::from(limits.bitrate) * 5 / 4 / 8
+            )
+        );
+    }
 }

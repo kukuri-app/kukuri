@@ -117,6 +117,37 @@ describe('LiveSessionMedia', () => {
     expect(screen.getByRole('button', { name: 'Enable microphone' })).toHaveAttribute('aria-pressed', 'false');
   });
 
+  // 取り込みの許可を待つ間に card が消えたら、後から得た取り込みを止め、配信も止める(T4: 残留 stream の回収)。
+  test('stops a capture that arrives after the card goes away', async () => {
+    const media = api();
+    let resolveCapture: (stream: MediaStream) => void = () => undefined;
+    vi.mocked(captureVideo).mockReturnValue(new Promise((resolve) => (resolveCapture = resolve)));
+    const { unmount } = render(<LiveSessionMedia api={media} topic={request.topic} session={session()} isOwner />);
+    await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
+    await waitFor(() => expect(captureVideo).toHaveBeenCalled());
+    unmount();
+    const track = { stop: vi.fn() };
+    resolveCapture({ getTracks: () => [track] } as unknown as MediaStream);
+    await waitFor(() => expect(track.stop).toHaveBeenCalled());
+    expect(encodeVideo).not.toHaveBeenCalled();
+    expect(media.stopLiveBroadcast).toHaveBeenCalledTimes(2);
+  });
+
+  test('stops watching only after an in-flight start finishes', async () => {
+    const media = api();
+    let finishWatch: () => void = () => undefined;
+    media.watchLiveMedia.mockReturnValue(new Promise<undefined>((resolve) => (finishWatch = () => resolve(undefined))));
+    const { unmount } = render(
+      <LiveSessionMedia api={media} topic={request.topic} session={session({ joined_by_me: true })} isOwner={false} />
+    );
+    await waitFor(() => expect(media.watchLiveMedia).toHaveBeenCalled());
+    unmount();
+    await Promise.resolve();
+    expect(media.stopWatchingLiveMedia).not.toHaveBeenCalled();
+    finishWatch();
+    await waitFor(() => expect(media.stopWatchingLiveMedia).toHaveBeenCalledWith(request));
+  });
+
   // 5 人目以降は満員と示す(#1034 AC-2a)。退出・画面を離れたら購読を止める。
   test('shows a full broadcast to a joined viewer and stops watching when it unmounts', async () => {
     const media = api(1);
@@ -126,7 +157,7 @@ describe('LiveSessionMedia', () => {
     expect(await screen.findByText(/This broadcast is full/)).toBeInTheDocument();
     expect(media.watchLiveMedia).toHaveBeenCalledWith(request);
     unmount();
-    expect(media.stopWatchingLiveMedia).toHaveBeenCalledWith(request);
+    await waitFor(() => expect(media.stopWatchingLiveMedia).toHaveBeenCalledWith(request));
   });
 
   test('shows nothing to viewers who have not joined or after the session ends', () => {

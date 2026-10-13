@@ -87,22 +87,12 @@ impl AppService {
         topic_id: &str,
         input: CreateLiveSessionInput,
     ) -> Result<String> {
-        self.create_live_session_in_channel(topic_id, ChannelRef::Public, input)
-            .await
-    }
-
-    pub async fn create_live_session_in_channel(
-        &self,
-        topic_id: &str,
-        channel_ref: ChannelRef,
-        input: CreateLiveSessionInput,
-    ) -> Result<String> {
-        self.create_live_session_with_media(topic_id, channel_ref, input, None)
+        self.create_live_session_in_channel(topic_id, ChannelRef::Public, input, None)
             .await
     }
 
     /// `media_endpoint_id` は映像・音声を送るこの端末の endpoint id(ADR 0067 §8)。無ければ media の無い session。
-    pub async fn create_live_session_with_media(
+    pub async fn create_live_session_in_channel(
         &self,
         topic_id: &str,
         channel_ref: ChannelRef,

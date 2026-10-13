@@ -661,6 +661,7 @@ async fn private_channel_removal_cancels_displayed_fetch_and_rejects_stale_regis
                 title: "private live".into(),
                 description: String::new(),
             },
+            None,
         )
         .await
         .unwrap();

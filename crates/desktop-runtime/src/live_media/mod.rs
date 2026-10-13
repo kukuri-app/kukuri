@@ -149,6 +149,8 @@ struct Broadcast {
     announced: bool,
     catalog: moq_mux::catalog::Producer,
     video: moq_mux::container::Producer<Container, hang::catalog::VideoConfig>,
+    /// 最後に置いた映像の timestamp(μs)。
+    last_video_us: u64,
     source: LiveVideoSource,
     viewers: Arc<AtomicUsize>,
     /// 開くのを待つ間も映像を置けるよう、broadcast の一覧と別に lock する。
@@ -220,6 +222,7 @@ impl Broadcast {
             announced: false,
             catalog,
             video,
+            last_video_us: 0,
             source,
             viewers: Arc::default(),
             microphone: Arc::default(),
@@ -409,11 +412,12 @@ impl LiveMedia {
         let current = broadcasts
             .get_mut(session_id)
             .context("the live session is not being broadcast")?;
-        let timestamp = Timestamp::from_micros(
-            micros(current.catalog.clock().now()).saturating_sub(micros_of(age)),
-        )?;
+        // IPC の遅れの揺れで前の frame より前にならないようにする(巻き戻ると視聴者の track が止まる)。
+        let timestamp_us = micros(current.catalog.clock().now())
+            .saturating_sub(micros_of(age))
+            .max(current.last_video_us.saturating_add(1));
         let written = current.video.write(moq_mux::container::Frame {
-            timestamp,
+            timestamp: Timestamp::from_micros(timestamp_us)?,
             duration: None,
             payload: data.into(),
             keyframe,
@@ -423,6 +427,7 @@ impl LiveMedia {
             return Ok(());
         }
         written?;
+        current.last_video_us = timestamp_us;
         if !current.announced {
             current.broadcast.announce(origin::Route::default())?;
             current.announced = true;
@@ -451,6 +456,10 @@ impl LiveMedia {
             };
             (current.origin.consume(), Arc::clone(&current.viewers))
         };
+        // 満員なら docs を読む前に断る(待っている視聴者の試し直しを軽くする)。枠は認可の後に取る。
+        if viewers.load(Ordering::Acquire) >= MAX_DIRECT_VIEWERS {
+            return Err(DENIED_FULL.into());
+        }
         let (context, owner) = app
             .live_media_scope(&request.topic_id, &request.session_id)
             .await
@@ -539,6 +548,20 @@ fn micros(timestamp: Timestamp) -> u64 {
 
 fn micros_of(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
+/// 受ける側の映像の上限(ADR 0067 §4): catalog の source(画面は 15 fps)の frame 数と bitrate の 1.25 倍を 1 秒分。
+fn video_budget(config: &hang::catalog::VideoConfig) -> RateBudget {
+    let screen = LiveVideoSource::Screen.limits();
+    let limits = if config.framerate == Some(f64::from(screen.framerate)) {
+        screen
+    } else {
+        LiveVideoSource::Camera.limits()
+    };
+    RateBudget::new(
+        u64::from(limits.framerate),
+        u64::from(limits.bitrate) * 5 / 4 / 8,
+    )
 }
 
 fn video_config(limits: LiveVideoLimits) -> hang::catalog::VideoConfig {
@@ -658,13 +681,7 @@ async fn play(
         u64::from(audio_budget.max_audio_frames_per_second),
         audio_budget.max_audio_bytes_per_second,
     );
-    // 受ける側の上限: 2 つの source のうち大きい方の frame 数と bitrate の 1.25 倍(ADR 0067 §4)。
-    let camera = LiveVideoSource::Camera.limits();
-    let screen_limits = LiveVideoSource::Screen.limits();
-    let mut video_admission = RateBudget::new(
-        u64::from(camera.framerate.max(screen_limits.framerate)),
-        u64::from(camera.bitrate.max(screen_limits.bitrate)) * 5 / 4 / 8,
-    );
+    let mut video_admission = video_budget(video_config);
     loop {
         // 次に届いたもの(購読の future を落としてから扱う)。
         let next = {
@@ -685,8 +702,11 @@ async fn play(
             Next::Video(None) | Next::Catalog(None) | Next::Closed => {
                 return Ok(LiveWatchState::Ended);
             }
-            // 配信の途中で mic が初めて開いたら、音声の track を足す。
+            // 配信の途中で source が替わったら上限を合わせ、mic が初めて開いたら音声の track を足す。
             Next::Catalog(Some(catalog)) => {
+                if let Some(config) = catalog.video.renditions.get(LIVE_VIDEO_TRACK) {
+                    video_admission = video_budget(config);
+                }
                 if audio.is_none() {
                     audio = open_audio(&broadcast, &catalog).await?;
                 }

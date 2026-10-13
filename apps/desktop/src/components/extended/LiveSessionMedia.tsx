@@ -54,6 +54,7 @@ function LiveBroadcastControls({ api, request }: MediaProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const previewRef = useRef<HTMLVideoElement>(null);
   const encodingRef = useRef<{ stop(): void } | null>(null);
+  const aliveRef = useRef(true);
   const { topic, session_id: sessionId } = request;
 
   const stopEncoding = () => {
@@ -65,6 +66,12 @@ function LiveBroadcastControls({ api, request }: MediaProps) {
     setPhase('idle');
     await api.stopLiveBroadcast(request).catch(() => undefined);
   };
+  // 画面を離れた後に終わった操作は、配信を止めて捨てる(取り込みも mic も残さない)。
+  const abandoned = () => {
+    if (aliveRef.current) return false;
+    void api.stopLiveBroadcast(request).catch(() => undefined);
+    return true;
+  };
   // mic は取り込みが始まってから開く(取り込みが拒否されたら mic も開かない)。配信中の source の切替では mic を閉じない。
   const start = async (nextSource: LiveVideoSource, nextMicrophone: boolean) => {
     const keepMicrophone = phase === 'live' && nextMicrophone;
@@ -73,7 +80,12 @@ function LiveBroadcastControls({ api, request }: MediaProps) {
     setNotice(null);
     try {
       const status = await api.setLiveBroadcast({ ...request, source: nextSource, microphone: keepMicrophone });
+      if (abandoned()) return;
       const stream = await captureVideo(nextSource, status.limits);
+      if (abandoned()) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       encodingRef.current = encodeVideo({
         stream,
         limits: status.limits,
@@ -83,11 +95,13 @@ function LiveBroadcastControls({ api, request }: MediaProps) {
       });
       if (nextMicrophone && !keepMicrophone) {
         const opened = await api.setLiveBroadcast({ ...request, source: nextSource, microphone: true });
+        if (abandoned()) return;
         setMicrophone(opened.microphone);
         if (!opened.microphone) setNotice(t('media.microphoneUnavailable'));
       }
       setPhase('live');
     } catch (error) {
+      if (abandoned()) return;
       await stop();
       setNotice(t(`media.errors.${captureErrorKind(error, nextSource)}`));
     }
@@ -97,6 +111,7 @@ function LiveBroadcastControls({ api, request }: MediaProps) {
     setMicrophone(next);
     if (phase !== 'live') return;
     const status = await api.setLiveBroadcast({ ...request, source, microphone: next });
+    if (abandoned()) return;
     setMicrophone(status.microphone);
     setNotice(next && !status.microphone ? t('media.microphoneUnavailable') : null);
   };
@@ -107,7 +122,10 @@ function LiveBroadcastControls({ api, request }: MediaProps) {
   // 画面を離れたら取り込みと配信を止める(再起動の後も自動では始めない)。
   useEffect(() => {
     const encoding = encodingRef;
+    const alive = aliveRef;
+    alive.current = true;
     return () => {
+      alive.current = false;
       encoding.current?.stop();
       void api.stopLiveBroadcast({ topic, session_id: sessionId }).catch(() => undefined);
     };
@@ -178,11 +196,13 @@ function LiveViewer({ api, request }: MediaProps) {
     const target = { topic, session_id: sessionId };
     const player = createLivePlayer(canvasRef.current!);
     let stopped = false;
+    let watching: Promise<void> = Promise.resolve();
     void (async () => {
       while (!stopped) {
         let ended: LiveWatchState = 'ended';
         try {
-          await api.watchLiveMedia(target);
+          watching = api.watchLiveMedia(target);
+          await watching;
           for (;;) {
             const batch = parseLiveVideoBatch(await api.nextLiveVideo(target));
             if (stopped) return;
@@ -205,7 +225,11 @@ function LiveViewer({ api, request }: MediaProps) {
     return () => {
       stopped = true;
       player.close();
-      void api.stopWatchingLiveMedia(target).catch(() => undefined);
+      // 視聴の開始の途中なら、その後で止める(先に止めると開始が残り、音声が鳴り続ける)。
+      void watching
+        .catch(() => undefined)
+        .then(() => api.stopWatchingLiveMedia(target))
+        .catch(() => undefined);
     };
   }, [api, topic, sessionId]);
 

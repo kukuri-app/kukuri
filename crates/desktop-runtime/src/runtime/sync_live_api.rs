@@ -158,7 +158,7 @@ impl DesktopRuntime {
         #[cfg(target_family = "wasm")]
         let media_endpoint_id = None;
         self.app_service
-            .create_live_session_with_media(
+            .create_live_session_in_channel(
                 request.topic.as_str(),
                 request.channel_ref,
                 CreateLiveSessionInput {
