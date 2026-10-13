@@ -205,6 +205,13 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // #1034: webview の camera・画面の取り込みは、配信を始めた source だけを許す(ADR 0067 §9)。
+        .manage(commands::live_media::LiveCaptureGate::default())
+        .on_permission_request(|webview, kind| {
+            webview
+                .state::<commands::live_media::LiveCaptureGate>()
+                .respond(kind)
+        })
         .on_window_event(|window, event| {
             // 利用可能なトレイがある場合だけ隠す。それ以外は停止処理へ進む。
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -215,6 +222,8 @@ pub fn run() {
         .setup(|app| {
             #[cfg(target_os = "linux")]
             file_dialog::install(app.handle())?;
+            #[cfg(target_os = "linux")]
+            commands::live_media::enable_media_stream(app.handle())?;
             app.manage(app_update::AppUpdateState::default());
             app.manage(desktop_lifecycle::DesktopLifecycle::default());
             app.manage(desktop_lifecycle::WindowCloseState::new(
@@ -358,6 +367,12 @@ pub fn run() {
             commands::link_preview::fetch_link_preview,
             commands::link_preview::verify_profile_domain,
             commands::metaverse_audio::set_metaverse_audio,
+            commands::live_media::set_live_broadcast,
+            commands::live_media::push_live_video,
+            commands::live_media::stop_live_broadcast,
+            commands::live_media::watch_live_media,
+            commands::live_media::next_live_video,
+            commands::live_media::stop_watching_live_media,
             commands::app_consent::get_app_consent_status,
             commands::app_consent::accept_app_consents,
             commands::identity::get_account_display,

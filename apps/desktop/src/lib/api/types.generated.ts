@@ -958,6 +958,20 @@ listening: number,
  */
 rejected_frames: number, };
 
+export type LiveVideoSource = "camera" | "screen";
+
+export type LiveVideoLimits = { width: number, height: number, framerate: number, bitrate: number, };
+
+export type SetLiveBroadcastRequest = { topic: string, session_id: string, source: LiveVideoSource, microphone: boolean, };
+
+export type LiveBroadcastStatus = { 
+/**
+ * mic が開いているか(求めても開けなければ false で、映像だけを送る)。
+ */
+microphone: boolean, limits: LiveVideoLimits, };
+
+export type LiveMediaRequest = { topic: string, session_id: string, };
+
 export type MoveDomeRequest = { source_topic: string, move_id: string, source_instance_id: string, target_context: SpatialContextV1, };
 
 export type ListDomeConnectionTopologyRequest = { spatial_context: SpatialContextV1, };

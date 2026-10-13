@@ -148,6 +148,15 @@ impl DesktopRuntime {
     }
 
     pub async fn create_live_session(&self, request: CreateLiveSessionRequest) -> Result<String> {
+        // この端末が映像・音声を送る(ADR 0067 §8)。Web は配信しない(ADR 0060)。
+        #[cfg(not(target_family = "wasm"))]
+        let media_endpoint_id = self
+            .iroh_stack
+            .current_node()
+            .await
+            .map(|node| node.endpoint().id().to_string());
+        #[cfg(target_family = "wasm")]
+        let media_endpoint_id = None;
         self.app_service
             .create_live_session_in_channel(
                 request.topic.as_str(),
@@ -156,6 +165,7 @@ impl DesktopRuntime {
                     title: request.title,
                     description: request.description,
                 },
+                media_endpoint_id,
             )
             .await
     }
@@ -163,7 +173,10 @@ impl DesktopRuntime {
     pub async fn end_live_session(&self, request: LiveSessionCommandRequest) -> Result<()> {
         self.app_service
             .end_live_session(request.topic.as_str(), request.session_id.as_str())
-            .await
+            .await?;
+        #[cfg(not(target_family = "wasm"))]
+        self.live_media.stop_broadcast(&request.session_id).await;
+        Ok(())
     }
 
     pub async fn join_live_session(&self, request: LiveSessionCommandRequest) -> Result<()> {
@@ -173,9 +186,68 @@ impl DesktopRuntime {
     }
 
     pub async fn leave_live_session(&self, request: LiveSessionCommandRequest) -> Result<()> {
+        #[cfg(not(target_family = "wasm"))]
+        self.live_media.stop_watching(&request.session_id).await;
         self.app_service
             .leave_live_session(request.topic.as_str(), request.session_id.as_str())
             .await
+    }
+
+    /// live の配信を始める・source と mic を切り替える(画面が camera・画面の取り込みを始める前。ADR 0067 §9、#1034)。
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn set_live_broadcast(
+        &self,
+        request: crate::SetLiveBroadcastRequest,
+    ) -> Result<crate::LiveBroadcastStatus> {
+        let endpoint_id = self
+            .iroh_stack
+            .current_node()
+            .await
+            .map(|node| node.endpoint().id().to_string());
+        self.live_media
+            .set_broadcast(&self.app_service, endpoint_id, request)
+            .await
+    }
+
+    /// 画面が圧縮した映像の chunk を置く。`age` は取り込みから今までの時間。
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn push_live_video(
+        &self,
+        session_id: &str,
+        keyframe: bool,
+        age: std::time::Duration,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        self.live_media
+            .push_video(session_id, keyframe, age, data)
+            .await
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn stop_live_broadcast(&self, request: crate::LiveMediaRequest) -> Result<()> {
+        self.live_media.stop_broadcast(&request.session_id).await;
+        Ok(())
+    }
+
+    /// live を視聴する(配信者の端末へ購読する)。映像は `next_live_video` で受け取る。
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn watch_live_media(&self, request: crate::LiveMediaRequest) -> Result<()> {
+        let node = self.iroh_stack.current_node().await;
+        self.live_media
+            .watch(&self.app_service, node, request)
+            .await
+    }
+
+    /// 送りかけの映像と視聴の状態(画面へ渡す binary の形)。
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn next_live_video(&self, request: crate::LiveMediaRequest) -> Result<Vec<u8>> {
+        Ok(self.live_media.next_video(&request.session_id).await)
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn stop_watching_live_media(&self, request: crate::LiveMediaRequest) -> Result<()> {
+        self.live_media.stop_watching(&request.session_id).await;
+        Ok(())
     }
 
     pub async fn list_game_rooms(

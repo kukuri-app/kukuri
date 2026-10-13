@@ -144,6 +144,7 @@ fn live_manifest(
         status,
         started_at: Utc::now().timestamp_millis(),
         ended_at: None,
+        media_endpoint_id: None,
     }
 }
 

@@ -19,6 +19,34 @@
     "title": "ライブタイトル"
   },
   "loading": "ライブセッションを読み込み中…",
+  "media": {
+    "broadcasting": "映像を配信しています",
+    "disableMicrophone": "マイクを無効にする",
+    "enableMicrophone": "マイクを有効にする",
+    "errors": {
+      "cameraUnavailable": "カメラを使えません。画面の配信は選べます",
+      "denied": "カメラ・画面の取り込みが許可されませんでした",
+      "elsewhere": "このライブセッションは、この端末から映像を配信できません（この端末で新しく作ったライブセッションから配信できます）",
+      "failed": "映像の配信を始められませんでした",
+      "unsupported": "この環境では映像を配信できません"
+    },
+    "microphoneUnavailable": "マイクを使えないため、映像だけを配信しています",
+    "preview": "自分の映像",
+    "source": "配信する映像",
+    "sources": {
+      "camera": "カメラ",
+      "screen": "画面"
+    },
+    "startBroadcast": "映像の配信を始める",
+    "states": {
+      "connecting": "配信に接続しています…",
+      "ended": "映像が止まりました。接続し直しています…",
+      "full": "満員のため視聴できません（配信者から直接受けられるのは 4 人まで）。空きを待っています…",
+      "no_media": "配信者はまだ映像を送っていません"
+    },
+    "stopBroadcast": "映像の配信を止める",
+    "video": "配信の映像"
+  },
   "statuses": {
     "Ended": "終了",
     "Live": "配信中",

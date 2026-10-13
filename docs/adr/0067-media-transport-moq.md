@@ -12,6 +12,11 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - D6: 映像の codec は VP8（§9）。
 - D7: 配信できる映像は camera と画面で、1 つの配信で同時に送るのはどちらか 1 つ（§9）。
 - D8: 画質の上限は camera が 1280×720・30 fps・1.5 Mbps、画面が 1920×1080・15 fps・2.5 Mbps（§4）。
+- D9: 配信の操作（camera／画面の選択・mic の on／off・開始・停止）は、主催者の配信中の session の card に置く。session の作成は変えない（§9）。
+- D10: 視聴者の映像・音声の再生は「参加」で始まり「退出」で止まる（§9）。
+- D11: 配信者は配信中に mic だけを止める・戻すことができる（§9）。
+
+#1034 の AC-2 は、配信者から直接届く視聴者（4 人まで、5 人目は満員）の AC-2a と、視聴者どうしの転送の AC-2b に分ける（2026-10-13 のユーザー判断。D9〜D11 も同日）。AC-2a の監査の後、同日のユーザー判断で次も決めた: 主催者が live の列を離れたら配信を止める。この端末で作っていない session（別の端末・Web・この版より前）は、配信を始めるときに理由を示して断る。Windows の WebView2 が camera の許可を保存すること（§9）は受け入れる。
 
 観測の基準は main `e6177415f4b2c93ab5de5f009dae16769b8d90b9`、外部依存と実行基盤の確認日は 2026-10-13（実機での確認は #1033・#1034 で行う）。
 
@@ -74,7 +79,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 
 - 送る側（live では転送する視聴者も）が受け口で相手の認可要求を検証してから、その session の公開範囲に対象の broadcast を置く。拒否は理由の code だけを返して接続を閉じ、音声・映像・他の参加者の識別子を返さない。
   - metaverse: 要求は参加者が署名した `DomeSpatialAccessProofV1`（Spatial Context と話者の Dome の owner に束縛、10 秒）と、対象の Dome（instance・generation・session）。送る側は署名と期限を確かめ、自分の状態で `evaluate_dome_room_access`（owner から visitor への block、公開 topic は gossip を止めていないこと、private は current epoch の active な参加者）を評価し、自分がその Dome の session に参加中であることを確かめる。
-  - live: 要求は視聴者が署名した、live session と scope に束縛した 10 秒の proof。送る側は session が終了していないこと（検証済みの state）と、private なら current epoch の active な参加者であることを確かめる。公開 live の事前の topic 購読 lease を条件にしない。
+  - live: 要求は視聴者が署名した、session の scope と配信者（owner）に束縛した 10 秒の proof（Dome と同じ形）と、対象の session。送る側は自分が配信中の session であることと、session が終了していないこと（検証済みの state）と、private なら current epoch の active な参加者であることを確かめる。公開 live の事前の topic 購読 lease を条件にしない。
 - 継続: 送る側は 5 秒ごとに、接続の初めに proof で確かめた相手の公開鍵について、自分の状態（block、公開 topic の gossip、private の参加者）で access を評価し直し、自分がまだ同じ Dome の session に居ることを確かめる。拒否なら session を閉じる（ADR 0045 の KeepAlive と同じ間隔）。送る側は Spatial Context の状態を持つ参加者なので、proof を送り直させない。moq-lite では announce を取り消しても進行中の購読は止まらないため、止めるときは session を閉じる。
 - mute・block した author は購読しない（decode・再生の前に捨てる）。topology・参加・presence は変えない。
 - mic・camera・screen は利用者の操作の後、機器を開けた（OS の許可を含む）場合だけ送る。開けなければ送信は 0 で、開始を成功と表示しない。`moq-audio` は購読者がいる間だけ機器を開くため、mic が on の間は自分の端末も購読して機器を開いたままにし、最初の音が届いてから on と示す。再起動後は自動で開始しない。Windows で OS の設定が mic を拒否しているときの見え方は #1033 が実機で確かめ、送信 0 と表示を合わせる。
@@ -89,7 +94,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 | 話者が送る相手（metaverse） | 話者の端末 | 64（固定） | 新しい購読を `busy` で拒否する。その聞き手は空きができるまで聞こえない | 相手の退出・失効・購読の解除・30 秒無通信で解除 |
 | 音声の送信量 | 話者ごと | 50 frame/s・32 KiB/s（ADR 0041 player） | 受ける側が捨てて拒否の件数に数える | 1 秒分の枠を経過時間に比例して補充する（正規の 20 ms の frame の到着の揺れとまとめ到着は捨てない） |
 | 再生前の保持 | 話者ごと | 既定 50 ms、上限は client の jitter frame × 20 ms（既定 160 ms） | 上限より遅れた group は古いものから飛ばし、保持が上限を超える分は書かずに捨てる | 再生と同時 |
-| 配信者が直接送る視聴者（live） | 配信者の端末 | 4（#1034 AC-1 で確定。D8 の上限で、配信者の上りは最大約 10 Mbps） | 直接の子の一覧を返し、転送の参加へ回す（§8） | 子の退出・失効・30 秒無通信で解除 |
+| 配信者が直接送る視聴者（live） | 配信者の端末 | 4（#1034 AC-1 で確定。D8 の上限で、配信者の上りは最大約 10 Mbps） | 直接の子の一覧を返し、転送の参加へ回す（§8）。AC-2b までは `full` で拒否し、視聴者は満員と示して 5 秒ごとに試し直す | 子の退出・失効・30 秒無通信で解除。枠は認可で取り、接続の終了で空く |
 | 視聴者が転送する相手（live） | 視聴者の端末 | 2（同上。転送する視聴者の上りは最大約 5 Mbps） | 自分の子の一覧を返す | 同上 |
 | 転送の参加の問い合わせ（live） | 1 回の参加 | 16 段、1 段 5 秒 | 参加できないと表示する | 参加の終了で破棄 |
 | 視聴者の親（live） | 視聴者の端末 | 1 | — | 張り直しで置き換え |
@@ -98,8 +103,8 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 | live の track | broadcast | 映像 1・音声 1 | 受けない | 配信の終了で削除 |
 | live の group の保持 | track・転送する端末 | 最新 1 group | 古い group を捨てる | 配信の終了で削除 |
 | live の映像の codec | 配信 | VP8（D6） | — | — |
-| live の映像の画質（D8） | 配信 | camera: 1280×720・30 fps・1.5 Mbps。画面: 1920×1080・15 fps・2.5 Mbps | 配信者の encoder の設定で守る。受ける側は frame 数（30・15 /s）と bitrate の 1.25 倍を、1 秒分の枠を経過時間に比例して補充して数え、超える分を捨てる | 配信の終了で破棄 |
-| live の映像の group | track | keyframe ごと、2 秒 | 途中参加は最新の group（keyframe）から始める | 配信の終了で削除 |
+| live の映像の画質（D8） | 配信 | camera: 1280×720・30 fps・1.5 Mbps。画面: 1920×1080・15 fps・2.5 Mbps | 配信者の encoder の設定で守る。受ける側は catalog が示す今の source の frame 数（30・15 /s）と bitrate のそれぞれ 1.25 倍（配信者の間引きと同じ）を、1 秒分の枠を経過時間に比例して補充して数え、超える分を捨てる | 配信の終了で破棄 |
+| live の映像の group | track | keyframe ごと、2 秒 | 途中参加は最新の group（keyframe）から始める（遅れの許容 0 で購読し、最初の frame の後に下の 1 秒にする） | 配信の終了で削除 |
 | 視聴の購読の最大遅延（live の映像） | 視聴者・転送する端末 | 1 秒 | 遅れた group は古いものから飛ばす | 視聴の終了で破棄 |
 | 音声と映像のずれ（live） | 視聴者の端末 | 映像の遅れ 45 ms・進み 125 ms 以内を目標（ITU-R BT.1359 の検知の閾値） | 映像は Rust の音声の再生時刻に合わせて出し、遅れすぎた frame は捨てる | — |
 | 画面へ送りかけの映像（Rust → 画面） | 視聴者の端末 | 1 秒分（30 chunk） | 次の keyframe まで捨てる | 画面の終了・視聴の終了で破棄 |
@@ -142,9 +147,10 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 
 - 音声は Rust 側（`moq-audio`）で取り込み・圧縮（Opus、20 ms）・decode・mix・再生を行い、echo cancellation（`sonora`）は再生中の音を参照に使う。画面側の音声の取り込み・再生（`getUserMedia`・WebAudio）は削除する。live の音声も同じ経路を使う。
 - metaverse の距離減衰: 聞き手の端末の Rust が、話者の位置の track と、画面から受ける聞き手の位置・ready な隣接 Dome の opening の位置から既存の距離関数で gain を求め、話者ごとの音量に反映する。gain の関数は Rust の 1 か所に残し、TypeScript の gain の関数は #1033 で削除した（画面は話者を近い順に並べるための距離と opening の位置だけを持つ）。
-- 映像（#1034 AC-1、D5〜D7）: 配信者の画面が `getUserMedia`（camera）か `getDisplayMedia`（画面）のどちらか 1 つを取り込み、`VideoEncoder`（VP8、`latencyMode: realtime`）で圧縮し、chunk を Tauri の IPC（raw の `invoke`）で Rust へ渡す。Rust は署名・moq の公開・転送・認可だけを行う。視聴者の Rust は受けた chunk を `ipc::Channel` で画面へ渡し、画面の `VideoDecoder` で復号して描画する。映像の frame は Rust の音声の再生時刻（再生中の音声の timestamp）に合わせて出す。映像の取り込みでは mic を使わず、live の音声は上の Rust の経路で取り込む。
+- 映像（#1034 AC-1、D5〜D7）: 配信者の画面が `getUserMedia`（camera）か `getDisplayMedia`（画面）のどちらか 1 つを取り込み、`VideoEncoder`（VP8、`latencyMode: realtime`）で圧縮し、chunk を Tauri の IPC（raw の `invoke`）で Rust へ渡す。Rust は署名・moq の公開・転送・認可だけを行う。視聴者の画面は、受けた chunk を raw の応答で取りに来て（`next_live_video`。届くまで最大 1 秒待ち、送りかけは §4 の 1 秒分まで）、画面の `VideoDecoder` で復号して描画する。`ipc::Channel` は 1 KiB 以上の raw の payload を画面側の上限の無い queue に積むため使わない（#1034 AC-2a）。映像の frame は Rust の音声の再生時刻（再生中の音声の timestamp）に合わせて出す。映像の取り込みでは mic を使わず、live の音声は上の Rust の経路で取り込む。
+  - 配信の操作（D9〜D11、#1034 AC-2a）: 主催者の card で camera か画面を選んで始める。broadcast は最初の keyframe で公開し、取り込みが拒否されたら配信を止めて送信 0。mic は取り込みが始まってから開き（取り込みが拒否されたら開かない）、配信中の off は `moq-audio` の `stop`（機器を閉じ、track と catalog は残す）。視聴者は catalog の更新を追って途中で足された音声の track を購読し、音声の再生時刻は最後に再生へ渡した位置から経過時間で進める（mic が止まっても映像を止めない）。視聴者は満員・映像の無い間・止まった後に 5 秒ごとに試し直す。主催者の card が画面から消えると（列を閉じる・別の画面へ移る）、取り込みと配信を止める（再開は card の操作だけ）。視聴者は manifest の端末へ購読するので、配信できるのはこの端末で作った session だけで、それ以外は始めるときに理由を示して断る。
   - frame の取り出し: Windows（WebView2）は `MediaStreamTrackProcessor`。Linux（WebKitGTK）は window に `MediaStreamTrackProcessor` が無い（feature `MediaStreamTrackProcessing` は既定で無効で、有効にしても dedicated worker だけ）ため、`<video>` と `requestVideoFrameCallback` から `VideoFrame` を作る。
-  - 許可: Tauri 2.12 の `on_permission_request` で、利用者が配信を始めた後だけ camera・画面の取り込みを許し、それ以外は拒否する。Windows の画面は WebView2 の選択画面、Linux は xdg-desktop-portal（camera は Camera portal、画面は ScreenCast portal の選択画面が開始のたびに出る）。
+  - 許可: Tauri 2.12 の `on_permission_request` で、利用者が配信を始めた後だけ、その source（camera か画面）の取り込みを許す。それ以外は platform の既定のまま（Linux は拒否、Windows は WebView2 の確認）とし、移行用の QR の読み取り（#1628）の camera を変えない。ただし Windows の WebView2 は Allow を profile に保存するため、一度 camera で配信した後は、camera の要求（#1628 を含む）に確認が出ない（送るには配信の操作が要る）。Linux の WebKitGTK は既定で `getUserMedia`・`getDisplayMedia` を持たないので `enable-media-stream` を有効にする。Windows の画面は WebView2 の選択画面、Linux は xdg-desktop-portal（camera は Camera portal、画面は ScreenCast portal の選択画面が開始のたびに出る）。
   - 制約: Ubuntu 22.04 の webview は camera を列挙できない見込み（WebKitGTK 2.50 以降は PipeWire 0.3.64 以上を要し、22.04 は 0.3.48。未実測）。その場合は camera を選べないことを示し、画面の配信だけにする。Linux の VP8 は GStreamer の good（既定で入る）で encode・decode でき、H.264 は追加の package（libav か plugins-bad）が要る。
   - 不採用の案（Rust で取り込み・圧縮し、画面で復号・描画）: 上流の `moq-video` 0.1.11（2026-05 初版、kukuri と同じ moq の版）で camera・画面・H.264 の encode を賄えるが、encoder は H.264 だけで、Linux の視聴に追加の package が要り、OpenH264 を source から build して同梱すると配る側が AVC の特許の pool の対象になる。VP8 にするには libvpx の binding を kukuri が持つことになる。Wayland の画面の取り込みは、kukuri の `ashpd` の runtime の設定と衝突する。
   - 実測（2026-10-13、試作は破棄。Windows は Edge 155＝WebView2 runtime 154 と同じ系統、Linux は Ubuntu 26.04・WebKitGTK 2.52.6・GStreamer 1.28 の headless）:
@@ -180,7 +186,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 ### live 配信の映像・音声
 
 - Feature 名: live media（moq-lite、視聴者の転送）
-- Durable / Transient: media は Transient。track の descriptor（配信者の endpoint id、配信ごとの署名鍵の公開鍵、track の codec）は Durable（live manifest の一部、owner 署名と revision つき）
+- Durable / Transient: media と hang の catalog（track の codec・画質）は Transient。descriptor（配信者の端末の endpoint id。配信ごとの署名鍵の公開鍵は AC-2b）は Durable（live manifest の任意の項目、owner 署名と revision つき。ADR 0005 の追補）
 - Canonical Source: descriptor は ADR 0005 の docs state と manifest blob。media は配信者の端末
 - Replicated?: descriptor は Yes、media は No
 - Rebuildable From: descriptor は docs と blob
@@ -216,7 +222,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 
 - #1032（完了）: iroh 1.3 fork への移行。この ADR の依存の基準。
 - #1033: §1〜§7・§9 の受け口・認可・停止・時刻・上限と、metaverse の音声の取り込み〜再生。削除: `MetaverseRoomEventV1::SpatialAudioFrame`・`MetaverseSpatialAudioFrameV1`・wire の `spatial_audio_frame`・`preflight_spatial_audio_event`・`useSpatialAudio.ts` の PCM の送信と即時再生・`resamplePcm16`・`SpatialAudioModel.ts` の距離関数・CLI schema と IPC 型の該当部分。ADR 0041 の音声の行と ADR 0043 の音声の節を実装に合わせる。
-- #1034: AC-1 で映像の方式・codec・上限（§4 の live の行の値を含む）を決めた（D5〜D8、試作のコードは破棄）。AC-2 で live の配信・視聴・転送・途中参加・終了を実装する。#1033 の部分を使い、live manifest に track の descriptor を足す（ADR 0005 の追補）。
+- #1034: AC-1 で映像の方式・codec・上限（§4 の live の行の値を含む）を決めた（D5〜D8、試作のコードは破棄）。AC-2a で配信者から直接届く視聴者の配信・視聴・途中参加・終了を、AC-2b で視聴者どうしの転送と配信者の署名を実装する。#1033 の部分（受け口・認可・音声の機器）を使い、live manifest に配信者の端末の id を足す（ADR 0005 の追補）。
 
 ## 旧記述の失効範囲
 

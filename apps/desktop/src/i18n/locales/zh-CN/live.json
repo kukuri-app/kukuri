@@ -19,6 +19,34 @@
     "title": "直播标题"
   },
   "loading": "正在加载直播会话…",
+  "media": {
+    "broadcasting": "正在直播画面",
+    "disableMicrophone": "关闭麦克风",
+    "enableMicrophone": "开启麦克风",
+    "errors": {
+      "cameraUnavailable": "无法使用摄像头。可以改为直播屏幕。",
+      "denied": "未允许捕获摄像头或屏幕。",
+      "elsewhere": "无法从此设备直播此直播会话。可以从在此设备上新建的直播会话进行直播。",
+      "failed": "无法开始直播画面。",
+      "unsupported": "此环境无法直播画面。"
+    },
+    "microphoneUnavailable": "无法使用麦克风，仅直播画面。",
+    "preview": "我的画面",
+    "source": "直播的画面",
+    "sources": {
+      "camera": "摄像头",
+      "screen": "屏幕"
+    },
+    "startBroadcast": "开始直播画面",
+    "states": {
+      "connecting": "正在连接直播…",
+      "ended": "画面已停止。正在重新连接…",
+      "full": "观众已满，无法观看（最多 4 人直接从主播接收）。正在等待空位…",
+      "no_media": "主播尚未开始发送画面。"
+    },
+    "stopBroadcast": "停止直播画面",
+    "video": "直播画面"
+  },
   "statuses": {
     "Ended": "已结束",
     "Live": "直播中",

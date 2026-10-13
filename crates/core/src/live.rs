@@ -33,6 +33,15 @@ pub struct LiveSessionManifestBlobV1 {
     pub status: LiveSessionStatus,
     pub started_at: i64,
     pub ended_at: Option<i64>,
+    /// 映像・音声を送る配信者の端末の endpoint id(ADR 0067 §8)。無い session は media を持たない。
+    /// 旧版は知らない項目として読み飛ばす。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_endpoint_id: Option<String>,
+}
+
+/// 配信の映像・音声の broadcast の path(ADR 0067 §9)。
+pub fn live_media_broadcast_path(session_id: &str) -> String {
+    format!("live/{session_id}")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

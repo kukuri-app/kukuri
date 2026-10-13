@@ -505,6 +505,7 @@ async fn private_live_session_reaches_a_member_through_the_channel_hint() {
                 title: "private live".into(),
                 description: "members only".into(),
             },
+            None,
         )
         .await
         .expect("create private live session");

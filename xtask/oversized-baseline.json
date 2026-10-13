@@ -17,7 +17,7 @@
       "path": "crates/metaverse-host/src/lib.rs"
     },
     {
-      "lines": 1155,
+      "lines": 1156,
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
@@ -35,6 +35,10 @@
     {
       "lines": 1117,
       "path": "apps/desktop/src/shell/useDesktopShellData.ts"
+    },
+    {
+      "lines": 1056,
+      "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {
       "lines": 1054,
@@ -55,10 +59,6 @@
     {
       "lines": 1043,
       "path": "crates/harness/src/scenarios/desktop_smoke.rs"
-    },
-    {
-      "lines": 1042,
-      "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {
       "lines": 1042,

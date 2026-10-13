@@ -17,6 +17,12 @@ mod identity;
 mod ipc_ts_export;
 mod kdf;
 #[cfg(not(target_family = "wasm"))]
+mod live_media;
+#[cfg(not(target_family = "wasm"))]
+mod media_access;
+#[cfg(not(target_family = "wasm"))]
+mod media_devices;
+#[cfg(not(target_family = "wasm"))]
 mod metaverse_audio;
 mod paths;
 mod requests;
@@ -51,7 +57,7 @@ pub use backup::{
     rollback_pending_device_restore, validate_prepared_device_restore,
 };
 pub use command::{
-    COMMAND_FAILED_CODE, ClientGate, CommandError, DispatchContext,
+    COMMAND_FAILED_CODE, ClientGate, CommandError, DispatchContext, LIVE_BROADCAST_ELSEWHERE_CODE,
     PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE, PostRetryView, SCOPE_LIMIT_REACHED_CODE,
     STALE_RUNTIME_CODE, UNSUPPORTED_PLATFORM_CODE, dispatch_command, dispatched_commands,
     map_error,
@@ -125,6 +131,11 @@ pub use kukuri_app_api::{
     ScopeDisplayRequest, ScopeDisplayTarget, ScopeLimitReached,
 };
 pub use kukuri_transport::{ConnectivityPeerKind, PeerPage};
+#[cfg(not(target_family = "wasm"))]
+pub use live_media::{
+    LiveBroadcastElsewhere, LiveBroadcastStatus, LiveMediaRequest, LiveVideoLimits,
+    LiveVideoSource, SetLiveBroadcastRequest,
+};
 #[cfg(not(target_family = "wasm"))]
 pub use metaverse_audio::{
     MetaverseAudioNeighbor, MetaverseAudioRoom, MetaverseAudioSpeaker, MetaverseAudioStatus,

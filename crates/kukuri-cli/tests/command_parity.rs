@@ -164,8 +164,18 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
                 | "cancel_account_transfer"
                 | "start_account_union_sync"
         ),
-        // #1033: GUIのmic・speakerを使う空間音声。CLI／daemonには機器と3D表示がない。
-        "gui_media_device" => tauri == "commands::metaverse_audio::set_metaverse_audio",
+        // #1033: GUIのmic・speakerを使う空間音声。#1034: GUIのcamera・画面・mic・speakerを使うlive配信と視聴。
+        // CLI／daemonには機器と3D・映像の表示がない。
+        "gui_media_device" => matches!(
+            tauri,
+            "commands::metaverse_audio::set_metaverse_audio"
+                | "commands::live_media::set_live_broadcast"
+                | "commands::live_media::push_live_video"
+                | "commands::live_media::stop_live_broadcast"
+                | "commands::live_media::watch_live_media"
+                | "commands::live_media::next_live_video"
+                | "commands::live_media::stop_watching_live_media"
+        ),
         _ => false,
     }
 }
@@ -210,7 +220,7 @@ fn baseline_inventory_is_classified_once() {
         manifest.scope_revision,
         "2026-10-11-1197-ac4a-notification-id"
     );
-    assert_eq!(manifest.entries.len(), 189);
+    assert_eq!(manifest.entries.len(), 195);
     check_inventory(&gui_commands(), &manifest.entries).expect("全入口の分類");
 }
 

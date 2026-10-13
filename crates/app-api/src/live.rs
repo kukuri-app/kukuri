@@ -1,4 +1,5 @@
 use crate::service::*;
+use kukuri_core::SpatialContextV1;
 
 impl AppService {
     pub async fn list_live_sessions(&self, topic_id: &str) -> Result<Vec<LiveSessionView>> {
@@ -86,15 +87,17 @@ impl AppService {
         topic_id: &str,
         input: CreateLiveSessionInput,
     ) -> Result<String> {
-        self.create_live_session_in_channel(topic_id, ChannelRef::Public, input)
+        self.create_live_session_in_channel(topic_id, ChannelRef::Public, input, None)
             .await
     }
 
+    /// `media_endpoint_id` は映像・音声を送るこの端末の endpoint id(ADR 0067 §8)。無ければ media の無い session。
     pub async fn create_live_session_in_channel(
         &self,
         topic_id: &str,
         channel_ref: ChannelRef,
         input: CreateLiveSessionInput,
+        media_endpoint_id: Option<String>,
     ) -> Result<String> {
         let now = Utc::now().timestamp_millis();
         let title = input.title.trim();
@@ -130,6 +133,7 @@ impl AppService {
             status: LiveSessionStatus::Live,
             started_at: now,
             ended_at: None,
+            media_endpoint_id,
         };
         let state = self
             .persist_live_session_manifest(&source_replica_id, topic_id, manifest.clone(), now)
@@ -320,5 +324,64 @@ impl AppService {
             .await?;
         self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         Ok(())
+    }
+
+    /// 配信者の端末で、自分の終わっていない session なら、視聴者の資格を判定する scope と owner(自分)と、映像・音声を
+    /// 送る端末の id を返す(ADR 0067 §3)。
+    pub async fn live_media_scope(
+        &self,
+        topic_id: &str,
+        session_id: &str,
+    ) -> Result<Option<(SpatialContextV1, Pubkey, Option<String>)>> {
+        let Some((_, state, manifest)) = self
+            .fetch_live_session_state_and_manifest(topic_id, session_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if manifest.status == LiveSessionStatus::Ended
+            || state.owner_pubkey.as_str() != self.current_author_pubkey()
+        {
+            return Ok(None);
+        }
+        Ok(Some((
+            live_spatial_context(&manifest),
+            manifest.owner_pubkey,
+            manifest.media_endpoint_id,
+        )))
+    }
+
+    /// 視聴者の端末で、終わっていない session の配信者の端末と、proof を束縛する scope・owner を返す。
+    pub async fn live_media_source(
+        &self,
+        topic_id: &str,
+        session_id: &str,
+    ) -> Result<Option<(String, SpatialContextV1, Pubkey)>> {
+        let Some((_, _, manifest)) = self
+            .fetch_live_session_state_and_manifest(topic_id, session_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if manifest.status == LiveSessionStatus::Ended {
+            return Ok(None);
+        }
+        let context = live_spatial_context(&manifest);
+        Ok(manifest
+            .media_endpoint_id
+            .map(|endpoint| (endpoint, context, manifest.owner_pubkey)))
+    }
+}
+
+/// live session の scope を、Dome と同じ資格の判定(公開 topic・private channel の current epoch)に渡す形にする。
+fn live_spatial_context(manifest: &LiveSessionManifestBlobV1) -> SpatialContextV1 {
+    match manifest.channel_id.clone() {
+        None => SpatialContextV1::Topic {
+            topic_id: manifest.topic_id.clone(),
+        },
+        Some(channel_id) => SpatialContextV1::Channel {
+            topic_id: manifest.topic_id.clone(),
+            channel_id,
+        },
     }
 }

@@ -160,7 +160,7 @@ import type {
 import { invokeDesktop } from '../invoke/desktop';
 import { command } from '../invoke/dispatch';
 import { commitDomeLayoutRequest, resyncDomeSnapshotsRequest } from './domeHostingRequests';
-import { developerLogsApi, displayDemandApi, domeTransitionApi, postReloadApi, socialBlockApi } from './apiModules';
+import { developerLogsApi, displayDemandApi, domeTransitionApi, liveMediaApi, postReloadApi, socialBlockApi } from './apiModules';
 
 export const runtimeApi: DesktopApi = {
   createPost: command('createPost', async (topic, content, replyTo, attachments = [], channelRef = { kind: 'public' }, contentLabels = []) => {
@@ -751,6 +751,7 @@ export const runtimeApi: DesktopApi = {
   ...developerLogsApi,
   ...postReloadApi,
   ...displayDemandApi,
+  ...liveMediaApi,
   commitDomeLayout: command('commitDomeLayout', async (
     spatialContext,
     instanceId,

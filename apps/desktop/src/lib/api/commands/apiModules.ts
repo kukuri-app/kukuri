@@ -2,5 +2,6 @@
 export { developerLogsApi } from './developerLogsApi';
 export { displayDemandApi } from './displayDemandApi';
 export { domeTransitionApi } from './domeTransitionApi';
+export { liveMediaApi } from './liveMediaApi';
 export { postReloadApi } from './postReloadApi';
 export { socialBlockApi } from './socialBlockApi';
