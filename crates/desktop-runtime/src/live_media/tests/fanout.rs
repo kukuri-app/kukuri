@@ -69,7 +69,9 @@ async fn live_media_fanout_keeps_upstream_bounded() {
     assert_eq!(denial_code(&ancestor), Some(DENIED_ANCESTOR));
     drop(held);
 
-    // 視聴者を増やすと配信者の子の一覧から転送を受け、配信者の子は 4 人、各視聴者の子は 2 人のまま届く。
+    // 視聴者を増やすと配信者の子の一覧から転送を受け(同じ視聴者を選び続ければ 1 段深く付く)、見続けている全員に届く。
+    // 配信者の子は 4 人のまま、どの視聴者の子も 2 人を超えない。
+    let mut forwarded = Vec::new();
     for _ in 0..3 {
         let peer = swarm.peer().await;
         swarm.watch(&peer).await;
@@ -77,18 +79,29 @@ async fn live_media_fanout_keeps_upstream_bounded() {
             .collect_until(&peer, |chunks| !chunks.is_empty())
             .await;
         assert_eq!(state, LiveWatchState::Watching.code());
-        assert!(chunks.iter().all(|(_, _, index)| *index == 1));
+        assert!(!chunks.is_empty() && chunks.iter().all(|(_, _, index)| *index == 1));
         let route = swarm.links(&peer).await.route;
-        assert_eq!(route.len(), 3, "forwarded by one direct viewer");
-        assert!(ids.contains(&route[1]));
+        assert!(
+            route.len() >= 3 && ids.contains(&route[1]),
+            "forwarded through a direct viewer: {route:?}"
+        );
+        forwarded.push(peer);
     }
     assert_eq!(
         swarm.links(&swarm.broadcaster).await.children.len(),
         MAX_DIRECT_VIEWERS
     );
-    for peer in &direct {
-        assert!(swarm.links(peer).await.children.len() <= MAX_FORWARDED_VIEWERS);
+    let mut children = 0;
+    for peer in direct.iter().chain(&forwarded) {
+        let count = swarm.links(peer).await.children.len();
+        assert!(count <= MAX_FORWARDED_VIEWERS);
+        children += count;
     }
+    assert_eq!(
+        children,
+        forwarded.len(),
+        "each added viewer has one parent"
+    );
     swarm.shutdown().await;
 
     // 参加の問い合わせは 16 段で止まり、空きが無いと示す(どこまでも満員を返す配信者の端末)。
@@ -123,17 +136,23 @@ async fn live_media_drops_frames_without_broadcaster_signature() {
     let swarm = swarm().await;
     swarm.start().await;
     swarm.push(1, true).await;
+    // 改ざんする親は、署名どおりの keyframe(98)と署名の後で変えた差分(99)を 100 ms ごとに送り続ける(止まらない)。
     let mut tamperer = swarm.fake_parent(usize::MAX).await;
-    tamperer.video.push(99, true);
+    let _tampering = tamperer.pump(&[(98, true, false), (99, false, true)]);
     swarm.watch(&swarm.viewer).await;
-    // 配信者は満員(子は改ざんする視聴者だけ)なので、参加し直しても同じ親に付き、また離れる。
+    // 変えた差分を受けると、正しい frame が届き続けていてもその親から離れる。配信者は満員(子は改ざんする親だけ)なので、
+    // 5 秒ごとに同じ親へ参加し直す。
     let (state, chunks) = swarm
         .collect_until(&swarm.viewer, |_| tamperer.granted() >= 3)
         .await;
     assert_eq!(state, LiveWatchState::Watching.code());
     assert!(
-        chunks.is_empty(),
-        "a changed frame never reaches the screen"
+        tamperer.granted() >= 3,
+        "the viewer leaves the parent that changed a frame"
+    );
+    assert!(
+        chunks.iter().all(|(_, _, index)| *index == 98),
+        "a changed frame never reaches the screen: {chunks:?}"
     );
     tamperer.assert_rejoined_at_most_every(REJOIN_INTERVAL);
 
@@ -141,11 +160,16 @@ async fn live_media_drops_frames_without_broadcaster_signature() {
     tamperer.slots.pop();
     let _pump = swarm.pump(7);
     let (state, chunks) = swarm
-        .collect_until(&swarm.viewer, |chunks| !chunks.is_empty())
+        .collect_until(&swarm.viewer, |chunks| {
+            chunks.iter().any(|(_, _, index)| *index == 7)
+        })
         .await;
     assert_eq!(state, LiveWatchState::Watching.code());
-    assert!(!chunks.is_empty());
-    assert!(chunks.iter().all(|(_, _, index)| *index == 7), "{chunks:?}");
+    assert!(chunks.iter().any(|(_, _, index)| *index == 7), "{chunks:?}");
+    assert!(
+        chunks.iter().all(|(_, _, index)| *index != 99),
+        "{chunks:?}"
+    );
     assert_eq!(
         swarm.links(&swarm.viewer).await.route,
         [swarm.broadcaster.id(), swarm.viewer.id()]
@@ -162,7 +186,7 @@ async fn live_media_rejoins_after_parent_loss_within_rate_limit() {
     swarm.start().await;
     swarm.push(1, true).await;
     let mut hung = swarm.fake_parent(1).await;
-    let sending = hung.pump(2);
+    let sending = hung.pump(&[(2, true, false)]);
     let child = swarm.peer().await;
     for peer in [&swarm.viewer, &child] {
         swarm.watch(peer).await;
@@ -264,7 +288,7 @@ struct FakeParent {
     _fanout: Arc<Fanout>,
 }
 
-/// 配信者の鍵で署名した keyframe を置く映像の track。
+/// 配信者の鍵で署名した frame を置く映像の track。
 struct FakeVideo {
     signer: LiveMediaSigner,
     catalog: moq_mux::catalog::Producer,
@@ -358,8 +382,8 @@ impl Swarm {
 }
 
 impl FakeVideo {
-    /// 1 byte 目を `index` にした keyframe を置く。`tamper` なら署名の後で中身を変える。
-    fn push(&self, index: u8, tamper: bool) {
+    /// 1 byte 目を `index` にした frame を置く。`tamper` なら署名の後で中身を変える。
+    fn push(&self, index: u8, keyframe: bool, tamper: bool) {
         let timestamp_us = micros(self.catalog.clock().now());
         let mut payload = self
             .signer
@@ -374,19 +398,21 @@ impl FakeVideo {
                 timestamp: Timestamp::from_micros(timestamp_us).expect("timestamp"),
                 duration: None,
                 payload: payload.into(),
-                keyframe: true,
+                keyframe,
             })
             .expect("write");
     }
 }
 
 impl FakeParent {
-    /// 100 ms ごとに keyframe を置き続ける(落とすと止まる。接続・公開・track は残る)。
-    fn pump(&self, index: u8) -> AbortOnDropHandle<()> {
+    /// 100 ms ごとに `frames`(番号・keyframe・改ざん)を順に置き続ける(落とすと止まる。接続・公開・track は残る)。
+    fn pump(&self, frames: &'static [(u8, bool, bool)]) -> AbortOnDropHandle<()> {
         let video = Arc::clone(&self.video);
         AbortOnDropHandle::new(n0_future::task::spawn(async move {
             loop {
-                video.push(index, false);
+                for &(index, keyframe, tamper) in frames {
+                    video.push(index, keyframe, tamper);
+                }
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }))
