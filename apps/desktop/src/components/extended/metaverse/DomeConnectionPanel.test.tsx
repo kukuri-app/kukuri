@@ -70,6 +70,7 @@ function actions(topology = emptyTopology()) {
     createRoom: vi.fn(),
     publishRoomEvent: vi.fn(),
     listRoomEvents: vi.fn(),
+    getAuthorSocialView: vi.fn(),
     importRoomAsset: vi.fn(),
     getBlobPreviewUrl: vi.fn(),
     updateRoom: vi.fn(),

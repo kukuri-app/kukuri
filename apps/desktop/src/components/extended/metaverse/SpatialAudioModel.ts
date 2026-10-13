@@ -47,13 +47,15 @@ type SpatialAudioRequestInput = {
   neighbors: DomeNeighborTransitionView[];
   presences: Record<string, PeerPresence>;
   remoteTransforms: Record<string, AvatarTransform>;
-  mutedAuthorPubkeys: ReadonlySet<string>;
+  /** mute していないと分かった author。分かるまでは渡さない(mute した相手を一度も流さない)。 */
+  audibleAuthorPubkeys: ReadonlySet<string>;
   now: number;
 };
 
 /**
  * Rust の空間音声へ渡す状態(ADR 0067 §9)。音声を送っている話者を、current Dome は avatar の位置、ready な隣接 Dome は
- * opening までの距離で近い順に並べる。mute した話者・ready でない隣接 Dome・古い presence は渡さない。
+ * opening までの距離で近い順に並べる。mute した(または mute の状態が分からない)話者・ready でない隣接 Dome・古い
+ * presence は渡さない。
  */
 export function spatialAudioRequest({
   room,
@@ -62,7 +64,7 @@ export function spatialAudioRequest({
   neighbors,
   presences,
   remoteTransforms,
-  mutedAuthorPubkeys,
+  audibleAuthorPubkeys,
   now,
 }: SpatialAudioRequestInput): SetMetaverseAudioRequest {
   const listener = roundedPosition(listenerPosition);
@@ -87,7 +89,7 @@ export function spatialAudioRequest({
   for (const presence of Object.values(presences)) {
     const roomId = presence.roomId;
     if (!presence.microphoneEnabled || !roomId || !presence.authorPubkey
-      || mutedAuthorPubkeys.has(presence.authorPubkey)
+      || !audibleAuthorPubkeys.has(presence.authorPubkey)
       || now - presence.lastSeenAt > SPATIAL_AUDIO_PRESENCE_TTL_MS) continue;
     let distance: number | undefined;
     if (roomId === current.instance_id) {

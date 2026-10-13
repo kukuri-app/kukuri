@@ -33,6 +33,7 @@ export function createMetaverseRoomActions({
     listRoomEvents: (roomId, afterEnvelopeId, limit) =>
       api.listMetaverseRoomEvents(activeTopic, roomId, afterEnvelopeId, limit),
     setAudio: (request) => api.setMetaverseAudio(request),
+    getAuthorSocialView: (pubkey) => api.getAuthorSocialView(pubkey),
     importRoomAsset: (roomId, kind, mime, name, dataBase64) =>
       api.importMetaverseRoomAsset(
         activeTopic,

@@ -24,7 +24,7 @@ type UseSpatialAudioArgs = {
   /** 参加中で online の Dome。`null` で取り込み・送信・購読・再生をすべて止める。 */
   selectedRoom: GameRoomView | null;
   listenerTransformRef: RefObject<AvatarTransform | null>;
-  mutedAuthorPubkeys: ReadonlySet<string>;
+  audibleAuthorPubkeys: ReadonlySet<string>;
   transitionNeighbors: DomeNeighborTransitionView[];
   peerPresence: Record<string, PeerPresence>;
   remoteTransforms: Record<string, AvatarTransform>;
@@ -38,14 +38,14 @@ export function useSpatialAudio({
   actions,
   selectedRoom,
   listenerTransformRef,
-  mutedAuthorPubkeys,
+  audibleAuthorPubkeys,
   transitionNeighbors,
   peerPresence,
   remoteTransforms,
 }: UseSpatialAudioArgs) {
   const [microphoneRequested, setMicrophoneRequested] = useState(false);
   const [microphoneEnabled, setMicrophoneEnabled] = useState(false);
-  const inputsRef = useRef({ transitionNeighbors, peerPresence, remoteTransforms, mutedAuthorPubkeys, microphoneRequested });
+  const inputsRef = useRef({ transitionNeighbors, peerPresence, remoteTransforms, audibleAuthorPubkeys, microphoneRequested });
   const roomRef = useRef(selectedRoom);
   // actions を作り直しても(画面の他の操作)音声を止めない。
   const setAudioRef = useRef(actions.setAudio);
@@ -53,7 +53,7 @@ export function useSpatialAudio({
   const queueRef = useRef<Promise<unknown>>(Promise.resolve());
   // 周期の送信は描画の後の最新の入力を読む。
   useEffect(() => {
-    inputsRef.current = { transitionNeighbors, peerPresence, remoteTransforms, mutedAuthorPubkeys, microphoneRequested };
+    inputsRef.current = { transitionNeighbors, peerPresence, remoteTransforms, audibleAuthorPubkeys, microphoneRequested };
     roomRef.current = selectedRoom;
     setAudioRef.current = actions.setAudio;
   });
@@ -84,7 +84,7 @@ export function useSpatialAudio({
         neighbors: inputs.transitionNeighbors,
         presences: inputs.peerPresence,
         remoteTransforms: inputs.remoteTransforms,
-        mutedAuthorPubkeys: inputs.mutedAuthorPubkeys,
+        audibleAuthorPubkeys: inputs.audibleAuthorPubkeys,
         now,
       });
       const key = JSON.stringify(request);

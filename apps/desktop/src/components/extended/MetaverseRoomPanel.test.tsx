@@ -5,6 +5,7 @@ import { useState, type ReactNode } from 'react';
 
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import type {
+  AuthorSocialView,
   DesktopApi,
   DomePhysicsSnapshotV1,
   GameRoomView,
@@ -179,10 +180,36 @@ function presenceLeaveEvent(peerId: string, seq: number): MetaverseRoomEventView
   };
 }
 
+/// 音声を送っている話者の presence(空間音声の候補。ADR 0067)。
+function speakingPresenceEvent(endpointId: string, authorPubkey: string, seq: number): MetaverseRoomEventView {
+  const view = presenceJoinEvent(`${endpointId}:seed`, seq);
+  const now = Date.now();
+  return {
+    ...view,
+    content: {
+      ...view.content,
+      event: {
+        type: 'presence_join',
+        presence: {
+          room_id: room.metaverse!.instance_id,
+          peer_id: `${endpointId}:seed`,
+          display_name: null,
+          avatar_asset_ref: null,
+          joined_at: now,
+          last_seen_at: now,
+          microphone_enabled: true,
+        },
+      },
+    },
+    envelope: { pubkey: authorPubkey },
+  };
+}
+
 type RenderPanelOptions = {
   rooms?: GameRoomView[];
   syncStatus?: SyncStatus;
   onRefresh?: () => Promise<void>;
+  knownAuthorsByPubkey?: Record<string, AuthorSocialView>;
 };
 
 function createSyncStatus(): SyncStatus {
@@ -230,6 +257,7 @@ function panelElement(api: DesktopApi, options: RenderPanelOptions = {}) {
       rooms={options.rooms ?? [room]}
       syncStatus={effectiveSyncStatus}
       locale='en'
+      knownAuthorsByPubkey={options.knownAuthorsByPubkey}
       localProfile={{
         pubkey: effectiveSyncStatus.local_author_pubkey,
         name: 'host',
@@ -634,6 +662,45 @@ describe('MetaverseRoomPanel animation sharing', () => {
     await waitFor(() => {
       expect(screen.getByText('Remote animation: none')).toBeInTheDocument();
     });
+  });
+
+  /// 話者 a・b が音声を送っている Dome に入る。返す `passed` は、空間音声へ渡した話者の列(要求ごと)。
+  async function joinWithSpeakers(baseApi: DesktopApi, options: RenderPanelOptions = {}) {
+    const setMetaverseAudio = vi.fn(baseApi.setMetaverseAudio);
+    const api: DesktopApi = {
+      ...baseApi,
+      setMetaverseAudio,
+      listMetaverseRoomEvents: vi.fn().mockResolvedValue([
+        speakingPresenceEvent('endpoint-a', 'a'.repeat(64), 1),
+        speakingPresenceEvent('endpoint-b', 'b'.repeat(64), 2),
+      ]),
+    };
+    const view = renderPanel(api, options);
+    await userEvent.click(screen.getByRole('button', { name: 'Join Room' }));
+    const passed = () =>
+      setMetaverseAudio.mock.calls.map(([request]) => request.speakers.map((speaker) => speaker.endpoint_id).sort());
+    return { api, view, passed };
+  }
+
+  test('does not pass a muted speaker whom the shell does not hold to spatial audio', async () => {
+    const baseApi = createDesktopMockApi();
+    // 画面の作者の情報は、表示中の投稿などの作者だけを持つ(投稿の無い話者、作者の詳細を閉じた後、起動し直した後)。
+    await baseApi.muteAuthor('a'.repeat(64));
+    const { passed } = await joinWithSpeakers(baseApi);
+
+    await waitFor(() => expect(passed().at(-1)).toEqual(['endpoint-b']));
+    expect(passed().flat()).not.toContain('endpoint-a');
+  });
+
+  test('stops a speaker muted while they are present', async () => {
+    const baseApi = createDesktopMockApi();
+    const { api, view, passed } = await joinWithSpeakers(baseApi);
+    await waitFor(() => expect(passed().at(-1)).toEqual(['endpoint-a', 'endpoint-b']));
+
+    // 作者の詳細で mute すると、画面の作者の情報が更新される。
+    const muted = await baseApi.muteAuthor('a'.repeat(64));
+    view.rerender(panelElement(api, { knownAuthorsByPubkey: { [muted.author_pubkey]: muted } }));
+    await waitFor(() => expect(passed().at(-1)).toEqual(['endpoint-b']));
   });
 
   test('submits local movement to the authoritative host', async () => {

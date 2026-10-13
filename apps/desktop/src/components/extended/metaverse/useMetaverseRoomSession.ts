@@ -64,7 +64,7 @@ type UseMetaverseRoomSessionArgs = {
   localDisplayName: string | null;
   localAvatarAssetRef: MetaverseAssetRef | null;
   localAvatarAssetUrl: string | null; avatarFetchActive?: boolean;
-  mutedAuthorPubkeys?: ReadonlySet<string>;
+  audibleAuthorPubkeys?: ReadonlySet<string>;
   initialSelectedRoomId?: string | null;
   activeChannelId?: string | null;
   configuredEntryInstanceId?: string | null;
@@ -85,7 +85,7 @@ export const ONLINE_DOME_RECOVERY: DomeRecoveryStatus = {
   targetTitle: null,
 };
 
-const EMPTY_MUTED_AUTHOR_PUBKEYS = new Set<string>();
+const EMPTY_AUTHOR_PUBKEYS = new Set<string>();
 
 const EMPTY_ROOM_CHAT_HISTORY: NonNullable<
   NonNullable<GameRoomView['metaverse']>['chat_history']
@@ -101,7 +101,7 @@ export function useMetaverseRoomSession({
   localDisplayName,
   localAvatarAssetRef,
   localAvatarAssetUrl, avatarFetchActive = true,
-  mutedAuthorPubkeys = EMPTY_MUTED_AUTHOR_PUBKEYS,
+  audibleAuthorPubkeys = EMPTY_AUTHOR_PUBKEYS,
   initialSelectedRoomId = null,
   activeChannelId = null,
   configuredEntryInstanceId = null,
@@ -222,7 +222,7 @@ export function useMetaverseRoomSession({
     actions,
     selectedRoom: domeRecovery.state === 'online' ? admittedRoom : null,
     listenerTransformRef: lastSentTransformRef,
-    mutedAuthorPubkeys,
+    audibleAuthorPubkeys,
     transitionNeighbors,
     peerPresence,
     remoteTransforms,

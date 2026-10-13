@@ -1,4 +1,5 @@
 import type {
+  AuthorSocialView,
   DomeCustomizationV1,
   DomeConnectionProposalView,
   DomeConnectionTopologyView,
@@ -43,6 +44,8 @@ export type MetaverseRoomActions = {
   ) => Promise<MetaverseRoomEventView[]>;
   /** 空間音声(ADR 0067)。Tauri の app だけが持つ(機器を使う)。 */
   setAudio?: (request: SetMetaverseAudioRequest) => Promise<MetaverseAudioStatus>;
+  /** 話者の mute の状態の正本(空間音声の候補を選ぶ)。 */
+  getAuthorSocialView: (pubkey: string) => Promise<AuthorSocialView>;
   importRoomAsset: (
     roomId: string,
     kind: 'vrm' | 'glb' | 'texture',

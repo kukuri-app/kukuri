@@ -61,7 +61,8 @@ describe('spatialAudioRequest', () => {
         'avatar:far': { roomId: 'dome-a', peerId: 'avatar:far', seq: 1, position: [0, 100, 1_000], rotation: [0, 0, 0], sentAt: 0 },
         'avatar:near': { roomId: 'dome-a', peerId: 'avatar:near', seq: 1, position: [0, 100, 100], rotation: [0, 0, 0], sentAt: 0 },
       } as never,
-      mutedAuthorPubkeys: new Set(['muted']),
+      // mute していないと分かった author だけを渡す(muted は、mute した、または mute の状態がまだ分からない author)。
+      audibleAuthorPubkeys: new Set(['far', 'near', 'silent', 'stale', 'neighbor', 'offline']),
       now: 1_000,
     });
     expect(request.room).toEqual({
@@ -93,7 +94,6 @@ describe('spatialAudioRequest', () => {
       listenerPosition: [0, 100, 0] as [number, number, number],
       neighbors: [ready, notReady],
       remoteTransforms: {},
-      mutedAuthorPubkeys: new Set(['muted']),
       now: 1_000,
     };
     // 音声を送っている 4 人に対し、無関係な peer(別の Dome・mic off・ready でない隣接・古い presence)を 10 倍にする。
@@ -105,8 +105,10 @@ describe('spatialAudioRequest', () => {
       [`offline-${index}`, speaker(`endpoint-offline-${index}`, `offline-${index}`, 'dome-c')],
       [`stale-${index}`, speaker(`endpoint-stale-${index}`, `stale-${index}`, 'dome-a', { lastSeenAt: -20_000 })],
     ]).flat());
-    expect(spatialAudioRequest({ ...input, presences: { ...presences, ...unrelated } }))
-      .toEqual(spatialAudioRequest({ ...input, presences }));
+    // 無関係な peer も mute していないと分かった author にする(外れるのは、それぞれの条件による)。key は author。
+    const audibleAuthorPubkeys = new Set(Object.keys({ ...presences, ...unrelated }));
+    expect(spatialAudioRequest({ ...input, audibleAuthorPubkeys, presences: { ...presences, ...unrelated } }))
+      .toEqual(spatialAudioRequest({ ...input, audibleAuthorPubkeys, presences }));
   });
 
   it('stops everything outside a Dome', () => {
@@ -117,7 +119,7 @@ describe('spatialAudioRequest', () => {
       neighbors: [ready],
       presences: { near: speaker('endpoint-near', 'near', 'dome-a') },
       remoteTransforms: {},
-      mutedAuthorPubkeys: new Set(),
+      audibleAuthorPubkeys: new Set(['near']),
       now: 1_000,
     });
     expect(request).toEqual({
