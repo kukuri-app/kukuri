@@ -2,12 +2,16 @@
 
 ## Status
 
-Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証の完了は #1033（metaverse の空間音声）と #1034（live の映像・音声）の各 AC で判定する。#1033 の実装で §1・§3・§4・§7・§9 の実装の形を補った（判断は変えていない）。
+Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証の完了は #1033（metaverse の空間音声）と #1034（live の映像・音声）の各 AC で判定する。#1033 の実装で §1・§3・§4・§7・§9 の実装の形を補った（2026-10-13 のユーザー判断で採用）。#1034 AC-1 で映像の配置・codec・取り込む対象・画質の上限を決めた（D5〜D8）。
 
 - D1: live の映像・音声は、配信者が数人へ直接送り、受け取った視聴者が次の視聴者へ転送する（§8）。
 - D2: 音声の取り込み・圧縮・再生は Rust 側で行う（§9）。
 - D3: builder preview の完了条件に #1033・#1034 を含めない（§10）。
 - D4: metaverse の話者 1 人が同時に音声を送る相手は 64 人まで、聞き手は近い順に 16 人の話者を聞く（§4）。
+- D5: live の映像は画面（webview）の `getUserMedia`・`getDisplayMedia`・WebCodecs で取り込み・圧縮・復号・描画し、Rust は署名・搬送・認可を行う（§9）。
+- D6: 映像の codec は VP8（§9）。
+- D7: 配信できる映像は camera と画面で、1 つの配信で同時に送るのはどちらか 1 つ（§9）。
+- D8: 画質の上限は camera が 1280×720・30 fps・1.5 Mbps、画面が 1920×1080・15 fps・2.5 Mbps（§4）。
 
 観測の基準は main `e6177415f4b2c93ab5de5f009dae16769b8d90b9`、外部依存と実行基盤の確認日は 2026-10-13（実機での確認は #1033・#1034 で行う）。
 
@@ -41,7 +45,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 
 ### 実行基盤（2026-10-13 確認。実機は未確認）
 
-- WebKitGTK（Ubuntu の更新版は 22.04 が 2.50.4、24.04 が 2.52.6）: `getUserMedia` は build に含まれるが、permission の既定は拒否で、Allow する処理が要る。capture の処理経路に echo cancellation が無い（source の読解）。WebCodecs は 2.44 以降既定で有効で、Opus・VP8/VP9 は既定で入る GStreamer の package で使え、H.264 は universe の package が要る見込み。
+- WebKitGTK（Ubuntu の更新版は 22.04 が 2.50.4（以後の更新は終了）、24.04 が 2.52.6）: `getUserMedia` は build に含まれるが、permission の既定は拒否で、Allow する処理が要る。capture の処理経路に echo cancellation が無い（source の読解）。WebCodecs は 2.44 以降既定で有効。既定の install で使える映像の codec は VP8 の encode・decode と VP9 の encode で、VP9 の decode と H.264 は universe の package（plugins-bad・libav）が要る見込み（#1034 AC-1 の調査。実測は Ubuntu 26.04 の §9）。
 - WebView2: `getUserMedia`・AudioWorklet・WebCodecs（software の Opus）が使える。許可は WebView2 の既定の確認画面で、利用者の判断が profile に保存される。Chromium の echo cancellation は自分が再生した音を参照に使う（WebView2 で既定かは未確認）。
 - 取り込みと再生を webview と Rust に分けると、どちらの echo cancellation も相手の声の参照を持てない。成り立つのは、両方を Rust で行うか、両方を webview で行うかである。
 - Rust: `cpal` 0.18（Linux は ALSA が既定、PipeWire・PulseAudio の host は feature。PipeWire host は 0.3.53 以上で、Ubuntu 22.04 の 0.3.48 では使えない。PipeWire・PulseAudio 周りに未修正の不具合がある）、純 Rust の Opus、`sonora`（Windows も CI 対象）。`moq-audio` はこの 3 つを組み合わせている。
@@ -85,15 +89,21 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 | 話者が送る相手（metaverse） | 話者の端末 | 64（固定） | 新しい購読を `busy` で拒否する。その聞き手は空きができるまで聞こえない | 相手の退出・失効・購読の解除・30 秒無通信で解除 |
 | 音声の送信量 | 話者ごと | 50 frame/s・32 KiB/s（ADR 0041 player） | 受ける側が捨てて拒否の件数に数える | 1 秒分の枠を経過時間に比例して補充する（正規の 20 ms の frame の到着の揺れとまとめ到着は捨てない） |
 | 再生前の保持 | 話者ごと | 既定 50 ms、上限は client の jitter frame × 20 ms（既定 160 ms） | 上限より遅れた group は古いものから飛ばし、保持が上限を超える分は書かずに捨てる | 再生と同時 |
-| 配信者が直接送る視聴者（live） | 配信者の端末 | 4（#1034 AC-1 が bitrate の計測で見直す） | 直接の子の一覧を返し、転送の参加へ回す（§8） | 子の退出・失効・30 秒無通信で解除 |
-| 視聴者が転送する相手（live） | 視聴者の端末 | 2（同上） | 自分の子の一覧を返す | 同上 |
+| 配信者が直接送る視聴者（live） | 配信者の端末 | 4（#1034 AC-1 で確定。D8 の上限で、配信者の上りは最大約 10 Mbps） | 直接の子の一覧を返し、転送の参加へ回す（§8） | 子の退出・失効・30 秒無通信で解除 |
+| 視聴者が転送する相手（live） | 視聴者の端末 | 2（同上。転送する視聴者の上りは最大約 5 Mbps） | 自分の子の一覧を返す | 同上 |
 | 転送の参加の問い合わせ（live） | 1 回の参加 | 16 段、1 段 5 秒 | 参加できないと表示する | 参加の終了で破棄 |
 | 視聴者の親（live） | 視聴者の端末 | 1 | — | 張り直しで置き換え |
 | 接続の試行の記録 | 端末 | 64 件・30 秒 | 試行しない | 期限で削除 |
 | catalog | broadcast | 1 つ、4 KiB | 受けない | broadcast の終了で削除 |
 | live の track | broadcast | 映像 1・音声 1 | 受けない | 配信の終了で削除 |
 | live の group の保持 | track・転送する端末 | 最新 1 group | 古い group を捨てる | 配信の終了で削除 |
-| live の映像の codec・画質・bitrate・group の長さ・音声と映像のずれ | — | #1034 AC-1 で決める | — | — |
+| live の映像の codec | 配信 | VP8（D6） | — | — |
+| live の映像の画質（D8） | 配信 | camera: 1280×720・30 fps・1.5 Mbps。画面: 1920×1080・15 fps・2.5 Mbps | 配信者の encoder の設定で守る。受ける側は frame 数（30・15 /s）と bitrate の 1.25 倍を、1 秒分の枠を経過時間に比例して補充して数え、超える分を捨てる | 配信の終了で破棄 |
+| live の映像の group | track | keyframe ごと、2 秒 | 途中参加は最新の group（keyframe）から始める | 配信の終了で削除 |
+| 視聴の購読の最大遅延（live の映像） | 視聴者・転送する端末 | 1 秒 | 遅れた group は古いものから飛ばす | 視聴の終了で破棄 |
+| 音声と映像のずれ（live） | 視聴者の端末 | 映像の遅れ 45 ms・進み 125 ms 以内を目標（ITU-R BT.1359 の検知の閾値） | 映像は Rust の音声の再生時刻に合わせて出し、遅れすぎた frame は捨てる | — |
+| 画面へ送りかけの映像（Rust → 画面） | 視聴者の端末 | 1 秒分（30 chunk） | 次の keyframe まで捨てる | 画面の終了・視聴の終了で破棄 |
+| encoder の待ち（画面 → Rust） | 配信者の端末 | 2 frame | 待ちが上限を超えた frame は encode しない | 配信の停止で破棄 |
 
 1 人に送るごとに上り約 50 kbps（Opus 24 kbps と 20 ms ごとの packet の overhead）で、話者の上りは最大約 3.5 Mbps。既定の定員（64 人）の Dome では全員に届く。上限 64 は budget の JSON の項目にしない（既存の完全 JSON 設定の形を変えない）。
 
@@ -132,7 +142,20 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 
 - 音声は Rust 側（`moq-audio`）で取り込み・圧縮（Opus、20 ms）・decode・mix・再生を行い、echo cancellation（`sonora`）は再生中の音を参照に使う。画面側の音声の取り込み・再生（`getUserMedia`・WebAudio）は削除する。live の音声も同じ経路を使う。
 - metaverse の距離減衰: 聞き手の端末の Rust が、話者の位置の track と、画面から受ける聞き手の位置・ready な隣接 Dome の opening の位置から既存の距離関数で gain を求め、話者ごとの音量に反映する。gain の関数は Rust の 1 か所に残し、TypeScript の gain の関数は #1033 で削除した（画面は話者を近い順に並べるための距離と opening の位置だけを持つ）。
-- 映像の取り込み・圧縮の場所と codec は #1034 AC-1 が Linux と Windows の試作で決める。比べる案は、(a) Rust で取り込み・圧縮し、画面の WebCodecs で decode・描画、(b) 画面の `getUserMedia`・`getDisplayMedia`・WebCodecs で取り込み・圧縮・描画。どちらも描画は画面で行い、映像は Rust の音声の再生時刻に合わせる。H.264 の特許の扱いと、Linux の webview で使える codec（VP8/VP9 は既定の package、H.264 は追加の package）を判断に含める。
+- 映像（#1034 AC-1、D5〜D7）: 配信者の画面が `getUserMedia`（camera）か `getDisplayMedia`（画面）のどちらか 1 つを取り込み、`VideoEncoder`（VP8、`latencyMode: realtime`）で圧縮し、chunk を Tauri の IPC（raw の `invoke`）で Rust へ渡す。Rust は署名・moq の公開・転送・認可だけを行う。視聴者の Rust は受けた chunk を `ipc::Channel` で画面へ渡し、画面の `VideoDecoder` で復号して描画する。映像の frame は Rust の音声の再生時刻（再生中の音声の timestamp）に合わせて出す。映像の取り込みでは mic を使わず、live の音声は上の Rust の経路で取り込む。
+  - frame の取り出し: Windows（WebView2）は `MediaStreamTrackProcessor`。Linux（WebKitGTK）は window に `MediaStreamTrackProcessor` が無い（feature `MediaStreamTrackProcessing` は既定で無効で、有効にしても dedicated worker だけ）ため、`<video>` と `requestVideoFrameCallback` から `VideoFrame` を作る。
+  - 許可: Tauri 2.12 の `on_permission_request` で、利用者が配信を始めた後だけ camera・画面の取り込みを許し、それ以外は拒否する。Windows の画面は WebView2 の選択画面、Linux は xdg-desktop-portal（camera は Camera portal、画面は ScreenCast portal の選択画面が開始のたびに出る）。
+  - 制約: Ubuntu 22.04 の webview は camera を列挙できない見込み（WebKitGTK 2.50 以降は PipeWire 0.3.64 以上を要し、22.04 は 0.3.48。未実測）。その場合は camera を選べないことを示し、画面の配信だけにする。Linux の VP8 は GStreamer の good（既定で入る）で encode・decode でき、H.264 は追加の package（libav か plugins-bad）が要る。
+  - 不採用の案（Rust で取り込み・圧縮し、画面で復号・描画）: 上流の `moq-video` 0.1.11（2026-05 初版、kukuri と同じ moq の版）で camera・画面・H.264 の encode を賄えるが、encoder は H.264 だけで、Linux の視聴に追加の package が要り、OpenH264 を source から build して同梱すると配る側が AVC の特許の pool の対象になる。VP8 にするには libvpx の binding を kukuri が持つことになる。Wayland の画面の取り込みは、kukuri の `ashpd` の runtime の設定と衝突する。
+  - 実測（2026-10-13、試作は破棄。Windows は Edge 155＝WebView2 runtime 154 と同じ系統、Linux は Ubuntu 26.04・WebKitGTK 2.52.6・GStreamer 1.28 の headless）:
+
+    | 項目 | Windows | Linux |
+    | --- | --- | --- |
+    | VP8 の encode（合成の映像、1 frame） | 720p 約 2 ms、1080p 約 3.5 ms | 720p 約 9 ms、1080p 約 23 ms |
+    | VP8 の decode（1 frame） | 約 1 ms | 約 1〜2 ms |
+    | 取り込み→encode の遅延（fake・mock の camera、720p、p50／p95） | 1／3 ms | 7〜8／9 ms |
+    | H.264 | 往復する | `avc` 形式（description つき）なら往復する。Annex B は decode に失敗 |
+    | AV1 | 往復する | decode に失敗 |
 
 ### 10. builder preview（D3）
 
@@ -166,7 +189,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - Blob 必要有無: manifest の JSON だけ
 - SQLite projection 必要有無: 既存の live の projection。media は持たない
 - 必須 contract: 「対象別の contract」の #1034 の行
-- 必須 scenario: Linux と Windows で、配信者 1・視聴者 2 以上（1 名は途中参加、1 名は転送を受ける）の camera・mic・screen、同期、終了
+- 必須 scenario: Linux と Windows で、配信者 1・視聴者 2 以上（1 名は途中参加、1 名は転送を受ける）の camera と画面（それぞれ mic つき）、同期、終了
 
 ## 対象別の contract
 
@@ -186,12 +209,14 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 | #1034 | `live_media_fanout_keeps_upstream_bounded` | 配信者 4・視聴者 2 の上限、問い合わせの 16 段、祖先への接続の拒否 |
 | #1034 | `live_media_drops_frames_without_broadcaster_signature` | 転送した視聴者が変えた frame を捨て、参加し直す |
 | #1034 | `live_media_rejoins_after_parent_loss_within_rate_limit` | 親の喪失・5 秒の停止で張り直し、5 秒に 1 回まで |
+| #1034 | `live_media_presents_video_against_audio_clock` | 音声の再生時刻に合わせて映像を出し、ずれが上限を超える frame を捨てる |
+| #1034 | `live_media_bounds_frames_waiting_for_the_screen` | 画面へ送りかけの映像が 1 秒分を超えたら次の keyframe まで捨て、受ける側の frame 数・bitrate の上限を超える分を捨てる |
 
 ## #1032〜#1034 の責務と削除先
 
 - #1032（完了）: iroh 1.3 fork への移行。この ADR の依存の基準。
 - #1033: §1〜§7・§9 の受け口・認可・停止・時刻・上限と、metaverse の音声の取り込み〜再生。削除: `MetaverseRoomEventV1::SpatialAudioFrame`・`MetaverseSpatialAudioFrameV1`・wire の `spatial_audio_frame`・`preflight_spatial_audio_event`・`useSpatialAudio.ts` の PCM の送信と即時再生・`resamplePcm16`・`SpatialAudioModel.ts` の距離関数・CLI schema と IPC 型の該当部分。ADR 0041 の音声の行と ADR 0043 の音声の節を実装に合わせる。
-- #1034: AC-1 で映像の方式・codec・上限（§4 の live の行の値を含む）を決め、AC-2 で live の配信・視聴・転送・途中参加・終了を実装する。#1033 の部分を使い、live manifest に track の descriptor を足す（ADR 0005 の追補）。試作のコードは完成形に残さない。
+- #1034: AC-1 で映像の方式・codec・上限（§4 の live の行の値を含む）を決めた（D5〜D8、試作のコードは破棄）。AC-2 で live の配信・視聴・転送・途中参加・終了を実装する。#1033 の部分を使い、live manifest に track の descriptor を足す（ADR 0005 の追補）。
 
 ## 旧記述の失効範囲
 
