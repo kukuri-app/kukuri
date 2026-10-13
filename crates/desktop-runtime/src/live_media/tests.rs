@@ -280,24 +280,34 @@ async fn live_media_requires_explicit_start_and_permission() {
 async fn live_media_late_joiner_starts_from_latest_group() {
     let pair = pair().await;
     pair.start().await;
-    // 取り込みの間隔(30 fps なら 33 ms)より短い 10 ms ごとに置く。
-    for (index, keyframe) in [(1, true), (2, false), (3, false), (4, true), (5, false)] {
-        pair.push(index, keyframe).await;
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    // 20 group(keyframe と差分 2 つ)を、取り込みの間隔(30 fps なら 33 ms)より短い 5 ms ごとに置く。どれも配信者の
+    // cache に残っている間に参加する。
+    let mut index = 0_u8;
+    for _ in 0..20 {
+        for keyframe in [true, false, false] {
+            index += 1;
+            pair.push(index, keyframe).await;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
-    // 途中から参加すると、今の group(keyframe 4)から届き、前の group は送らない。
+    // 途中から参加すると、過去の group の数に依らず今の group(最後の keyframe)から届き、前の group は送らない。
     pair.watch().await;
-    pair.push(6, false).await;
+    pair.push(index + 1, false).await;
     let (state, chunks) = pair
-        .collect_until(|chunks| chunks.iter().any(|(_, _, index)| *index == 6))
+        .collect_until(|chunks| chunks.iter().any(|(_, _, each)| *each == index + 1))
         .await;
     assert_eq!(state, LiveWatchState::Watching.code());
     assert_eq!(
         chunks
             .iter()
-            .map(|(_, keyframe, index)| (*keyframe, *index))
+            .map(|(_, keyframe, each)| (*keyframe, *each))
             .collect::<Vec<_>>(),
-        [(true, 4), (false, 5), (false, 6)]
+        [
+            (true, index - 2),
+            (false, index - 1),
+            (false, index),
+            (false, index + 1)
+        ]
     );
     pair.shutdown().await;
 }
