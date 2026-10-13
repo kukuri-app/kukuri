@@ -151,8 +151,8 @@ async fn live_media_drops_frames_without_broadcaster_signature() {
         "the viewer leaves the parent that changed a frame"
     );
     assert!(
-        chunks.iter().all(|(_, _, index)| *index == 98),
-        "a changed frame never reaches the screen: {chunks:?}"
+        !chunks.is_empty() && chunks.iter().all(|(_, _, index)| *index == 98),
+        "the valid frames reach the screen and a changed one never does: {chunks:?}"
     );
     tamperer.assert_rejoined_at_most_every(REJOIN_INTERVAL);
 
@@ -422,13 +422,14 @@ impl FakeParent {
         self.grants.lock().expect("grants").len()
     }
 
-    /// 参加し直しの間隔(許可の時刻の差)が `interval` を下回らない(timer の揺れを 50 ms まで許す)。
+    /// 参加し直しの間隔(許可の時刻の差)が `interval` を下回らない。許可は参加の手順の終わりに記録するので、初めての
+    /// 接続を含む 1 回目の手順が長い分だけ間隔は短く見える(0.5 秒まで許す。間隔を守らなければ数十 ms で参加し直す)。
     fn assert_rejoined_at_most_every(&self, interval: Duration) {
         let grants = self.grants.lock().expect("grants");
         for pair in grants.windows(2) {
             let gap = pair[1] - pair[0];
             assert!(
-                gap + Duration::from_millis(50) >= interval,
+                gap + Duration::from_millis(500) >= interval,
                 "rejoined after {gap:?}"
             );
         }
