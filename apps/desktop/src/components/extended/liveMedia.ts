@@ -13,6 +13,8 @@ export type LiveVideoBatch = { state: LiveWatchState; audioClockUs: number; chun
 const VIDEO_LEAD_US = 125_000;
 /// keyframe の間隔(group の長さ)。
 const KEYFRAME_INTERVAL_US = 2_000_000;
+/// 画面が変わらない間も前の frame を送り直す間隔(視聴者は 5 秒届かなければ親を失ったとみなす。ADR 0067 §8)。
+const HEARTBEAT_US = 1_000_000;
 /// encoder の待ちの上限(frame)。超えた frame は送らない。
 const ENCODER_QUEUE = 2;
 /// Rust へ送りかけの chunk と、復号して描く前の frame の上限(1 秒分)。
@@ -200,9 +202,15 @@ export function encodeVideo(options: {
     };
     preview.requestVideoFrameCallback(onFrame);
   }
+  const heartbeat = window.setInterval(() => {
+    if (performance.now() * 1000 - lastFrameUs >= HEARTBEAT_US) {
+      encode(preview, preview.videoWidth, preview.videoHeight);
+    }
+  }, HEARTBEAT_US / 1000);
   return {
     stop() {
       stopped = true;
+      window.clearInterval(heartbeat);
       void reader?.cancel().catch(() => undefined);
       stream.getTracks().forEach((each) => each.stop());
       preview.srcObject = null;

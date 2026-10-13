@@ -1,16 +1,19 @@
-//! ADR 0067 の #1034 の contract。実 iroh の 2 node の間で、機器を使わずに配信の映像と音声を流して確かめる
-//! (2 つの app は docs と blob を共有し、視聴者は配信者の session を読める)。
+//! ADR 0067 の #1034 の contract。実 iroh の node の間で、機器を使わずに配信の映像と音声を流して確かめる
+//! (app は docs と blob を共有し、視聴者は配信者の session を読める)。視聴者どうしの転送は `fanout`。
+
+mod fanout;
 
 use super::*;
 use kukuri_app_api::CreateLiveSessionInput;
 use kukuri_blob_service::MemoryBlobService;
-use kukuri_core::{ChannelRef, KukuriKeys, TopicId, generate_keys};
+use kukuri_core::{ChannelRef, KukuriKeys, MediaAccessRequestV1, TopicId, generate_keys};
 use kukuri_docs_sync::MemoryDocsSync;
 use kukuri_iroh_node::MediaSubscription;
 use kukuri_store::MemoryStore;
 use kukuri_transport::{FakeNetwork, FakeTransport};
 
-use crate::media_access::media_authorizer;
+use super::screen::ScreenChunk;
+use crate::media_access::{denial_code, media_authorizer};
 use crate::media_devices::OPUS_SAMPLE_RATE;
 
 const TOPIC: &str = "kukuri:topic:live-media";
@@ -39,39 +42,71 @@ fn app(
     ))
 }
 
-struct Pair {
-    broadcaster_node: Arc<IrohDocsNode>,
-    viewer_node: Arc<IrohDocsNode>,
-    broadcaster_app: Arc<AppService>,
-    viewer_app: Arc<AppService>,
-    owner: Pubkey,
-    viewer_pubkey: Pubkey,
-    broadcaster: Arc<LiveMedia>,
-    viewer: Arc<LiveMedia>,
+/// 1 台の端末(app・iroh の node・live の配信と視聴)。
+struct Peer {
+    pubkey: Pubkey,
+    app: Arc<AppService>,
+    node: Arc<IrohDocsNode>,
+    live: Arc<LiveMedia>,
+}
+
+impl Peer {
+    fn id(&self) -> String {
+        self.node.endpoint().id().to_string()
+    }
+}
+
+/// docs と blob を共有し、互いの endpoint を知っている端末の集まり。
+#[derive(Default)]
+struct Net {
+    network: FakeNetwork,
+    docs: Arc<MemoryDocsSync>,
+    blobs: Arc<MemoryBlobService>,
+    nodes: StdMutex<Vec<Arc<IrohDocsNode>>>,
+}
+
+impl Net {
+    /// 端末を足し、これまでの端末と互いの endpoint を知らせる。
+    async fn peer(&self) -> Peer {
+        let keys = generate_keys();
+        let pubkey = keys.public_key();
+        let app = app(keys, &self.network, &self.docs, &self.blobs);
+        let node = IrohDocsNode::memory().await.expect("node");
+        let live = Arc::new(LiveMedia::default());
+        node.install_media_authorizer(Some(media_authorizer(
+            Weak::new(),
+            Arc::downgrade(&live),
+            Arc::downgrade(&app),
+        )));
+        let mut nodes = self.nodes.lock().expect("nodes");
+        for other in nodes.iter() {
+            other.discovery().add_endpoint_info(node.endpoint().addr());
+            node.discovery().add_endpoint_info(other.endpoint().addr());
+        }
+        nodes.push(Arc::clone(&node));
+        Peer {
+            pubkey,
+            app,
+            node,
+            live,
+        }
+    }
+}
+
+/// 配信者が公開 topic に media のある live session を作った状態(視聴者 1 人を含む)。
+struct Swarm {
+    net: Net,
+    broadcaster: Peer,
+    viewer: Peer,
     session_id: String,
 }
 
-/// 配信者が公開 topic に media のある live session を作った状態。
-async fn pair() -> Pair {
-    let network = FakeNetwork::default();
-    let docs = Arc::new(MemoryDocsSync::default());
-    let blobs = Arc::new(MemoryBlobService::default());
-    let (owner_keys, viewer_keys) = (generate_keys(), generate_keys());
-    let (owner, viewer_pubkey) = (owner_keys.public_key(), viewer_keys.public_key());
-    let broadcaster_app = app(owner_keys, &network, &docs, &blobs);
-    let viewer_app = app(viewer_keys, &network, &docs, &blobs);
-    let broadcaster_node = IrohDocsNode::memory().await.expect("broadcaster node");
-    let viewer_node = IrohDocsNode::memory().await.expect("viewer node");
-    viewer_node
-        .discovery()
-        .add_endpoint_info(broadcaster_node.endpoint().addr());
-    let broadcaster = Arc::new(LiveMedia::default());
-    broadcaster_node.install_media_authorizer(Some(media_authorizer(
-        Weak::new(),
-        Arc::downgrade(&broadcaster),
-        Arc::downgrade(&broadcaster_app),
-    )));
-    let session_id = broadcaster_app
+async fn swarm() -> Swarm {
+    let net = Net::default();
+    let broadcaster = net.peer().await;
+    let viewer = net.peer().await;
+    let session_id = broadcaster
+        .app
         .create_live_session_in_channel(
             TOPIC,
             ChannelRef::Public,
@@ -79,29 +114,29 @@ async fn pair() -> Pair {
                 title: "live".into(),
                 description: String::new(),
             },
-            Some(broadcaster_node.endpoint().id().to_string()),
+            Some(broadcaster.id()),
         )
         .await
         .expect("live session");
-    Pair {
-        broadcaster_node,
-        viewer_node,
-        broadcaster_app,
-        viewer_app,
-        owner,
-        viewer_pubkey,
+    Swarm {
+        net,
         broadcaster,
-        viewer: Arc::new(LiveMedia::default()),
+        viewer,
         session_id,
     }
 }
 
-impl Pair {
+impl Swarm {
+    async fn peer(&self) -> Peer {
+        self.net.peer().await
+    }
+
     async fn start(&self) -> LiveBroadcastStatus {
         self.broadcaster
+            .live
             .set_broadcast(
-                &self.broadcaster_app,
-                Some(self.broadcaster_node.endpoint().id().to_string()),
+                &self.broadcaster.app,
+                Some(self.broadcaster.id()),
                 self.start_request(),
             )
             .await
@@ -117,16 +152,38 @@ impl Pair {
         }
     }
 
-    /// 機器の無い build の mic の代わりに、配信の catalog と clock で音声を置く。
+    /// 機器の無い build の mic の代わりに、mic と同じく非公開の broadcast へ音声を書き、署名して配信へ写す。
     async fn fake_microphone(&self) -> FakeMicrophone {
-        let mut broadcasts = self.broadcaster.broadcasts.lock().await;
+        let mut broadcasts = self.broadcaster.live.broadcasts.lock().await;
         let current = broadcasts.get_mut(&self.session_id).expect("broadcast");
-        fake_microphone(&mut current.broadcast, current.catalog.clone())
+        let mut private = moq_net::broadcast::Info::new().produce();
+        let private_catalog = moq_mux::catalog::Producer::new(
+            &mut private,
+            moq_mux::catalog::Config::default().with_clock(current.catalog.clock()),
+        )
+        .expect("catalog");
+        let (speaking, voice) = fake_voice(&mut private, private_catalog.clone());
+        let signing = sign_audio(
+            &private,
+            &private_catalog,
+            &mut current.broadcast,
+            &current.catalog,
+            current.signer.clone(),
+        )
+        .await
+        .expect("signing");
+        FakeMicrophone {
+            speaking,
+            _voice: voice,
+            _signing: signing,
+            _private: private,
+        }
     }
 
     /// 画面が圧縮した映像の代わり(Rust は映像を復号しない)。1 byte 目に番号を入れる。
     async fn push(&self, index: u8, keyframe: bool) {
         self.broadcaster
+            .live
             .push_video(
                 &self.session_id,
                 keyframe,
@@ -137,13 +194,26 @@ impl Pair {
             .expect("push");
     }
 
-    /// 視聴をやり直す(前の視聴を止めてから始める)。
-    async fn watch(&self) {
-        self.viewer.stop_watching(&self.session_id).await;
-        self.viewer
+    /// 配信者が 100 ms ごとに keyframe を置き続ける(1 byte 目は `index`)。
+    fn pump(&self, index: u8) -> AbortOnDropHandle<()> {
+        let (live, session_id) = (Arc::clone(&self.broadcaster.live), self.session_id.clone());
+        AbortOnDropHandle::new(n0_future::task::spawn(async move {
+            loop {
+                let _ = live
+                    .push_video(&session_id, true, Duration::ZERO, vec![index, 0, 0, 0])
+                    .await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }))
+    }
+
+    /// `peer` の視聴をやり直す(前の視聴を止めてから始める)。
+    async fn watch(&self, peer: &Peer) {
+        peer.live.stop_watching(&self.session_id).await;
+        peer.live
             .watch(
-                &self.viewer_app,
-                Some(self.viewer_node.clone()),
+                &peer.app,
+                Some(peer.node.clone()),
                 LiveMediaRequest {
                     topic: TOPIC.into(),
                     session_id: self.session_id.clone(),
@@ -154,15 +224,19 @@ impl Pair {
     }
 
     /// 画面と同じく取り、届いた形を読み直す。
-    async fn next(&self) -> Batch {
-        Batch::decode(&self.viewer.next_video(&self.session_id).await)
+    async fn next(&self, peer: &Peer) -> Batch {
+        Batch::decode(&peer.live.next_video(&self.session_id).await)
     }
 
     /// 視聴の状態が変わるか `done` が満たされるまで取り続ける(上限 30 回)。
-    async fn collect_until(&self, done: impl Fn(&[Chunk]) -> bool) -> (u8, Vec<Chunk>) {
+    async fn collect_until(
+        &self,
+        peer: &Peer,
+        done: impl Fn(&[Chunk]) -> bool,
+    ) -> (u8, Vec<Chunk>) {
         let mut chunks = Vec::new();
         for _ in 0..30 {
-            let batch = self.next().await;
+            let batch = self.next(peer).await;
             chunks.extend(batch.chunks);
             if batch.state != LiveWatchState::Watching.code() || done(&chunks) {
                 return (batch.state, chunks);
@@ -171,29 +245,60 @@ impl Pair {
         (LiveWatchState::Watching.code(), chunks)
     }
 
-    /// 視聴者の proof つきの認可要求で、配信者の端末へ直接購読する。
-    async fn subscribe(&self) -> Result<MediaSubscription> {
+    /// `from` の端末が `owner` に束縛した proof つきの認可要求。
+    async fn request(&self, from: &Peer, owner: &Pubkey) -> Vec<u8> {
         let context = SpatialContextV1::Topic {
             topic_id: TopicId::new(TOPIC),
         };
-        let request = serde_json::to_vec(&MediaAccessRequestV1::Live(LiveMediaAccessRequestV1 {
-            proof: self
-                .viewer_app
-                .build_dome_access_proof(context, self.owner.clone())
+        serde_json::to_vec(&MediaAccessRequestV1::Live(LiveMediaAccessRequestV1 {
+            proof: from
+                .app
+                .build_dome_access_proof(context, owner.clone())
                 .await
                 .expect("proof"),
             topic_id: TOPIC.into(),
             session_id: self.session_id.clone(),
         }))
-        .expect("request");
-        self.viewer_node
-            .media_subscribe(&self.broadcaster_node.endpoint().id().to_string(), &request)
+        .expect("request")
+    }
+
+    /// `from` の端末から、配信者に束縛した proof つきの認可要求で `to` の端末へ直接購読する。
+    async fn subscribe(&self, from: &Peer, to: &Peer) -> Result<MediaSubscription> {
+        let request = self.request(from, &self.broadcaster.pubkey).await;
+        from.node.media_subscribe(&to.id(), &request).await
+    }
+
+    /// `peer` の口(配信者は配信の、視聴者は転送の)の経路と子。
+    async fn links(&self, peer: &Peer) -> FanoutLinks {
+        self.fanout(peer).await.links().clone()
+    }
+
+    async fn fanout(&self, peer: &Peer) -> Arc<Fanout> {
+        let broadcast = peer
+            .live
+            .broadcasts
+            .lock()
             .await
+            .get(&self.session_id)
+            .map(|current| Arc::clone(&current.fanout));
+        match broadcast {
+            Some(fanout) => fanout,
+            None => peer
+                .live
+                .viewers
+                .lock()
+                .await
+                .get(&self.session_id)
+                .and_then(|viewer| viewer.fanout.upgrade())
+                .expect("watching"),
+        }
     }
 
     async fn shutdown(self) {
-        let _ = self.viewer_node.shutdown().await;
-        let _ = self.broadcaster_node.shutdown().await;
+        let nodes = std::mem::take(&mut *self.net.nodes.lock().expect("nodes"));
+        for node in nodes {
+            let _ = node.shutdown().await;
+        }
     }
 }
 
@@ -233,20 +338,21 @@ impl Batch {
 
 #[tokio::test]
 async fn live_media_requires_explicit_start_and_permission() {
-    let pair = pair().await;
+    let pair = swarm().await;
     // 配信の開始の前は、視聴者に何も届かない(media の無い状態)。
-    pair.watch().await;
-    let (state, chunks) = pair.collect_until(|_| false).await;
+    pair.watch(&pair.viewer).await;
+    let (state, chunks) = pair.collect_until(&pair.viewer, |_| false).await;
     assert_eq!(state, LiveWatchState::NoMedia.code());
     assert!(chunks.is_empty());
 
     // 自分の session でなければ配信を始められない。
     assert!(
         pair.viewer
+            .live
             .set_broadcast(
-                &pair.viewer_app,
-                Some(pair.viewer_node.endpoint().id().to_string()),
-                pair.start_request(),
+                &pair.viewer.app,
+                Some(pair.viewer.id()),
+                pair.start_request()
             )
             .await
             .is_err(),
@@ -255,15 +361,16 @@ async fn live_media_requires_explicit_start_and_permission() {
     // owner でも、この端末で作っていない session(manifest の配信者の端末が別)は配信しない。
     let elsewhere = pair
         .broadcaster
+        .live
         .set_broadcast(
-            &pair.broadcaster_app,
-            Some(pair.viewer_node.endpoint().id().to_string()),
+            &pair.broadcaster.app,
+            Some(pair.viewer.id()),
             pair.start_request(),
         )
         .await
         .expect_err("another device");
     assert!(elsewhere.downcast_ref::<LiveBroadcastElsewhere>().is_some());
-    assert!(pair.broadcaster.broadcasts.lock().await.is_empty());
+    assert!(pair.broadcaster.live.broadcasts.lock().await.is_empty());
 
     // 開始しても、画面の取り込みが始まる(最初の keyframe が届く)までは公開しない(取り込みの拒否なら送信 0)。
     // 機器の無い build は mic を開けず、映像だけを送る。
@@ -271,8 +378,8 @@ async fn live_media_requires_explicit_start_and_permission() {
     assert!(!status.microphone);
     assert_eq!(status.limits, LiveVideoSource::Camera.limits());
     pair.push(1, false).await;
-    pair.watch().await;
-    let (state, chunks) = pair.collect_until(|_| false).await;
+    pair.watch(&pair.viewer).await;
+    let (state, chunks) = pair.collect_until(&pair.viewer, |_| false).await;
     assert_eq!(
         state,
         LiveWatchState::NoMedia.code(),
@@ -280,11 +387,13 @@ async fn live_media_requires_explicit_start_and_permission() {
     );
     assert!(chunks.is_empty());
 
-    // 最初の keyframe で公開し、視聴者へ届く。
+    // 最初の keyframe で公開し、視聴者へ届く(配信者の署名を確かめて外した中身を画面へ渡す)。
     pair.push(2, true).await;
-    pair.watch().await;
+    pair.watch(&pair.viewer).await;
     pair.push(3, false).await;
-    let (state, chunks) = pair.collect_until(|chunks| chunks.len() >= 2).await;
+    let (state, chunks) = pair
+        .collect_until(&pair.viewer, |chunks| chunks.len() >= 2)
+        .await;
     assert_eq!(state, LiveWatchState::Watching.code());
     assert_eq!(
         chunks
@@ -298,7 +407,7 @@ async fn live_media_requires_explicit_start_and_permission() {
 
 #[tokio::test]
 async fn live_media_late_joiner_starts_from_latest_group() {
-    let pair = pair().await;
+    let pair = swarm().await;
     pair.start().await;
     // 20 group(keyframe と差分 2 つ)を、取り込みの間隔(30 fps なら 33 ms)より短い 5 ms ごとに置く。どれも配信者の
     // cache に残っている間に参加する。
@@ -311,10 +420,12 @@ async fn live_media_late_joiner_starts_from_latest_group() {
         }
     }
     // 途中から参加すると、過去の group の数に依らず今の group(最後の keyframe)から届き、前の group は送らない。
-    pair.watch().await;
+    pair.watch(&pair.viewer).await;
     pair.push(index + 1, false).await;
     let (state, chunks) = pair
-        .collect_until(|chunks| chunks.iter().any(|(_, _, each)| *each == index + 1))
+        .collect_until(&pair.viewer, |chunks| {
+            chunks.iter().any(|(_, _, each)| *each == index + 1)
+        })
         .await;
     assert_eq!(state, LiveWatchState::Watching.code());
     assert_eq!(
@@ -334,67 +445,97 @@ async fn live_media_late_joiner_starts_from_latest_group() {
 
 #[tokio::test]
 async fn ended_live_session_rejects_media_subscribe() {
-    let pair = pair().await;
+    let pair = swarm().await;
     pair.start().await;
     pair.push(1, true).await;
-    pair.watch().await;
-    let (state, _) = pair.collect_until(|chunks| !chunks.is_empty()).await;
+    pair.watch(&pair.viewer).await;
+    let (state, _) = pair
+        .collect_until(&pair.viewer, |chunks| !chunks.is_empty())
+        .await;
     assert_eq!(state, LiveWatchState::Watching.code());
 
-    // 配信の停止: 見ている視聴者の購読は閉じ、新しい購読は拒否する(停止後の送信 0)。
-    pair.broadcaster.stop_broadcast(&pair.session_id).await;
-    let (state, _) = pair.collect_until(|_| false).await;
+    // 配信の停止: 見ている視聴者の購読は閉じ(参加し直すと映像が無い)、新しい購読は拒否する(停止後の送信 0)。
+    pair.broadcaster.live.stop_broadcast(&pair.session_id).await;
+    let (state, _) = pair.collect_until(&pair.viewer, |_| false).await;
     assert_eq!(
         state,
-        LiveWatchState::Ended.code(),
+        LiveWatchState::NoMedia.code(),
         "stopping the broadcast closes its viewers"
     );
-    let denied = pair.subscribe().await.err().expect("stopped");
+    let denied = pair
+        .subscribe(&pair.viewer, &pair.broadcaster)
+        .await
+        .err()
+        .expect("stopped");
     assert_eq!(denial_code(&denied), Some(DENIED_NOT_LIVE));
     pair.start().await;
     pair.push(2, true).await;
-    pair.watch().await;
-    let (state, _) = pair.collect_until(|chunks| !chunks.is_empty()).await;
+    pair.watch(&pair.viewer).await;
+    let (state, _) = pair
+        .collect_until(&pair.viewer, |chunks| !chunks.is_empty())
+        .await;
     assert_eq!(state, LiveWatchState::Watching.code());
 
     // 資格の失効: owner が視聴者を block すると、5 秒ごとの評価し直しで閉じ、新しい購読も拒否する。
-    pair.broadcaster_app
-        .block_author(pair.viewer_pubkey.as_str())
+    pair.broadcaster
+        .app
+        .block_author(pair.viewer.pubkey.as_str())
         .await
         .expect("block");
-    let (state, _) = pair.collect_until(|_| false).await;
+    let (state, _) = pair.collect_until(&pair.viewer, |_| false).await;
     assert_eq!(
         state,
         LiveWatchState::Ended.code(),
         "the broadcaster closes the revoked viewer"
     );
-    let denied = pair.subscribe().await.err().expect("blocked");
+    let denied = pair
+        .subscribe(&pair.viewer, &pair.broadcaster)
+        .await
+        .err()
+        .expect("blocked");
     assert_eq!(denial_code(&denied), Some(DENIED_ACCESS));
-    pair.broadcaster_app
-        .unblock_author(pair.viewer_pubkey.as_str())
+    pair.broadcaster
+        .app
+        .unblock_author(pair.viewer.pubkey.as_str())
         .await
         .expect("unblock");
 
-    // session の終了: 配信を止める前でも、見ている視聴者は評価し直しで閉じ、新しい購読は拒否する。
-    pair.watch().await;
+    // 転送する視聴者も、配信者に束縛していない proof の購読を断る。
+    pair.watch(&pair.viewer).await;
     pair.push(3, true).await;
-    let (state, _) = pair.collect_until(|chunks| !chunks.is_empty()).await;
+    let (state, _) = pair
+        .collect_until(&pair.viewer, |chunks| !chunks.is_empty())
+        .await;
     assert_eq!(state, LiveWatchState::Watching.code());
-    pair.broadcaster_app
+    let other = pair.peer().await;
+    let request = pair.request(&other, &other.pubkey).await;
+    let denied = other
+        .node
+        .media_subscribe(&pair.viewer.id(), &request)
+        .await
+        .err()
+        .expect("unbound proof");
+    assert_eq!(denial_code(&denied), Some(DENIED_ACCESS));
+
+    // session の終了: 配信を止める前でも、見ている視聴者は評価し直しで閉じ、配信者も転送した視聴者も新しい購読を断る。
+    pair.broadcaster
+        .app
         .end_live_session(TOPIC, &pair.session_id)
         .await
         .expect("end");
-    let (state, _) = pair.collect_until(|_| false).await;
+    let (state, _) = pair.collect_until(&pair.viewer, |_| false).await;
     assert_eq!(
         state,
-        LiveWatchState::Ended.code(),
+        LiveWatchState::NoMedia.code(),
         "the broadcaster closes viewers of the ended session"
     );
-    let denied = pair.subscribe().await.err().expect("ended");
-    assert_eq!(denial_code(&denied), Some(DENIED_NOT_LIVE));
+    for to in [&pair.broadcaster, &pair.viewer] {
+        let denied = pair.subscribe(&other, to).await.err().expect("ended");
+        assert_eq!(denial_code(&denied), Some(DENIED_NOT_LIVE));
+    }
     // 視聴者の端末は終わった session へ購読しない。
-    pair.watch().await;
-    let (state, chunks) = pair.collect_until(|_| false).await;
+    pair.watch(&pair.viewer).await;
+    let (state, chunks) = pair.collect_until(&pair.viewer, |_| false).await;
     assert_eq!(state, LiveWatchState::NoMedia.code());
     assert!(chunks.is_empty());
     pair.shutdown().await;
@@ -402,21 +543,29 @@ async fn ended_live_session_rejects_media_subscribe() {
 
 #[tokio::test]
 async fn live_media_direct_viewers_are_bounded() {
-    let pair = pair().await;
+    let pair = swarm().await;
     pair.start().await;
     pair.push(1, true).await;
     let mut viewers = Vec::new();
     for _ in 0..MAX_DIRECT_VIEWERS {
-        viewers.push(pair.subscribe().await.expect("within the limit"));
+        viewers.push(
+            pair.subscribe(&pair.viewer, &pair.broadcaster)
+                .await
+                .expect("within the limit"),
+        );
     }
-    // 5 人目は満員(視聴者どうしの転送は #1034 AC-2b)。
-    let full = pair.subscribe().await.err().expect("full");
+    // 5 人目は満員(転送へ回るための子の一覧は `fanout` の contract)。
+    let full = pair
+        .subscribe(&pair.viewer, &pair.broadcaster)
+        .await
+        .err()
+        .expect("full");
     assert_eq!(denial_code(&full), Some(DENIED_FULL));
     // 1 人抜ければ次の視聴者が入れる。
     viewers.pop();
     let mut admitted = None;
     for _ in 0..50 {
-        if let Ok(viewer) = pair.subscribe().await {
+        if let Ok(viewer) = pair.subscribe(&pair.viewer, &pair.broadcaster).await {
             admitted = Some(viewer);
             break;
         }
@@ -429,21 +578,23 @@ async fn live_media_direct_viewers_are_bounded() {
 
 #[tokio::test]
 async fn live_media_presents_video_against_audio_clock() {
-    let pair = pair().await;
+    let pair = swarm().await;
     pair.start().await;
     pair.push(1, true).await;
-    pair.watch().await;
+    pair.watch(&pair.viewer).await;
     let mut index = 1_u8;
     // 映像を 1 frame 置いて、画面と同じく取る。
     let mut next = async || {
         index += 1;
         pair.push(index, false).await;
         tokio::time::sleep(Duration::from_millis(20)).await;
-        let batch = pair.next().await;
+        let batch = pair.next(&pair.viewer).await;
         assert_eq!(batch.state, LiveWatchState::Watching.code());
         batch
     };
-    let (_, chunks) = pair.collect_until(|chunks| !chunks.is_empty()).await;
+    let (_, chunks) = pair
+        .collect_until(&pair.viewer, |chunks| !chunks.is_empty())
+        .await;
     assert!(!chunks.is_empty());
     assert_eq!(
         next().await.audio_clock_us,
@@ -497,16 +648,19 @@ fn latest(batches: &[Batch]) -> (u64, u64) {
     (video, batches.last().expect("batch").audio_clock_us)
 }
 
-/// mic の代わり: `speaking` の間、20 ms ごとに Opus を書く音声の track。止めても track は残る(mic の `stop` と同じ)。
+/// mic の代わり: `speaking` の間、20 ms ごとに Opus を非公開の broadcast へ書き、署名して配信へ写す。止めても track は
+/// 残る(mic の `stop` と同じ)。
 struct FakeMicrophone {
-    speaking: Arc<std::sync::atomic::AtomicBool>,
-    _task: AbortOnDropHandle<()>,
+    speaking: Arc<AtomicBool>,
+    _voice: AbortOnDropHandle<()>,
+    _signing: AbortOnDropHandle<()>,
+    _private: moq_net::broadcast::Producer,
 }
 
-fn fake_microphone(
+fn fake_voice(
     broadcast: &mut moq_net::broadcast::Producer,
     catalog: moq_mux::catalog::Producer,
-) -> FakeMicrophone {
+) -> (Arc<AtomicBool>, AbortOnDropHandle<()>) {
     let clock = catalog.clock();
     let mut options = moq_audio::encode::Options::default();
     options.track = Some(LIVE_AUDIO_TRACK.into());
@@ -518,7 +672,7 @@ fn fake_microphone(
         &options,
     )
     .expect("encoder");
-    let speaking = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let speaking = Arc::new(AtomicBool::new(true));
     let writing = Arc::clone(&speaking);
     let task = n0_future::task::spawn(async move {
         let mut tick = n0_future::time::interval(Duration::from_millis(20));
@@ -534,10 +688,7 @@ fn fake_microphone(
             let _ = producer.write(&moq_audio::Frame::new(samples.into(), clock.now()));
         }
     });
-    FakeMicrophone {
-        speaking,
-        _task: AbortOnDropHandle::new(task),
-    }
+    (speaking, AbortOnDropHandle::new(task))
 }
 
 #[test]

@@ -1,10 +1,10 @@
 # live の映像・音声の実機確認
 
-正本は [ADR 0067](../adr/0067-media-transport-moq.md)（#1034）。映像は画面（webview）の `getUserMedia`・`getDisplayMedia`・WebCodecs（VP8）で取り込み・復号し、音声は Rust 側（[空間音声](metaverse-spatial-audio.md)と同じ機器の経路）で扱う。配信者の端末は視聴者 4 人まで直接送る（視聴者どうしの転送は #1034 AC-2b）。
+正本は [ADR 0067](../adr/0067-media-transport-moq.md)（#1034）。映像は画面（webview）の `getUserMedia`・`getDisplayMedia`・WebCodecs（VP8）で取り込み・復号し、音声は Rust 側（[空間音声](metaverse-spatial-audio.md)と同じ機器の経路）で扱う。配信者の端末は視聴者 4 人まで直接送り、5 人目からは視聴中の視聴者が 2 人まで転送する（配信者の署名を確かめ、中身を変えずに渡す）。
 
 ## 前提
 
-- Tauri の desktop app（`audio-devices` を有効にした build）を、Windows と Linux の端末に入れる。配信者 1・視聴者 2（1 名は途中参加）。
+- Tauri の desktop app（`audio-devices` を有効にした build）を、Windows と Linux の端末に入れる。配信者 1・視聴者 2 以上（1 名は途中参加、1 名は転送を受ける）。
 - camera・mic・speaker。Ubuntu 22.04 の webview は camera を列挙できない見込み（ADR 0067 §9）で、その場合は画面だけを確かめる。
 - 試験の配信は `test` topic に作る。
 
@@ -19,10 +19,12 @@
 7. 視聴者が退出すると再生が止まる。配信者が「映像の配信を止める」か session を終えると、視聴者の映像と声が 5 秒以内に止まる。終了後は参加できない。
 8. 配信者の app を再起動しても、配信は自動で始まらない。
 9. 経路は `kukuri_connectivity` の log「media connection established」の `path`（`direct_p2p` / `relay_supported_p2p` / `relay_fallback`）で確かめる。視聴者の識別子と映像・音声は log に出ない。
+10. 転送: 視聴者の端末で `KUKURI_INSTANCE` を変えて app を 4 つ起動し（[dev.md の環境変数](dev.md#remote-sync-用の環境変数)）、それぞれ参加して配信者の直接の枠を埋める。別の端末の視聴者が参加すると、視聴中の視聴者から転送を受けて映像と声が届き、同期も 3. と同じ。転送している視聴者を退出させると、受けていた視聴者の映像は止まり、10 秒ほどで戻る（配信者か別の視聴者から受け直す）。
 
 ## 既知の制約
 
-- 直接の視聴者は 4 人まで。5 人目は満員と出て、空きを 5 秒ごとに待つ（転送は #1034 AC-2b）。
+- 直接の視聴者は 4 人まで、各視聴者が転送するのは 2 人まで。参加の問い合わせが 16 段で尽きると「視聴の空きが見つからないため参加できません」と出て、5 秒ごとに試し直す。
+- 転送する視聴者は、上り回線を子の数 × 配信の bitrate（最大約 5 Mbps）使う。転送を受ける視聴者は、親が抜けると参加し直すまで（親が止まったときは 5 秒の判定の後）映像が止まる。
 - 配信できるのは、この端末で作った session だけ（manifest の配信者の端末の id）。別の端末・Web で作った session と、この版より前に作った session は、配信を始めると「この端末から映像を配信できません」と出て取り込まない（この端末で新しく作れば配信できる）。
 - 主催者が live の列を離れる（列を閉じる・別の画面へ移る）と、取り込みと配信は止まる。戻ったら card で始め直す。
 - Windows の WebView2 は camera の許可を保存するので、一度 camera で配信した後は、移行用の QR の読み取り（#1628）でも camera の確認が出ない。

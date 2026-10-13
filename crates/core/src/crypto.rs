@@ -61,6 +61,18 @@ impl KukuriKeys {
         keypair.sign_schnorr(message)
     }
 
+    /// live の配信の frame の署名鍵を、アカウントの署名鍵から session ごとに導く(ADR 0067 §8)。同じアカウント鍵と
+    /// session からはどの端末でも同じ鍵になり、この鍵からアカウントの秘密鍵は求められない。
+    pub fn derive_live_media_signer(&self, session_id: &str) -> Result<crate::LiveMediaSigner> {
+        let seed = blake3::Hasher::new_derive_key(LIVE_MEDIA_SIGNER_DERIVATION_CONTEXT)
+            .update(&self.secret_key.to_secret_bytes())
+            .update(session_id.as_bytes())
+            .finalize();
+        let secret = SecretKey::from_secret_bytes(*seed.as_bytes())
+            .context("the live media signing key is not a valid scalar")?;
+        Ok(crate::LiveMediaSigner(Keypair::from_secret_key(&secret)))
+    }
+
     /// docs(iroh-docs)の書き込みに使う docs author の秘密鍵の種を、アカウントの署名鍵から導出する(ADR 0053)。
     ///
     /// 同じアカウント鍵からは、どの端末でも同じ値になる。導出は一方向で、この値からアカウントの秘密鍵は求められない。
@@ -72,6 +84,9 @@ impl KukuriKeys {
         ))
     }
 }
+
+/// live の配信の署名鍵の導出の context(ADR 0067 §8)。変えると配信中の session の署名が確かめられなくなる。
+const LIVE_MEDIA_SIGNER_DERIVATION_CONTEXT: &str = "kukuri.app 2026-10-13 live media signer v1";
 
 /// docs author の導出の context(ADR 0053 §1)。変更してはならない。
 const DOCS_AUTHOR_DERIVATION_CONTEXT: &str = "kukuri.app 2026-09-21 docs author v1";

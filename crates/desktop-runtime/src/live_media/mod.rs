@@ -1,51 +1,58 @@
-//! live 配信の映像・音声(ADR 0067 §8・§9、#1034 AC-2a)。
+//! live 配信の映像・音声(ADR 0067 §8・§9、#1034)。
 //!
-//! 配信者の端末は、画面が VP8 に圧縮した映像の chunk と mic の音声(moq-audio)を、同じ clock の timestamp で
-//! 1 つの broadcast に置く。最初の keyframe が届くまで broadcast を公開しない(取り込みが拒否されたら送信 0)。
-//! 直接の視聴者は 4 人まで(超えたら満員)。視聴者の端末は配信者の端末へ購読し、音声を Rust で再生し、映像の
-//! chunk を送りかけ 1 秒分までで画面へ渡す(音声の再生時刻を添える)。音声と映像の bytes は memory にだけ置き、
-//! docs・blob・SQLite・log へ出さない。Web は扱わない(ADR 0060)。
+//! 配信者の端末は、画面が VP8 に圧縮した映像の chunk と mic の音声(moq-audio)に session ごとの鍵で frame ごとに
+//! 署名し、同じ clock の timestamp で 1 つの broadcast に置く。最初の keyframe が届くまで broadcast を公開しない
+//! (取り込みが拒否されたら送信 0)。配信者が直接送るのは 4 人まで、受けた視聴者は確かめた frame を中身を変えずに
+//! 2 人まで転送する(`watch`)。視聴者は音声を Rust で再生し、映像の chunk を送りかけ 1 秒分までで画面へ渡す(音声の
+//! 再生時刻を添える。`screen`)。音声と映像の bytes は memory にだけ置き、docs・blob・SQLite・log へ出さない。Web は
+//! 扱わない(ADR 0060)。
 
+mod screen;
+mod watch;
+
+use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard, Weak};
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result};
+use iroh::EndpointId;
 use kukuri_app_api::AppService;
 use kukuri_core::{
-    LiveMediaAccessRequestV1, MediaAccessRequestV1, Pubkey, SpatialContextV1,
-    live_media_broadcast_path,
+    LiveMediaAccessRequestV1, LiveMediaSigner, Pubkey, SpatialContextV1, live_media_broadcast_path,
 };
 use kukuri_iroh_node::{IrohDocsNode, MediaGrant, media_origin_config};
-use moq_mux::catalog::hang::{Catalog, Container};
-use moq_net::bytes::Bytes;
+use moq_mux::catalog::hang::Container;
 use moq_net::{Timestamp, origin};
 use n0_future::task::AbortOnDropHandle;
-use n0_future::time::{Instant, timeout};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Mutex;
 
 use crate::media_access::{
-    DENIED_ACCESS, DENIED_FULL, DENIED_NOT_LIVE, DENIED_UNAVAILABLE, RateBudget, SUBSCRIBE_TIMEOUT,
-    denial_code, opus_frames, ordered_frames, read_catalog,
+    DENIED_ACCESS, DENIED_ANCESTOR, DENIED_FULL, DENIED_NOT_LIVE, DENIED_UNAVAILABLE, RateBudget,
+    ordered_frames,
 };
 use crate::media_devices as devices;
+use screen::{ScreenQueue, encode_screen_batch};
 
 const LIVE_AUDIO_TRACK: &str = "audio";
 const LIVE_VIDEO_TRACK: &str = "video";
-/// 配信者が直接送る視聴者の上限(ADR 0067 §4・§8)。
+/// 配信者が直接送る視聴者と、視聴者が転送する相手の上限(ADR 0067 §4・§8)。
 const MAX_DIRECT_VIEWERS: usize = 4;
-/// 画面へ送りかけの映像の上限(1 秒分。ADR 0067 §4)。
-const SCREEN_QUEUE_CHUNKS: usize = 30;
+const MAX_FORWARDED_VIEWERS: usize = 2;
+/// 参加の問い合わせの上限(ADR 0067 §4): 段数と 1 段の上限。経路はこの段数と配信者の分までを持つ。
+const MAX_JOIN_STEPS: usize = 16;
+const JOIN_STEP_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_ROUTE: usize = MAX_JOIN_STEPS + 1;
+/// 参加し直す間隔の下限と、親から何も届かなければ親を失ったとみなす時間(ADR 0067 §8)。
+const REJOIN_INTERVAL: Duration = Duration::from_secs(5);
+const STALL: Duration = Duration::from_secs(5);
 /// 視聴の購読の最大遅延(映像。ADR 0067 §4)と、音声の再生前の保持の上限(ADR 0041 client の既定 8 × 20 ms)。
 const VIDEO_MAX_AGE: Duration = Duration::from_secs(1);
 const AUDIO_PLAYOUT: Duration = Duration::from_millis(160);
 /// Opus の 1 frame の長さ(μs)。
 const OPUS_FRAME_MICROS: u64 = 20_000;
-/// 画面が次の映像を待つ上限(届かなければ空を返し、画面はまた待つ)。
-const SCREEN_WAIT: Duration = Duration::from_secs(1);
 
 /// 配信する映像(ADR 0067 D7。1 つの配信で同時に送るのはどちらか 1 つ)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,7 +122,7 @@ pub struct LiveMediaRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LiveWatchState {
     Watching,
-    /// 配信者が直接送る視聴者が上限に達している(視聴者どうしの転送は #1034 AC-2b)。
+    /// 配信者と転送する視聴者のどこにも空きが無い(参加の問い合わせが 16 段で尽きた)。
     Full,
     /// media の無い session、または配信者がまだ映像を送っていない。
     NoMedia,
@@ -153,27 +160,25 @@ pub(crate) struct LiveMedia {
     viewers: Mutex<HashMap<String, Viewer>>,
 }
 
-/// 配信中の session。落とすと broadcast を閉じ、mic を止め、視聴者の接続を終える。
+/// 配信中の session。落とすと broadcast を閉じ、mic を止め、視聴者の接続を評価し直しで終える。
 struct Broadcast {
-    topic_id: String,
-    origin: origin::Producer,
+    fanout: Arc<Fanout>,
     broadcast: moq_net::broadcast::Producer,
-    announced: bool,
     catalog: moq_mux::catalog::Producer,
     video: moq_mux::container::Producer<Container, hang::catalog::VideoConfig>,
     /// 最後に置いた映像の timestamp(μs)。
     last_video_us: u64,
     source: LiveVideoSource,
-    viewers: Arc<AtomicUsize>,
+    signer: LiveMediaSigner,
     /// 開くのを待つ間も映像を置けるよう、broadcast の一覧と別に lock する。
     microphone: Arc<Mutex<Microphone>>,
-    _origin_driver: AbortOnDropHandle<()>,
 }
 
 /// 配信の mic。一度開いた後は、止めても track と catalog を残す(視聴者の購読はそのまま続く)。
 #[derive(Default)]
 struct Microphone {
-    capture: Option<devices::Capture>,
+    /// 機器と、その音声に署名して配信の track へ写す task。
+    capture: Option<(devices::Capture, AbortOnDropHandle<()>)>,
     on: bool,
 }
 
@@ -182,20 +187,21 @@ impl Microphone {
         &mut self,
         enabled: bool,
         broadcast: &mut moq_net::broadcast::Producer,
-        catalog: moq_mux::catalog::Producer,
+        catalog: &moq_mux::catalog::Producer,
+        signer: LiveMediaSigner,
     ) -> bool {
         if enabled == self.on {
             return self.on;
         }
         self.on = if !enabled {
-            if let Some(capture) = &self.capture {
+            if let Some((capture, _)) = &self.capture {
                 capture.stop();
             }
             false
         } else {
             let opened = match self.capture.as_mut() {
-                Some(capture) => capture.start().await,
-                None => devices::Capture::open(broadcast, catalog, LIVE_AUDIO_TRACK, None)
+                Some((capture, _)) => capture.start().await,
+                None => open_microphone(broadcast, catalog, signer)
                     .await
                     .map(|capture| self.capture = Some(capture)),
             };
@@ -208,14 +214,79 @@ impl Microphone {
     }
 }
 
+/// mic を開く。moq-audio は配信と同じ clock で非公開の broadcast へ書き、その音声に署名して配信の track へ写す。
+async fn open_microphone(
+    broadcast: &mut moq_net::broadcast::Producer,
+    catalog: &moq_mux::catalog::Producer,
+    signer: LiveMediaSigner,
+) -> Result<(devices::Capture, AbortOnDropHandle<()>)> {
+    let mut private = moq_net::broadcast::Info::new().produce();
+    let private_catalog = moq_mux::catalog::Producer::new(
+        &mut private,
+        moq_mux::catalog::Config::default().with_clock(catalog.clock()),
+    )?;
+    let capture = devices::Capture::open(
+        &mut private,
+        private_catalog.clone(),
+        LIVE_AUDIO_TRACK,
+        None,
+    )
+    .await?;
+    let signing = sign_audio(&private, &private_catalog, broadcast, catalog, signer).await?;
+    Ok((capture, signing))
+}
+
+/// 非公開の broadcast の音声を読み、配信者の署名を付けて配信の音声の track へ写す(ADR 0067 §8)。
+async fn sign_audio(
+    private: &moq_net::broadcast::Producer,
+    private_catalog: &moq_mux::catalog::Producer,
+    broadcast: &mut moq_net::broadcast::Producer,
+    catalog: &moq_mux::catalog::Producer,
+    signer: LiveMediaSigner,
+) -> Result<AbortOnDropHandle<()>> {
+    let config = private_catalog
+        .snapshot()
+        .audio
+        .renditions
+        .get(LIVE_AUDIO_TRACK)
+        .cloned()
+        .context("the microphone has no audio track")?;
+    let mut frames = ordered_frames(
+        &private.consume(),
+        LIVE_AUDIO_TRACK,
+        Container::try_from(&config)?,
+        hang::catalog::PRIORITY.audio,
+        AUDIO_PLAYOUT,
+    )
+    .await?;
+    let track = broadcast.create_track(
+        LIVE_AUDIO_TRACK,
+        catalog.track_info(hang::catalog::PRIORITY.audio),
+    )?;
+    let mut signed = catalog.audio(track, Container::try_from(&config)?, config)?;
+    Ok(AbortOnDropHandle::new(n0_future::task::spawn(async move {
+        while let Ok(Some(mut frame)) = frames.read().await {
+            frame.payload = signer
+                .sign(LIVE_AUDIO_TRACK, micros(frame.timestamp), &frame.payload)
+                .into();
+            let _ = signed.write(frame);
+        }
+    })))
+}
+
 impl Broadcast {
-    /// 公開前の broadcast。
-    fn new(topic_id: String, session_id: &str, source: LiveVideoSource) -> Result<Self> {
-        let (origin, driver) = origin::Producer::new(media_origin_config());
-        let origin_driver = n0_future::task::spawn(async move {
-            moq_net::time::run(driver).await;
-        });
-        let mut broadcast = origin.create_broadcast(live_media_broadcast_path(session_id))?;
+    /// 公開前の broadcast。直接の視聴者への経路は配信者(`endpoint_id`)だけ。
+    fn new(
+        topic_id: String,
+        session_id: &str,
+        source: LiveVideoSource,
+        endpoint_id: String,
+        signer: LiveMediaSigner,
+    ) -> Result<Self> {
+        let fanout = Fanout::new(topic_id, MAX_DIRECT_VIEWERS, vec![endpoint_id]);
+        let mut broadcast = fanout
+            .origin
+            .create_broadcast(live_media_broadcast_path(session_id))?;
         let catalog =
             moq_mux::catalog::Producer::new(&mut broadcast, moq_mux::catalog::Config::default())?;
         let track = broadcast.create_track(
@@ -228,150 +299,114 @@ impl Broadcast {
             video_config(source.limits()),
         )?;
         Ok(Self {
-            topic_id,
-            origin,
+            fanout,
             broadcast,
-            announced: false,
             catalog,
             video,
             last_video_us: 0,
             source,
-            viewers: Arc::default(),
+            signer,
             microphone: Arc::default(),
-            _origin_driver: AbortOnDropHandle::new(origin_driver),
         })
     }
 }
 
-/// 直接の視聴者 1 人分の枠。落とすと空く。
-struct ViewerSlot(Arc<AtomicUsize>);
+/// 子へ映像・音声を公開する口(配信者の端末と、転送する視聴者。ADR 0067 §8)。落とすと、子の接続は評価し直しで閉じる。
+struct Fanout {
+    topic_id: String,
+    origin: origin::Producer,
+    /// 直接の子の上限(配信者 4、転送する視聴者 2)。
+    limit: usize,
+    /// 子へ公開しているか(配信者は最初の keyframe から。転送する視聴者は親から受けている間)。
+    announced: AtomicBool,
+    links: StdMutex<FanoutLinks>,
+    _driver: AbortOnDropHandle<()>,
+}
 
-impl ViewerSlot {
-    fn take(viewers: &Arc<AtomicUsize>) -> Option<Self> {
-        viewers
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                (count < MAX_DIRECT_VIEWERS).then_some(count + 1)
-            })
-            .ok()
-            .map(|_| Self(Arc::clone(viewers)))
+/// 配信者からこの端末までの経路(この端末を含む)と直接の子(endpoint id)。参加の応答に添える(許可は経路だけ)。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct FanoutLinks {
+    route: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    children: Vec<String>,
+}
+
+impl Fanout {
+    fn new(topic_id: String, limit: usize, route: Vec<String>) -> Arc<Self> {
+        let (origin, driver) = origin::Producer::new(media_origin_config());
+        let driver = n0_future::task::spawn(async move {
+            moq_net::time::run(driver).await;
+        });
+        Arc::new(Self {
+            topic_id,
+            origin,
+            limit,
+            announced: AtomicBool::new(false),
+            links: StdMutex::new(FanoutLinks {
+                route,
+                children: Vec::new(),
+            }),
+            _driver: AbortOnDropHandle::new(driver),
+        })
+    }
+
+    fn links(&self) -> MutexGuard<'_, FanoutLinks> {
+        self.links.lock().expect("fanout links poisoned")
+    }
+
+    /// 経路を付け替える(転送する視聴者が親を変えた)。最も近い祖先から `MAX_ROUTE` 件までを持つ。
+    fn set_route(&self, mut route: Vec<String>) {
+        route.drain(..route.len().saturating_sub(MAX_ROUTE));
+        self.links().route = route;
+    }
+
+    /// 子の枠を取る。満員なら、満員の応答に添える子の一覧と経路。
+    fn admit(self: &Arc<Self>, child: String) -> std::result::Result<ChildSlot, String> {
+        let mut links = self.links();
+        if links.children.len() >= self.limit {
+            return Err(serde_json::to_string(&*links).unwrap_or_default());
+        }
+        links.children.push(child.clone());
+        Ok(ChildSlot {
+            fanout: Arc::downgrade(self),
+            child,
+        })
     }
 }
 
-impl Drop for ViewerSlot {
+/// 子 1 人分の枠。落とすと空く(接続が終われば grant と一緒に落ちる)。
+struct ChildSlot {
+    fanout: Weak<Fanout>,
+    child: String,
+}
+
+impl Drop for ChildSlot {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
+        if let Some(fanout) = self.fanout.upgrade() {
+            let mut links = fanout.links();
+            if let Some(at) = links.children.iter().position(|child| *child == self.child) {
+                links.children.swap_remove(at);
+            }
+        }
     }
 }
 
-/// 視聴中の session。落とすと購読と再生を止める。
+/// 視聴中の session。落とすと購読・再生・転送を止める。
 struct Viewer {
     screen: Arc<ScreenQueue>,
+    /// 転送の口(視聴の task が持ち、task が終われば子の接続は評価し直しで閉じる)。
+    fanout: Weak<Fanout>,
     _task: AbortOnDropHandle<()>,
 }
 
-/// 画面へ送りかけの映像(1 秒分まで。超えたら次の keyframe まで捨てる)と、視聴の状態・音声の再生時刻。
-#[derive(Default)]
-struct ScreenQueue {
-    state: StdMutex<ScreenState>,
-    ready: Notify,
-}
-
-#[derive(Default)]
-struct ScreenState {
-    chunks: VecDeque<ScreenChunk>,
-    waiting_keyframe: bool,
-    ended: Option<LiveWatchState>,
-    /// 最後に再生へ渡した音声の、聞こえる位置の timestamp(μs)と、渡した時刻。音声がまだ無ければ None。
-    audio_clock: Option<(u64, Instant)>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ScreenChunk {
-    timestamp_us: u64,
-    keyframe: bool,
-    data: Bytes,
-}
-
-impl ScreenQueue {
-    fn push(&self, chunk: ScreenChunk) {
-        let mut state = self.state.lock().expect("screen queue poisoned");
-        if chunk.keyframe {
-            if state.waiting_keyframe || state.chunks.len() >= SCREEN_QUEUE_CHUNKS {
-                state.chunks.clear();
-            }
-            state.waiting_keyframe = false;
-        } else if state.waiting_keyframe {
-            return;
-        } else if state.chunks.len() >= SCREEN_QUEUE_CHUNKS {
-            state.waiting_keyframe = true;
-            return;
-        }
-        state.chunks.push_back(chunk);
-        drop(state);
-        self.ready.notify_one();
-    }
-
-    fn set_audio_clock(&self, timestamp_us: u64) {
-        self.state
-            .lock()
-            .expect("screen queue poisoned")
-            .audio_clock = Some((timestamp_us, Instant::now()));
-    }
-
-    fn end(&self, state: LiveWatchState) {
-        self.state
-            .lock()
-            .expect("screen queue poisoned")
-            .ended
-            .get_or_insert(state);
-        self.ready.notify_one();
-    }
-
-    /// 送りかけの映像を全部取る。無ければ `SCREEN_WAIT` まで待つ。音声の再生時刻は、最後に渡した位置から経過時間で
-    /// 進める(mic が止まっても映像を止めない)。音声がまだ無ければ 0。
-    async fn take(&self) -> (LiveWatchState, u64, Vec<ScreenChunk>) {
-        let deadline = Instant::now() + SCREEN_WAIT;
-        loop {
-            let ready = self.ready.notified();
-            {
-                let mut state = self.state.lock().expect("screen queue poisoned");
-                if !state.chunks.is_empty() || state.ended.is_some() || Instant::now() >= deadline {
-                    let chunks = state.chunks.drain(..).collect();
-                    let watch = state.ended.unwrap_or(LiveWatchState::Watching);
-                    let clock = state.audio_clock.map_or(0, |(timestamp_us, at)| {
-                        timestamp_us.saturating_add(micros_of(at.elapsed()))
-                    });
-                    return (watch, clock, chunks);
-                }
-            }
-            let _ = timeout(deadline.saturating_duration_since(Instant::now()), ready).await;
-        }
-    }
-}
-
-/// 画面へ渡す形: state(1)・音声の再生時刻(8)・chunk の数(2)、chunk ごとに timestamp(8)・keyframe(1)・長さ(4)・bytes。
-/// 数値は little endian。
-fn encode_screen_batch(
-    watch: LiveWatchState,
-    audio_clock_us: u64,
-    chunks: &[ScreenChunk],
-) -> Vec<u8> {
-    let mut out = Vec::with_capacity(
-        11 + chunks
-            .iter()
-            .map(|chunk| 13 + chunk.data.len())
-            .sum::<usize>(),
-    );
-    out.push(watch.code());
-    out.extend_from_slice(&audio_clock_us.to_le_bytes());
-    out.extend_from_slice(&(chunks.len() as u16).to_le_bytes());
-    for chunk in chunks {
-        out.extend_from_slice(&chunk.timestamp_us.to_le_bytes());
-        out.push(u8::from(chunk.keyframe));
-        out.extend_from_slice(&(chunk.data.len() as u32).to_le_bytes());
-        out.extend_from_slice(&chunk.data);
-    }
-    out
+/// 視聴の task が使うもの。
+struct Watch {
+    app: Arc<AppService>,
+    node: Arc<IrohDocsNode>,
+    topic_id: String,
+    session_id: String,
+    screen: Arc<ScreenQueue>,
+    fanout: Arc<Fanout>,
 }
 
 impl LiveMedia {
@@ -387,17 +422,25 @@ impl LiveMedia {
             .live_media_scope(&request.topic, &request.session_id)
             .await?
             .context("only the owner of a live session can broadcast it")?;
-        // 視聴者は manifest の端末へ購読するので、この端末で作った session だけを配信する。
-        if endpoint_id.is_none() || media_endpoint_id != endpoint_id {
+        // 視聴者は manifest の端末へ購読し、manifest の鍵で署名を確かめるので、この端末で作った session だけを配信する。
+        let Some(endpoint_id) = endpoint_id.filter(|id| media_endpoint_id.as_ref() == Some(id))
+        else {
             return Err(LiveBroadcastElsewhere.into());
-        }
+        };
         let limits = request.source.limits();
-        let (microphone, mut broadcast, catalog) = {
+        let (microphone, mut broadcast, catalog, signer) = {
             let mut broadcasts = self.broadcasts.lock().await;
             let current = match broadcasts.entry(request.session_id) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => {
-                    let broadcast = Broadcast::new(request.topic, entry.key(), request.source)?;
+                    let signer = app.live_media_signer(entry.key())?;
+                    let broadcast = Broadcast::new(
+                        request.topic,
+                        entry.key(),
+                        request.source,
+                        endpoint_id,
+                        signer,
+                    )?;
                     entry.insert(broadcast)
                 }
             };
@@ -409,17 +452,18 @@ impl LiveMedia {
                 Arc::clone(&current.microphone),
                 current.broadcast.clone(),
                 current.catalog.clone(),
+                current.signer.clone(),
             )
         };
         let microphone = microphone
             .lock()
             .await
-            .set(request.microphone, &mut broadcast, catalog)
+            .set(request.microphone, &mut broadcast, &catalog, signer)
             .await;
         Ok(LiveBroadcastStatus { microphone, limits })
     }
 
-    /// 画面が圧縮した映像の chunk を置く。`age` は取り込みから今までの時間(timestamp を取り込み時に合わせる)。
+    /// 画面が圧縮した映像の chunk に署名して置く。`age` は取り込みから今までの時間(timestamp を取り込み時に合わせる)。
     pub(crate) async fn push_video(
         &self,
         session_id: &str,
@@ -438,7 +482,10 @@ impl LiveMedia {
         let written = current.video.write(moq_mux::container::Frame {
             timestamp: Timestamp::from_micros(timestamp_us)?,
             duration: None,
-            payload: data.into(),
+            payload: current
+                .signer
+                .sign(LIVE_VIDEO_TRACK, timestamp_us, &data)
+                .into(),
             keyframe,
         });
         // 最初の keyframe の前の frame は置けない(途中参加と同じく keyframe から始める)。
@@ -447,9 +494,9 @@ impl LiveMedia {
         }
         written?;
         current.last_video_us = timestamp_us;
-        if !current.announced {
+        if !current.fanout.announced.load(Ordering::Acquire) {
             current.broadcast.announce(origin::Route::default())?;
-            current.announced = true;
+            current.fanout.announced.store(true, Ordering::Release);
         }
         Ok(())
     }
@@ -459,28 +506,24 @@ impl LiveMedia {
         self.broadcasts.lock().await.remove(session_id);
     }
 
-    /// 配信者の端末の受け口が呼ぶ。配信中の自分の session への要求だけを、proof と access で確かめて許す。
+    /// 受け口が呼ぶ(配信者の端末と、転送する視聴者)。子へ公開している session への要求だけを、要求した端末が祖先で
+    /// ないこと・proof・access で確かめて許す。満員なら子の一覧と経路を添えて断る(ADR 0067 §8)。
     pub(crate) async fn grant(
-        self: &Arc<Self>,
+        &self,
         app: &Arc<AppService>,
+        remote: EndpointId,
         request: LiveMediaAccessRequestV1,
     ) -> std::result::Result<MediaGrant, String> {
-        let (publish, viewers) = {
-            let broadcasts = self.broadcasts.lock().await;
-            let Some(current) = broadcasts
-                .get(&request.session_id)
-                .filter(|current| current.topic_id == request.topic_id && current.announced)
-            else {
-                return Err(DENIED_NOT_LIVE.into());
-            };
-            (current.origin.consume(), Arc::clone(&current.viewers))
-        };
-        // 満員なら docs を読む前に断る(待っている視聴者の試し直しを軽くする)。枠は認可の後に取る。
-        if viewers.load(Ordering::Acquire) >= MAX_DIRECT_VIEWERS {
-            return Err(DENIED_FULL.into());
+        let fanout = self
+            .fanout(&request.topic_id, &request.session_id)
+            .await
+            .ok_or_else(|| DENIED_NOT_LIVE.to_string())?;
+        let remote = remote.to_string();
+        if fanout.links().route.contains(&remote) {
+            return Err(DENIED_ANCESTOR.into());
         }
-        let (context, owner, _) = app
-            .live_media_scope(&request.topic_id, &request.session_id)
+        let (_, _, context, owner) = app
+            .live_media_source(&request.topic_id, &request.session_id)
             .await
             .map_err(|_| DENIED_UNAVAILABLE.to_string())?
             .ok_or_else(|| DENIED_NOT_LIVE.to_string())?;
@@ -489,16 +532,26 @@ impl LiveMedia {
             .await
             .map_err(|_| DENIED_UNAVAILABLE.to_string())?
             .ok_or_else(|| DENIED_ACCESS.to_string())?;
-        let slot = ViewerSlot::take(&viewers).ok_or_else(|| DENIED_FULL.to_string())?;
-        let live = Arc::downgrade(self);
+        // 子の一覧は資格を確かめた相手にだけ返す。
+        let slot = fanout
+            .admit(remote)
+            .map_err(|links| format!("{DENIED_FULL}\n{links}"))?;
+        let detail = serde_json::to_string(&FanoutLinks {
+            route: fanout.links().route.clone(),
+            children: Vec::new(),
+        })
+        .unwrap_or_default();
+        let publish = fanout.origin.consume();
+        let fanout = Arc::downgrade(&fanout);
         let app = Arc::downgrade(app);
         Ok(MediaGrant {
             publish,
+            detail,
             revalidate: Arc::new(move || {
                 // 枠は認可の間だけ持つ(接続が終われば grant と一緒に落ちて空く)。
                 let _slot = &slot;
                 Box::pin(still_allowed(
-                    live.clone(),
+                    fanout.clone(),
                     app.clone(),
                     request.topic_id.clone(),
                     request.session_id.clone(),
@@ -510,8 +563,29 @@ impl LiveMedia {
         })
     }
 
-    /// 視聴を始める(同じ session の前の視聴は止めて始め直す。満員・映像の無い間は画面が 5 秒ごとに呼び直す)。状態は
-    /// `next_video` で画面へ渡す。
+    /// 子へ公開している session の口(配信中なら配信者の、視聴中なら転送の)。
+    async fn fanout(&self, topic_id: &str, session_id: &str) -> Option<Arc<Fanout>> {
+        let broadcast = self
+            .broadcasts
+            .lock()
+            .await
+            .get(session_id)
+            .map(|current| Arc::clone(&current.fanout));
+        let fanout = match broadcast {
+            Some(fanout) => Some(fanout),
+            None => self
+                .viewers
+                .lock()
+                .await
+                .get(session_id)
+                .and_then(|viewer| viewer.fanout.upgrade()),
+        };
+        fanout.filter(|fanout| {
+            fanout.topic_id == topic_id && fanout.announced.load(Ordering::Acquire)
+        })
+    }
+
+    /// 視聴を始める(同じ session の前の視聴は止めて始め直す)。状態は `next_video` で画面へ渡す。
     pub(crate) async fn watch(
         &self,
         app: &Arc<AppService>,
@@ -521,17 +595,21 @@ impl LiveMedia {
         let node = node.context("the iroh stack is not running")?;
         let mut viewers = self.viewers.lock().await;
         let screen = Arc::new(ScreenQueue::default());
-        let task = n0_future::task::spawn(watch_session(
-            Arc::clone(app),
+        let fanout = Fanout::new(request.topic.clone(), MAX_FORWARDED_VIEWERS, Vec::new());
+        let viewer_fanout = Arc::downgrade(&fanout);
+        let task = n0_future::task::spawn(watch::watch_session(Watch {
+            app: Arc::clone(app),
             node,
-            request.topic,
-            request.session_id.clone(),
-            Arc::clone(&screen),
-        ));
+            topic_id: request.topic,
+            session_id: request.session_id.clone(),
+            screen: Arc::clone(&screen),
+            fanout,
+        }));
         viewers.insert(
             request.session_id,
             Viewer {
                 screen,
+                fanout: viewer_fanout,
                 _task: AbortOnDropHandle::new(task),
             },
         );
@@ -555,7 +633,7 @@ impl LiveMedia {
         }
     }
 
-    /// 視聴を止める(購読と再生を止める)。
+    /// 視聴を止める(購読・再生・転送を止める)。
     pub(crate) async fn stop_watching(&self, session_id: &str) {
         self.viewers.lock().await.remove(session_id);
     }
@@ -594,9 +672,9 @@ fn video_config(limits: LiveVideoLimits) -> hang::catalog::VideoConfig {
     config
 }
 
-/// 配信者の端末が 5 秒ごとに確かめる: まだ配信中で、session が終わっておらず、視聴者の資格がある。
+/// 子の資格を 5 秒ごとに確かめる: 口がまだあり(配信中・視聴中)、session が終わっておらず、視聴者の資格がある。
 async fn still_allowed(
-    live: Weak<LiveMedia>,
+    fanout: Weak<Fanout>,
     app: Weak<AppService>,
     topic_id: String,
     session_id: String,
@@ -604,193 +682,16 @@ async fn still_allowed(
     owner: Pubkey,
     viewer: Pubkey,
 ) -> bool {
-    let (Some(live), Some(app)) = (live.upgrade(), app.upgrade()) else {
+    let (Some(_fanout), Some(app)) = (fanout.upgrade(), app.upgrade()) else {
         return false;
     };
-    if !live.broadcasts.lock().await.contains_key(&session_id) {
-        return false;
-    }
     matches!(
-        app.live_media_scope(&topic_id, &session_id).await,
+        app.live_media_source(&topic_id, &session_id).await,
         Ok(Some(_))
     ) && app
         .media_listener_allowed(&context, &owner, &viewer)
         .await
         .unwrap_or(false)
-}
-
-/// 1 つの session を視聴し、終わったら画面へ状態を渡す。
-async fn watch_session(
-    app: Arc<AppService>,
-    node: Arc<IrohDocsNode>,
-    topic_id: String,
-    session_id: String,
-    screen: Arc<ScreenQueue>,
-) {
-    let ended = match play(&app, &node, &topic_id, &session_id, &screen).await {
-        Ok(state) => state,
-        Err(error) => match denial_code(&error) {
-            Some(DENIED_FULL) => LiveWatchState::Full,
-            Some(code) => {
-                tracing::debug!(code, "live media subscription denied");
-                LiveWatchState::Ended
-            }
-            None => {
-                tracing::debug!("live media subscription ended");
-                LiveWatchState::Ended
-            }
-        },
-    };
-    screen.end(ended);
-}
-
-async fn play(
-    app: &AppService,
-    node: &IrohDocsNode,
-    topic_id: &str,
-    session_id: &str,
-    screen: &ScreenQueue,
-) -> Result<LiveWatchState> {
-    let Some((endpoint_id, context, owner)) = app.live_media_source(topic_id, session_id).await?
-    else {
-        return Ok(LiveWatchState::NoMedia);
-    };
-    let proof = app.build_dome_access_proof(context, owner).await?;
-    let request = serde_json::to_vec(&MediaAccessRequestV1::Live(LiveMediaAccessRequestV1 {
-        proof,
-        topic_id: topic_id.to_string(),
-        session_id: session_id.to_string(),
-    }))?;
-    let subscription = match node.media_subscribe(&endpoint_id, &request).await {
-        Ok(subscription) => subscription,
-        Err(error) if denial_code(&error) == Some(DENIED_NOT_LIVE) => {
-            return Ok(LiveWatchState::NoMedia);
-        }
-        Err(error) => return Err(error),
-    };
-    let broadcast = timeout(
-        SUBSCRIBE_TIMEOUT,
-        subscription.broadcast(&live_media_broadcast_path(session_id)),
-    )
-    .await
-    .context("the broadcaster did not publish in time")??;
-    let (catalog, mut catalogs) = read_catalog(&broadcast).await?;
-    let video_config = catalog
-        .video
-        .renditions
-        .get(LIVE_VIDEO_TRACK)
-        .context("the broadcast has no video track")?;
-    if video_config.codec != hang::catalog::VideoCodec::VP8 {
-        bail!("the broadcast video is not VP8");
-    }
-    let container = Container::try_from(video_config)
-        .map_err(|error| anyhow!("unsupported video container: {error}"))?;
-    // 途中参加は最新の group から始め(遅れの許容 0 で購読し、前の group を送らせない)、届き始めてから 1 秒を許す。
-    let mut video = ordered_frames(
-        &broadcast,
-        LIVE_VIDEO_TRACK,
-        container,
-        hang::catalog::PRIORITY.video,
-        Duration::ZERO,
-    )
-    .await?;
-    let mut joined = false;
-    let mut audio = open_audio(&broadcast, &catalog).await?;
-    let audio_budget = &app.metaverse_resource_budget().player;
-    let mut audio_admission = RateBudget::new(
-        u64::from(audio_budget.max_audio_frames_per_second),
-        audio_budget.max_audio_bytes_per_second,
-    );
-    let mut video_admission = video_budget(video_config);
-    loop {
-        // 次に届いたもの(購読の future を落としてから扱う)。
-        let next = {
-            let audio_frame = async {
-                match audio.as_mut() {
-                    Some((frames, _, _)) => frames.read().await,
-                    None => std::future::pending().await,
-                }
-            };
-            tokio::select! {
-                frame = video.read() => Next::Video(frame?),
-                frame = audio_frame => Next::Audio(frame?),
-                catalog = moq_mux::catalog::Stream::next(&mut catalogs) => Next::Catalog(catalog?.map(Box::new)),
-                _ = subscription.closed() => Next::Closed,
-            }
-        };
-        match next {
-            Next::Video(None) | Next::Catalog(None) | Next::Closed => {
-                return Ok(LiveWatchState::Ended);
-            }
-            // 配信の途中で source が替わったら上限を合わせ、mic が初めて開いたら音声の track を足す。
-            Next::Catalog(Some(catalog)) => {
-                if let Some(config) = catalog.video.renditions.get(LIVE_VIDEO_TRACK) {
-                    video_admission = video_budget(config);
-                }
-                if audio.is_none() {
-                    audio = open_audio(&broadcast, &catalog).await?;
-                }
-            }
-            Next::Video(Some(frame)) => {
-                if !joined {
-                    video.set_max_age(VIDEO_MAX_AGE);
-                    joined = true;
-                }
-                if video_admission
-                    .admit(Instant::now(), frame.payload.len())
-                    .is_ok()
-                {
-                    screen.push(ScreenChunk {
-                        timestamp_us: micros(frame.timestamp),
-                        keyframe: frame.keyframe,
-                        data: frame.payload,
-                    });
-                }
-            }
-            Next::Audio(None) => audio = None,
-            Next::Audio(Some(frame)) => {
-                if audio_admission
-                    .admit(Instant::now(), frame.payload.len())
-                    .is_err()
-                {
-                    continue;
-                }
-                let (_, decoder, (_, output)) = audio.as_mut().expect("audio is open");
-                let decoded = decoder.decode(&frame.payload)?;
-                output.write(&decoded.samples, AUDIO_PLAYOUT)?;
-                let heard = micros(frame.timestamp).saturating_add(OPUS_FRAME_MICROS);
-                screen.set_audio_clock(heard.saturating_sub(micros_of(output.buffered())));
-            }
-        }
-    }
-}
-
-enum Next {
-    Video(Option<moq_mux::container::Frame>),
-    Audio(Option<moq_mux::container::Frame>),
-    Catalog(Option<Box<Catalog>>),
-    Closed,
-}
-
-/// catalog に音声の track があれば、購読して再生の出力を開く。
-async fn open_audio(
-    broadcast: &moq_net::broadcast::Consumer,
-    catalog: &Catalog,
-) -> Result<
-    Option<(
-        moq_mux::container::Consumer<Container>,
-        moq_audio::decode::Decoder,
-        (devices::Playback, devices::Output),
-    )>,
-> {
-    if !catalog.audio.renditions.contains_key(LIVE_AUDIO_TRACK) {
-        return Ok(None);
-    }
-    let (frames, decoder) =
-        opus_frames(broadcast, catalog, LIVE_AUDIO_TRACK, AUDIO_PLAYOUT).await?;
-    let playback = devices::Playback::open().await?;
-    let output = playback.output()?;
-    Ok(Some((frames, decoder, (playback, output))))
 }
 
 #[cfg(test)]

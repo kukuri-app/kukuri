@@ -1,5 +1,5 @@
 use crate::service::*;
-use kukuri_core::SpatialContextV1;
+use kukuri_core::{LiveMediaSigner, LiveMediaVerifier, SpatialContextV1};
 
 impl AppService {
     pub async fn list_live_sessions(&self, topic_id: &str) -> Result<Vec<LiveSessionView>> {
@@ -92,6 +92,7 @@ impl AppService {
     }
 
     /// `media_endpoint_id` は映像・音声を送るこの端末の endpoint id(ADR 0067 §8)。無ければ media の無い session。
+    /// media のある session には、frame の署名を確かめる鍵(owner の鍵から session ごとに導く)も載せる。
     pub async fn create_live_session_in_channel(
         &self,
         topic_id: &str,
@@ -133,6 +134,11 @@ impl AppService {
             status: LiveSessionStatus::Live,
             started_at: now,
             ended_at: None,
+            media_signing_key: media_endpoint_id
+                .as_ref()
+                .map(|_| self.live_media_signer(&session_id))
+                .transpose()?
+                .map(|signer| signer.public_key_hex()),
             media_endpoint_id,
         };
         let state = self
@@ -327,7 +333,7 @@ impl AppService {
     }
 
     /// 配信者の端末で、自分の終わっていない session なら、視聴者の資格を判定する scope と owner(自分)と、映像・音声を
-    /// 送る端末の id を返す(ADR 0067 §3)。
+    /// 送る端末の id(署名を確かめる鍵の無い旧い session は持たない)を返す(ADR 0067 §3)。
     pub async fn live_media_scope(
         &self,
         topic_id: &str,
@@ -347,16 +353,25 @@ impl AppService {
         Ok(Some((
             live_spatial_context(&manifest),
             manifest.owner_pubkey,
-            manifest.media_endpoint_id,
+            manifest
+                .media_signing_key
+                .as_ref()
+                .and(manifest.media_endpoint_id),
         )))
     }
 
-    /// 視聴者の端末で、終わっていない session の配信者の端末と、proof を束縛する scope・owner を返す。
+    /// この端末が配信する session の frame の署名鍵(owner の鍵から導く。manifest の鍵と同じ)。
+    pub fn live_media_signer(&self, session_id: &str) -> Result<LiveMediaSigner> {
+        self.keys().derive_live_media_signer(session_id)
+    }
+
+    /// 視聴者の端末で、終わっていない session の配信者の端末と、frame の署名を確かめる鍵と、proof を束縛する scope・
+    /// owner を返す。どちらかが無い session は media を持たない。
     pub async fn live_media_source(
         &self,
         topic_id: &str,
         session_id: &str,
-    ) -> Result<Option<(String, SpatialContextV1, Pubkey)>> {
+    ) -> Result<Option<(String, LiveMediaVerifier, SpatialContextV1, Pubkey)>> {
         let Some((_, _, manifest)) = self
             .fetch_live_session_state_and_manifest(topic_id, session_id)
             .await?
@@ -367,9 +382,14 @@ impl AppService {
             return Ok(None);
         }
         let context = live_spatial_context(&manifest);
+        let key = manifest
+            .media_signing_key
+            .as_deref()
+            .and_then(LiveMediaVerifier::from_hex);
         Ok(manifest
             .media_endpoint_id
-            .map(|endpoint| (endpoint, context, manifest.owner_pubkey)))
+            .zip(key)
+            .map(|(endpoint, key)| (endpoint, key, context, manifest.owner_pubkey)))
     }
 }
 
