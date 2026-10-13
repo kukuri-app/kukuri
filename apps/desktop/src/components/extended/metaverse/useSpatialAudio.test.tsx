@@ -31,13 +31,13 @@ describe('useSpatialAudio', () => {
       }));
     const actions = { setAudio } as unknown as MetaverseRoomActions;
     const listenerTransformRef = { current: null };
-    const mutedAuthorPubkeys = new Set<string>();
+    const audibleAuthorPubkeys = new Set<string>();
     const { rerender } = renderHook(
       (selectedRoom: GameRoomView | null) => useSpatialAudio({
         actions,
         selectedRoom,
         listenerTransformRef,
-        mutedAuthorPubkeys,
+        audibleAuthorPubkeys,
         transitionNeighbors: [],
         peerPresence: {},
         remoteTransforms: {},
@@ -68,13 +68,13 @@ describe('useSpatialAudio', () => {
     const first = vi.fn<(request: SetMetaverseAudioRequest) => Promise<MetaverseAudioStatus>>(answer);
     const second = vi.fn<(request: SetMetaverseAudioRequest) => Promise<MetaverseAudioStatus>>(answer);
     const listenerTransformRef = { current: null };
-    const mutedAuthorPubkeys = new Set<string>();
+    const audibleAuthorPubkeys = new Set<string>();
     const { rerender } = renderHook(
       (actions: MetaverseRoomActions) => useSpatialAudio({
         actions,
         selectedRoom: dome(1),
         listenerTransformRef,
-        mutedAuthorPubkeys,
+        audibleAuthorPubkeys,
         transitionNeighbors: [],
         peerPresence: {},
         remoteTransforms: {},

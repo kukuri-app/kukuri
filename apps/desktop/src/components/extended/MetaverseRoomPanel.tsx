@@ -111,11 +111,7 @@ export function MetaverseRoomPanel({
     floor: null,
   });
   const localDisplayName = localProfile?.display_name?.trim() || localProfile?.name?.trim() || null;
-  const mutedAuthorPubkeys = useMemo(() => new Set(
-    Object.values(knownAuthorsByPubkey)
-      .filter((author) => author.muted)
-      .map((author) => author.author_pubkey)
-  ), [knownAuthorsByPubkey]);
+  const [audibleAuthorPubkeys, setAudibleAuthorPubkeys] = useState<ReadonlySet<string>>(() => new Set());
   const session = useMetaverseRoomSession({
     actions,
     managementActive: managedScope === scope && managedId !== null,
@@ -128,12 +124,24 @@ export function MetaverseRoomPanel({
     localAvatarAssetUrl,
     avatarFetchActive:
       columnRuntime.active && columnRuntime.visible && !columnRuntime.suspended,
-    mutedAuthorPubkeys,
+    audibleAuthorPubkeys,
     initialSelectedRoomId,
     activeChannelId: activeChannel?.channel_id ?? null,
     configuredEntryInstanceId: activeChannel?.entry_dome_instance_id ?? null,
     onError: setError,
   });
+  // mute の状態は、Dome とその隣に居る相手ごとに正本から引く(画面の作者の情報は、表示中の投稿などの作者しか持たない)。
+  // mute の操作は作者の情報を更新するので、そのたびに引き直す。
+  const presentAuthors = [...new Set(Object.values(session.peerPresence).flatMap((presence) => presence.authorPubkey ?? []))]
+    .sort().join(',');
+  useEffect(() => {
+    let cancelled = false;
+    const authors = presentAuthors ? presentAuthors.split(',') : [];
+    void Promise.all(authors.map((pubkey) => actions.getAuthorSocialView(pubkey).catch(() => null))).then((views) => {
+      if (!cancelled) setAudibleAuthorPubkeys(new Set(views.flatMap((view) => view && !view.muted ? [view.author_pubkey] : [])));
+    });
+    return () => { cancelled = true; };
+  }, [actions, knownAuthorsByPubkey, presentAuthors]);
 
   useEffect(() => {
     let cancelled = false;
