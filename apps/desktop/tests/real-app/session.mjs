@@ -1,12 +1,14 @@
 // 起動した instance を、利用者と同じ状態(同意・開発者モード・互いに直接つながる)へ進める(#1800)。
 import { eventually } from '../web-e2e/wait.mjs';
 
-/// 同意して runtime が動き始めるのを待ち、開発者モード(live・Metaverse の列)を有効にして画面を読み直す。
+/// 同意して runtime が動き始めるのを待ち、開発者モード(live・Metaverse の列)を有効にし、画面の言語を日本語に
+/// して(文言は日本語の翻訳 file から引く。OS の言語に左右されない)読み直す。
 export async function accept(instance) {
   const status = await eventually(`${instance.name} startup status`, () =>
     instance.invoke('get_desktop_startup_status').catch(() => null)
   );
-  if (status.status === 'consent_required') {
+  const fresh = status.status === 'consent_required';
+  if (fresh) {
     await instance.invoke('accept_app_consents', {
       documents: status.documents.map(({ slug, currentVersion }) => ({ slug, version: currentVersion })),
       language: 'ja',
@@ -18,10 +20,23 @@ export async function accept(instance) {
     async () => (await instance.invoke('get_desktop_startup_status')).status === 'ready',
     60_000
   );
+  if (fresh) {
+    // 試験の instance どうしだけでつながるよう、コミュニティノードを外し(利用者が設定で外すのと同じ)、初回プロフィールを
+    // 保存する(どちらの案内の dialog も開かず、操作の focus を奪わない)。
+    await instance.invoke('set_community_node_config', { request: { nodes: [], trust_node_priority: null } });
+    const { active_account_id: accountId } = await instance.invoke('list_accounts');
+    await instance.invoke('save_initial_profile', {
+      request: {
+        account_id: accountId,
+        profile: { name: null, display_name: instance.name, about: null, picture_upload: null, clear_picture: false },
+      },
+    });
+  }
   // 読み直しの前の画面には印を付け、印の無い(読み直した後の)画面を待つ。読み直しと応答が競うので、応答は待たない。
   await instance
     .evaluate(
-      `(localStorage.setItem('kukuri.desktop.developer-mode', 'true'), window.__beforeReload = true, setTimeout(() => location.reload()), true)`
+      `(localStorage.setItem('kukuri.desktop.developer-mode', 'true'), localStorage.setItem('kukuri.desktop.locale', 'ja'),` +
+        ` window.__beforeReload = true, setTimeout(() => location.reload()), true)`
     )
     .catch(() => undefined);
   await eventually(`${instance.name} to show the main screen`, () =>

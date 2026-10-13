@@ -542,10 +542,16 @@ jobs:
         timeout-minutes: 45
         run: cargo xtask desktop-package
 
-      # #1800: 配布と同じ build を同じ PC で複数起動し、画面と Rust のやり取りを含めて確かめる。
+      # #1800: 配布と同じ build を同じ PC で複数起動し、画面と Rust のやり取りを含めて確かめる。音声は仮想の線
+      # (VB-CABLE)を既定の入出力にして確かめる(全 instance が共有する)。
+      - name: Install a virtual audio cable
+        uses: AlekseyMartynov/action-vbcable-win@6ec0facd8780f0f463d7dc2fcfd630e06eb1fc0b
+
       - name: Real app tests
-        timeout-minutes: 15
+        timeout-minutes: 20
         shell: bash
+        env:
+          REAL_APP_AUDIO: vbcable
         run: >-
           node apps/desktop/tests/real-app/run.mjs
           --app apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/kukuri-desktop-tauri.exe

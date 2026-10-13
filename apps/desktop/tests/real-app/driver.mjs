@@ -1,20 +1,21 @@
 // 配布と同じ build の kukuri を同じ PC で複数起動し、各画面の JS を評価する(#1800)。
 // Windows は WebView2 の診断用の port(CDP)、Linux は WebKit の remote inspector を使う。
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, openSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { eventually } from '../web-e2e/wait.mjs';
+import { audioEnv } from './audio.mjs';
 
 const WINDOWS = process.platform === 'win32';
 const STARTUP_MS = 60_000;
 
-/// 1 つの instance を起動する。`env` は instance ごとの追加の環境変数。
-export async function launch({ app, root, name, port, env = {} }) {
+/// 1 つの instance を起動する。`env` は instance ごとの追加の環境変数。`fresh` が偽なら前の profile のまま起動し直す。
+export async function launch({ app, root, name, port, env = {}, fresh = true }) {
   const dir = join(root, name);
-  rmSync(dir, { recursive: true, force: true });
+  if (fresh) rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(dir, 'data'), { recursive: true });
-  const log = openSync(join(dir, 'app.log'), 'w');
+  const log = openSync(join(dir, 'app.log'), fresh ? 'w' : 'a');
   const platformEnv = WINDOWS
     ? {
         WEBVIEW2_USER_DATA_FOLDER: join(dir, 'webview'),
@@ -41,7 +42,10 @@ export async function launch({ app, root, name, port, env = {} }) {
       KUKURI_ADVERTISE_HOST: '127.0.0.1',
       KUKURI_DISCOVERY_MODE: 'static_peer',
       KUKURI_DISCOVERY_SEEDS: '',
+      // log は色付けなしで書く(試験が読む)。
+      NO_COLOR: '1',
       ...platformEnv,
+      ...audioEnv(name),
       ...env,
     },
     stdio: ['ignore', log, log],
@@ -52,8 +56,20 @@ export async function launch({ app, root, name, port, env = {} }) {
   const page = await (WINDOWS ? connectCdp(port) : connectWebKit(port));
   return {
     name,
-    dir,
+    port,
+    pid: child.pid,
+    log: join(dir, 'app.log'),
     evaluate: page.evaluate,
+    /// key の入力を受けるよう、この instance の window に focus を移す(Linux は window manager の下で xdotool、
+    /// Windows は CDP で focus を模擬する)。
+    focus() {
+      if (!WINDOWS) {
+        // WM_CLASS を持つのは toplevel の window だけ(GTK・WebKit の子の window は持たない)。
+        execFileSync('xdotool', [
+          'search', '--sync', '--onlyvisible', '--pid', String(child.pid), '--classname', '.', 'windowactivate', '--sync',
+        ]);
+      }
+    },
     /// Tauri の command を画面から呼ぶ(画面と Rust の受け渡しの経路を通す)。
     invoke: (command, args = {}) =>
       page.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)}, ${JSON.stringify(args)})`),
@@ -83,6 +99,8 @@ async function connectCdp(port) {
   );
   const socket = await open(target.webSocketDebuggerUrl);
   const { call } = rpc(socket, (message) => message);
+  // 複数の window が並ぶので、どの画面も focus があるものとして key の入力を受けさせる。
+  await call('Emulation.setFocusEmulationEnabled', { enabled: true });
   return {
     async evaluate(expression, { gesture = false } = {}) {
       const reply = await call('Runtime.evaluate', {
