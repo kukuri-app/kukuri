@@ -22,17 +22,20 @@ pub(crate) const DENIED_ACCESS: &str = "access_denied";
 pub(crate) const DENIED_NOT_IN_DOME: &str = "not_in_dome";
 pub(crate) const DENIED_INVALID: &str = "invalid_request";
 pub(crate) const DENIED_UNAVAILABLE: &str = "unavailable";
-/// 配信者が直接送る視聴者が上限に達している(ADR 0067 §4)。
+/// 直接の子が上限に達している(ADR 0067 §4)。live は改行の後に子の一覧と経路が続く(§8)。
 pub(crate) const DENIED_FULL: &str = "full";
-/// 配信していない・終わった live session。
+/// 配信していない・終わった live session(転送する視聴者は、入力が途絶えている間も)。
 pub(crate) const DENIED_NOT_LIVE: &str = "not_live";
-const KNOWN_DENIALS: [&str; 6] = [
+/// 要求した端末が、転送する視聴者の祖先(循環の防止。ADR 0067 §8)。
+pub(crate) const DENIED_ANCESTOR: &str = "ancestor";
+const KNOWN_DENIALS: [&str; 7] = [
     DENIED_ACCESS,
     DENIED_NOT_IN_DOME,
     DENIED_INVALID,
     DENIED_UNAVAILABLE,
     DENIED_FULL,
     DENIED_NOT_LIVE,
+    DENIED_ANCESTOR,
 ];
 /// 公開を待つ・catalog を読む上限。
 pub(crate) const SUBSCRIBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -43,7 +46,7 @@ pub(crate) fn media_authorizer(
     live: Weak<LiveMedia>,
     app: Weak<AppService>,
 ) -> MediaAuthorizer {
-    Arc::new(move |_remote, request| {
+    Arc::new(move |remote, request| {
         let (audio, live, app) = (audio.clone(), live.clone(), app.clone());
         Box::pin(async move {
             let app = app
@@ -55,7 +58,7 @@ pub(crate) fn media_authorizer(
                     None => Err(DENIED_UNAVAILABLE.to_string()),
                 },
                 Ok(MediaAccessRequestV1::Live(request)) => match live.upgrade() {
-                    Some(live) => live.grant(&app, request).await,
+                    Some(live) => live.grant(&app, remote, request).await,
                     None => Err(DENIED_UNAVAILABLE.to_string()),
                 },
                 Err(_) => Err(DENIED_INVALID.to_string()),
@@ -64,15 +67,19 @@ pub(crate) fn media_authorizer(
     })
 }
 
-/// 購読の拒否の code(既知のものだけ)。相手の識別子と media を log に出さないため(ADR 0067 §2)。
-pub(crate) fn denial_code(error: &anyhow::Error) -> Option<&'static str> {
+/// 購読の拒否の code(既知のものだけ。相手の識別子と media を log に出さないため。ADR 0067 §2)と添え書き。
+pub(crate) fn denial(error: &anyhow::Error) -> Option<(&'static str, &str)> {
     let denied = error.downcast_ref::<MediaDenied>()?;
-    Some(
-        KNOWN_DENIALS
-            .into_iter()
-            .find(|known| *known == denied.0)
-            .unwrap_or("unknown"),
-    )
+    let (code, detail) = denied.0.split_once('\n').unwrap_or((&denied.0, ""));
+    let code = KNOWN_DENIALS
+        .into_iter()
+        .find(|known| *known == code)
+        .unwrap_or("unknown");
+    Some((code, detail))
+}
+
+pub(crate) fn denial_code(error: &anyhow::Error) -> Option<&'static str> {
+    denial(error).map(|(code, _)| code)
 }
 
 /// 受ける側の送信量の検査(ADR 0041 player・ADR 0067 §4)。1 秒分の枠を経過時間に比例して補充するので、正規の

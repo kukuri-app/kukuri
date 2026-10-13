@@ -1,4 +1,6 @@
 use anyhow::Result;
+use secp256k1::schnorr::Signature;
+use secp256k1::{Keypair, XOnlyPublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::{ChannelId, EnvelopeId, ManifestBlobRef, Pubkey, TopicId};
@@ -37,6 +39,64 @@ pub struct LiveSessionManifestBlobV1 {
     /// 旧版は知らない項目として読み飛ばす。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_endpoint_id: Option<String>,
+    /// 映像・音声の frame の配信者の署名を確かめる鍵(x-only 公開鍵の hex。ADR 0067 §8)。転送する視聴者が中身を
+    /// 変えたら、視聴者はこの鍵で見分ける。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_signing_key: Option<String>,
+}
+
+/// live の配信の frame の署名鍵(owner の鍵から session ごとに導く。`KukuriKeys::derive_live_media_signer`)。
+#[derive(Clone)]
+pub struct LiveMediaSigner(pub(crate) Keypair);
+
+/// frame の payload の先頭に置く署名の長さ(Schnorr)。
+const LIVE_MEDIA_SIGNATURE_LEN: usize = 64;
+
+impl LiveMediaSigner {
+    /// manifest に載せる公開鍵(x-only の hex)。
+    pub fn public_key_hex(&self) -> String {
+        self.0.x_only_public_key().0.to_string()
+    }
+
+    /// track・timestamp・payload に署名し、署名を先頭に付けた payload を返す。
+    pub fn sign(&self, track: &str, timestamp_us: u64, payload: &[u8]) -> Vec<u8> {
+        let signature = self
+            .0
+            .sign_schnorr(&live_media_digest(track, timestamp_us, payload));
+        let mut signed = Vec::with_capacity(LIVE_MEDIA_SIGNATURE_LEN + payload.len());
+        signed.extend_from_slice(&signature.to_byte_array());
+        signed.extend_from_slice(payload);
+        signed
+    }
+}
+
+/// 配信者の署名を確かめる鍵(manifest の `media_signing_key`)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LiveMediaVerifier(XOnlyPublicKey);
+
+impl LiveMediaVerifier {
+    pub fn from_hex(key: &str) -> Option<Self> {
+        key.parse().ok().map(Self)
+    }
+
+    /// 配信者の署名を確かめ、署名を除いた payload を返す。確かめられなければ `None`。
+    pub fn verify<'a>(&self, track: &str, timestamp_us: u64, signed: &'a [u8]) -> Option<&'a [u8]> {
+        let (signature, payload) = signed.split_at_checked(LIVE_MEDIA_SIGNATURE_LEN)?;
+        Signature::from_byte_array(signature.try_into().ok()?)
+            .verify(&live_media_digest(track, timestamp_us, payload), &self.0)
+            .ok()?;
+        Some(payload)
+    }
+}
+
+fn live_media_digest(track: &str, timestamp_us: u64, payload: &[u8]) -> [u8; 32] {
+    let mut message = Vec::with_capacity(32 + track.len() + payload.len());
+    message.extend_from_slice(b"kukuri live media frame v1");
+    message.extend_from_slice(&(track.len() as u64).to_le_bytes());
+    message.extend_from_slice(track.as_bytes());
+    message.extend_from_slice(&timestamp_us.to_le_bytes());
+    message.extend_from_slice(payload);
+    crate::crypto::sha256_digest(&message)
 }
 
 /// 配信の映像・音声の broadcast の path(ADR 0067 §9)。
@@ -74,4 +134,37 @@ pub fn build_live_session_envelope<T: Serialize>(
         ],
         content,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::KukuriKeys;
+
+    // #1034 AC-2b: 配信者の署名は track・timestamp・payload に束縛し、session ごとの鍵で確かめる。
+    #[test]
+    fn live_media_frames_verify_only_with_the_session_key() {
+        let keys = KukuriKeys::generate();
+        let signer = keys.derive_live_media_signer("live-1").expect("signer");
+        assert_eq!(
+            signer.public_key_hex(),
+            keys.derive_live_media_signer("live-1")
+                .expect("signer")
+                .public_key_hex(),
+            "the same account and session derive the same key"
+        );
+        let key = LiveMediaVerifier::from_hex(&signer.public_key_hex()).expect("key");
+        let signed = signer.sign("video", 7, b"frame");
+        assert_eq!(key.verify("video", 7, &signed), Some(&b"frame"[..]));
+        // 中身・track・timestamp を変えた frame と、別の session の鍵では確かめられない。
+        let mut tampered = signed.clone();
+        *tampered.last_mut().expect("payload") ^= 1;
+        assert_eq!(key.verify("video", 7, &tampered), None);
+        assert_eq!(key.verify("audio", 7, &signed), None);
+        assert_eq!(key.verify("video", 8, &signed), None);
+        assert_eq!(key.verify("video", 7, b"short"), None);
+        let other = keys.derive_live_media_signer("live-2").expect("signer");
+        let other_key = LiveMediaVerifier::from_hex(&other.public_key_hex()).expect("key");
+        assert_eq!(other_key.verify("video", 7, &signed), None);
+    }
 }

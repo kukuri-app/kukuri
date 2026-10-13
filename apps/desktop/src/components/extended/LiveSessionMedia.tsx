@@ -26,7 +26,7 @@ type LiveMediaApi = Pick<
   | 'stopWatchingLiveMedia'
 >;
 
-/// 満員・映像の無い間・止まった後に、視聴を試し直す間隔。
+/// 空きが見つからない・映像の無い間・止まった後に、視聴を試し直す間隔(視聴中に親を失ったときは runtime が参加し直す)。
 const RETRY_MS = 5_000;
 
 type LiveSessionMediaProps = {

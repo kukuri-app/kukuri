@@ -36,7 +36,14 @@ Accepted
 - manifest に任意の `media_endpoint_id`（映像・音声を送る配信者の端末の iroh endpoint id）を足す。desktop runtime（GUI・CLI）の作成では
   作った端末の id を入れ、Web の作成と旧版の manifest は持たない（media の無い session）。owner の署名と revision は既存の manifest の規則のまま。
 - 無いときは JSON に出さないので、media の無い session の manifest は従来と同じ bytes になる。旧版は未知の項目を無視して読み、映像・音声を
-  扱わない。視聴者は検証済みの manifest の id へだけ購読する（ADR 0067 §3）。配信ごとの署名鍵の公開鍵は #1034 AC-2b が足す。
+  扱わない。視聴者は検証済みの manifest の id へだけ購読する（ADR 0067 §3）。配信ごとの署名鍵の公開鍵は下の追補。
+
+### 追補: 映像・音声の署名鍵（#1034 AC-2b、2026-10-13）
+- manifest に任意の `media_signing_key`（配信者が映像・音声の frame に付けた署名を確かめる x-only 公開鍵の hex）を足す。`media_endpoint_id` と
+  同じく desktop runtime の作成で入れ、owner のアカウントの鍵と session id から導く（ADR 0067 §8）。owner の署名と revision は既存の manifest の
+  規則のまま。無いときは JSON に出さない。
+- 鍵の無い manifest は、`media_endpoint_id` があっても media の無い session として扱う（視聴者は購読せず、配信者は配信を始めるときに理由を
+  示して断る）。
 
 ## Consequences
 - 映像・音声の搬送は [ADR 0067](0067-media-transport-moq.md) に従う。manifest の descriptor は上の追補による（分類は ADR 0067 の Feature Data Classification）。

@@ -31,6 +31,7 @@ fn authorizer(publish: origin::Consumer, allowed: Arc<AtomicBool>) -> MediaAutho
                     let allowed = allowed.clone();
                     Box::pin(async move { allowed.load(Ordering::SeqCst) })
                 }),
+                detail: String::new(),
             })
         })
     })

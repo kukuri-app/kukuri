@@ -500,6 +500,7 @@ impl MetaverseAudio {
                             .unwrap_or(false)
                 })
             }),
+            detail: String::new(),
         })
     }
 }

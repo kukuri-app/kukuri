@@ -162,13 +162,13 @@ describe('LiveSessionMedia', () => {
     await waitFor(() => expect(media.stopWatchingLiveMedia).toHaveBeenCalledWith(request));
   });
 
-  // 5 人目以降は満員と示す(#1034 AC-2a)。退出・画面を離れたら購読を止める。
+  // 配信者と転送する視聴者のどこにも空きが無ければ、参加できないと示す(#1034 AC-2b)。退出・画面を離れたら購読を止める。
   test('shows a full broadcast to a joined viewer and stops watching when it unmounts', async () => {
     const media = api(1);
     const { unmount } = render(
       <LiveSessionMedia api={media} topic={request.topic} session={session({ joined_by_me: true })} isOwner={false} />
     );
-    expect(await screen.findByText(/This broadcast is full/)).toBeInTheDocument();
+    expect(await screen.findByText(/No free spot to watch was found/)).toBeInTheDocument();
     expect(media.watchLiveMedia).toHaveBeenCalledWith(request);
     unmount();
     await waitFor(() => expect(media.stopWatchingLiveMedia).toHaveBeenCalledWith(request));

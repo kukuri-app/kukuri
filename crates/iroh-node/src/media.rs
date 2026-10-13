@@ -27,8 +27,8 @@ pub(crate) const MEDIA_ALPN: &[u8] = b"/kukuri/media/1";
 pub const MEDIA_MAX_INBOUND_SESSIONS: usize = 64;
 /// 認可要求の上限(private channel の proof の envelope 2 つを収める)。
 pub const MEDIA_ACCESS_REQUEST_MAX_BYTES: usize = 64 * 1024;
-/// 認可の応答(`ok` か拒否の code)の上限。
-const ACCESS_RESPONSE_MAX_BYTES: usize = 256;
+/// 認可の応答(`ok` か拒否の code に、改行と添え書きが続く)の上限。live の転送の祖先と子の一覧(ADR 0067 §8)を収める。
+const ACCESS_RESPONSE_MAX_BYTES: usize = 4 * 1024;
 /// 接続の後の、認可の往復と moq-lite の handshake のそれぞれの上限。
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// 拒否の code を相手が読むまで接続を残す上限。
@@ -48,10 +48,11 @@ const APP_REVOKED: u16 = 1;
 /// 認可を評価し直す。偽なら接続を閉じる。
 pub type MediaRevalidate = Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>;
 
-/// 認可の結果。`publish` には、この相手に見せてよい broadcast だけが載る。
+/// 認可の結果。`publish` には、この相手に見せてよい broadcast だけが載る。`detail` は許可の応答に添える(空なら付けない)。
 pub struct MediaGrant {
     pub publish: origin::Consumer,
     pub revalidate: MediaRevalidate,
+    pub detail: String,
 }
 
 /// 相手の endpoint id と認可要求の bytes から、許可(`MediaGrant`)か拒否の code を返す。
@@ -61,7 +62,7 @@ pub type MediaAuthorizer = Arc<
         + Sync,
 >;
 
-/// 送る側が拒否した(code は拒否の理由。接続できない失敗とは区別する)。
+/// 送る側が拒否した(拒否の理由の code。改行の後に添え書きが続くことがある。接続できない失敗とは区別する)。
 #[derive(Debug)]
 pub struct MediaDenied(pub String);
 
@@ -223,6 +224,10 @@ async fn authorize(
     match authorizer(connection.remote_id(), request).await {
         Ok(grant) => {
             send.write_all(GRANTED).await?;
+            if !grant.detail.is_empty() {
+                send.write_all(format!("\n{}", grant.detail).as_bytes())
+                    .await?;
+            }
             send.finish()?;
             Ok(Some(grant))
         }
@@ -269,11 +274,17 @@ async fn serve(connection: &Connection, grant: MediaGrant) {
 pub struct MediaSubscription {
     connection: Connection,
     announced: origin::Consumer,
+    detail: String,
     _session: moq_net::Session,
     _driver: AbortOnDropHandle<()>,
 }
 
 impl MediaSubscription {
+    /// 許可の応答の添え書き(無ければ空)。
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+
     /// 相手が公開した `path` の broadcast。公開を待ち、session が閉じたら失敗する。
     pub async fn broadcast(&self, path: &str) -> Result<broadcast::Consumer> {
         self.announced
@@ -331,10 +342,13 @@ impl IrohDocsNode {
                 return Err(error);
             }
         };
-        if response != GRANTED {
+        let response = String::from_utf8_lossy(&response).into_owned();
+        let (code, detail) = response.split_once('\n').unwrap_or((&response, ""));
+        if code.as_bytes() != GRANTED {
             connection.close(CLOSE_DONE.into(), b"done");
-            return Err(MediaDenied(String::from_utf8_lossy(&response).into_owned()).into());
+            return Err(MediaDenied(response).into());
         }
+        let detail = detail.to_string();
         let (subscribe, announced_driver) = origin::Producer::new(media_origin_config());
         let connected = timeout(
             HANDSHAKE_TIMEOUT,
@@ -367,6 +381,7 @@ impl IrohDocsNode {
         Ok(MediaSubscription {
             connection,
             announced: subscribe.consume(),
+            detail,
             _session: session,
             _driver: AbortOnDropHandle::new(task),
         })

@@ -41,7 +41,7 @@
     "states": {
       "connecting": "Connecting to the broadcast…",
       "ended": "The video stopped. Reconnecting…",
-      "full": "This broadcast is full (up to 4 viewers receive it directly from the host). Waiting for a free spot…",
+      "full": "No free spot to watch was found, so you can't join yet. Waiting for a free spot…",
       "no_media": "The host has not started sending video yet."
     },
     "stopBroadcast": "Stop video broadcast",
