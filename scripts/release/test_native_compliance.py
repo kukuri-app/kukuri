@@ -51,7 +51,7 @@ class NativeTests(unittest.TestCase):
             self.assertTrue(row["url"].startswith("https://"))
             if "sha512" in row: self.assertRegex(row["sha512"], r"^[0-9a-f]{128}$")
             else: self.assertRegex(row["sha256"], r"^[0-9a-f]{64}$")
-        self.assertEqual(len(seen), 31)
+        self.assertEqual(len(seen), 32)
 
     def test_bundled_runtime_is_the_reviewed_binary(self):
         # #1431: build が渡す runtime は、source を固定した審査済みの版そのもの。

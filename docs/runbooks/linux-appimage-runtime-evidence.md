@@ -41,6 +41,18 @@ libc、GL／EGL／DRM等のホスト解決と実codec利用可否は、同梱済
 
 上の件数は2026-09-07の検証用AppImageの観測で、`libwayland-*`／`libxkbcommon`／`libxcb-randr`／`-render`／`-shm`／`libXau`／`libXdmcp`の10件を含む。#1222以降はこの10件を同梱せず、GL／EGL／DRMと同じくホスト解決とする（理由と仕組みは[AppImage手順](linux-appimage-smoke.md#同梱しない表示系library1222)）。外側runtime、AppRun、GTK hookは変更しない。ELF inventoryとsource／noticeの対象は公開候補ごとのAppDirから導くため、除いたlibraryは自動的に対象外になる。linuxdeployが配置済みの`usr/share/doc/<package>/copyright`は残ることがあり、同梱ELFの一覧とは区別する。
 
+### #1795以降の同梱構成（2026-10-13）
+
+`bundleMediaFramework`を有効にし、build host（配布用はUbuntu 22.04）の`/usr/lib/x86_64-linux-gnu/gstreamer-1.0/`のpluginを`usr/lib/gstreamer-1.0/`へ、`gst-plugin-scanner`／`gst-ptp-helper`を`usr/lib/gstreamer1.0/gstreamer-1.0/`へ同梱する。複製はTauri CLI 2.12.0（commit `447fa9f3`）内蔵の`linuxdeploy-plugin-gstreamer.sh`（blob `757afd4f`）が行い、pluginの依存libraryはlinuxdeployが集める。#1222の表示系libraryの除外はその後に働く。
+
+複製するpluginはbuild hostに入っているpackageで決まる。配布用のbuild hostにはWebKitGTKの依存で`gstreamer1.0-plugins-base`／`-good`／`-gl`（とgoodが推奨する`-x`）が入り、H.264／AACのdecoder（`gstreamer1.0-libav`、`-plugins-bad`、`-plugins-ugly`等）は入れない。build hostへpackageを足すと配るcodecが変わる。camera／画面の取り込みに要るpipewireのplugin（`gstreamer1.0-pipewire`）も入れていない（#1034で扱う）。
+
+`AppRun.wrapped`は#1795以前から`GST_PLUGIN_SYSTEM_PATH_1_0`をAppDirの`usr/lib/gstreamer-1.0`へ向けていた。この場所が無かったためpluginが0件になり、動画の再生とWebCodecsが使えず、`<video>`へ動画を置くとWebKitWebProcessが終了した。同梱の1.20 coreとGLib 2.72はUbuntu 24.04（1.24）／26.04（1.28）のhost pluginも読めないので、hostのpluginへは頼らない（観測は#1795）。
+
+追加の非ELFは`apprun-hooks/linuxdeploy-plugin-gstreamer.sh`（plugin／scanner／ptp helperの場所をAppDirへ向ける環境変数）。上流のlinuxdeploy-plugin-gstreamerにはlicense fileが無いため、生成元のTauriのMIT本文を固定noticeに加えた（static source 27件＋notice 5件）。plugin／helperのELFは既存のcollectorがbuild IDでpackageへ結び付け、対応するUbuntu sourceを集める。
+
+hostと同じregistry file（`~/.cache/gstreamer-1.0/registry.x86_64.bin`）を使うため、AppImageとhostのGStreamerを交互に使うと、それぞれ最初の利用時にregistryを作り直す。
+
 ## 外側runtimeのstatic依存
 
 [Makefile](https://github.com/AppImage/type2-runtime/blob/75849dc/src/runtime/Makefile)は

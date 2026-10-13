@@ -8,7 +8,7 @@
     "category": "SocialNetworking",
     "linux": {
       "appimage": {
-        "bundleMediaFramework": false
+        "bundleMediaFramework": true
       },
       "deb": {
         "desktopTemplate": "linux/kukuri.desktop",
