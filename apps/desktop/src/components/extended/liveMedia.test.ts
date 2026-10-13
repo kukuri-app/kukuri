@@ -59,5 +59,8 @@ describe('live media', () => {
     expect(captureErrorKind(error('NotFoundError'), 'camera')).toBe('cameraUnavailable');
     expect(captureErrorKind(error('NotFoundError'), 'screen')).toBe('failed');
     expect(captureErrorKind(error('NotSupportedError'), 'camera')).toBe('unsupported');
+    expect(captureErrorKind(Object.assign(error('InvokeError'), { code: 'LIVE_BROADCAST_ELSEWHERE' }), 'camera')).toBe(
+      'elsewhere'
+    );
   });
 });

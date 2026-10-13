@@ -134,6 +134,18 @@ impl LiveWatchState {
     }
 }
 
+/// この端末で作っていない live session の配信の拒否(manifest の配信者の端末が別。2026-10-13 のユーザー判断)。
+#[derive(Debug)]
+pub struct LiveBroadcastElsewhere;
+
+impl std::fmt::Display for LiveBroadcastElsewhere {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("this live session is broadcast from the device that created it")
+    }
+}
+
+impl std::error::Error for LiveBroadcastElsewhere {}
+
 /// 端末の live の配信と視聴。
 #[derive(Default)]
 pub(crate) struct LiveMedia {
@@ -363,15 +375,22 @@ fn encode_screen_batch(
 }
 
 impl LiveMedia {
-    /// 配信を始める、または配信中の source と mic を切り替える。broadcast は最初の keyframe で公開する。
+    /// 配信を始める、または配信中の source と mic を切り替える(`endpoint_id` はこの端末)。broadcast は最初の keyframe
+    /// で公開する。
     pub(crate) async fn set_broadcast(
         &self,
         app: &Arc<AppService>,
+        endpoint_id: Option<String>,
         request: SetLiveBroadcastRequest,
     ) -> Result<LiveBroadcastStatus> {
-        app.live_media_scope(&request.topic, &request.session_id)
+        let (_, _, media_endpoint_id) = app
+            .live_media_scope(&request.topic, &request.session_id)
             .await?
             .context("only the owner of a live session can broadcast it")?;
+        // 視聴者は manifest の端末へ購読するので、この端末で作った session だけを配信する。
+        if endpoint_id.is_none() || media_endpoint_id != endpoint_id {
+            return Err(LiveBroadcastElsewhere.into());
+        }
         let limits = request.source.limits();
         let (microphone, mut broadcast, catalog) = {
             let mut broadcasts = self.broadcasts.lock().await;
@@ -460,7 +479,7 @@ impl LiveMedia {
         if viewers.load(Ordering::Acquire) >= MAX_DIRECT_VIEWERS {
             return Err(DENIED_FULL.into());
         }
-        let (context, owner) = app
+        let (context, owner, _) = app
             .live_media_scope(&request.topic_id, &request.session_id)
             .await
             .map_err(|_| DENIED_UNAVAILABLE.to_string())?

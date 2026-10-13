@@ -26,6 +26,7 @@
     "errors": {
       "cameraUnavailable": "The camera is unavailable. You can broadcast your screen instead.",
       "denied": "Camera or screen capture was not allowed.",
+      "elsewhere": "This live session can only be broadcast from the device that created it.",
       "failed": "Could not start the video broadcast.",
       "unsupported": "Video broadcasting is not available here."
     },

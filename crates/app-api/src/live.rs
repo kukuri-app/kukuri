@@ -326,13 +326,13 @@ impl AppService {
         Ok(())
     }
 
-    /// 配信者の端末で、自分の終わっていない session なら、視聴者の資格を判定する scope と owner(自分)を返す
-    /// (ADR 0067 §3)。
+    /// 配信者の端末で、自分の終わっていない session なら、視聴者の資格を判定する scope と owner(自分)と、映像・音声を
+    /// 送る端末の id を返す(ADR 0067 §3)。
     pub async fn live_media_scope(
         &self,
         topic_id: &str,
         session_id: &str,
-    ) -> Result<Option<(SpatialContextV1, Pubkey)>> {
+    ) -> Result<Option<(SpatialContextV1, Pubkey, Option<String>)>> {
         let Some((_, state, manifest)) = self
             .fetch_live_session_state_and_manifest(topic_id, session_id)
             .await?
@@ -347,6 +347,7 @@ impl AppService {
         Ok(Some((
             live_spatial_context(&manifest),
             manifest.owner_pubkey,
+            manifest.media_endpoint_id,
         )))
     }
 

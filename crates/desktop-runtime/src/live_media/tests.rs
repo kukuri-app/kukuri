@@ -99,7 +99,11 @@ async fn pair() -> Pair {
 impl Pair {
     async fn start(&self) -> LiveBroadcastStatus {
         self.broadcaster
-            .set_broadcast(&self.broadcaster_app, self.start_request())
+            .set_broadcast(
+                &self.broadcaster_app,
+                Some(self.broadcaster_node.endpoint().id().to_string()),
+                self.start_request(),
+            )
             .await
             .expect("start")
     }
@@ -239,11 +243,27 @@ async fn live_media_requires_explicit_start_and_permission() {
     // 自分の session でなければ配信を始められない。
     assert!(
         pair.viewer
-            .set_broadcast(&pair.viewer_app, pair.start_request())
+            .set_broadcast(
+                &pair.viewer_app,
+                Some(pair.viewer_node.endpoint().id().to_string()),
+                pair.start_request(),
+            )
             .await
             .is_err(),
         "only the owner broadcasts"
     );
+    // owner でも、この端末で作っていない session(manifest の配信者の端末が別)は配信しない。
+    let elsewhere = pair
+        .broadcaster
+        .set_broadcast(
+            &pair.broadcaster_app,
+            Some(pair.viewer_node.endpoint().id().to_string()),
+            pair.start_request(),
+        )
+        .await
+        .expect_err("another device");
+    assert!(elsewhere.downcast_ref::<LiveBroadcastElsewhere>().is_some());
+    assert!(pair.broadcaster.broadcasts.lock().await.is_empty());
 
     // 開始しても、画面の取り込みが始まる(最初の keyframe が届く)までは公開しない(取り込みの拒否なら送信 0)。
     // 機器の無い build は mic を開けず、映像だけを送る。

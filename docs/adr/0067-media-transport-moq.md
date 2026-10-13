@@ -16,7 +16,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - D10: 視聴者の映像・音声の再生は「参加」で始まり「退出」で止まる（§9）。
 - D11: 配信者は配信中に mic だけを止める・戻すことができる（§9）。
 
-#1034 の AC-2 は、配信者から直接届く視聴者（4 人まで、5 人目は満員）の AC-2a と、視聴者どうしの転送の AC-2b に分ける（2026-10-13 のユーザー判断。D9〜D11 も同日）。
+#1034 の AC-2 は、配信者から直接届く視聴者（4 人まで、5 人目は満員）の AC-2a と、視聴者どうしの転送の AC-2b に分ける（2026-10-13 のユーザー判断。D9〜D11 も同日）。AC-2a の監査の後、同日のユーザー判断で次も決めた: 主催者が live の列を離れたら配信を止める。この端末で作っていない session（別の端末・Web・この版より前）は、配信を始めるときに理由を示して断る。Windows の WebView2 が camera の許可を保存すること（§9）は受け入れる。
 
 観測の基準は main `e6177415f4b2c93ab5de5f009dae16769b8d90b9`、外部依存と実行基盤の確認日は 2026-10-13（実機での確認は #1033・#1034 で行う）。
 
@@ -148,7 +148,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - 音声は Rust 側（`moq-audio`）で取り込み・圧縮（Opus、20 ms）・decode・mix・再生を行い、echo cancellation（`sonora`）は再生中の音を参照に使う。画面側の音声の取り込み・再生（`getUserMedia`・WebAudio）は削除する。live の音声も同じ経路を使う。
 - metaverse の距離減衰: 聞き手の端末の Rust が、話者の位置の track と、画面から受ける聞き手の位置・ready な隣接 Dome の opening の位置から既存の距離関数で gain を求め、話者ごとの音量に反映する。gain の関数は Rust の 1 か所に残し、TypeScript の gain の関数は #1033 で削除した（画面は話者を近い順に並べるための距離と opening の位置だけを持つ）。
 - 映像（#1034 AC-1、D5〜D7）: 配信者の画面が `getUserMedia`（camera）か `getDisplayMedia`（画面）のどちらか 1 つを取り込み、`VideoEncoder`（VP8、`latencyMode: realtime`）で圧縮し、chunk を Tauri の IPC（raw の `invoke`）で Rust へ渡す。Rust は署名・moq の公開・転送・認可だけを行う。視聴者の画面は、受けた chunk を raw の応答で取りに来て（`next_live_video`。届くまで最大 1 秒待ち、送りかけは §4 の 1 秒分まで）、画面の `VideoDecoder` で復号して描画する。`ipc::Channel` は 1 KiB 以上の raw の payload を画面側の上限の無い queue に積むため使わない（#1034 AC-2a）。映像の frame は Rust の音声の再生時刻（再生中の音声の timestamp）に合わせて出す。映像の取り込みでは mic を使わず、live の音声は上の Rust の経路で取り込む。
-  - 配信の操作（D9〜D11、#1034 AC-2a）: 主催者の card で camera か画面を選んで始める。broadcast は最初の keyframe で公開し、取り込みが拒否されたら配信を止めて送信 0。mic は取り込みが始まってから開き（取り込みが拒否されたら開かない）、配信中の off は `moq-audio` の `stop`（機器を閉じ、track と catalog は残す）。視聴者は catalog の更新を追って途中で足された音声の track を購読し、音声の再生時刻は最後に再生へ渡した位置から経過時間で進める（mic が止まっても映像を止めない）。視聴者は満員・映像の無い間・止まった後に 5 秒ごとに試し直す。主催者の card が画面から消えると（列を閉じる・別の画面へ移る）、取り込みと配信を止める（再開は card の操作だけ）。
+  - 配信の操作（D9〜D11、#1034 AC-2a）: 主催者の card で camera か画面を選んで始める。broadcast は最初の keyframe で公開し、取り込みが拒否されたら配信を止めて送信 0。mic は取り込みが始まってから開き（取り込みが拒否されたら開かない）、配信中の off は `moq-audio` の `stop`（機器を閉じ、track と catalog は残す）。視聴者は catalog の更新を追って途中で足された音声の track を購読し、音声の再生時刻は最後に再生へ渡した位置から経過時間で進める（mic が止まっても映像を止めない）。視聴者は満員・映像の無い間・止まった後に 5 秒ごとに試し直す。主催者の card が画面から消えると（列を閉じる・別の画面へ移る）、取り込みと配信を止める（再開は card の操作だけ）。視聴者は manifest の端末へ購読するので、配信できるのはこの端末で作った session だけで、それ以外は始めるときに理由を示して断る。
   - frame の取り出し: Windows（WebView2）は `MediaStreamTrackProcessor`。Linux（WebKitGTK）は window に `MediaStreamTrackProcessor` が無い（feature `MediaStreamTrackProcessing` は既定で無効で、有効にしても dedicated worker だけ）ため、`<video>` と `requestVideoFrameCallback` から `VideoFrame` を作る。
   - 許可: Tauri 2.12 の `on_permission_request` で、利用者が配信を始めた後だけ、その source（camera か画面）の取り込みを許す。それ以外は platform の既定のまま（Linux は拒否、Windows は WebView2 の確認）とし、移行用の QR の読み取り（#1628）の camera を変えない。ただし Windows の WebView2 は Allow を profile に保存するため、一度 camera で配信した後は、camera の要求（#1628 を含む）に確認が出ない（送るには配信の操作が要る）。Linux の WebKitGTK は既定で `getUserMedia`・`getDisplayMedia` を持たないので `enable-media-stream` を有効にする。Windows の画面は WebView2 の選択画面、Linux は xdg-desktop-portal（camera は Camera portal、画面は ScreenCast portal の選択画面が開始のたびに出る）。
   - 制約: Ubuntu 22.04 の webview は camera を列挙できない見込み（WebKitGTK 2.50 以降は PipeWire 0.3.64 以上を要し、22.04 は 0.3.48。未実測）。その場合は camera を選べないことを示し、画面の配信だけにする。Linux の VP8 は GStreamer の good（既定で入る）で encode・decode でき、H.264 は追加の package（libav か plugins-bad）が要る。

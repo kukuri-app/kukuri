@@ -26,6 +26,7 @@
     "errors": {
       "cameraUnavailable": "无法使用摄像头。可以改为直播屏幕。",
       "denied": "未允许捕获摄像头或屏幕。",
+      "elsewhere": "此直播会话只能从创建它的设备直播。",
       "failed": "无法开始直播画面。",
       "unsupported": "此环境无法直播画面。"
     },

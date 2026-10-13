@@ -56,10 +56,12 @@ export function fitVideoSize(width: number, height: number, limits: LiveVideoLim
   return { width: even(width), height: even(height) };
 }
 
-export type LiveCaptureError = 'denied' | 'cameraUnavailable' | 'unsupported' | 'failed';
+export type LiveCaptureError = 'denied' | 'cameraUnavailable' | 'unsupported' | 'elsewhere' | 'failed';
 
-/// 取り込みの失敗の理由。Ubuntu 22.04 の webview は camera を列挙できない(ADR 0067 §9)。
+/// 配信の開始の失敗の理由。Ubuntu 22.04 の webview は camera を列挙できない(ADR 0067 §9)。この端末で作っていない
+/// session は runtime が code で断る。
 export function captureErrorKind(error: unknown, source: LiveVideoSource): LiveCaptureError {
+  if ((error as { code?: unknown } | null)?.code === 'LIVE_BROADCAST_ELSEWHERE') return 'elsewhere';
   const name = error instanceof Error ? error.name : '';
   if (name === 'NotAllowedError') return 'denied';
   if (name === 'NotSupportedError') return 'unsupported';

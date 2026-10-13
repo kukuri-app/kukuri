@@ -133,8 +133,8 @@ pub use kukuri_app_api::{
 pub use kukuri_transport::{ConnectivityPeerKind, PeerPage};
 #[cfg(not(target_family = "wasm"))]
 pub use live_media::{
-    LiveBroadcastStatus, LiveMediaRequest, LiveVideoLimits, LiveVideoSource,
-    SetLiveBroadcastRequest,
+    LiveBroadcastElsewhere, LiveBroadcastStatus, LiveMediaRequest, LiveVideoLimits,
+    LiveVideoSource, SetLiveBroadcastRequest,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use metaverse_audio::{

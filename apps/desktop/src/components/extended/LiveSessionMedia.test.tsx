@@ -74,6 +74,20 @@ describe('LiveSessionMedia', () => {
     expect(encodeVideo).not.toHaveBeenCalled();
   });
 
+  // この端末で作っていない session は、取り込まずに理由を示す(2026-10-13 のユーザー判断)。
+  test('explains that a session created elsewhere cannot be broadcast here', async () => {
+    const media = api();
+    media.setLiveBroadcast.mockRejectedValue(
+      Object.assign(new Error('elsewhere'), { name: 'InvokeError', code: 'LIVE_BROADCAST_ELSEWHERE' })
+    );
+    render(<LiveSessionMedia api={media} topic={request.topic} session={session()} isOwner />);
+    await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This live session can only be broadcast from the device that created it.'
+    );
+    expect(captureVideo).not.toHaveBeenCalled();
+  });
+
   test('opens the microphone after capture starts and can turn it off and stop', async () => {
     const media = api();
     const stopEncoding = vi.fn();

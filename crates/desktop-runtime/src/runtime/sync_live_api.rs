@@ -199,8 +199,13 @@ impl DesktopRuntime {
         &self,
         request: crate::SetLiveBroadcastRequest,
     ) -> Result<crate::LiveBroadcastStatus> {
+        let endpoint_id = self
+            .iroh_stack
+            .current_node()
+            .await
+            .map(|node| node.endpoint().id().to_string());
         self.live_media
-            .set_broadcast(&self.app_service, request)
+            .set_broadcast(&self.app_service, endpoint_id, request)
             .await
     }
 

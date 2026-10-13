@@ -27,6 +27,8 @@ pub struct CommandError {
 pub const COMMAND_FAILED_CODE: &str = "command_failed";
 pub const SCOPE_LIMIT_REACHED_CODE: &str = "SCOPE_LIMIT_REACHED";
 pub const PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE: &str = "PRIVATE_CHANNEL_CONTROLLER_PENDING";
+/// この端末で作っていない live session は配信できない(#1034)。画面は code で判別して理由を示す。
+pub const LIVE_BROADCAST_ELSEWHERE_CODE: &str = "LIVE_BROADCAST_ELSEWHERE";
 /// 呼んでいる間に runtime が差し替わった・止まった（旧世代の結果は返さない）。
 pub const STALE_RUNTIME_CODE: &str = "stale_runtime";
 /// この platform では使えない command（Web の capability。ADR 0056 §6）。
@@ -98,6 +100,10 @@ pub fn map_error(error: anyhow::Error) -> CommandError {
     // 購読する scope の上限(#1221 R2-C)。画面は code で判別し、操作を取り消して説明する。
     if error.downcast_ref::<ScopeLimitReached>().is_some() {
         return CommandError::new(SCOPE_LIMIT_REACHED_CODE, format!("{error:#}"));
+    }
+    #[cfg(not(target_family = "wasm"))]
+    if error.downcast_ref::<LiveBroadcastElsewhere>().is_some() {
+        return CommandError::new(LIVE_BROADCAST_ELSEWHERE_CODE, format!("{error:#}"));
     }
     // 鍵更新の担当端末でないための保留(#1219 W6)。画面は code で判別してダイアログを出す(W8)。
     if error
@@ -492,6 +498,13 @@ mod tests {
     fn controller_pending_is_reported_by_its_code() {
         let error = map_error(anyhow::Error::from(crate::PrivateChannelControllerPending));
         assert_eq!(error.code, PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE);
+    }
+
+    // #1034: この端末で作っていない live session の配信の拒否は、画面が code で理由を示す。
+    #[test]
+    fn live_broadcast_elsewhere_is_reported_by_its_code() {
+        let error = map_error(anyhow::Error::from(crate::LiveBroadcastElsewhere));
+        assert_eq!(error.code, LIVE_BROADCAST_ELSEWHERE_CODE);
     }
 
     #[test]
