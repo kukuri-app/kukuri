@@ -57,7 +57,7 @@ pub use backup::{
     rollback_pending_device_restore, validate_prepared_device_restore,
 };
 pub use command::{
-    COMMAND_FAILED_CODE, ClientGate, CommandError, DispatchContext,
+    COMMAND_FAILED_CODE, ClientGate, CommandError, DispatchContext, LIVE_BROADCAST_ELSEWHERE_CODE,
     PRIVATE_CHANNEL_CONTROLLER_PENDING_CODE, PostRetryView, SCOPE_LIMIT_REACHED_CODE,
     STALE_RUNTIME_CODE, UNSUPPORTED_PLATFORM_CODE, dispatch_command, dispatched_commands,
     map_error,
