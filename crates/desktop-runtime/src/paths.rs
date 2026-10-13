@@ -52,6 +52,14 @@ pub fn default_app_data_dir(platform_app_data_dir: &Path, profile: AppBuildProfi
     }
 }
 
+/// 同じ PC で複数起動するときの instance の名前(`KUKURI_INSTANCE`、空なら無し)。
+pub fn desktop_instance_from_env() -> Option<String> {
+    std::env::var("KUKURI_INSTANCE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 pub fn resolve_app_data_dir_from_env(base_app_data_dir: &Path) -> Result<PathBuf> {
     let mut app_data_dir = std::env::var("KUKURI_APP_DATA_DIR")
         .ok()
@@ -61,10 +69,7 @@ pub fn resolve_app_data_dir_from_env(base_app_data_dir: &Path) -> Result<PathBuf
         .unwrap_or_else(|| base_app_data_dir.to_path_buf());
 
     if app_data_dir == base_app_data_dir
-        && let Some(instance) = std::env::var("KUKURI_INSTANCE")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
+        && let Some(instance) = desktop_instance_from_env()
     {
         app_data_dir = app_data_dir.join(instance);
     }

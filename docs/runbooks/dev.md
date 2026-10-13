@@ -446,7 +446,7 @@ export KUKURI_DISCOVERY_SEEDS=<node_id または node_id@host:port をカンマ�
 ```
 
 - `KUKURI_ADVERTISE_HOST` を設定すると `Your Ticket` はその host を使う。
-- `KUKURI_INSTANCE` を設定すると app data dir が分離される。
+- `KUKURI_INSTANCE` を設定すると app data dir が分離される。desktop app は単一起動の制御と deep link の登録をせず、同じ PC の他の instance と同時に動く（#1800）。webview の保存領域（localStorage など）は identifier 単位のままなので、instance ごとに分けるときは Windows は `WEBVIEW2_USER_DATA_FOLDER`、Linux は `XDG_DATA_HOME`・`XDG_CACHE_HOME` も instance ごとに変える。
 - `KUKURI_APP_DATA_DIR` を設定すると app data dir を丸ごと上書きできる。
 - 既定の app data dir は build の種別で分かれる（#1105）。配布版（release build）は OS の app data dir（Windows は `%APPDATA%\app.kukuri.desktop`）、`tauri:dev` や `cargo build` の開発ビルド（debug build）はその兄弟の `app.kukuri.desktop.dev` を使う。開発ビルドは配布版の同意記録・アカウント・DB・OS 通知設定を読み書きしない。`KUKURI_INSTANCE` はこの build 別の dir の下に作られ、`KUKURI_APP_DATA_DIR` は build の種別に関係なく指定した dir をそのまま使う。
 - 開発ビルドの `KUKURI_APP_DATA_DIR` に配布版の dir を指定しない。同意判定は build の種別を見ないため、開発中の版への同意が配布版の同意として扱われる（記録の `build_profile` は `development` になる）。
@@ -503,7 +503,7 @@ $env:KUKURI_INSTANCE="desktop-a"
 以下の手動確認は、合意した利用条件と自動検証で不足する点から選ぶ参照表である。対象OS・操作・期待結果・確認を打ち切る時点を先に固定する。Social graph、Private channel、DHT、Windowsの各節も同じ扱いとし、未依頼のlaneや異常系を追加しない。
 
 1. 各端末で `KUKURI_BIND_ADDR=0.0.0.0:0` と `KUKURI_ADVERTISE_HOST` を設定する。
-2. 同一マシンで複数起動する場合は `KUKURI_INSTANCE` も別値にする。
+2. 同一マシンで複数起動する場合は `KUKURI_INSTANCE` も別値にする（webview の保存領域の分け方は上の環境変数の説明を参照）。
 3. `npx pnpm@10.16.1 tauri:dev` を起動する。
 4. 両方の `Your Ticket` を相互に `Peer Ticket` へ貼って import する。
 5. 片方で post し、もう片方の timeline に反映されることを確認する。

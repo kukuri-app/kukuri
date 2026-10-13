@@ -191,8 +191,12 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default();
 
+    // KUKURI_INSTANCE を付けた起動は、同じ PC の他の instance と同時に動く(単一起動の制御と deep link の
+    // 登録をしない。#1800)。
     #[cfg(desktop)]
-    {
+    let separate_instance = kukuri_desktop_runtime::desktop_instance_from_env().is_some();
+    #[cfg(desktop)]
+    if !separate_instance {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             info!("received kukuri desktop single-instance activation");
             // The app may be resident in the tray with its window hidden
@@ -219,7 +223,7 @@ pub fn run() {
                 desktop_lifecycle::close_window(window.clone());
             }
         })
-        .setup(|app| {
+        .setup(move |app| {
             #[cfg(target_os = "linux")]
             file_dialog::install(app.handle())?;
             #[cfg(target_os = "linux")]
@@ -337,7 +341,9 @@ pub fn run() {
             commands::background_notifications::spawn(app.handle().clone());
             // MSIX owns protocol registration through its package manifest.
             #[cfg(any(all(windows, not(feature = "microsoft-store")), target_os = "linux"))]
-            app.deep_link().register_all()?;
+            if !separate_instance {
+                app.deep_link().register_all()?;
+            }
             if initialize_runtime {
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
