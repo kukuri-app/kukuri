@@ -83,7 +83,7 @@ describe('LiveSessionMedia', () => {
     render(<LiveSessionMedia api={media} topic={request.topic} session={session()} isOwner />);
     await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'This live session can only be broadcast from the device that created it.'
+      "This live session can't be broadcast from this device."
     );
     expect(captureVideo).not.toHaveBeenCalled();
   });
