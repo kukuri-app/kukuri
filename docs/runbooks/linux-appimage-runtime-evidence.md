@@ -45,13 +45,13 @@ libc、GL／EGL／DRM等のホスト解決と実codec利用可否は、同梱済
 
 `bundleMediaFramework`を有効にし、build host（配布用はUbuntu 22.04）の`/usr/lib/x86_64-linux-gnu/gstreamer-1.0/`のpluginを`usr/lib/gstreamer-1.0/`へ、`gst-plugin-scanner`／`gst-ptp-helper`を`usr/lib/gstreamer1.0/gstreamer-1.0/`へ同梱する。複製はTauri CLI 2.12.0（commit `447fa9f3`）内蔵の`linuxdeploy-plugin-gstreamer.sh`（blob `757afd4f`）が行い、pluginの依存libraryはlinuxdeployが集める。#1222の表示系libraryの除外はその後に働く。
 
-複製するpluginはbuild hostに入っているpackageで決まる。配布用のbuild hostにはWebKitGTKの依存で`gstreamer1.0-plugins-base`／`-good`／`-gl`（とgoodが推奨する`-x`）が入り、H.264／AACのdecoder（`gstreamer1.0-libav`、`-plugins-bad`、`-plugins-ugly`等）は入れない。build hostへpackageを足すと配るcodecが変わる。camera／画面の取り込みに要るpipewireのplugin（`gstreamer1.0-pipewire`）も入れていない（#1034で扱う）。
+複製するpluginはbuild hostに入っているpackageで決まる。配布用のbuild hostにはWebKitGTKの依存と推奨で`gstreamer1.0-plugins-base`／`-good`／`-gl`（とgoodが推奨する`-x`）が入り、H.264／AACのdecoderを含む`gstreamer1.0-libav`／`-plugins-bad`は入れない。build hostへpackageを足すと配るcodecが変わる。camera／画面の取り込みに要るpipewireのplugin（`gstreamer1.0-pipewire`）も入れていない（#1034で扱う）。
 
 `AppRun.wrapped`は#1795以前から`GST_PLUGIN_SYSTEM_PATH_1_0`をAppDirの`usr/lib/gstreamer-1.0`へ向けていた。この場所が無かったためpluginが0件になり、動画の再生とWebCodecsが使えず、`<video>`へ動画を置くとWebKitWebProcessが終了した。同梱の1.20 coreとGLib 2.72はUbuntu 24.04（1.24）／26.04（1.28）のhost pluginも読めないので、hostのpluginへは頼らない（観測は#1795）。
 
 追加の非ELFは`apprun-hooks/linuxdeploy-plugin-gstreamer.sh`（plugin／scanner／ptp helperの場所をAppDirへ向ける環境変数）。上流のlinuxdeploy-plugin-gstreamerにはlicense fileが無いため、生成元のTauriのMIT本文を固定noticeに加えた（static source 27件＋notice 5件）。plugin／helperのELFは既存のcollectorがbuild IDでpackageへ結び付け、対応するUbuntu sourceを集める。
 
-hostと同じregistry file（`~/.cache/gstreamer-1.0/registry.x86_64.bin`）を使うため、AppImageとhostのGStreamerを交互に使うと、それぞれ最初の利用時にregistryを作り直す。
+AppImageは起動ごとにmount先が変わるため、同梱GStreamerは起動ごとの最初の利用時にregistryを作り直す。hookの`GST_REGISTRY_REUSE_PLUGIN_SCANNER=no`のままではplugin 1件ごとにscannerを起動し、webviewが約1.5秒止まった。起動処理（`apps/desktop/src-tauri/src/appimage_env.rs`）がscannerの使い回し（`GST_REGISTRY_REUSE_PLUGIN_SCANNER=yes`）と専用のregistry（`GST_REGISTRY_1_0`＝`~/.cache/app.kukuri.desktop/gstreamer-1.0/registry.bin`）を設定し、待ちを短くしてhostのregistry file（`~/.cache/gstreamer-1.0/registry.x86_64.bin`）を書き換えない（#1795）。
 
 ## 外側runtimeのstatic依存
 
