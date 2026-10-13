@@ -208,3 +208,49 @@ async fn owner_layout_commit_is_explicit_idempotent_and_restarts_from_new_revisi
     assert_eq!(no_op.outcome, DomeLayoutCommitOutcome::NoOp);
     assert_eq!(no_op.revision, 2);
 }
+
+// 稼働の状態の読取りは、先に進んだ Dome の時計を戻さず、失敗しない(#1803)。読取りの時刻は lock の前に取るので、
+// 待つ間に session の処理(snapshot・input)が後の時刻で時計を進めていることがある。
+#[tokio::test]
+async fn reading_the_hosting_after_the_session_clock_moved_ahead_succeeds() {
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(FakeTransport::new("self", FakeNetwork::default()));
+    let app = AppService::new(store, transport);
+    let topic = "kukuri:topic:dome-hosting-clock";
+    let room_id = app
+        .create_metaverse_room(
+            topic,
+            CreateMetaverseRoomInput {
+                title: "Hosted Dome".into(),
+                description: String::new(),
+                max_peers: Some(8),
+            },
+        )
+        .await
+        .expect("create Dome");
+    let context = SpatialContextV1::Topic {
+        topic_id: kukuri_core::TopicId::new(topic),
+    };
+    app.start_owner_dome_hosting(StartOwnerDomeHostingInput {
+        expected_generation: None,
+        spatial_context: context.clone(),
+        instance_id: room_id.clone(),
+        endpoint_id: "owner-endpoint".into(),
+        lease_duration_millis: 60_000,
+    })
+    .await
+    .expect("start owner hosting");
+    app.dome_host_sessions
+        .lock()
+        .await
+        .get_mut(&room_id)
+        .expect("the hosted session")
+        .advance_to(Utc::now().timestamp_millis() + 1_000)
+        .expect("move the session clock ahead");
+
+    let hosting = app
+        .get_dome_hosting(context, &room_id)
+        .await
+        .expect("read the hosting");
+    assert_eq!(hosting.state.kind, DomeHostingStateKindV1::OwnerHosted);
+}

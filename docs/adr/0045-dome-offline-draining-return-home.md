@@ -12,7 +12,7 @@ Connection recordが存在していても、host停止、通常解除、owner間
 
 ### Hostとparticipant liveness
 
-- Owner-device hostはP2Pのephemeral hint、Community Node hostはstatus応答で、active lease epochとsessionへ束縛した署名済みheartbeatを5秒ごとに発行する。
+- Owner-device hostはP2Pのephemeral hintで2.5秒ごと、Community Node hostはstatus応答で5秒ごとに、active lease epochとsessionへ束縛した署名済みheartbeatを発行する。Owner-device hostの間隔はofflineの判定（5秒）の半分とし、届くまでの遅れと端末の時計のずれで、動いているhostをofflineと判定しない（#1803。判定と同じ5秒ごとに送っていた間は、遅れの分だけ毎周期offlineの瞬間ができ、画面がmicを止めていた）。
 - Clientは署名、host identity、epoch、session、単調sequenceを検証し、最新値だけをmemoryに保持する。最終heartbeatから5秒超を`offline`、15秒まではgrace、15秒超を`closed/heartbeat_timeout`とする。
 - Clientがgossipで受けたowner device hostのheartbeatは、Spatial ContextとInstanceで引く台帳に、contextとhostからInstanceを導けるものだけを置く。署名時刻（受信時刻より未来なら受信時刻）から30秒（graceの2倍）で捨て、contextごとに100件（部屋の一覧の窓）まで置き、満ちたcontextでは新しいhostを置かない。heartbeatでしか知らないDomeは、15〜30秒は`closed/heartbeat_timeout`を返して入室中の画面を退避させ、30秒で一覧・接続の相手・入口の候補から外れる（#1553。それまでは再起動まで残っていた）。
 - Grace中は最後のauthoritative snapshotとadmitted sceneを保持し、interaction、audio/presence送信、新規transitionを停止する。同じepoch/sessionが復帰すれば再Joinせず再開する。

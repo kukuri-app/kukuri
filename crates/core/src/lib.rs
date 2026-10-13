@@ -110,9 +110,9 @@ pub use dome_layout::{
     verify_signed_dome_layout_candidate, verify_signed_dome_layout_commit,
 };
 pub use dome_recovery::{
-    DomeEvacuationCandidateKindV1, DomeEvacuationCandidateV1, DomeEvacuationPhaseV1,
-    DomeEvacuationReasonV1, DomeHostLivenessV1, order_dome_evacuation_candidates,
-    resolve_dome_host_liveness,
+    DOME_HOST_HEARTBEAT_SEND_INTERVAL_MILLIS, DomeEvacuationCandidateKindV1,
+    DomeEvacuationCandidateV1, DomeEvacuationPhaseV1, DomeEvacuationReasonV1, DomeHostLivenessV1,
+    order_dome_evacuation_candidates, resolve_dome_host_liveness,
 };
 pub use dome_session::{
     DOME_SESSION_REQUEST_MAX_BYTES, DOME_SESSION_RESPONSE_MAX_BYTES, DOME_SESSION_RESYNC_MAX_BYTES,

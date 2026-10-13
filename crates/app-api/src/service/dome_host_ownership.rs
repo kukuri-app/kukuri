@@ -33,7 +33,7 @@ impl AppService {
         let key = instance_id.clone();
         let handle = n0_future::task::spawn(async move {
             let mut interval = n0_future::time::interval(std::time::Duration::from_millis(
-                kukuri_core::DOME_HOST_HEARTBEAT_INTERVAL_MILLIS as u64,
+                kukuri_core::DOME_HOST_HEARTBEAT_SEND_INTERVAL_MILLIS as u64,
             ));
             interval.set_missed_tick_behavior(n0_future::time::MissedTickBehavior::Delay);
             let mut located = None;
