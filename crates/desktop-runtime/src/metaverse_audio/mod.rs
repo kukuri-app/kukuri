@@ -7,26 +7,30 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, Weak};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result};
 use kukuri_app_api::AppService;
 use kukuri_core::{
-    METAVERSE_AUDIO_POSITION_TRACK, METAVERSE_AUDIO_TRACK, MetaverseAudioAccessRequestV1,
-    MetaverseBudgetResource, MetaverseBudgetScope, MetaverseResourceRejection,
-    MetaverseResourceRejectionReason, Pubkey, SpatialContextV1,
+    METAVERSE_AUDIO_POSITION_TRACK, METAVERSE_AUDIO_TRACK, MediaAccessRequestV1,
+    MetaverseAudioAccessRequestV1, MetaverseBudgetResource, MetaverseBudgetScope,
+    MetaverseResourceRejection, MetaverseResourceRejectionReason, Pubkey, SpatialContextV1,
     connection_opening_audio_distance_cm, metaverse_audio_broadcast_path,
     spatial_audio_distance_cm, spatial_audio_gain_milli,
 };
-use kukuri_iroh_node::{IrohDocsNode, MediaAuthorizer, MediaGrant};
+use kukuri_iroh_node::{IrohDocsNode, MediaGrant};
 use moq_net::{Timestamp, origin, track};
 use n0_future::task::AbortOnDropHandle;
 use n0_future::time::{Instant, timeout};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-mod devices;
+use crate::media_access::{
+    DENIED_ACCESS, DENIED_NOT_IN_DOME, DENIED_UNAVAILABLE, RateBudget, RateExceeded,
+    SUBSCRIBE_TIMEOUT, denial_code, opus_frames, read_catalog,
+};
+use crate::media_devices as devices;
 
 /// Opus の 1 frame の長さ。再生前の保持の上限は client budget の jitter frame の数を掛ける(既定 8 で 160 ms。
 /// ADR 0041、ADR 0067 §4)。
@@ -37,15 +41,6 @@ const ATTEMPT_LEDGER_LIMIT: usize = 64;
 const ATTEMPT_LEDGER_TTL: Duration = Duration::from_secs(30);
 /// 自分の位置を位置の track へ書く間隔の下限(10 Hz)。
 const POSITION_INTERVAL: Duration = Duration::from_millis(100);
-/// 公開を待つ・catalog を読む上限。
-const SUBSCRIBE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Opus の設定(声。ADR 0067 §9)。
-const OPUS_SAMPLE_RATE: u32 = 48_000;
-/// 認可の拒否の code(理由だけを返し、他の参加者の識別子を返さない。ADR 0067 §3)。
-const DENIED_ACCESS: &str = "access_denied";
-const DENIED_NOT_IN_DOME: &str = "not_in_dome";
-const DENIED_INVALID: &str = "invalid_request";
-const DENIED_UNAVAILABLE: &str = "unavailable";
 
 /// 画面が渡す Dome(current または ready な隣接)。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,64 +137,19 @@ impl Listener {
     }
 }
 
-/// 送信量の検査(ADR 0041 player の 50 frame/s・32 KiB/s)。1 秒分の枠を経過時間に比例して補充するので、正規の
-/// 20 ms の frame の到着の揺れとまとめ到着(1 秒分まで)は捨てず、上限を超え続ける分だけを捨てる。
-struct FrameBudget {
-    at: Option<Instant>,
-    frames: f64,
-    bytes: f64,
-    max_frames: u64,
-    max_bytes: u64,
-}
-
-impl FrameBudget {
-    fn new(max_frames: u64, max_bytes: u64) -> Self {
-        Self {
-            at: None,
-            frames: max_frames as f64,
-            bytes: max_bytes as f64,
-            max_frames,
-            max_bytes,
-        }
-    }
-
-    fn admit(
-        &mut self,
-        now: Instant,
-        bytes: usize,
-    ) -> std::result::Result<(), MetaverseResourceRejection> {
-        let elapsed = self
-            .at
-            .map_or(0.0, |at| now.saturating_duration_since(at).as_secs_f64());
-        self.at = Some(now);
-        self.frames = (self.frames + elapsed * self.max_frames as f64).min(self.max_frames as f64);
-        self.bytes = (self.bytes + elapsed * self.max_bytes as f64).min(self.max_bytes as f64);
-        // observed は上限を超えたことだけを示す(1 秒分の枠を使い切った)。
-        let rejection = |resource, limit: u64| {
-            MetaverseResourceRejection::new(
-                MetaverseBudgetScope::Player,
-                resource,
-                MetaverseResourceRejectionReason::RateExceeded,
-                limit.saturating_add(1),
-                limit,
-            )
-        };
-        if self.frames < 1.0 {
-            return Err(rejection(
-                MetaverseBudgetResource::AudioFrameRate,
-                self.max_frames,
-            ));
-        }
-        if self.bytes < bytes as f64 {
-            return Err(rejection(
-                MetaverseBudgetResource::AudioBandwidth,
-                self.max_bytes,
-            ));
-        }
-        self.frames -= 1.0;
-        self.bytes -= bytes as f64;
-        Ok(())
-    }
+/// 送信量の上限を超えた frame の拒否(ADR 0041 player の 50 frame/s・32 KiB/s)。observed は上限を超えたことだけを示す。
+fn audio_rejection(exceeded: RateExceeded, budget: &RateBudget) -> MetaverseResourceRejection {
+    let (resource, limit) = match exceeded {
+        RateExceeded::Frames => (MetaverseBudgetResource::AudioFrameRate, budget.max_frames()),
+        RateExceeded::Bytes => (MetaverseBudgetResource::AudioBandwidth, budget.max_bytes()),
+    };
+    MetaverseResourceRejection::new(
+        MetaverseBudgetScope::Player,
+        resource,
+        MetaverseResourceRejectionReason::RateExceeded,
+        limit.saturating_add(1),
+        limit,
+    )
 }
 
 /// 購読中の話者。落とすと購読の task を止め、接続を閉じる。
@@ -405,8 +355,12 @@ impl MetaverseAudio {
         let position = broadcast
             .create_track(METAVERSE_AUDIO_POSITION_TRACK, None)
             .context("failed to create the position track")?;
+        let catalog =
+            moq_mux::catalog::Producer::new(&mut broadcast, moq_mux::catalog::Config::default())?;
         let playback = audio.playback().await.ok();
-        let capture = devices::Capture::open(&mut broadcast, playback).await?;
+        let capture =
+            devices::Capture::open(&mut broadcast, catalog, METAVERSE_AUDIO_TRACK, playback)
+                .await?;
         Ok(Microphone {
             _capture: capture,
             position,
@@ -495,7 +449,7 @@ impl MetaverseAudio {
     }
 
     /// 話者の端末の受け口が呼ぶ。参加中の Dome への要求だけを、proof と access で確かめて許す。
-    async fn grant(
+    pub(crate) async fn grant(
         self: &Arc<Self>,
         app: &Arc<AppService>,
         request: MetaverseAudioAccessRequestV1,
@@ -512,11 +466,7 @@ impl MetaverseAudio {
             (audio.room.clone(), audio.origin.consume())
         };
         let listener = app
-            .authorize_spatial_audio_listener(
-                &request.proof,
-                &room.spatial_context,
-                &room.owner_pubkey,
-            )
+            .authorize_media_listener(&request.proof, &room.spatial_context, &room.owner_pubkey)
             .await
             .map_err(|_| DENIED_UNAVAILABLE.to_string())?
             .ok_or_else(|| DENIED_ACCESS.to_string())?;
@@ -541,7 +491,7 @@ impl MetaverseAudio {
                         .is_some_and(|current| current.room.same_session(&room));
                     still_here
                         && app
-                            .spatial_audio_listener_allowed(
+                            .media_listener_allowed(
                                 &room.spatial_context,
                                 &room.owner_pubkey,
                                 &listener,
@@ -552,25 +502,6 @@ impl MetaverseAudio {
             }),
         })
     }
-}
-
-/// iroh-node の media の受け口へ付ける認可。runtime を所有しない(止まった後の要求は拒否する)。
-pub(crate) fn media_authorizer(
-    audio: Weak<MetaverseAudio>,
-    app: Weak<AppService>,
-) -> MediaAuthorizer {
-    Arc::new(move |_remote, request| {
-        let audio = audio.clone();
-        let app = app.clone();
-        Box::pin(async move {
-            let (Some(audio), Some(app)) = (audio.upgrade(), app.upgrade()) else {
-                return Err(DENIED_UNAVAILABLE.to_string());
-            };
-            let request: MetaverseAudioAccessRequestV1 =
-                serde_json::from_slice(&request).map_err(|_| DENIED_INVALID.to_string())?;
-            audio.grant(&app, request).await
-        })
-    })
 }
 
 /// 1 人の話者を購読し、終わるまで再生する(拒否・切断・公開の終了で終わる)。
@@ -599,19 +530,8 @@ async fn listen(
     .await
     {
         // 話者の識別子・音声を log に出さない(ADR 0067 §2)。拒否は固定の code だけを出す。
-        match error.downcast_ref::<kukuri_iroh_node::MediaDenied>() {
-            Some(denied) => {
-                let code = [
-                    DENIED_ACCESS,
-                    DENIED_NOT_IN_DOME,
-                    DENIED_INVALID,
-                    DENIED_UNAVAILABLE,
-                ]
-                .into_iter()
-                .find(|known| *known == denied.0)
-                .unwrap_or("unknown");
-                tracing::debug!(code, "spatial audio subscription denied");
-            }
+        match denial_code(&error) {
+            Some(code) => tracing::debug!(code, "spatial audio subscription denied"),
             None => tracing::debug!("spatial audio subscription ended"),
         }
     }
@@ -632,12 +552,14 @@ async fn play(
     let proof = app
         .build_dome_access_proof(room.spatial_context.clone(), room.owner_pubkey.clone())
         .await?;
-    let request = serde_json::to_vec(&MetaverseAudioAccessRequestV1 {
-        proof,
-        instance_id: room.instance_id.clone(),
-        instance_generation: room.instance_generation,
-        session_id: room.session_id.clone(),
-    })?;
+    let request = serde_json::to_vec(&MediaAccessRequestV1::MetaverseAudio(
+        MetaverseAudioAccessRequestV1 {
+            proof,
+            instance_id: room.instance_id.clone(),
+            instance_generation: room.instance_generation,
+            session_id: room.session_id.clone(),
+        },
+    ))?;
     let subscription = node.media_subscribe(endpoint_id, &request).await?;
     let broadcast = timeout(
         SUBSCRIBE_TIMEOUT,
@@ -648,39 +570,16 @@ async fn play(
     )
     .await
     .context("the speaker did not publish in time")??;
-    let mut catalog =
-        moq_mux::catalog::Consumer::<()>::new(&broadcast, moq_mux::catalog::CatalogFormat::Hang)
-            .await?;
-    let catalog = timeout(
-        SUBSCRIBE_TIMEOUT,
-        moq_mux::catalog::Stream::next(&mut catalog),
-    )
-    .await
-    .context("the speaker catalog did not arrive in time")??
-    .context("the speaker catalog ended")?;
-    let config = catalog
-        .audio
-        .renditions
-        .get(METAVERSE_AUDIO_TRACK)
-        .context("the speaker publishes no audio track")?
-        .clone();
-    if config.codec != hang::catalog::AudioCodec::Opus
-        || config.sample_rate != OPUS_SAMPLE_RATE
-        || config.channel_count != 1
-    {
-        bail!("the speaker audio track is not mono 48 kHz Opus");
-    }
-    let container = moq_mux::catalog::hang::Container::try_from(&config)
-        .map_err(|error| anyhow!("unsupported audio container: {error}"))?;
+    let (catalog, _) = read_catalog(&broadcast).await?;
     let budget = app.metaverse_resource_budget();
     let playout = OPUS_FRAME * budget.client.max_audio_jitter_frames;
-    let mut frames = audio_frames(&broadcast, container, playout).await?;
-    let mut decoder = moq_audio::decode::Decoder::new(&config, &moq_audio::decode::Config::new())?;
+    let (mut frames, mut decoder) =
+        opus_frames(&broadcast, &catalog, METAVERSE_AUDIO_TRACK, playout).await?;
     let mut positions = broadcast
         .track(METAVERSE_AUDIO_POSITION_TRACK)?
         .subscribe(track::Subscription::default())
         .await?;
-    let mut admission = FrameBudget::new(
+    let mut admission = RateBudget::new(
         u64::from(budget.player.max_audio_frames_per_second),
         budget.player.max_audio_bytes_per_second,
     );
@@ -689,9 +588,10 @@ async fn play(
         tokio::select! {
             frame = frames.read() => {
                 let Some(frame) = frame? else { return Ok(()) };
-                if let Err(rejection) = admission.admit(Instant::now(), frame.payload.len()) {
+                if let Err(exceeded) = admission.admit(Instant::now(), frame.payload.len()) {
                     rejected.fetch_add(1, Ordering::Relaxed);
-                    tracing::debug!(code = %rejection.code(), "spatial audio frame rejected");
+                    let code = audio_rejection(exceeded, &admission).code();
+                    tracing::debug!(%code, "spatial audio frame rejected");
                     continue;
                 }
                 let decoded = decoder.decode(&frame.payload)?;
@@ -713,24 +613,6 @@ async fn play(
             _ = subscription.closed() => return Ok(()),
         }
     }
-}
-
-/// 話者の音声の track を、group の順を並べ直して時刻順の frame として読む。`playout`(再生前の保持の上限)より
-/// 遅れた group は古いものから飛ばす。
-async fn audio_frames(
-    broadcast: &moq_net::broadcast::Consumer,
-    container: moq_mux::catalog::hang::Container,
-    playout: Duration,
-) -> Result<moq_mux::container::Consumer<moq_mux::catalog::hang::Container>> {
-    let track = broadcast
-        .track(METAVERSE_AUDIO_TRACK)?
-        .subscribe(
-            track::Subscription::default()
-                .with_priority(hang::catalog::PRIORITY.audio)
-                .with_max_age(playout),
-        )
-        .await?;
-    Ok(moq_mux::container::Consumer::new(track, container))
 }
 
 #[cfg(test)]

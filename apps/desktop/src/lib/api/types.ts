@@ -61,11 +61,14 @@ import type {
   GameScoreView,
   JoinedPrivateChannelPage,
   JoinedPrivateChannelView,
+  LiveBroadcastStatus,
+  LiveMediaRequest,
   LiveSessionView,
   MetaverseAssetKind,
   MetaverseAssetRef,
   MetaverseRoomEventV1,
   MetaverseAudioStatus,
+  SetLiveBroadcastRequest,
   SetMetaverseAudioRequest,
   SpatialContextV1,
   MetaverseRoomEventView,
@@ -555,6 +558,13 @@ export interface DesktopApi {
   ): Promise<MetaverseRoomEventView[]>;
   /** 空間音声の状態を Rust に渡す(ADR 0067)。mic と speaker を使う Tauri の app だけの command。 */
   setMetaverseAudio(request: SetMetaverseAudioRequest): Promise<MetaverseAudioStatus>;
+  /** live の配信と視聴(#1034、ADR 0067 §9)。camera・画面・mic・speaker を使う Tauri の app だけの command。 */
+  setLiveBroadcast(request: SetLiveBroadcastRequest): Promise<LiveBroadcastStatus>;
+  pushLiveVideo(sessionId: string, keyframe: boolean, ageMicros: number, data: Uint8Array): Promise<void>;
+  stopLiveBroadcast(request: LiveMediaRequest): Promise<void>;
+  watchLiveMedia(request: LiveMediaRequest): Promise<void>;
+  nextLiveVideo(request: LiveMediaRequest): Promise<ArrayBuffer>;
+  stopWatchingLiveMedia(request: LiveMediaRequest): Promise<void>;
   importMetaverseRoomAsset(
     topic: string,
     roomId: string,

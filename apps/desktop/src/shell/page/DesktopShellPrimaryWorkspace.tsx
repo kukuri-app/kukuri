@@ -12,6 +12,7 @@ import type { CommunityNodePanelView } from '@/components/settings/types';
 import { AuthorTrustGateNotice } from '@/components/core/AuthorTrustGateNotice';
 import { useAuthorTrustGateReveal } from '@/components/core/useAuthorTrustGateReveal';
 import { SessionVisibility, PendingSessionCards } from '@/components/extended/SessionVisibility';
+import { LiveSessionMedia } from '@/components/extended/LiveSessionMedia';
 import { GameRoomPanel } from '@/components/extended/GameRoomPanel';
 import type { MetaverseRoomActions } from '@/components/extended/metaverse/MetaverseRoomActions';
 import { ProfileConnectionsPanel } from '@/components/extended/ProfileConnectionsPanel';
@@ -776,6 +777,7 @@ export function DesktopShellPrimarySurface({
                           </span>
                         </div>
                       ) : null}
+                      <LiveSessionMedia api={api} topic={surfaceTopic} session={session} isOwner={isOwner} />
                       <div className='post-actions'>
                         {session.joined_by_me ? (
                           <Button

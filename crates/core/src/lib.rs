@@ -166,7 +166,7 @@ pub use link_preview::{
 };
 pub use live::{
     LiveSessionManifestBlobV1, LiveSessionStateDocV1, LiveSessionStatus, LiveSignalKind,
-    build_live_session_envelope,
+    build_live_session_envelope, live_media_broadcast_path,
 };
 pub use media::{
     AssetRef, AssetRole, DOME_INSTANCE_MANIFEST_MIME, DOME_PRESET_MANIFEST_MIME,
@@ -174,11 +174,11 @@ pub use media::{
     MediaManifestItem, blob_hash, build_media_manifest_envelope,
 };
 pub use metaverse_audio::{
-    METAVERSE_AUDIO_POSITION_TRACK, METAVERSE_AUDIO_TRACK, METAVERSE_MEDIA_TTL_MILLIS,
-    MetaverseAudioAccessRequestV1, connection_opening_audio_distance_cm,
-    metaverse_audio_broadcast_path, metaverse_room_event_is_live, spatial_audio_distance_cm,
-    spatial_audio_gain_milli, validate_metaverse_room_event_content,
-    validate_metaverse_room_event_for_instance,
+    LiveMediaAccessRequestV1, METAVERSE_AUDIO_POSITION_TRACK, METAVERSE_AUDIO_TRACK,
+    METAVERSE_MEDIA_TTL_MILLIS, MediaAccessRequestV1, MetaverseAudioAccessRequestV1,
+    connection_opening_audio_distance_cm, metaverse_audio_broadcast_path,
+    metaverse_room_event_is_live, spatial_audio_distance_cm, spatial_audio_gain_milli,
+    validate_metaverse_room_event_content, validate_metaverse_room_event_for_instance,
 };
 pub use metaverse_resource_budget::{
     ClientResourceBudget, DomeResourceBudget, HostResourceBudget, MetaverseAssetBudgetMetadataV1,

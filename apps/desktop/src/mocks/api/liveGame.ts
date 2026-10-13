@@ -58,6 +58,12 @@ type LiveGameMock = Pick<
   | 'publishMetaverseRoomEvent'
   | 'listMetaverseRoomEvents'
   | 'setMetaverseAudio'
+  | 'setLiveBroadcast'
+  | 'pushLiveVideo'
+  | 'stopLiveBroadcast'
+  | 'watchLiveMedia'
+  | 'nextLiveVideo'
+  | 'stopWatchingLiveMedia'
   | 'importMetaverseRoomAsset'
 >;
 
@@ -706,6 +712,25 @@ export function createLiveGameMock(runtime: MockRuntime): LiveGameMock {
         rejected_frames: 0,
       };
     },
+    // live の映像も Tauri の app だけ。mock は mic を開けず、視聴者には映像の無い状態(code 2)を返す。
+    async setLiveBroadcast(request) {
+      return {
+        microphone: false,
+        limits:
+          request.source === 'camera'
+            ? { width: 1280, height: 720, framerate: 30, bitrate: 1_500_000 }
+            : { width: 1920, height: 1080, framerate: 15, bitrate: 2_500_000 },
+      };
+    },
+    async pushLiveVideo() {},
+    async stopLiveBroadcast() {},
+    async watchLiveMedia() {},
+    async nextLiveVideo() {
+      const batch = new ArrayBuffer(11);
+      new DataView(batch).setUint8(0, 2);
+      return batch;
+    },
+    async stopWatchingLiveMedia() {},
     async publishMetaverseRoomEvent(topic, roomId, peerId, seq, event) {
       const now = Date.now();
       const envelopeId = `mock-metaverse-event-${now}-${seq}`;

@@ -91,6 +91,8 @@ test('browser mock shell can run profile, private channel, live, and game flows'
   await liveDialog.getByRole('button', { name: 'Start Live' }).click();
   const liveCard = page.locator('article.post-card').filter({ has: page.getByText('Launch Party') });
   await expect(liveCard).toBeVisible();
+  // #1034: 主催者の card には映像の配信の操作がある(取り込みは押した後だけ)。
+  await expect(liveCard.getByRole('button', { name: 'Start video broadcast' })).toBeVisible();
   await page
     .locator('article.post-card')
     .filter({ has: page.getByText('Launch Party') })

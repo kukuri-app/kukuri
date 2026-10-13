@@ -19,6 +19,33 @@
     "title": "Live Title"
   },
   "loading": "Loading live sessions…",
+  "media": {
+    "broadcasting": "Broadcasting video",
+    "disableMicrophone": "Disable microphone",
+    "enableMicrophone": "Enable microphone",
+    "errors": {
+      "cameraUnavailable": "The camera is unavailable. You can broadcast your screen instead.",
+      "denied": "Camera or screen capture was not allowed.",
+      "failed": "Could not start the video broadcast.",
+      "unsupported": "Video broadcasting is not available here."
+    },
+    "microphoneUnavailable": "The microphone is unavailable, so only video is being broadcast.",
+    "preview": "Your video",
+    "source": "Video to broadcast",
+    "sources": {
+      "camera": "Camera",
+      "screen": "Screen"
+    },
+    "startBroadcast": "Start video broadcast",
+    "states": {
+      "connecting": "Connecting to the broadcast…",
+      "ended": "The video stopped. Reconnecting…",
+      "full": "This broadcast is full (up to 4 viewers receive it directly from the host). Waiting for a free spot…",
+      "no_media": "The host has not started sending video yet."
+    },
+    "stopBroadcast": "Stop video broadcast",
+    "video": "Broadcast video"
+  },
   "statuses": {
     "Ended": "Ended",
     "Live": "Live",

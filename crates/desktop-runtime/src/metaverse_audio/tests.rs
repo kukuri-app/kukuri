@@ -7,6 +7,15 @@ use kukuri_docs_sync::MemoryDocsSync;
 use kukuri_store::MemoryStore;
 use kukuri_transport::{FakeNetwork, FakeTransport};
 use moq_net::group;
+use std::sync::Weak;
+
+use crate::media_access::{media_authorizer, ordered_frames};
+use crate::media_devices::OPUS_SAMPLE_RATE;
+
+/// 認可要求の bytes(media の受け口が受ける形)。
+fn request_bytes(request: MetaverseAudioAccessRequestV1) -> Vec<u8> {
+    serde_json::to_vec(&MediaAccessRequestV1::MetaverseAudio(request)).expect("request")
+}
 
 const TOPIC: &str = "kukuri:topic:spatial-audio";
 
@@ -182,6 +191,7 @@ async fn pair() -> Pair {
     let speaker = Arc::new(MetaverseAudio::default());
     speaker_node.install_media_authorizer(Some(media_authorizer(
         Arc::downgrade(&speaker),
+        Weak::new(),
         Arc::downgrade(&speaker_app),
     )));
     Pair {
@@ -237,7 +247,7 @@ impl Pair {
 
     /// 聞き手の proof つきの認可要求(話者の世代 1 の Dome)。
     async fn access_request(&self) -> Vec<u8> {
-        serde_json::to_vec(&MetaverseAudioAccessRequestV1 {
+        request_bytes(MetaverseAudioAccessRequestV1 {
             proof: self
                 .listener_app
                 .build_dome_access_proof(room(&self.owner, 1).spatial_context, self.owner.clone())
@@ -247,7 +257,6 @@ impl Pair {
             instance_generation: 1,
             session_id: "dome-a".into(),
         })
-        .expect("request")
     }
 
     async fn shutdown(self) {
@@ -278,7 +287,7 @@ fn metaverse_audio_frame_budget_rejects_excess_frames_and_bytes() {
     let start = Instant::now();
     let at = |micros: u64| start + Duration::from_micros(micros);
     // 正規の 20 ms の frame は、到着の揺れ(最大 2 ms 早い)と 180 ms 分のまとめ到着があっても 10 秒間捨てない。
-    let mut budget = FrameBudget::new(50, 32 * 1024);
+    let mut budget = RateBudget::new(50, 32 * 1024);
     for index in 0..500_u64 {
         let arrival = if (100..109).contains(&index) {
             108 * 20_000
@@ -288,7 +297,7 @@ fn metaverse_audio_frame_budget_rejects_excess_frames_and_bytes() {
         budget.admit(at(arrival), 100).expect("a regular frame");
     }
     // 上限を超え続ける送り手(60 frame/s を 10 秒)は、1 秒分の枠と毎秒 50 frame を超える分だけ捨てる。
-    let mut budget = FrameBudget::new(50, 32 * 1024);
+    let mut budget = RateBudget::new(50, 32 * 1024);
     let mut admitted = 0;
     let mut rejection = None;
     for index in 0..600_u64 {
@@ -299,17 +308,17 @@ fn metaverse_audio_frame_budget_rejects_excess_frames_and_bytes() {
     }
     assert!((545..=551).contains(&admitted), "admitted {admitted}");
     assert_eq!(
-        rejection.expect("excess frames").code(),
+        audio_rejection(rejection.expect("excess frames"), &budget).code(),
         "METAVERSE_PLAYER_AUDIO_FRAME_RATE_RATE_EXCEEDED"
     );
     // bytes も同じ: 1 秒分(32 KiB)を使い切った直後の frame は捨てる。
-    let mut budget = FrameBudget::new(50, 32 * 1024);
+    let mut budget = RateBudget::new(50, 32 * 1024);
     budget
         .admit(start, 32 * 1024)
         .expect("a full second of bytes");
     let rejection = budget.admit(start, 1).expect_err("over the byte budget");
     assert_eq!(
-        rejection.code(),
+        audio_rejection(rejection, &budget).code(),
         "METAVERSE_PLAYER_AUDIO_BANDWIDTH_RATE_EXCEEDED"
     );
 }
@@ -324,9 +333,15 @@ async fn metaverse_audio_plays_bursty_and_reordered_frames_in_timestamp_order() 
         .expect("audio track");
     let consumer = broadcast.consume();
     let container = moq_mux::catalog::hang::Container::Legacy(moq_mux::container::Kind::Audio);
-    let mut frames = audio_frames(&consumer, container, OPUS_FRAME * 8)
-        .await
-        .expect("frames");
+    let mut frames = ordered_frames(
+        &consumer,
+        METAVERSE_AUDIO_TRACK,
+        container,
+        hang::catalog::PRIORITY.audio,
+        OPUS_FRAME * 8,
+    )
+    .await
+    .expect("frames");
     let write = |sequence: u64| {
         let mut group = track.create_group(group::Info { sequence }).expect("group");
         hang::container::Frame {
@@ -510,7 +525,7 @@ async fn metaverse_audio_subscribe_is_denied_without_dome_access() {
     };
     let denied = pair
         .listener_node
-        .media_subscribe(&speaker_id, &serde_json::to_vec(&stale).expect("request"))
+        .media_subscribe(&speaker_id, &request_bytes(stale))
         .await
         .err()
         .expect("denied");
@@ -535,7 +550,7 @@ async fn metaverse_audio_subscribe_is_denied_without_dome_access() {
     };
     let denied = pair
         .listener_node
-        .media_subscribe(&speaker_id, &serde_json::to_vec(&unbound).expect("request"))
+        .media_subscribe(&speaker_id, &request_bytes(unbound))
         .await
         .err()
         .expect("denied");

@@ -12,13 +12,28 @@ pub const METAVERSE_MEDIA_TTL_MILLIS: i64 = 10_000;
 pub const METAVERSE_AUDIO_TRACK: &str = "audio";
 pub const METAVERSE_AUDIO_POSITION_TRACK: &str = "position";
 
-/// 聞き手が話者の端末へ送る認可要求(ADR 0067 §3)。proof は話者の Dome の owner と Spatial Context に束縛する。
+/// 聞き手・視聴者が送る側の端末へ送る認可要求(ADR 0067 §3)。proof は送る側の owner と scope に束縛する。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MediaAccessRequestV1 {
+    MetaverseAudio(MetaverseAudioAccessRequestV1),
+    Live(LiveMediaAccessRequestV1),
+}
+
+/// metaverse の話者の音声。proof は話者の Dome の owner と Spatial Context に束縛する。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MetaverseAudioAccessRequestV1 {
     pub proof: DomeSpatialAccessProofV1,
     pub instance_id: String,
     pub instance_generation: u64,
+    pub session_id: String,
+}
+
+/// live 配信。proof は配信者(session の owner)と、session の topic・channel に束縛する。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveMediaAccessRequestV1 {
+    pub proof: DomeSpatialAccessProofV1,
+    pub topic_id: String,
     pub session_id: String,
 }
 

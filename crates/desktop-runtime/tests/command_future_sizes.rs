@@ -49,6 +49,13 @@ where
     size_of::<R>()
 }
 
+fn size4<F, A, B, C, D, R>(_: F) -> usize
+where
+    F: FnOnce(&'static DesktopRuntime, A, B, C, D) -> R,
+{
+    size_of::<R>()
+}
+
 /// 各 command の future の大きさ。実行環境は要らない（型の大きさだけを見る）。
 fn command_future_sizes() -> Vec<(&'static str, usize)> {
     vec![
@@ -484,6 +491,21 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         (
             "set_metaverse_audio",
             size1(DesktopRuntime::set_metaverse_audio),
+        ),
+        (
+            "set_live_broadcast",
+            size1(DesktopRuntime::set_live_broadcast),
+        ),
+        ("push_live_video", size4(DesktopRuntime::push_live_video)),
+        (
+            "stop_live_broadcast",
+            size1(DesktopRuntime::stop_live_broadcast),
+        ),
+        ("watch_live_media", size1(DesktopRuntime::watch_live_media)),
+        ("next_live_video", size1(DesktopRuntime::next_live_video)),
+        (
+            "stop_watching_live_media",
+            size1(DesktopRuntime::stop_watching_live_media),
         ),
         (
             "retry_post_elements",

@@ -114,10 +114,10 @@ impl AppService {
         )
     }
 
-    /// 話者の端末で、聞き手の音声の購読の要求を確かめる(ADR 0067 §3)。proof の署名・期限と、話者の Dome の
-    /// Spatial Context・owner への束縛を確かめ、owner から聞き手への block と Spatial Context の資格を自分の状態で
-    /// 評価する。許されたら聞き手の公開鍵を返す。
-    pub async fn authorize_spatial_audio_listener(
+    /// 送る側の端末で、聞き手・視聴者の media の購読の要求を確かめる(ADR 0067 §3)。proof の署名・期限と、scope
+    /// (Dome の Spatial Context か live session の topic・channel)・owner への束縛を確かめ、owner から相手への block と
+    /// scope の資格を自分の状態で評価する。許されたら相手の公開鍵を返す。
+    pub async fn authorize_media_listener(
         &self,
         proof: &DomeSpatialAccessProofV1,
         spatial_context: &SpatialContextV1,
@@ -136,13 +136,13 @@ impl AppService {
             return Ok(None);
         }
         Ok(self
-            .spatial_audio_listener_allowed(spatial_context, owner_pubkey, &listener)
+            .media_listener_allowed(spatial_context, owner_pubkey, &listener)
             .await?
             .then_some(listener))
     }
 
-    /// 話者の端末が 5 秒ごとに評価し直す(聞き手の公開鍵は接続の初めの proof で確かめた)。
-    pub async fn spatial_audio_listener_allowed(
+    /// 送る側の端末が 5 秒ごとに評価し直す(相手の公開鍵は接続の初めの proof で確かめた)。
+    pub async fn media_listener_allowed(
         &self,
         spatial_context: &SpatialContextV1,
         owner_pubkey: &Pubkey,
