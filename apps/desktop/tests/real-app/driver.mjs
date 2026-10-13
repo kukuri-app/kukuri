@@ -60,6 +60,9 @@ export async function launch({ app, root, name, port, env = {}, fresh = true }) 
     pid: child.pid,
     log: join(dir, 'app.log'),
     evaluate: page.evaluate,
+    /// 描画を 1 秒に `fps` 回までにする(読み直した後も)。GPU の無い Windows の runner では、複数の webview の 3D の描画
+    /// (software)が CPU を埋め、Rust の処理まで遅れる。Linux の webview は抑えなくても足りるので何もしない。
+    capFrames: page.capFrames,
     /// key の入力を受けるよう、この instance の window に focus を移す(Linux は window manager の下で xdotool、
     /// Windows は CDP で focus を模擬する)。
     focus() {
@@ -111,8 +114,39 @@ async function connectCdp(port) {
       });
       return resultOf(reply);
     },
+    async capFrames(fps) {
+      const source = frameCap(fps);
+      await call('Page.addScriptToEvaluateOnNewDocument', { source });
+      await call('Runtime.evaluate', { expression: source });
+    },
     close: () => socket.close(),
   };
+}
+
+/// `requestAnimationFrame` を、`fps` 回 / 秒までに間引く(`cancelAnimationFrame` も対にする)。
+function frameCap(fps) {
+  return `(() => {
+    if (window.__frameCap) return;
+    window.__frameCap = ${fps};
+    const request = window.requestAnimationFrame.bind(window);
+    const cancel = window.cancelAnimationFrame.bind(window);
+    const pending = new Map();
+    let next = 0;
+    window.requestAnimationFrame = (callback) => {
+      const id = ++next;
+      const timer = setTimeout(() => {
+        pending.set(id, { frame: request((time) => { pending.delete(id); callback(time); }) });
+      }, ${Math.round(1000 / fps)});
+      pending.set(id, { timer });
+      return id;
+    };
+    window.cancelAnimationFrame = (id) => {
+      const entry = pending.get(id);
+      pending.delete(id);
+      if (entry?.timer !== undefined) clearTimeout(entry.timer);
+      if (entry?.frame !== undefined) cancel(entry.frame);
+    };
+  })()`;
 }
 
 /// WebKitGTK の remote inspector。page の target へ包んで送り、非同期の結果は `Runtime.awaitPromise` で待つ。
@@ -165,6 +199,7 @@ async function connectWebKit(port) {
         await send('Runtime.awaitPromise', { promiseObjectId: promise.result.result.objectId, returnByValue: true })
       );
     },
+    capFrames: async () => undefined,
     close: () => socket.close(),
   };
 }

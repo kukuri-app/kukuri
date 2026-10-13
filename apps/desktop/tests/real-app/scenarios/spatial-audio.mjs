@@ -19,6 +19,8 @@ const WINDOW_MS = 5 * PERIOD_MS;
 /// 話者(S・O)と聞き手(L)の声の帯域(Hz)。
 const VOICE = [300, 950];
 const REPLY = [1500, 2950];
+/// 3 つの Dome の描画の上限(1 秒あたり)。
+const FRAMES_PER_SECOND = 10;
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const gainAt = (cm) => (cm <= 100 ? 1 : 100 / cm);
 const positionOf = async (instance) => (await audioState(instance)).request.listener_position;
@@ -31,6 +33,7 @@ export async function run({ launch, restart, log, topic }) {
   }
   let [listener, speaker, other] = await launch('listener', 'speaker', 'other');
   const all = () => [listener, speaker, other];
+  await Promise.all(all().map((instance) => instance.capFrames(FRAMES_PER_SECOND)));
   if (isolated) unplug('other'); // SA-2: O の入力デバイスは最初は無い。
   await Promise.all(all().map(accept));
   await connect(all());
@@ -185,6 +188,7 @@ export async function run({ launch, restart, log, topic }) {
 
     // SA-7: 再起動の後の mic は off(O は mic を on のまま止める)。
     other = await restart(other);
+    await other.capFrames(FRAMES_PER_SECOND);
     await accept(other);
     await openTopic(other, topic, 'game');
     await entered(other);
