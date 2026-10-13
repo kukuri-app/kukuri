@@ -35,7 +35,12 @@ export function useDomeTransitionNeighbors(
         }
         const loading = resolveActiveDomeNeighbors(topology, selectedRoom, rooms, {}, {});
         if (cancelled) return;
-        setNeighbors(current => loading.length || current.length ? loading : current);
+        // 一覧の読み直しのたびに確かめ直す。その間も、同じ接続の同じ相手は確かめ済みの状態を保つ(空間音声・presence が
+        // 通れる隣を数秒ごとに外さない)。
+        setNeighbors(current => loading.length || current.length
+          ? loading.map(neighbor => current.find(previous => previous.connectionId === neighbor.connectionId
+            && previous.room.room_id === neighbor.room.room_id) ?? neighbor)
+          : current);
         const hostingErrors = new Set<string>();
         const hostingEntries = await Promise.all(loading.map(async (neighbor) => {
           try {
