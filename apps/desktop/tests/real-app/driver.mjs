@@ -45,7 +45,10 @@ export async function launch({ app, root, name, port, env = {} }) {
       ...env,
     },
     stdio: ['ignore', log, log],
+    // Linux は WebKit の子の process(描画・通信)ごと止めるため、process group を分ける。
+    detached: !WINDOWS,
   });
+  const exited = new Promise((resolve) => child.once('exit', resolve));
   const page = await (WINDOWS ? connectCdp(port) : connectWebKit(port));
   return {
     name,
@@ -59,9 +62,9 @@ export async function launch({ app, root, name, port, env = {} }) {
       if (WINDOWS) {
         spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' });
       } else {
-        child.kill('SIGKILL');
+        process.kill(-child.pid, 'SIGKILL');
       }
-      await new Promise((resolve) => child.once('exit', resolve));
+      await exited;
     },
   };
 }
@@ -79,7 +82,7 @@ async function connectCdp(port) {
     STARTUP_MS
   );
   const socket = await open(target.webSocketDebuggerUrl);
-  const call = rpc(socket, (message) => message);
+  const { call } = rpc(socket, (message) => message);
   return {
     async evaluate(expression, { gesture = false } = {}) {
       const reply = await call('Runtime.evaluate', {
@@ -96,30 +99,43 @@ async function connectCdp(port) {
 
 /// WebKitGTK の remote inspector。page の target へ包んで送り、非同期の結果は `Runtime.awaitPromise` で待つ。
 async function connectWebKit(port) {
-  await eventually(
-    'the WebKit inspector',
-    () => fetch(`http://127.0.0.1:${port}/`).then(() => true, () => false),
+  // inspector の一覧に page が載るのを待ち、その path へつなぐ(載る前につなぐと target の知らせが来ない)。
+  const path = await eventually(
+    'the WebKit inspector page',
+    () =>
+      fetch(`http://127.0.0.1:${port}/`)
+        .then((response) => response.text())
+        .then((html) => /socket\/[^'"]+\/WebPage/.exec(html)?.[0], () => null),
     STARTUP_MS
   );
-  const socket = await open(`ws://127.0.0.1:${port}/socket/1/1/WebPage`);
-  // 読み直しで page の target が作り直されたら、新しい target へ送る。
+  const socket = await open(`ws://127.0.0.1:${port}/${path}`);
+  // 読み直しで page の target が作り直されたら、新しい target へ送る。消えた target へ送った呼出しは失敗にする。
   let targetId;
+  const calls = rpc(socket, (message) =>
+    message.method === 'Target.dispatchMessageFromTarget' ? JSON.parse(message.params.message) : message.error ? message : null
+  );
   socket.addEventListener('message', (event) => {
-    const message = JSON.parse(event.data);
-    if (message.method === 'Target.targetCreated' && message.params.targetInfo.type === 'page') {
-      targetId = message.params.targetInfo.targetId;
+    const { method, params } = JSON.parse(event.data);
+    if (method === 'Target.targetCreated' && params.targetInfo.type === 'page' && !params.targetInfo.isProvisional) {
+      targetId = params.targetInfo.targetId;
     }
+    if (method === 'Target.didCommitProvisionalTarget') targetId = params.newTargetId;
+    if (method === 'Target.targetDestroyed') calls.abandon(params.targetId);
   });
   await eventually('the WebKit page target', () => targetId, STARTUP_MS);
-  const call = rpc(socket, (message) =>
-    message.method === 'Target.dispatchMessageFromTarget' ? JSON.parse(message.params.message) : null
-  );
-  const send = (method, params) =>
-    call(method, params, (id, payload) => ({
-      id,
-      method: 'Target.sendMessageToTarget',
-      params: { targetId, message: JSON.stringify({ id, ...payload }) },
-    }));
+  const send = (method, params) => {
+    const target = targetId;
+    return calls.call(
+      method,
+      params,
+      (id, payload) => ({
+        id,
+        method: 'Target.sendMessageToTarget',
+        params: { targetId: target, message: JSON.stringify({ id, ...payload }) },
+      }),
+      target
+    );
+  };
   return {
     async evaluate(expression, { gesture = false } = {}) {
       const promise = await send('Runtime.evaluate', {
@@ -144,22 +160,31 @@ function open(url) {
 }
 
 /// 応答を id で待つ呼出し。`unwrap` は受けた message から応答を取り出し、`wrap` は送る形を作る。
+/// `abandon(tag)` は `tag` を付けて送った呼出しを、応答の無いまま失敗にする(送り先の page が消えたとき)。
 function rpc(socket, unwrap) {
   let next = 0;
   const pending = new Map();
+  const settle = (id, reply) => {
+    pending.get(id)?.resolve(reply);
+    pending.delete(id);
+  };
   socket.addEventListener('message', (event) => {
     const reply = unwrap(JSON.parse(event.data));
-    if (reply?.id !== undefined && pending.has(reply.id)) {
-      pending.get(reply.id)(reply);
-      pending.delete(reply.id);
-    }
+    if (reply?.id !== undefined) settle(reply.id, reply);
   });
-  return (method, params, wrap = (id, payload) => ({ id, ...payload })) =>
-    new Promise((resolve) => {
-      const id = ++next;
-      pending.set(id, resolve);
-      socket.send(JSON.stringify(wrap(id, { method, params })));
-    });
+  return {
+    call: (method, params, wrap = (id, payload) => ({ id, ...payload }), tag = null) =>
+      new Promise((resolve) => {
+        const id = ++next;
+        pending.set(id, { resolve, tag });
+        socket.send(JSON.stringify(wrap(id, { method, params })));
+      }),
+    abandon(tag) {
+      for (const [id, entry] of pending) {
+        if (entry.tag === tag) settle(id, { id, error: { message: 'the page went away' } });
+      }
+    },
+  };
 }
 
 function resultOf(reply) {

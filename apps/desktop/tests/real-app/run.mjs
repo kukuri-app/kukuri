@@ -51,6 +51,17 @@ for (const name of names) {
   } catch (error) {
     failed += 1;
     console.log(`FAIL ${name}: ${error?.stack ?? error}`);
+    // 失敗の時点で各 instance の画面に見えているもの(調べるため)。
+    for (const instance of started) {
+      const seen = await instance
+        .evaluate(
+          `[...document.querySelectorAll('h1, h2, h3, button, [role="status"], [role="alert"]')]` +
+            `.filter((node) => node.getClientRects().length > 0)` +
+            `.map((node) => (node.getAttribute('aria-label') ?? node.textContent ?? '').trim()).filter(Boolean).join(' | ')`
+        )
+        .catch((reason) => `unavailable: ${reason}`);
+      console.log(`[${name}] ${instance.name} sees: ${seen}`);
+    }
   } finally {
     await Promise.all(started.map((instance) => instance.close()));
   }

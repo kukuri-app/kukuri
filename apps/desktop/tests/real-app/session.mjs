@@ -18,9 +18,16 @@ export async function accept(instance) {
     async () => (await instance.invoke('get_desktop_startup_status')).status === 'ready',
     60_000
   );
-  await instance.evaluate(`(localStorage.setItem('kukuri.desktop.developer-mode', 'true'), location.reload(), true)`);
+  // 読み直しの前の画面には印を付け、印の無い(読み直した後の)画面を待つ。読み直しと応答が競うので、応答は待たない。
+  await instance
+    .evaluate(
+      `(localStorage.setItem('kukuri.desktop.developer-mode', 'true'), window.__beforeReload = true, setTimeout(() => location.reload()), true)`
+    )
+    .catch(() => undefined);
   await eventually(`${instance.name} to show the main screen`, () =>
-    instance.evaluate(`Boolean(document.querySelector('[data-testid="control-center-trigger"]'))`).catch(() => false)
+    instance
+      .evaluate(`!window.__beforeReload && Boolean(document.querySelector('[data-testid="control-center-trigger"]'))`)
+      .catch(() => false)
   );
 }
 
