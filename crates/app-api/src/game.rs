@@ -611,7 +611,6 @@ impl AppService {
             sent_at: now,
             event: input.event,
         };
-        self.preflight_spatial_audio_event(&content, now).await?;
         let instance_manifest = dome_instance_manifest_from_game_manifest(&manifest)?;
         validate_metaverse_room_event_for_instance(&content, &instance_manifest)?;
         let envelope = build_metaverse_room_event_envelope(
@@ -921,11 +920,6 @@ fn validate_metaverse_room_event_identity(
         MetaverseRoomEventV1::ChatMessage { message } => {
             if message.room_id != room_id || message.author_peer_id != peer_id {
                 anyhow::bail!("metaverse chat event identity does not match request");
-            }
-        }
-        MetaverseRoomEventV1::SpatialAudioFrame { frame } => {
-            if frame.room_id != room_id || frame.peer_id != peer_id {
-                anyhow::bail!("metaverse audio event identity does not match request");
             }
         }
     }

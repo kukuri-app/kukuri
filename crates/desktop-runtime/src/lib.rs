@@ -16,6 +16,8 @@ mod identity;
 #[cfg(feature = "ts")]
 mod ipc_ts_export;
 mod kdf;
+#[cfg(not(target_family = "wasm"))]
+mod metaverse_audio;
 mod paths;
 mod requests;
 mod runtime;
@@ -123,6 +125,11 @@ pub use kukuri_app_api::{
     ScopeDisplayRequest, ScopeDisplayTarget, ScopeLimitReached,
 };
 pub use kukuri_transport::{ConnectivityPeerKind, PeerPage};
+#[cfg(not(target_family = "wasm"))]
+pub use metaverse_audio::{
+    MetaverseAudioNeighbor, MetaverseAudioRoom, MetaverseAudioSpeaker, MetaverseAudioStatus,
+    MetaverseMicrophoneStatus, SetMetaverseAudioRequest,
+};
 pub use requests::CreateAccountRequest;
 #[cfg(target_family = "wasm")]
 pub use requests::WebAttachmentRef;

@@ -357,6 +357,7 @@ pub fn run() {
             commands::external_url::open_external_url,
             commands::link_preview::fetch_link_preview,
             commands::link_preview::verify_profile_domain,
+            commands::metaverse_audio::set_metaverse_audio,
             commands::app_consent::get_app_consent_status,
             commands::app_consent::accept_app_consents,
             commands::identity::get_account_display,

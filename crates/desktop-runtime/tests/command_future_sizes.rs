@@ -482,6 +482,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::resync_dome_snapshots),
         ),
         (
+            "set_metaverse_audio",
+            size1(DesktopRuntime::set_metaverse_audio),
+        ),
+        (
             "retry_post_elements",
             size1(DesktopRuntime::retry_post_elements),
         ),

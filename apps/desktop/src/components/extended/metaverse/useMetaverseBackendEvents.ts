@@ -23,7 +23,6 @@ type UseMetaverseBackendEventsArgs = {
   localPeerId: string;
   avatarFetchActive: boolean;
   remoteTransforms: Record<string, AvatarTransform>;
-  playSpatialAudioFrame: (view: MetaverseRoomEventView) => void;
   setRemoteTransforms: Dispatch<SetStateAction<Record<string, AvatarTransform>>>;
 };
 
@@ -64,7 +63,6 @@ export function useMetaverseBackendEvents({
   localPeerId,
   avatarFetchActive,
   remoteTransforms,
-  playSpatialAudioFrame,
   setRemoteTransforms,
 }: UseMetaverseBackendEventsArgs) {
   const [peerPresence, setPeerPresence] = useState<Record<string, PeerPresence>>({});
@@ -111,6 +109,9 @@ export function useMetaverseBackendEvents({
           avatarAssetRef: event.presence.avatar_asset_ref ?? null,
           joinedAt: event.presence.joined_at,
           lastSeenAt: event.presence.last_seen_at,
+          authorPubkey: String(view.envelope.pubkey),
+          roomId: event.presence.room_id,
+          microphoneEnabled: event.presence.microphone_enabled,
         };
         setPeerPresence((current) => mergePeerPresence(current, presence));
       } else if (event.type === 'presence_leave' && event.peer_id !== localPeerId) {
@@ -136,8 +137,6 @@ export function useMetaverseBackendEvents({
           ...current,
           [message.authorPeerId]: latestChatBubbleFromMessage(message),
         }));
-      } else if (event.type === 'spatial_audio_frame') {
-        playSpatialAudioFrame(view);
       }
     };
     const poll = async () => {
@@ -181,7 +180,7 @@ export function useMetaverseBackendEvents({
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [actions, localPeerId, playSpatialAudioFrame, pollRoomIdsKey, setRemoteTransforms]);
+  }, [actions, localPeerId, pollRoomIdsKey, setRemoteTransforms]);
 
   const avatarSessionKey = selectedRoom
     ? `${selectedRoom.room_id}:${selectedRoom.metaverse?.instance_generation ?? ''}:${localPeerId}`

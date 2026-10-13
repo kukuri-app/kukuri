@@ -107,6 +107,7 @@ function presenceJoinEvent(peerId: string, seq: number): MetaverseRoomEventView 
           avatar_asset_ref: null,
           joined_at: seq,
           last_seen_at: seq,
+          microphone_enabled: false,
         },
       },
     },

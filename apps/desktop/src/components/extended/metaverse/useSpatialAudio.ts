@@ -1,142 +1,122 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 
-import type { GameRoomView, MetaverseRoomEventView } from '@/lib/api';
-import type { AvatarTransform } from '../MetaverseSceneModel';
+import type { GameRoomView, SetMetaverseAudioRequest } from '@/lib/api';
+import type { AvatarTransform, PeerPresence } from '../MetaverseSceneModel';
 import type { DomeNeighborTransitionView } from './DomeTransitionModel';
 import type { MetaverseRoomActions } from './MetaverseRoomActions';
-import {
-  connectionOpeningAudioDistanceCm,
-  distanceCm,
-  METAVERSE_AUDIO_SAMPLE_RATE_HZ,
-  resamplePcm16,
-  spatialAudioGain,
-} from './SpatialAudioModel';
+import { spatialAudioRequest } from './SpatialAudioModel';
+
+/** 位置・話者・mic の変化を Rust の空間音声へ渡す間隔。 */
+const SPATIAL_AUDIO_SYNC_INTERVAL_MS = 200;
+/** 同じ内容を送り直す間隔。終わった購読(切断・話者の作り直し・満員)を Rust が試し直す(ADR 0067 §4)。 */
+const SPATIAL_AUDIO_RESEND_INTERVAL_MS = 5_000;
+
+const STOP_REQUEST: SetMetaverseAudioRequest = {
+  room: null,
+  microphone_enabled: false,
+  listener_position: [0, 0, 0],
+  neighbors: [],
+  speakers: [],
+};
 
 type UseSpatialAudioArgs = {
   actions: MetaverseRoomActions;
+  /** 参加中で online の Dome。`null` で取り込み・送信・購読・再生をすべて止める。 */
   selectedRoom: GameRoomView | null;
-  localPeerId: string;
   listenerTransformRef: RefObject<AvatarTransform | null>;
   mutedAuthorPubkeys: ReadonlySet<string>;
   transitionNeighbors: DomeNeighborTransitionView[];
+  peerPresence: Record<string, PeerPresence>;
+  remoteTransforms: Record<string, AvatarTransform>;
 };
 
+/**
+ * 空間音声(ADR 0067)。取り込み・圧縮・再生・距離減衰は Rust が行い、画面は mic の操作と、聞き手の位置・ready な
+ * 隣接 Dome・音声を送っている話者(近い順)を渡す。mic は利用者の操作の後、機器を開けたときだけ on と示す。
+ */
 export function useSpatialAudio({
   actions,
   selectedRoom,
-  localPeerId,
   listenerTransformRef,
   mutedAuthorPubkeys,
   transitionNeighbors,
+  peerPresence,
+  remoteTransforms,
 }: UseSpatialAudioArgs) {
+  const [microphoneRequested, setMicrophoneRequested] = useState(false);
   const [microphoneEnabled, setMicrophoneEnabled] = useState(false);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const microphoneStreamRef = useRef<MediaStream | null>(null);
-  const microphoneSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const microphoneProcessorRef = useRef<ScriptProcessorNode | null>(null);
-  const playingSourcesRef = useRef(new Set<AudioBufferSourceNode>());
+  const inputsRef = useRef({ transitionNeighbors, peerPresence, remoteTransforms, mutedAuthorPubkeys, microphoneRequested });
+  const roomRef = useRef(selectedRoom);
+  // actions を作り直しても(画面の他の操作)音声を止めない。
+  const setAudioRef = useRef(actions.setAudio);
+  // Rust へは送った順に 1 件ずつ反映する(前の Dome への遅れた要求が、後の Dome・停止を上書きしない)。
+  const queueRef = useRef<Promise<unknown>>(Promise.resolve());
+  // 周期の送信は描画の後の最新の入力を読む。
+  useEffect(() => {
+    inputsRef.current = { transitionNeighbors, peerPresence, remoteTransforms, mutedAuthorPubkeys, microphoneRequested };
+    roomRef.current = selectedRoom;
+    setAudioRef.current = actions.setAudio;
+  });
+  const audioAvailable = Boolean(actions.setAudio);
+  const roomKey = selectedRoom?.metaverse
+    ? `${selectedRoom.room_id}:${selectedRoom.metaverse.instance_generation}:${selectedRoom.metaverse.session_id}`
+    : null;
 
-  const stopSpatialAudio = useCallback(() => {
-    for (const source of playingSourcesRef.current) source.stop();
-    playingSourcesRef.current.clear();
-  }, []);
-
-  const disableMicrophone = useCallback(() => {
-    microphoneProcessorRef.current?.disconnect();
-    microphoneSourceRef.current?.disconnect();
-    microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
-    microphoneProcessorRef.current = null;
-    microphoneSourceRef.current = null;
-    microphoneStreamRef.current = null;
-    setMicrophoneEnabled(false);
-  }, []);
-
-  const playSpatialAudioFrame = useCallback((view: MetaverseRoomEventView) => {
-    if (view.content.event.type !== 'spatial_audio_frame'
-      || mutedAuthorPubkeys.has(String(view.envelope.pubkey))
-      || view.content.peer_id === localPeerId) return;
-    const context = audioContextRef.current;
-    const listenerPosition = listenerTransformRef.current?.position;
-    if (!context || !listenerPosition || context.state !== 'running') return;
-    const frame = view.content.event.frame;
-    let distance = distanceCm(frame.position, listenerPosition);
-    if (selectedRoom && frame.room_id !== selectedRoom.room_id) {
-      const neighbor = transitionNeighbors.find((candidate) =>
-        candidate.room.room_id === frame.room_id && candidate.boundaryState === 'ready'
-      );
-      if (!neighbor) return;
-      distance = connectionOpeningAudioDistanceCm(
-        frame.position,
-        neighbor.targetDirection,
-        neighbor.direction,
-        listenerPosition
-      );
-    }
-    const buffer = context.createBuffer(1, frame.samples.length, METAVERSE_AUDIO_SAMPLE_RATE_HZ);
-    const channel = buffer.getChannelData(0);
-    frame.samples.forEach((sample, index) => { channel[index] = sample / 32_768; });
-    const source = context.createBufferSource();
-    const gain = context.createGain();
-    gain.gain.value = spatialAudioGain(distance);
-    source.buffer = buffer;
-    source.connect(gain).connect(context.destination);
-    playingSourcesRef.current.add(source);
-    source.onended = () => playingSourcesRef.current.delete(source);
-    source.start();
-  }, [listenerTransformRef, localPeerId, mutedAuthorPubkeys, selectedRoom, transitionNeighbors]);
-
-  const enableMicrophone = useCallback(async () => {
-    if (!selectedRoom || microphoneStreamRef.current) return;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1 },
-      video: false,
-    });
-    const context = audioContextRef.current ?? new AudioContext();
-    audioContextRef.current = context;
-    await context.resume();
-    const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(1024, 1, 1);
-    source.connect(processor);
-    processor.connect(context.destination);
-    processor.onaudioprocess = (event) => {
-      const samples = resamplePcm16(event.inputBuffer.getChannelData(0), context.sampleRate);
-      if (!samples.length || !selectedRoom || !microphoneStreamRef.current) return;
-      const now = Date.now();
-      void actions.publishRoomEvent(selectedRoom.room_id, localPeerId, now, {
-        type: 'spatial_audio_frame',
-        frame: {
-          room_id: selectedRoom.room_id,
-          peer_id: localPeerId,
-          position: listenerTransformRef.current?.position ?? [0, 100, 0],
-          sample_rate_hz: METAVERSE_AUDIO_SAMPLE_RATE_HZ,
-          samples,
-          captured_at: now,
-        },
-      }).catch(() => disableMicrophone());
+  useEffect(() => {
+    if (!audioAvailable || !roomKey) return;
+    const send = (request: SetMetaverseAudioRequest) => {
+      const sent = queueRef.current.then(() => setAudioRef.current?.(request));
+      queueRef.current = sent.catch(() => undefined);
+      return sent;
     };
-    microphoneStreamRef.current = stream;
-    microphoneSourceRef.current = source;
-    microphoneProcessorRef.current = processor;
-    setMicrophoneEnabled(true);
-  }, [actions, disableMicrophone, listenerTransformRef, localPeerId, selectedRoom]);
+    let cancelled = false;
+    let inFlight = false;
+    let lastSent = '';
+    let lastSentAt = 0;
+    const sync = async () => {
+      if (inFlight) return;
+      const now = Date.now();
+      const inputs = inputsRef.current;
+      const request = spatialAudioRequest({
+        room: roomRef.current,
+        microphoneEnabled: inputs.microphoneRequested,
+        listenerPosition: listenerTransformRef.current?.position ?? [0, 100, 0],
+        neighbors: inputs.transitionNeighbors,
+        presences: inputs.peerPresence,
+        remoteTransforms: inputs.remoteTransforms,
+        mutedAuthorPubkeys: inputs.mutedAuthorPubkeys,
+        now,
+      });
+      const key = JSON.stringify(request);
+      if (key === lastSent && now - lastSentAt < SPATIAL_AUDIO_RESEND_INTERVAL_MS) return;
+      inFlight = true;
+      try {
+        const status = await send(request);
+        if (!status) return;
+        lastSent = key;
+        lastSentAt = now;
+        if (cancelled) return;
+        setMicrophoneEnabled(status.microphone === 'on');
+        // 機器を開けなかったら(OS の許可を含む)、mic の要求を取り消す(開始を表示しない)。
+        if (request.microphone_enabled && status.microphone !== 'on') setMicrophoneRequested(false);
+      } catch {
+        // 次の周期で送り直す。
+      } finally {
+        inFlight = false;
+      }
+    };
+    void sync();
+    const intervalId = window.setInterval(() => void sync(), SPATIAL_AUDIO_SYNC_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      setMicrophoneEnabled(false);
+      void send(STOP_REQUEST).catch(() => undefined);
+    };
+  }, [audioAvailable, listenerTransformRef, roomKey]);
 
-  const toggleMicrophone = useCallback(() => {
-    if (microphoneEnabled) disableMicrophone();
-    else void enableMicrophone().catch(() => disableMicrophone());
-  }, [disableMicrophone, enableMicrophone, microphoneEnabled]);
+  const toggleMicrophone = useCallback(() => setMicrophoneRequested((requested) => !requested), []);
+  const disableMicrophone = useCallback(() => setMicrophoneRequested(false), []);
 
-  useEffect(() => () => {
-    disableMicrophone();
-    stopSpatialAudio();
-    void audioContextRef.current?.close();
-    audioContextRef.current = null;
-  }, [disableMicrophone, stopSpatialAudio]);
-
-  return {
-    microphoneEnabled,
-    toggleMicrophone,
-    disableMicrophone,
-    playSpatialAudioFrame,
-    stopSpatialAudio,
-  };
+  return { microphoneEnabled, toggleMicrophone, disableMicrophone };
 }

@@ -65,6 +65,8 @@ import type {
   MetaverseAssetKind,
   MetaverseAssetRef,
   MetaverseRoomEventV1,
+  MetaverseAudioStatus,
+  SetMetaverseAudioRequest,
   SpatialContextV1,
   MetaverseRoomEventView,
   AuthorTrustGate,
@@ -551,6 +553,8 @@ export interface DesktopApi {
     afterEnvelopeId?: string | null,
     limit?: number | null
   ): Promise<MetaverseRoomEventView[]>;
+  /** 空間音声の状態を Rust に渡す(ADR 0067)。mic と speaker を使う Tauri の app だけの command。 */
+  setMetaverseAudio(request: SetMetaverseAudioRequest): Promise<MetaverseAudioStatus>;
   importMetaverseRoomAsset(
     topic: string,
     roomId: string,

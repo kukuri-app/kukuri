@@ -5,6 +5,7 @@ pub mod device_backup;
 pub mod external_url;
 pub mod identity;
 pub mod link_preview;
+pub mod metaverse_audio;
 pub mod os_notification;
 pub mod posts;
 pub mod system_locale;

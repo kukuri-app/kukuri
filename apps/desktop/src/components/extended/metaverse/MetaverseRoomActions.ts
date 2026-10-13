@@ -13,8 +13,10 @@ import type {
   DomeTransitionAccessDecisionV1,
   GameRoomView,
   MetaverseAssetRef,
+  MetaverseAudioStatus,
   MetaverseRoomEventView,
   MetaverseRoomEventV1,
+  SetMetaverseAudioRequest,
   SpatialContextV1,
 } from '@/lib/api';
 
@@ -39,6 +41,8 @@ export type MetaverseRoomActions = {
     afterEnvelopeId: string | null,
     limit: number
   ) => Promise<MetaverseRoomEventView[]>;
+  /** 空間音声(ADR 0067)。Tauri の app だけが持つ(機器を使う)。 */
+  setAudio?: (request: SetMetaverseAudioRequest) => Promise<MetaverseAudioStatus>;
   importRoomAsset: (
     roomId: string,
     kind: 'vrm' | 'glb' | 'texture',

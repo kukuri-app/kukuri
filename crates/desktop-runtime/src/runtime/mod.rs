@@ -183,6 +183,9 @@ pub struct DesktopRuntime {
     /// cache の世代。設定・同意・認証の変更で進め、古い応答を採らない。
     pub(crate) author_trust_gate_generation: Arc<AtomicU64>,
     event_sender: tokio::sync::broadcast::Sender<RuntimeEvent>,
+    /// metaverse の空間音声(ADR 0067、#1033)。Web は扱わない(ADR 0060)。
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) metaverse_audio: Arc<crate::metaverse_audio::MetaverseAudio>,
 }
 
 async fn load_private_channel_capabilities(
@@ -636,6 +639,16 @@ impl DesktopRuntime {
                 &app_service,
             )))
             .await?;
+        // 空間音声の受け口の認可(ADR 0067)。参加中の Dome の音声だけを、proof と access で確かめて公開する。
+        #[cfg(not(target_family = "wasm"))]
+        let metaverse_audio = Arc::new(crate::metaverse_audio::MetaverseAudio::default());
+        #[cfg(not(target_family = "wasm"))]
+        iroh_stack
+            .use_media_authorizer(crate::metaverse_audio::media_authorizer(
+                Arc::downgrade(&metaverse_audio),
+                Arc::downgrade(&app_service),
+            ))
+            .await?;
 
         // #1211 AC-2・AC-3: 移行で保存した必須 bundle と履歴があれば、背景で反映する。#1219 AC-4: 復元の後なら担当を
         // 引き取る。
@@ -721,6 +734,8 @@ impl DesktopRuntime {
             author_trust_gate_cache: Arc::new(Mutex::new(HashMap::new())),
             author_trust_gate_generation: Arc::new(AtomicU64::new(0)),
             event_sender,
+            #[cfg(not(target_family = "wasm"))]
+            metaverse_audio,
         })
     }
 

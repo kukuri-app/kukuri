@@ -10,7 +10,7 @@ import re
 import subprocess
 import tarfile
 
-REQUIRED_DEPENDS = {"libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1", "libssl3", "policykit-1"}
+REQUIRED_DEPENDS = {"libwebkit2gtk-4.1-0", "libgtk-3-0", "libayatana-appindicator3-1", "libssl3", "policykit-1", "libasound2t64"}
 EXECUTABLE = "usr/bin/kukuri-desktop-tauri"
 
 

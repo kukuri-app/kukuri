@@ -75,6 +75,16 @@ iroh-relay = { version = "1.3.0", features = ["server"] }
 jsonwebtoken = { version = "11.1.0", features = ["aws_lc_rs"] }
 keyring = { version = "4.2.0", default-features = false }
 libc = "0.2.189"
+# metaverse の空間音声と live の media の搬送（ADR 0067）。native だけで使う。
+# web-transport-iroh 0.8 系は web-transport-trait 0.5 を使い、moq-net 0.3 系（0.4）と組み合わせられない。
+moq-net = "0.3.11"
+hang = "0.21.12"
+web-transport-iroh = { version = "0.7.0", default-features = false, features = ["ring"] }
+# moq-net は poll 型の transport を要求し、web-transport-iroh は async 型だけを実装するため、moq-tokio の変換を使う。
+moq-tokio = { version = "0.19.24", default-features = false, features = ["iroh"] }
+# 機器（cpal。Linux は libasound）は desktop-runtime の `audio-devices` feature で Tauri の app だけが有効にする。
+moq-audio = { version = "0.1.11", default-features = false }
+moq-mux = { version = "0.10.12", default-features = false }
 chacha20poly1305 = "0.11.0"
 n0-future = "0.3.2"
 n0-mainline = "0.7.0"

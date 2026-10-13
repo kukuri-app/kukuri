@@ -57,6 +57,7 @@ type LiveGameMock = Pick<
   | 'revokeDomeConnection'
   | 'publishMetaverseRoomEvent'
   | 'listMetaverseRoomEvents'
+  | 'setMetaverseAudio'
   | 'importMetaverseRoomAsset'
 >;
 
@@ -696,6 +697,14 @@ export function createLiveGameMock(runtime: MockRuntime): LiveGameMock {
       };
       connectionViews.set(connectionId, revoked);
       return revoked;
+    },
+    // ブラウザの mock には mic・speaker が無い(Tauri の app だけが空間音声を持つ)。
+    async setMetaverseAudio(request) {
+      return {
+        microphone: request.microphone_enabled ? 'unavailable' : 'off',
+        listening: 0,
+        rejected_frames: 0,
+      };
     },
     async publishMetaverseRoomEvent(topic, roomId, peerId, seq, event) {
       const now = Date.now();

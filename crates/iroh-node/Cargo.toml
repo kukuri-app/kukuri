@@ -37,6 +37,11 @@ tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 # 公開 blob の発見（#1632、ADR 0063）。DHT は UDP を使うので native だけ。
 n0-mainline.workspace = true
 iroh-mainline-endpoint-discovery.workspace = true
+# media の搬送（ADR 0067）。Web は metaverse・live を扱わない（ADR 0060）。
+moq-net.workspace = true
+hang.workspace = true
+web-transport-iroh.workspace = true
+moq-tokio.workspace = true
 
 [dev-dependencies]
 kukuri-webrtc-transport = { path = "../webrtc-transport", features = ["test-signaling"] }

@@ -2,7 +2,7 @@
 //! へ書かず、作成時刻の scope bucket(private は現 epoch)へ移し、日が変わった更新は locator で読み手へ示す。
 
 use super::*;
-use kukuri_core::{ChannelId, MetaverseRoomChatMessageV1};
+use kukuri_core::{ChannelId, MetaverseRoomChatMessageV1, MetaverseRoomEventV1};
 use kukuri_docs_sync::{BucketReplica, BucketScope, DocKeyOrder, DocKeyQuery, TimeBucket};
 
 const TOPIC: &str = "kukuri:topic:session-rehome";
