@@ -550,7 +550,8 @@ fn micros_of(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
-/// 受ける側の映像の上限(ADR 0067 §4): catalog の source(画面は 15 fps)の frame 数と bitrate の 1.25 倍を 1 秒分。
+/// 受ける側の映像の上限(ADR 0067 §4): catalog の source(画面は 15 fps)の frame 数と bitrate のそれぞれ 1.25 倍を 1 秒分。
+/// 配信者の間引きは取り込みの間隔の 0.8 倍まで通すので、frame 数も 1.25 倍(切り上げ)まで受ける。
 fn video_budget(config: &hang::catalog::VideoConfig) -> RateBudget {
     let screen = LiveVideoSource::Screen.limits();
     let limits = if config.framerate == Some(f64::from(screen.framerate)) {
@@ -559,7 +560,7 @@ fn video_budget(config: &hang::catalog::VideoConfig) -> RateBudget {
         LiveVideoSource::Camera.limits()
     };
     RateBudget::new(
-        u64::from(limits.framerate),
+        (u64::from(limits.framerate) * 5).div_ceil(4),
         u64::from(limits.bitrate) * 5 / 4 / 8,
     )
 }

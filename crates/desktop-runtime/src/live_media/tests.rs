@@ -555,14 +555,14 @@ fn live_media_bounds_frames_waiting_for_the_screen() {
         (vec![42, 43], false),
         "the stale backlog is dropped at the next keyframe"
     );
-    // 受ける側の上限は、catalog の source の frame 数と bitrate の 1.25 倍。
+    // 受ける側の上限は、catalog の source の frame 数と bitrate のそれぞれ 1.25 倍(frame 数は切り上げ)。
     for source in [LiveVideoSource::Camera, LiveVideoSource::Screen] {
         let limits = source.limits();
         let budget = video_budget(&video_config(limits));
         assert_eq!(
             (budget.max_frames(), budget.max_bytes()),
             (
-                u64::from(limits.framerate),
+                (u64::from(limits.framerate) * 5).div_ceil(4),
                 u64::from(limits.bitrate) * 5 / 4 / 8
             )
         );
