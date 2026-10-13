@@ -152,7 +152,8 @@ pub use storage::{ClientStorage, KeyringUnavailable};
 #[cfg(not(target_family = "wasm"))]
 pub use kukuri_store::StoreStartupError;
 pub use paths::{
-    AppBuildProfile, default_app_data_dir, resolve_app_data_dir_from_env, resolve_db_path_from_env,
+    AppBuildProfile, default_app_data_dir, desktop_instance_from_env,
+    resolve_app_data_dir_from_env, resolve_db_path_from_env,
 };
 pub use requests::{
     AbortDomeTransitionRequest, AcceptDomeConnectionProposalRequest, AuthorRequest,
