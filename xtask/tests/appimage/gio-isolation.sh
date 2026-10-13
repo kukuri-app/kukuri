@@ -23,7 +23,7 @@ env LD_LIBRARY_PATH="$appdir/usr/lib" GIO_MODULE_DIR="$test_dir/host-modules" \
     "$fixture/AppRun.wrapped" >"$test_dir/before.out" 2>"$test_dir/before.err" || true
 grep -q 'undefined symbol: kukuri_fixture_missing_gio_symbol' "$test_dir/before.err"
 
-env APPDIR="$fixture" LD_LIBRARY_PATH="$appdir/usr/lib" \
+env APPDIR="$fixture" LD_LIBRARY_PATH="$appdir/usr/lib" XDG_CACHE_HOME="$test_dir/cache" \
     GIO_MODULE_DIR="$test_dir/host-modules" GIO_EXTRA_MODULES="$test_dir/host-modules" \
     "$fixture/env-probe" >"$test_dir/after.out" 2>"$test_dir/after.err"
 cat "$test_dir/after.out"
@@ -32,6 +32,8 @@ if [ -s "$test_dir/after.err" ]; then
     exit 1
 fi
 grep -q '^local=1 tls=1$' "$test_dir/after.out"
+# #1795: 同梱GStreamerはscannerを使い回し、ホストと共有しないregistryを使う。
+grep -qxF "gst_reuse=yes gst_registry=$test_dir/cache/app.kukuri.desktop/gstreamer-1.0/registry.bin" "$test_dir/after.out"
 
 # 通常起動では既存環境を変更しないため、同じ不整合fixtureは引き続き失敗する。
 env -u APPDIR LD_LIBRARY_PATH="$appdir/usr/lib" GIO_MODULE_DIR="$test_dir/host-modules" \

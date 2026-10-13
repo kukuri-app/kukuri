@@ -226,6 +226,13 @@
       "url": "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy/07333c6e942c7d71782b66be924c5d867f9dfdfc/LICENSE.txt",
       "sha512": "4853cd4f4944fc11e835a67defe476b82d4e50a2fc0f563e97ff66219f1db1b8b2d4c31f027c501111551765297a83b6073ff7cbdc15c273f17e316bb69ebe92",
       "kind": "notice"
+    },
+    {
+      "package": "notices",
+      "name": "tauri-LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/tauri-apps/tauri/447fa9f3f993fe77724189e355078b38ce20baea/LICENSE-MIT",
+      "sha512": "a98ef0406c078c5ecec8e0a50c3f003c3086ad53f2b9b7acb9b6ce65255c920a2ab64eadd4a763a904b4a61e864a5ff0a2705fdfca4768c478e717832838bbd6",
+      "kind": "notice"
     }
   ]
 }
