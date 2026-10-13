@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
+import tauriConfig from '../../../src-tauri/tauri.conf.json';
 import { captureErrorKind, fitVideoSize, frameToShow, parseLiveVideoBatch } from './liveMedia';
 
 /// Rust の `encode_screen_batch` と同じ形の応答を作る。
@@ -32,6 +33,13 @@ describe('live media', () => {
     expect(parseLiveVideoBatch(batch(1, 0, [])).state).toBe('full');
     expect(parseLiveVideoBatch(batch(2, 0, [])).state).toBe('no_media');
     expect(parseLiveVideoBatch(batch(3, 0, [])).state).toBe('ended');
+  });
+
+  // 映像の chunk は raw の body と応答で受け渡す(ADR 0067 §9)。CSP が IPC の custom protocol を許さないと、Tauri は
+  // postMessage の経路へ落ち、raw の body と応答を JSON の数の配列に変える(push は断られ、応答は読めない)。
+  test('lets invoke use the IPC custom protocol that carries raw video bytes', () => {
+    const connectSources = tauriConfig.app.security.csp['connect-src'].split(/\s+/);
+    expect(connectSources).toEqual(expect.arrayContaining(['ipc:', 'http://ipc.localhost']));
   });
 
   // ADR 0067 の live_media_presents_video_against_audio_clock(画面側): 映像は音声の再生時刻から 125 ms 先までの最新を出す。
