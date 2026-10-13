@@ -810,7 +810,7 @@ impl AppService {
             let mut sessions = self.dome_host_sessions.lock().await;
             match sessions.get_mut(&instance.instance_id) {
                 Some(runtime) => {
-                    runtime.advance_to(now)?;
+                    runtime.advance_for_read(now)?;
                     (
                         Some(now),
                         runtime.participant_count().try_into().unwrap_or(u32::MAX),

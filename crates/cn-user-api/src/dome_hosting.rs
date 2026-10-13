@@ -495,7 +495,9 @@ pub(crate) async fn dome_hosting_status(
     }
     let mut runtime = sessions.get_mut(&instance_id);
     if let Some(runtime) = runtime.as_deref_mut() {
-        runtime.advance_to(now).map_err(hosting_internal_error)?;
+        runtime
+            .advance_for_read(now)
+            .map_err(hosting_internal_error)?;
     }
     let state_kind = if assignment.expires_at <= now {
         DomeHostingStateKindV1::Closed

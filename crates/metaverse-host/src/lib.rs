@@ -370,6 +370,12 @@ impl DomeSessionRuntime {
         Ok(())
     }
 
+    /// 稼働の状態を読む前に `now_millis` まで進める。時計が既に先へ進んでいれば進めない(読取りの時刻は lock の前に
+    /// 取るので、待つ間に session の処理が後の時刻で進めていることがある。#1803)。
+    pub fn advance_for_read(&mut self, now_millis: i64) -> Result<()> {
+        self.advance_to(now_millis.max(self.last_simulated_at))
+    }
+
     pub fn advance_to(&mut self, now_millis: i64) -> Result<()> {
         if now_millis < self.last_simulated_at {
             bail!("Dome session clock cannot move backwards");
