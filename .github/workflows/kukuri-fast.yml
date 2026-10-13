@@ -36,6 +36,9 @@ on:
       - '.github/workflows/kukuri-nightly.yml'
       - '.github/workflows/kukuri-web-e2e.yml'
       - '.github/workflows/kukuri-release.yml'
+  # #1800: 実際のアプリの試験（windows-fast）を毎晩も動かす。
+  schedule:
+    - cron: '0 18 * * *'
   workflow_dispatch:
 
 # #1117: 同じ PR に続けて push したときは古い head の run を取り消し、runner の
@@ -538,6 +541,23 @@ jobs:
         # #1063: cache なしの実測 23〜25 分に対し、70% が 31.5 分となる値。
         timeout-minutes: 45
         run: cargo xtask desktop-package
+
+      # #1800: 配布と同じ build を同じ PC で複数起動し、画面と Rust のやり取りを含めて確かめる。
+      - name: Real app tests
+        timeout-minutes: 15
+        shell: bash
+        run: >-
+          node apps/desktop/tests/real-app/run.mjs
+          --app apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/kukuri-desktop-tauri.exe
+          --root "$RUNNER_TEMP/real-app"
+
+      - name: Keep real app logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kukuri-real-app-windows
+          path: ${{ runner.temp }}/real-app
+          if-no-files-found: ignore
 
       - name: Upload kukuri artifacts
         if: always()
