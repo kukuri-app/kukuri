@@ -434,6 +434,18 @@ Ubuntu 22.04のx86_64 hostで `cargo xtask desktop-package` を実行する。Li
 
 #889のScope revision v5では、成功済みの代表実機証跡と変更影響に絞った自動検証を採用する。全OS連携の追加手動確認やComputer Useは必須にせず、自動検証では判定できない具体的な問題だけを最小限の手動補完へ回す。検証方法を変えても署名・identity・データ保護、必須CI・独立監査は維持する。
 
+## 実際のアプリを複数動かす自動の試験（#1800）
+
+配布と同じ build（`--features tauri/custom-protocol` の release）を同じ PC で複数起動し、画面の JS を評価して操作・観測する。CI は Linux package と Fast の windows-fast で、package の build の後に動く（毎晩も動く）。
+
+```bash
+cd apps/desktop
+node tests/real-app/run.mjs --app <release build の実行 file> [--scenario <名前>] [--root <作業 dir>]
+```
+
+- 各 instance は `KUKURI_INSTANCE`・`KUKURI_APP_DATA_DIR`・webview の保存領域を作業 dir の下に分け、`static_peer` で互いの ticket だけでつながる（Community Node・relay・DHT へは出ない）。普段使いの kukuri の profile・deep link の登録には触れない。
+- Windows は WebView2 の診断用の port と疑似のカメラ・画面の起動の設定、Linux は Xvfb・D-Bus の下で WebKit の inspector を使う（`xvfb-run -a dbus-run-session -- node ...`）。
+
 ## remote-sync 用の環境変数
 ```bash
 export KUKURI_BIND_ADDR=0.0.0.0:0
