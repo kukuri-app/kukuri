@@ -20,7 +20,7 @@ const WINDOW_MS = 5 * PERIOD_MS;
 const VOICE = [300, 950];
 const REPLY = [1500, 2950];
 /// 3 つの Dome の描画の上限(1 秒あたり)。
-const FRAMES_PER_SECOND = 10;
+const FRAMES_PER_SECOND = 5;
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const gainAt = (cm) => (cm <= 100 ? 1 : 100 / cm);
 const positionOf = async (instance) => (await audioState(instance)).request.listener_position;
