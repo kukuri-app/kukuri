@@ -3,6 +3,10 @@ use std::collections::BTreeSet;
 
 use crate::{DOME_HOST_HEARTBEAT_INTERVAL_MILLIS, DOME_HOSTING_HEARTBEAT_GRACE_MILLIS};
 
+/// 所有者の端末が heartbeat を送る間隔。offline の判定(最後の heartbeat から `DOME_HOST_HEARTBEAT_INTERVAL_MILLIS`
+/// 超)の半分にして、届くまでの遅れと端末の時計のずれで、動いている host を offline と読ませない(#1803、ADR 0045)。
+pub const DOME_HOST_HEARTBEAT_SEND_INTERVAL_MILLIS: i64 = DOME_HOST_HEARTBEAT_INTERVAL_MILLIS / 2;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
