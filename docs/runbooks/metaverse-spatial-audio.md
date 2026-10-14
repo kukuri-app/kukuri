@@ -1,25 +1,30 @@
-# metaverse の空間音声の実機確認
+# metaverse の空間音声の確かめ方
 
-正本は [ADR 0067](../adr/0067-media-transport-moq.md)（#1033）。音声は話者と聞き手の端末を `/kukuri/media/1` で直接つなぎ、取り込み・Opus・再生・echo cancellation は Rust 側で行う。
+正本は [ADR 0067](../adr/0067-media-transport-moq.md)（#1033）。音声は話者と聞き手の端末を `/kukuri/media/1` で直接つなぎ、取り込み・Opus・再生・echo cancellation は Rust 側で行う。確かめるのは OS の標準の入出力の境界まで（入力へ入れた音が出力に出るか）で、人が聞いて確かめることはしない（#1800）。
 
-## 前提
+## 自動の試験
 
-- Tauri の desktop app（`audio-devices` を有効にした build）。Linux は build に `libasound2-dev`、実行に libasound が要る（deb は `libasound2t64 | libasound2` に依存する）。
-- Windows と Linux（Ubuntu 22.04 / 24.04）の 2 台。同じ topic の Dome に入れること。隣接の確認には、Connection で ready な隣接 Dome が要る。
-- mic と speaker。echo cancellation を確かめるときは headset ではなく speaker で再生する。
+`apps/desktop/tests/real-app/scenarios/spatial-audio.mjs`。配布と同じ build を 3 つ（聞き手 L・話者 S・O）同じ PC で動かし、L が Dome を作って稼働・入室し、S と O が入る。動かし方は [dev.md](dev.md) の「実際のアプリを複数動かす自動の試験」。CI では Linux package で、関係する PR ごとと毎晩に動く。instance ごとの仮想の入出力（`REAL_APP_AUDIO=pulse`、PulseAudio の null sink）を使う。
 
-## 確認
+Windows の CI では動かさない（GPU の無い runner では、3 つの Dome の 3D の描画が CPU を埋める。2026-10-14 のユーザー判断）。Windows の音声の機器の経路は、[live の試験](live-media.md)で確かめる（同じ Rust の音声の部品）。
 
-1. 両端末で同じ Dome に入る。mic は off のまま始まる（自動で on にならない）。
-2. 端末 A で mic を on にする。機器を開けない（Windows の OS の mic の設定で拒否している等）ときは on と表示しない。
-3. 端末 B で A の声が聞こえる。A に近づくと大きく、離れると小さくなる（1 m 以内は等倍、以遠は 1 m / 距離）。
-4. 両端末で同時に話す。speaker で再生しても、相手に自分の声が返らない。
-5. ready な隣接 Dome から opening 越しに聞こえる。ready でない隣接 Dome からは聞こえない。
-6. B で A を mute すると、A の声だけが止まる（移動・presence は変わらない）。
-7. A が Dome を出ると、B の再生が 5 秒以内に止まる。再起動の後は mic が off から始まる。
-8. 経路は `kukuri_connectivity` の log「media connection established」の `path`（`direct_p2p` / `relay_supported_p2p` / `relay_fallback`）で確かめる。話者の識別子と音声は log に出ない。
+| 項目 | 確かめること | 観測 |
+| --- | --- | --- |
+| SA-1 | 入室した直後の mic は off | HUD の mic の button |
+| SA-2 | mic を on にすると on。入力デバイスが無いと on にならず、聞き手は無音のまま | button・log・聞き手の出力 |
+| SA-3 | 話者の声が聞き手の出力に出る。離れると、出力の大きさが減衰の式（1 m 以内は 1、以遠は 1 m / 距離）のとおりに減る（±20%） | 聞き手の出力の大きさ・画面が渡す位置 |
+| SA-4 | 聞き手のスピーカーの音が聞き手の mic に入る部屋でも、話者に話者自身の声が戻らない（聞き手の声の 5% 未満） | 話者の出力の帯域ごとの大きさ |
+| SA-5 | 通行可能な隣の Dome の話者の声が opening 越しに出る。接続を解除すると止まる | 聞き手の出力 |
+| SA-6 | mute した話者の声だけが止まる。mute した話者の presence と移動は届く | 聞き手の出力・HUD の診断 |
+| SA-7 | 話者が Dome を出ると 5 秒以内に無音。再起動の後の mic は off | 聞き手の出力・button |
+| SA-8 | log の経路は `direct_p2p`。音声まわりの log に他の端末の識別子が出ない | 各 instance の log |
+
+## 試験の音
+
+- 話す音は、帯域の周波数を音ごとに無作為な位相で同時に鳴らす断続音（400 ms ごとに 150 ms）。途切れない音は雑音除去が弱め、1 つの周波数の音はエコーキャンセルが学びきれないか、遅れた自分の声から予測して消してしまうため（どれも実際の声では起きにくい）。
+- SA-4 の部屋は、聞き手の取り込みを聞き手の出力の monitor へ移して作る。PulseAudio の戻しの module は遅延を保つために変換の比を揺らし続け、エコーキャンセルが追えない。
 
 ## 既知の制約
 
-- Linux の cpal は PipeWire・PulseAudio の環境に未修正の不具合がある（cpal #1390、PR #1387）。途切れ・開けない場合は環境（sound server と版）とともに記録する。
+- Linux の cpal は PipeWire・PulseAudio の環境に未修正の不具合がある（cpal #1390、PR #1387）。
 - 版の違う kukuri の間では音声が届かない（moq-lite の版を kukuri の版ごとに固定する。ADR 0067 §1）。

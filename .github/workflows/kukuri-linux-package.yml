@@ -207,17 +207,23 @@ jobs:
             --updater "$filename" --public-key-file linux-x86_64-updater-key.pub \
             --deb-updater "$deb" --file "$deb" --file "$deb.sig" --file "$payload" \
             --file "$filename" --file "$filename.sig" --file linux-x86_64-updater-key.pub --file "$notices"
-      # #1800: 配布と同じ build を同じ PC で複数起動し、画面と Rust のやり取りを含めて確かめる。
+      # #1800: 配布と同じ build を同じ PC で複数起動し、画面と Rust のやり取りを含めて確かめる。音声は instance ごとの
+      # 仮想の入出力(PulseAudio の null sink)で、key の入力は window manager(openbox)の下で確かめる。
       - name: Real app tests
-        timeout-minutes: 15
+        timeout-minutes: 20
         shell: bash
+        env:
+          REAL_APP_AUDIO: pulse
         run: |
           set -euo pipefail
-          sudo apt-get install -y xvfb
-          xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- \
+          sudo apt-get install -y xvfb openbox xdotool pulseaudio pulseaudio-utils libasound2-plugins
+          xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- bash -c '
+            set -euo pipefail
+            openbox &
+            pulseaudio --start --exit-idle-time=-1
             node apps/desktop/tests/real-app/run.mjs \
-            --app apps/desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/kukuri-desktop-tauri \
-            --root "$RUNNER_TEMP/real-app"
+              --app apps/desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/kukuri-desktop-tauri \
+              --root "$RUNNER_TEMP/real-app"'
       - name: Keep real app logs
         if: failure()
         uses: actions/upload-artifact@v4

@@ -9,6 +9,7 @@ import { launch } from './driver.mjs';
 
 const SCENARIOS = {
   smoke: () => import('./scenarios/smoke.mjs'),
+  'spatial-audio': () => import('./scenarios/spatial-audio.mjs'),
 };
 
 const { values } = parseArgs({
@@ -38,6 +39,13 @@ for (const name of names) {
       );
       started.push(...instances);
       return instances;
+    },
+    /// instance を止め、同じ profile のまま起動し直す。
+    async restart(instance) {
+      await instance.close();
+      const next = await launch({ app, root: dir, name: instance.name, port: instance.port, fresh: false });
+      started[started.indexOf(instance)] = next;
+      return next;
     },
     log: (message) => console.log(`[${name}] ${message}`),
     /// 新しい profile の既定の topic。試験の instance は互いの ticket だけでつながり、外へは出ない。
