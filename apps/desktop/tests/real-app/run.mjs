@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { launch } from './driver.mjs';
+import { TOPIC } from './session.mjs';
 
 const SCENARIOS = {
   smoke: () => import('./scenarios/smoke.mjs'),
@@ -50,8 +51,7 @@ for (const name of names) {
       return next;
     },
     log: (message) => console.log(`[${name}] ${message}`),
-    /// 新しい profile の既定の topic。試験の instance は互いの ticket だけでつながり、外へは出ない。
-    topic: 'kukuri:topic:general',
+    topic: TOPIC,
   };
   const begin = Date.now();
   try {

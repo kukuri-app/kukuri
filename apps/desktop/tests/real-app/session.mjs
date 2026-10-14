@@ -1,8 +1,12 @@
 // 起動した instance を、利用者と同じ状態(同意・開発者モード・互いに直接つながる)へ進める(#1800)。
 import { eventually } from '../web-e2e/wait.mjs';
 
+/// 試験の topic(新しい profile の最初の一覧にある)。中身は instance どうし(127.0.0.1)の外へ出ない。外へ出る通信は
+/// dev.md の #1800 の節(#1825)。
+export const TOPIC = 'kukuri:topic:test';
+
 /// 同意して runtime が動き始めるのを待ち、開発者モード(live・Metaverse の列)を有効にし、画面の言語を日本語に
-/// して(文言は日本語の翻訳 file から引く。OS の言語に左右されない)読み直す。
+/// して(文言は日本語の翻訳 file から引く。OS の言語に左右されない)読み直し、試験の topic を開く。
 export async function accept(instance) {
   const status = await eventually(`${instance.name} startup status`, () =>
     instance.invoke('get_desktop_startup_status').catch(() => null)
@@ -39,14 +43,25 @@ export async function accept(instance) {
         ` window.__beforeReload = true, setTimeout(() => location.reload()), true)`
     )
     .catch(() => undefined);
+  // 画面は出た後に、今の列の route(topic を含む)を URL へ書き戻す。書き戻しの前に topic の列を開くと、開いた topic
+  // が書き戻しに消されるので、URL に topic が入るまで待つ(#1825)。
   await eventually(`${instance.name} to show the main screen`, () =>
     instance
-      .evaluate(`!window.__beforeReload && Boolean(document.querySelector('[data-testid="control-center-trigger"]'))`)
+      .evaluate(
+        `!window.__beforeReload && Boolean(document.querySelector('[data-testid="control-center-trigger"]'))` +
+          ` && location.hash.includes('topic=')`
+      )
       .catch(() => false)
+  );
+  // ticket の取り込み(connect)の前に試験の topic を開いておく。開いた topic へは、取り込むたびに相手が 1 人ずつ加わる。
+  // 全員が取り込みの後に同時に開くと、全員が全員を一度に加え、6 instance で互いに 5 人ずつにならないことがある(#1825)。
+  await openTopic(instance, TOPIC, 'timeline');
+  await eventually(`${instance.name} to open ${TOPIC}`, async () =>
+    (await instance.invoke('get_sync_status')).topic_diagnostics.some((each) => each.topic === TOPIC)
   );
 }
 
-/// 互いの ticket を取り込む(接続は topic を開いたときに始まる)。
+/// 互いの ticket を取り込む(開いている topic へ、取り込んだ相手が加わる)。
 export async function connect(instances) {
   const tickets = await Promise.all(instances.map((instance) => instance.invoke('get_local_peer_ticket')));
   for (const [index, instance] of instances.entries()) {
