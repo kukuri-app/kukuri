@@ -303,13 +303,20 @@ async fn retries_are_bounded_per_session_and_per_task() {
     assert!(per_read > 0, "the hints read the sessions");
     assert_eq!(f.reads(&ids[0]).await, 2 * per_read);
 
-    // 読み直しは前の読みから 2・4・8 秒後(hint から 2・6・14 秒後)。各回の直後に数え、3 回目の後は 1 分読まない。
+    // 読み直しは前の読みから 2・4・8 秒後(hint から 2・6・14 秒後)。各回の 0.5 秒前はまだ読まず、0.5 秒後には読んで
+    // いる。3 回目の後は 1 分読まない。
+    let hinted = tokio::time::Instant::now();
+    let margin = Duration::from_millis(500);
+    let mut due = Duration::ZERO;
     for (retried, delay) in SESSION_RETRY_DELAYS.iter().enumerate() {
-        sleep(*delay + Duration::from_millis(500)).await;
-        f.barrier().await;
-        assert_eq!(f.reads(&ids[0]).await, (3 + retried) * per_read);
-        for session_id in &ids[1..SESSION_RETRY_CAPACITY] {
-            assert_eq!(f.reads(session_id).await, (2 + retried) * per_read);
+        due += *delay;
+        for (at, done) in [(due - margin, retried), (due + margin, retried + 1)] {
+            tokio::time::sleep_until(hinted + at).await;
+            f.barrier().await;
+            assert_eq!(f.reads(&ids[0]).await, (2 + done) * per_read);
+            for session_id in &ids[1..SESSION_RETRY_CAPACITY] {
+                assert_eq!(f.reads(session_id).await, (1 + done) * per_read);
+            }
         }
     }
     sleep(Duration::from_secs(60)).await;
