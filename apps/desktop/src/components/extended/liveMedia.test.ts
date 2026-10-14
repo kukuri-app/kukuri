@@ -1,7 +1,7 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import tauriConfig from '../../../src-tauri/tauri.conf.json';
-import { captureErrorKind, fitVideoSize, frameToShow, parseLiveVideoBatch } from './liveMedia';
+import { captureErrorKind, createLivePlayer, fitVideoSize, frameToShow, parseLiveVideoBatch } from './liveMedia';
 
 /// Rust の `encode_screen_batch` と同じ形の応答を作る。
 function batch(state: number, clockUs: number, chunks: Array<[number, boolean, number[]]>) {
@@ -52,6 +52,55 @@ describe('live media', () => {
     // 音声の無い配信は、届いた最新を出す。
     expect(frameToShow(frames, 0)).toBe(3);
     expect(frameToShow([], 1_000_000)).toBe(-1);
+  });
+
+  // #1809: 配信を始め直すと frame の時刻が前へ戻る。WebKitGTK の decoder は、前に出した frame より早い時刻の frame を出さない。
+  test('draws a restarted broadcast whose timestamps go back', () => {
+    class Decoder {
+      state = 'unconfigured';
+      private latest = -Infinity;
+      constructor(private readonly init: { output: (frame: unknown) => void }) {}
+      configure() {
+        this.state = 'configured';
+      }
+      decode(chunk: { timestamp: number }) {
+        if (chunk.timestamp < this.latest) return;
+        this.latest = chunk.timestamp;
+        this.init.output({ timestamp: chunk.timestamp, displayWidth: 2, displayHeight: 2, close() {} });
+      }
+      reset() {
+        this.latest = -Infinity;
+      }
+      close() {
+        this.state = 'closed';
+      }
+    }
+    let draw = () => {};
+    vi.stubGlobal('VideoDecoder', Decoder);
+    vi.stubGlobal('EncodedVideoChunk', class {
+      constructor(init: object) {
+        Object.assign(this, init);
+      }
+    });
+    vi.stubGlobal('requestAnimationFrame', (callback: () => void) => ((draw = callback), 1));
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+    const drawn: number[] = [];
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({ drawImage: (frame: { timestamp: number }) => drawn.push(frame.timestamp) }),
+    } as unknown as HTMLCanvasElement;
+    try {
+      const player = createLivePlayer(canvas);
+      const keyframe = (timestampUs: number) => ({ timestampUs, keyframe: true, data: new Uint8Array([1]) });
+      player.push({ state: 'watching', audioClockUs: 76_000_000, chunks: [keyframe(76_000_000)] });
+      draw();
+      player.push({ state: 'watching', audioClockUs: 15_000_000, chunks: [keyframe(15_000_000)] });
+      draw();
+      expect(drawn).toEqual([76_000_000, 15_000_000]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test('fits the captured size within the quality limits', () => {
