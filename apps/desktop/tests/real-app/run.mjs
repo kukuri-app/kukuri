@@ -71,6 +71,17 @@ for (const name of names) {
         )
         .catch((reason) => `unavailable: ${reason}`);
       console.log(`[${name}] ${instance.name} sees: ${seen}`);
+      // window の focus・選ばれている列・keyboard の focus のある列・画面の中の列(列の選ばれ方で止まる失敗を調べるため。#1822)。
+      const columns = await instance
+        .evaluate(
+          `JSON.stringify({ focus: document.hasFocus(), ` +
+            `selected: document.querySelector('[data-column-id][data-active]')?.dataset.columnId, ` +
+            `keyboard: document.activeElement?.closest('[data-column-id]')?.dataset.columnId, ` +
+            `onScreen: [...document.querySelectorAll('[data-column-id]')].filter((column) => { ` +
+            `const rect = column.getBoundingClientRect(); return rect.right > 0 && rect.left < innerWidth; }).map((column) => column.dataset.columnId) })`
+        )
+        .catch((reason) => `unavailable: ${reason}`);
+      console.log(`[${name}] ${instance.name} columns: ${columns}`);
     }
   } finally {
     await Promise.all(started.map((instance) => instance.close()));
