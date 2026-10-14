@@ -1,6 +1,9 @@
 use super::remote_read_support::{read_local_then_remote, writer_readers};
 use super::*;
 
+/// 読んで検証した他の author の Dome の preset を覚える数(#1818)。超えたら古いものから捨てる。
+const DOME_PRESET_REUSE_LIMIT: usize = 32;
+
 #[derive(Debug)]
 pub(crate) enum DomeReadUnavailable {
     Preset,
@@ -186,18 +189,43 @@ impl AppService {
         read_local_then_remote(self.services.docs_sync.clone(), readers, read).await
     }
 
+    /// 他の author の preset は、参照(版と manifest の hash を含む)の中身が変わらないので、一度読んで検証したものを読み
+    /// 直さない(画面は Dome の一覧の読み直しのたびに hosting を読み、訪問者は owner の制御領域から読み直していた。
+    /// #1818)。自分の preset は手元から読み、そのたびに検証する。
     pub(crate) async fn fetch_dome_preset_manifest(
         &self,
         preset_ref: &DomePresetRefV1,
     ) -> Result<Option<DomePresetManifestV1>> {
-        self.read_author_object(
-            preset_ref.owner_pubkey.as_str(),
-            |docs, policy| async move {
-                self.read_dome_preset_manifest(docs.as_ref(), policy, preset_ref)
-                    .await
-            },
-        )
-        .await
+        let reuse = preset_ref.owner_pubkey.as_str() != self.current_author_pubkey();
+        if reuse
+            && let Some((_, manifest)) = self
+                .dome_presets
+                .lock()
+                .await
+                .iter()
+                .find(|(known, _)| known == preset_ref)
+        {
+            return Ok(Some(manifest.clone()));
+        }
+        let manifest = self
+            .read_author_object(
+                preset_ref.owner_pubkey.as_str(),
+                |docs, policy| async move {
+                    self.read_dome_preset_manifest(docs.as_ref(), policy, preset_ref)
+                        .await
+                },
+            )
+            .await?;
+        if reuse && let Some(manifest) = &manifest {
+            let mut presets = self.dome_presets.lock().await;
+            if !presets.iter().any(|(known, _)| known == preset_ref) {
+                presets.push_back((preset_ref.clone(), manifest.clone()));
+                if presets.len() > DOME_PRESET_REUSE_LIMIT {
+                    presets.pop_front();
+                }
+            }
+        }
+        Ok(manifest)
     }
 
     async fn read_dome_preset_manifest(
