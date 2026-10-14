@@ -225,6 +225,7 @@ export function createLivePlayer(canvas: HTMLCanvasElement) {
   const frames: VideoFrame[] = [];
   let clock = { us: 0, at: 0 };
   let waitingKeyframe = true;
+  let lastTimestampUs = -Infinity;
   const createDecoder = () => {
     const decoder = new VideoDecoder({
       output: (frame) => {
@@ -269,6 +270,10 @@ export function createLivePlayer(canvas: HTMLCanvasElement) {
     push(batch: LiveVideoBatch) {
       if (batch.audioClockUs > 0) clock = { us: batch.audioClockUs, at: performance.now() };
       for (const chunk of batch.chunks) {
+        // 配信を始め直すと frame の時刻が前へ戻る。WebKitGTK の decoder は前に出した frame より早い時刻の frame を出さない
+        // ので、作り直して次の keyframe から decode する(#1809)。
+        if (chunk.timestampUs < lastTimestampUs && decoder.state !== 'closed') decoder.close();
+        lastTimestampUs = chunk.timestampUs;
         if (decoder.state === 'closed') {
           decoder = createDecoder();
           waitingKeyframe = true;
