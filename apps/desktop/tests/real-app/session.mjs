@@ -39,9 +39,14 @@ export async function accept(instance) {
         ` window.__beforeReload = true, setTimeout(() => location.reload()), true)`
     )
     .catch(() => undefined);
+  // 画面は出た後に、今の列の route(topic を含む)を URL へ書き戻す。書き戻しの前に topic の列を開くと、開いた topic
+  // が書き戻しに消されるので、URL に topic が入るまで待つ(#1825)。
   await eventually(`${instance.name} to show the main screen`, () =>
     instance
-      .evaluate(`!window.__beforeReload && Boolean(document.querySelector('[data-testid="control-center-trigger"]'))`)
+      .evaluate(
+        `!window.__beforeReload && Boolean(document.querySelector('[data-testid="control-center-trigger"]'))` +
+          ` && location.hash.includes('topic=')`
+      )
       .catch(() => false)
   );
 }
