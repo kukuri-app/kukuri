@@ -48,8 +48,9 @@ for (const name of names) {
       return next;
     },
     log: (message) => console.log(`[${name}] ${message}`),
-    /// 新しい profile の既定の topic。試験の instance は互いの ticket だけでつながり、外へは出ない。
-    topic: 'kukuri:topic:general',
+    /// 試験の topic(新しい profile の最初の一覧にある)。中身は instance どうし(127.0.0.1)の外へ出ない。外へ出る通信は
+    /// dev.md の #1800 の節(#1825)。
+    topic: 'kukuri:topic:test',
   };
   const begin = Date.now();
   try {

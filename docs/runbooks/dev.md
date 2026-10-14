@@ -443,7 +443,11 @@ cd apps/desktop
 node tests/real-app/run.mjs --app <release build の実行 file> [--scenario <名前>] [--root <作業 dir>]
 ```
 
-- 各 instance は `KUKURI_INSTANCE`・`KUKURI_APP_DATA_DIR`・webview の保存領域を作業 dir の下に分け、`static_peer` で互いの ticket だけでつながる（Community Node・relay・DHT へは出ない）。普段使いの kukuri の profile・deep link の登録には触れない。
+- 各 instance は `KUKURI_INSTANCE`・`KUKURI_APP_DATA_DIR`・webview の保存領域を作業 dir の下に分け、`static_peer` で互いの ticket だけでつながる（relay は使わない）。普段使いの kukuri の profile・deep link の登録には触れない。live session・Dome・game room は `kukuri:topic:test` に作る。
+- topic の中身は instance どうし（`127.0.0.1`）の外へ出ない（iroh の endpoint は `127.0.0.1` にだけ bind する）。外へ出るのは次だけ（#1825）。
+  - 公開の Mainline DHT: 「公開コンテンツの発見」（ADR 0063。環境変数で固定した設定ではオンのまま切れない）のため、各 instance が自分の endpoint id と `127.0.0.1` の住所の記録を書き込み、互いの記録と補助 index の一覧を読む。試験は公開 blob（公開の投稿の本文・添付・画像、プロフィールの画像、custom reaction）を作らないので、hash の告知と補助 index の server への送信は無い。作ると、その hash の DHT への告知と本番の補助 index への登録が起きる。
+  - 本番の Community Node: 新しい profile の既定の node を試験が外す前に、画面がその公開 manifest を読むことがある（認証なし）。
+  - GitHub の更新確認と、LAN への UPnP の探索。
 - Windows は WebView2 の診断用の port と疑似のカメラ・画面の起動の設定、Linux は Xvfb・D-Bus の下で WebKit の inspector を使う（`xvfb-run -a dbus-run-session -- node ...`）。
 - 音声の確認は、`REAL_APP_AUDIO` で CI の仮想デバイスの構成を指定したときだけ動く（`pulse`: Linux の PulseAudio に instance ごとの null sink を作る。`vbcable`: Windows の VB-CABLE を全 instance の既定の入出力にする）。手元では付けない（既定の機器を使わないため、付けなければ飛ばす）。空間音声（`spatial-audio`）は instance ごとの入出力が要るので `pulse` だけで動く。PulseAudio は desktop の音声の server（rtkit の下の PipeWire・PulseAudio）と同じく real-time の優先度で動かす（CI は runner の上限を上げてから起動する）。優先度が無いと、CPU が埋まったときに server が遅れて app の出力が作り直され、エコーキャンセルが数秒合わず、映像と音のずれも乱れる（#1822）。Linux は key の入力に window manager（openbox）と xdotool が要る。中身は [metaverse-spatial-audio.md](metaverse-spatial-audio.md)。
 
