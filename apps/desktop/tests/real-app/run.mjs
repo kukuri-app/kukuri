@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { launch } from './driver.mjs';
+import { TOPIC } from './session.mjs';
 
 const SCENARIOS = {
   smoke: () => import('./scenarios/smoke.mjs'),
@@ -48,9 +49,7 @@ for (const name of names) {
       return next;
     },
     log: (message) => console.log(`[${name}] ${message}`),
-    /// 試験の topic(新しい profile の最初の一覧にある)。中身は instance どうし(127.0.0.1)の外へ出ない。外へ出る通信は
-    /// dev.md の #1800 の節(#1825)。
-    topic: 'kukuri:topic:test',
+    topic: TOPIC,
   };
   const begin = Date.now();
   try {
