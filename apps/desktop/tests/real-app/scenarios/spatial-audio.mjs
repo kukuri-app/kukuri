@@ -108,7 +108,9 @@ export async function run({ launch, restart, log, topic }) {
       const own = echo.level(2 * WINDOW_MS, VOICE);
       const reply = echo.level(2 * WINDOW_MS, REPLY);
       log(`SA-4: the speaker hears the listener as ${reply.toFixed(4)} and its own voice as ${own.toFixed(4)}`);
-      assert.ok(reply > 0.3 * near, 'the speaker hears the listener');
+      // L の声が消されていないこと(エコーの経路の遅れが揺れると、エコーキャンセルは L の声も数秒 1/4 ほどまで弱めるので、
+      // 基準は S の声の 10%。2026-10-15 のユーザー判断、#1822)。
+      assert.ok(reply > 0.1 * near, 'the speaker hears the listener');
       assert.ok(own < 0.05 * reply, 'the own voice of the speaker does not come back');
     } finally {
       voice();
