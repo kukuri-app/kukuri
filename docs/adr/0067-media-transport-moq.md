@@ -190,7 +190,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - Blob 必要有無: No
 - SQLite projection 必要有無: No
 - 必須 contract: 「対象別の contract」の #1033 の行
-- 必須 scenario: Linux と Windows の実機 2 台で、同時発話・隣接 Dome・mute・退出を確かめる（手順は [runbook](../runbooks/metaverse-spatial-audio.md)）
+- 必須 scenario: CI で、配布と同じ build の自動の試験（話者 2・聞き手 1。距離の減衰・エコーキャンセル・隣接 Dome・mute・退出を、OS の入出力の境界で確かめる。手順は [runbook](../runbooks/metaverse-spatial-audio.md)、#1800）
 
 ### live 配信の映像・音声
 

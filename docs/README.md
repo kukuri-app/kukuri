@@ -77,7 +77,7 @@ Issue・PR・セッションの記述だけで「実装済み」「検証成功�
 - Dome Hosting の有効化・割当・終了・split-brain復旧: `docs/runbooks/dome-hosting.md`
 - Dome prop、layout commit、manifest/asset保持: `docs/adr/0040-dome-prop-layout-retention.md`
 - Metaverse resource budget: `docs/adr/0041-metaverse-resource-budget.md`
-- metaverse の空間音声の実機確認（Windows・Linux の 2 台）: `docs/runbooks/metaverse-spatial-audio.md`（ADR 0067、#1033）
+- metaverse の空間音声の自動の試験（話者 2・聞き手 1）: `docs/runbooks/metaverse-spatial-audio.md`（ADR 0067、#1033、#1800）
 - live の映像・音声の実機確認（Windows・Linux、配信者 1・視聴者 2）: `docs/runbooks/live-media.md`（ADR 0067、#1034）
 - Spatial Context entryとauthoritative safe spawn: `docs/adr/0044-spatial-context-entry-safe-spawn.md`
 - Dome offline、Connection draining、Return Home: `docs/adr/0045-dome-offline-draining-return-home.md`
