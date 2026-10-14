@@ -14,14 +14,16 @@ export function useSessionProjectionRefresh(
   useEffect(() => {
     let disposed = false;
     let running = false;
-    let requested = false;
+    // 表示中の一覧へ取り直した projection の版(`last_sync_ts`)。変更の知らせの時点で取り直せなくても(live・game の列が
+    // 見えていない等)、次の store の更新で取り直す(#1815)。
+    let loaded: number | null | undefined;
     const refreshSessions = async () => {
-      requested = true;
       if (running) return;
       running = true;
-      while (requested && !disposed) {
-        requested = false;
+      while (!disposed) {
         const state = storeApi.getState();
+        const sync = state.syncStatus.last_sync_ts;
+        if (sync === loaded) break;
         const visible = new Set(visibleColumnIdsRef?.current ?? [state.workspaceState.activeColumnId]);
         const scopes = new Set<string>();
         const tasks: Promise<void>[] = [];
@@ -36,13 +38,15 @@ export function useSessionProjectionRefresh(
             ? loadLiveSection(column.scope.topicId, column.scope.channelId ?? null)
             : loadGameSection(column.scope.topicId, column.scope.channelId ?? null));
         }
+        if (tasks.length === 0) break;
         await Promise.allSettled(tasks);
+        loaded = sync;
       }
       running = false;
     };
-    const unsubscribe = storeApi.subscribe((state, previous) => {
+    const unsubscribe = storeApi.subscribe((state) => {
       // projection/candidateの変更でだけ再取得する。manifest取得のtimer retryではない。
-      if (state.syncStatus.last_sync_ts !== previous.syncStatus.last_sync_ts) void refreshSessions();
+      if (state.syncStatus.last_sync_ts !== loaded) void refreshSessions();
     });
     return () => { disposed = true; unsubscribe(); };
   }, [loadGameSection, loadLiveSection, storeApi, visibleColumnIdsRef]);
