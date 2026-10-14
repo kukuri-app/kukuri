@@ -260,7 +260,7 @@ async fn a_session_locator_in_the_current_bucket_leads_to_the_state_replica() {
     .await
     .expect("locator");
     let candidates = reader
-        .session_target_candidates(TOPIC, PUBLIC_CHANNEL_ID, None, "dome-located", "game")
+        .session_target_candidates(TOPIC, PUBLIC_CHANNEL_ID, None, "dome-located", "game", None)
         .await
         .expect("candidates");
     assert_eq!(candidates[0].0, created);

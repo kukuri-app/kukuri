@@ -6,6 +6,43 @@ use super::hydration_integrity_sessions::{live_manifest, write_live_session};
 use super::*;
 use crate::service::scope_receive::{SESSION_RETRY_CAPACITY, SESSION_RETRY_DELAYS};
 use kukuri_core::LiveSessionStatus;
+use kukuri_transport::{HintStream, SeedPeer};
+use std::sync::atomic::AtomicUsize;
+
+/// 読み先の近隣(作った端末と視聴者 4 人)。近隣が 5 人のとき、読み先はこのうち 4 人。
+const NEIGHBORS: [&str; 5] = ["creator", "viewer-1", "viewer-2", "viewer-3", "viewer-4"];
+
+/// hint は `StaticTransport` で配り、読み先は `NEIGHBORS` から 4 人を、選ぶたびに 4 つ先の位置から返す(近隣が
+/// 変わらないときの `topic_read_candidates` と同じ回り方)。
+struct RotatingReadPeers {
+    hints: Arc<StaticTransport>,
+    next: AtomicUsize,
+}
+
+#[async_trait]
+impl HintTransport for RotatingReadPeers {
+    async fn subscribe_hints(&self, topic: &TopicId) -> Result<HintStream> {
+        self.hints.subscribe_hints(topic).await
+    }
+
+    async fn unsubscribe_hints(&self, topic: &TopicId) -> Result<()> {
+        self.hints.unsubscribe_hints(topic).await
+    }
+
+    async fn publish_hint(&self, topic: &TopicId, hint: GossipHint) -> Result<()> {
+        self.hints.publish_hint(topic, hint).await
+    }
+
+    async fn topic_read_candidates(&self, _: &TopicId) -> Result<Vec<SeedPeer>> {
+        let start = self.next.fetch_add(4, std::sync::atomic::Ordering::SeqCst);
+        Ok((start..start + 4)
+            .map(|index| SeedPeer {
+                endpoint_id: NEIGHBORS[index % NEIGHBORS.len()].into(),
+                addr_hint: None,
+            })
+            .collect())
+    }
+}
 
 struct Fixture {
     app: AppService,
@@ -14,23 +51,58 @@ struct Fixture {
     provider: Arc<CountingDocsSync>,
     blobs: Arc<MemoryBlobService>,
     transport: Arc<StaticTransport>,
+    /// 読み先を近隣から順に回して選ぶとき(`fixture_rotating`)の、選ぶ位置。
+    rotation: Option<Arc<RotatingReadPeers>>,
     topic: TopicId,
 }
 
 /// topic の列を開き、lease の task の起動時の読み直しを終えてから返す。手元の docs は空で、provider を読む。
 async fn fixture(name: &str) -> Fixture {
+    fixture_with(name, false).await
+}
+
+/// `rotating` なら、読み先は `NEIGHBORS` から順に回して選び、provider はその先頭(作った端末)だけ。
+async fn fixture_with(name: &str, rotating: bool) -> Fixture {
     hold_off_the_day_boundary();
     let store = Arc::new(MemoryStore::default());
     let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
     let provider = Arc::new(CountingDocsSync::default());
     let blobs = Arc::new(MemoryBlobService::default());
     let topic = TopicId::new(format!("kukuri:topic:session-hint-retry-{name}").as_str());
+    let rotation = rotating.then(|| {
+        Arc::new(RotatingReadPeers {
+            hints: transport.clone(),
+            next: AtomicUsize::new(0),
+        })
+    });
+    let (docs, hints): (CountingDocsSync, Arc<dyn HintTransport>) = match &rotation {
+        None => (
+            CountingDocsSync::reading_from(provider.clone()),
+            transport.clone(),
+        ),
+        Some(rotation) => (
+            CountingDocsSync::reading_from_peers(
+                NEIGHBORS
+                    .iter()
+                    .map(|peer| {
+                        let docs: Arc<dyn DocsSync> = if *peer == NEIGHBORS[0] {
+                            provider.clone()
+                        } else {
+                            Arc::new(CountingDocsSync::default())
+                        };
+                        (peer.to_string(), docs)
+                    })
+                    .collect(),
+            ),
+            rotation.clone(),
+        ),
+    };
     let app = app_service_from_dependencies(
         store.clone(),
         store.clone(),
         transport.clone(),
-        transport.clone(),
-        Arc::new(CountingDocsSync::reading_from(provider.clone())),
+        hints,
+        Arc::new(docs),
         blobs.clone(),
         generate_keys(),
     );
@@ -43,6 +115,7 @@ async fn fixture(name: &str) -> Fixture {
         provider,
         blobs,
         transport,
+        rotation,
         topic,
     };
     fixture.barrier().await;
@@ -95,6 +168,17 @@ impl Fixture {
             .is_some()
     }
 
+    /// 最初の読み直し(と少しの余裕)のうちに一覧に出るか。
+    async fn listed_by_the_first_retry(&self, session_id: &str) -> bool {
+        timeout(SESSION_RETRY_DELAYS[0] + Duration::from_secs(1), async {
+            while !self.listed(session_id).await {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
     /// 読み先に、`owner` の署名つきの session を置く。
     async fn put_session(&self, owner: &KukuriKeys, session_id: &str) {
         write_live_session(
@@ -114,10 +198,14 @@ impl Fixture {
     }
 }
 
-/// 配信者と、その配信者に結び付いた session の id。
+/// 配信者と、その配信者に結び付いた session の id(作った時刻は今。読む replica は今作った session と同じ)。
 fn owned_session() -> (KukuriKeys, String) {
     let owner = generate_keys();
-    let session_id = format!("live-1-{}", &owner.public_key_hex()[..16]);
+    let session_id = format!(
+        "live-{}-{}",
+        Utc::now().timestamp_millis(),
+        &owner.public_key_hex()[..16]
+    );
     (owner, session_id)
 }
 
@@ -135,13 +223,10 @@ async fn a_session_missing_at_hint_time_is_listed_by_the_first_retry() {
 
     f.put_session(&owner, &session_id).await;
     f.app.last_sync_ts.set(0).await;
-    timeout(SESSION_RETRY_DELAYS[0] + Duration::from_secs(1), async {
-        while !f.listed(&session_id).await {
-            sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("the first retry lists the session");
+    assert!(
+        f.listed_by_the_first_retry(&session_id).await,
+        "the first retry lists the session"
+    );
     assert!(f.app.last_sync_ts.get().await > Some(0));
     assert_eq!(f.reads(&session_id).await, 2 * per_read);
 
@@ -152,6 +237,27 @@ async fn a_session_missing_at_hint_time_is_listed_by_the_first_retry() {
         2 * per_read,
         "a listed session is not read again"
     );
+}
+
+// AC-1 の原因(#1813)の再現: 読み先は近隣 5 人から 4 人を順に回して選ぶので、hint の時点の読みは、session を持つ
+// 唯一の端末(作った端末)を外しうる。選ぶ位置がどこから始まっても、最初の読み直しまでに一覧に出る(1 回の読みの
+// locator と replica ごとに選び直すと、選ぶ位置が 1 回の読みで一周し、読み直しも同じ 4 人に聞いて読めない)。
+#[tokio::test(start_paused = true)]
+async fn a_session_is_listed_by_the_first_retry_from_any_read_rotation() {
+    let f = fixture_with("rotation", true).await;
+    let rotation = f.rotation.as_ref().expect("the read peers rotate");
+    for start in 0..NEIGHBORS.len() {
+        let (owner, session_id) = owned_session();
+        f.put_session(&owner, &session_id).await;
+        rotation
+            .next
+            .store(start, std::sync::atomic::Ordering::SeqCst);
+        f.hint(&session_id, 1).await;
+        assert!(
+            f.listed_by_the_first_retry(&session_id).await,
+            "the first retry lists the session (the rotation starts at {start})"
+        );
+    }
 }
 
 // INVAR-2: 読み直しを待つ間に同じ session の続く hint で読めたら、その読み直しをやめる。
@@ -197,7 +303,16 @@ async fn retries_are_bounded_per_session_and_per_task() {
     assert!(per_read > 0, "the hints read the sessions");
     assert_eq!(f.reads(&ids[0]).await, 2 * per_read);
 
-    sleep(SESSION_RETRY_DELAYS.iter().sum::<Duration>() + Duration::from_secs(5)).await;
+    // 読み直しは前の読みから 2・4・8 秒後(hint から 2・6・14 秒後)。各回の直後に数え、3 回目の後は 1 分読まない。
+    for (retried, delay) in SESSION_RETRY_DELAYS.iter().enumerate() {
+        sleep(*delay + Duration::from_millis(500)).await;
+        f.barrier().await;
+        assert_eq!(f.reads(&ids[0]).await, (3 + retried) * per_read);
+        for session_id in &ids[1..SESSION_RETRY_CAPACITY] {
+            assert_eq!(f.reads(session_id).await, (2 + retried) * per_read);
+        }
+    }
+    sleep(Duration::from_secs(60)).await;
     f.barrier().await;
     let retries = SESSION_RETRY_DELAYS.len();
     assert_eq!(f.reads(&ids[0]).await, (2 + retries) * per_read);
