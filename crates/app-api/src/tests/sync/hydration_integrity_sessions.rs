@@ -80,7 +80,7 @@ async fn unreadable_reaction_record_does_not_break_the_timeline_of_the_topic() {
 
 /// `signer` があれば、manifest に署名した envelope を `envelopes/<id>` へ置いて state から指す(修正後の書き込みと同じ形)。
 /// `None` なら、署名で裏づけられない state だけを置く。
-async fn write_live_session(
+pub(super) async fn write_live_session(
     docs_sync: &dyn DocsSync,
     blob_service: &dyn BlobService,
     replica: &ReplicaId,
@@ -126,7 +126,7 @@ async fn write_live_session(
         .expect("write live state");
 }
 
-fn live_manifest(
+pub(super) fn live_manifest(
     session_id: &str,
     topic: &TopicId,
     channel_id: Option<&ChannelId>,

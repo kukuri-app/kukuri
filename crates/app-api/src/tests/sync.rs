@@ -412,6 +412,7 @@ mod scale_independence;
 mod scope_leases;
 mod session_catch_up;
 mod session_event_progress;
+mod session_hint_retry;
 mod session_manifest_fetch;
 mod shadowing_docs;
 pub(super) use shadowing_docs::ShadowingDocsSync;
