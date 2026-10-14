@@ -243,15 +243,26 @@ async function micOff(instance) {
 }
 
 /// avatar を `key` の向きへ、`until()` が終わるまで歩かせる(利用者と同じく、window を前に出して Dome の列を選び、操作を
-/// 再開してから押し、Esc でポインタの固定を解く)。window に focus が戻ると、前に focus のあった別の列が選ばれて Dome の
-/// 操作は止まり、Dome の画面の中を押しても列は選ばれない(#1822)。進む速さは描画の frame の数で変わるので、時間ではなく
-/// 着いたことで止める。
+/// 再開してから押し、Esc でポインタの固定を解く)。Dome の操作は、window の focus・Dome の列が選ばれていること・列が見えて
+/// いることがそろうまで止まる。window の切り替え(xdotool)が効かない回や、列が選ばれていない・見えていない回があるので、
+/// 操作を再開できるようになるまで置き直す。列の外枠に focus を置くと列が選ばれ、見える位置へ動く(既に focus があると event
+/// が出ないので一度外す)。Dome の画面の中を押しても列は選ばれない(#1822)。進む速さは描画の frame の数で変わるので、時間
+/// ではなく着いたことで止める。
 async function walk(instance, key, until) {
-  if (!(await instance.evaluate('document.hasFocus()'))) {
-    instance.focus();
-    await eventually(`${instance.name} to have the window focus`, () => instance.evaluate('document.hasFocus()'));
-  }
-  await instance.evaluate(`(document.querySelector('${STAGE}').closest('[data-column-id]').focus({ preventScroll: true }), true)`);
+  const resume = JSON.stringify(t('camera.resume'));
+  await eventually(
+    `${instance.name} to be able to resume the avatar`,
+    async () => {
+      if (!(await instance.evaluate('document.hasFocus()'))) instance.focus();
+      return instance.evaluate(`(() => {
+        const column = document.querySelector('${STAGE}').closest('[data-column-id]');
+        if (document.activeElement === column) column.blur();
+        column.focus();
+        return document.hasFocus() && [...column.querySelectorAll('button')].some((node) => node.textContent.trim() === ${resume} && !node.disabled);
+      })()`);
+    },
+    30_000
+  );
   await click(instance, t('camera.resume'));
   await press(instance, key, until);
   await press(instance, 'Escape');
