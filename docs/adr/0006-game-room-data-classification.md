@@ -36,6 +36,7 @@ Accepted
 
 ## Consequences
 - #1262: state/envelopeの到着による個別反映と表示中だけのmanifest取得はADR 0052「Session の個別反映と表示要求」に従う。ScoreGameの直列化と現在pointer比較は維持し、取得待ちのtimer retryはしない。
+- #1813: gossipのhintで読めなかったsessionの上限つきの読み直しは、ADR 0052「Session の個別反映と表示要求」の例外（ADR 0054「読み取り候補」）。
 - late joiner と restart 後の復元は `docs state + manifest blob` だけで成立しなければならない。
 - score/status は docs pointer が指す最新 manifest blob だけで再構築できなければならない。
 - 過去に署名された revision を置き直しても、score/status と操作の土台は過去へ戻らない。

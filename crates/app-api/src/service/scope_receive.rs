@@ -5,6 +5,9 @@
 //!   1 ページ(最大 200 行)だけ読み直す。続きを全件読みに行かない。
 //! - content hint(短命種以外)の受付は窓あたり `HINT_WINDOW_BUDGET` 件まで。超えた分は読まずに捨て、窓の終わりに同じ
 //!   読み直しを 1 回行う(#1567 AC-1)。topic の活動量が増えても、1 つの lease が読む量は窓あたりの定数に収まる。
+//! - session の hint で読めなかった session は、読み先(hint の topic の近隣から順に回して選ぶ)にまだ持つ端末が
+//!   無かったとみなし、間を置いて上限つきで読み直す(#1813)。読み先は 1 回の読みごとに次の組へ回るので、読み直しは
+//!   前の読みが外した近隣にも聞く。先に読めた近隣も、読んだ版を提供する。
 //! - 取り込んだ投稿から、従来どおり通知を作る(`ServiceHandles::notify_remote_posts`)。
 
 use super::replica_window::RANGE_CHECK_REACTIONS_PER_OBJECT;
@@ -25,6 +28,72 @@ const SESSION_REREAD_LIMIT: usize = 64;
 pub(crate) const HINT_WINDOW_BUDGET: usize = 32;
 /// 受付の窓の長さ。表示の照合の間隔(`RANGE_CHECK_INTERVAL_MS`)と同じ。
 pub(crate) const HINT_WINDOW: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// hint で読めなかった session を読み直すまでの間(前の読みから。n 回目の読み直しは n 番目の間の後)。#1813。
+pub(crate) const SESSION_RETRY_DELAYS: [std::time::Duration; 3] = [
+    std::time::Duration::from_secs(2),
+    std::time::Duration::from_secs(4),
+    std::time::Duration::from_secs(8),
+];
+/// 読み直しを待たせる session の上限(lease の task ごと)。超えた分は、次の読み直し・次の hint で回収する。
+pub(crate) const SESSION_RETRY_CAPACITY: usize = 16;
+
+/// session の hint の読み直しの予定(#1813)。期限・済んだ読み直しの回数・hint。件数と回数に上限を持つ。
+#[derive(Default)]
+struct SessionRetries(Vec<(n0_future::time::Instant, usize, GossipHint)>);
+
+/// session の hint が指す session(他の hint は `None`)。
+fn hinted_session(hint: &GossipHint) -> Option<(&str, &str)> {
+    match hint {
+        GossipHint::SessionChanged {
+            session_id,
+            object_kind,
+            ..
+        } => Some((session_id, object_kind)),
+        _ => None,
+    }
+}
+
+impl SessionRetries {
+    /// session の hint の読みの結果を受ける(`retried` は済んだ読み直しの回数。hint の時点の読みは 0)。読めなければ次の
+    /// 読み直しを予定し、読めたら同じ session の予定を消す。予定は session ごとに 1 件まで(続く hint は足さない)で、
+    /// 回数・件数の上限を超えたら予定しない。
+    fn record(&mut self, hint: &GossipHint, retried: usize, read: bool) {
+        let Some(session) = hinted_session(hint) else {
+            return;
+        };
+        let pending = self
+            .0
+            .iter()
+            .position(|(_, _, pending)| hinted_session(pending) == Some(session));
+        match (read, pending) {
+            (true, Some(index)) => {
+                self.0.swap_remove(index);
+            }
+            (false, None) => {
+                if let Some(delay) = SESSION_RETRY_DELAYS.get(retried)
+                    && self.0.len() < SESSION_RETRY_CAPACITY
+                {
+                    let at = n0_future::time::Instant::now() + *delay;
+                    self.0.push((at, retried + 1, hint.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn next_at(&self) -> Option<n0_future::time::Instant> {
+        self.0.iter().map(|(at, _, _)| *at).min()
+    }
+
+    /// 期限の来た読み直しを 1 件取り出す(済んだ読み直しの回数(これを含む)と hint)。
+    fn take_due(&mut self) -> Option<(usize, GossipHint)> {
+        let now = n0_future::time::Instant::now();
+        let index = self.0.iter().position(|(at, _, _)| *at <= now)?;
+        let (_, retried, hint) = self.0.swap_remove(index);
+        Some((retried, hint))
+    }
+}
 
 /// 短命種(その場で反映し、一覧では回収できない)。受付の上限を通さない(#1567 INVAR-1)。
 fn is_ephemeral_hint(hint: &GossipHint) -> bool {
@@ -119,9 +188,13 @@ impl AppService {
             let mut window_end = n0_future::time::Instant::now() + HINT_WINDOW;
             let mut window_used = 0usize;
             let mut dropped = 0u64;
+            let mut session_retries = SessionRetries::default();
             loop {
                 let boundary = n0_future::time::sleep(until_next_bucket(Utc::now().timestamp()));
                 let window = n0_future::time::sleep_until(window_end);
+                let retry = session_retries.next_at();
+                // content hint とその読み直しで反映した件数。
+                let mut applied = 0;
                 tokio::select! {
                     Some(event) = hint_stream.next() => {
                         dropped = dropped.saturating_add(event.dropped_before);
@@ -187,25 +260,15 @@ impl AppService {
                                 last_sync.set(now).await;
                             }
                             hint => {
-                                let applied = reader.apply_content_hint(&topic, &scope, hint).await;
-                                if applied > 0 {
-                                    last_sync.set(now).await;
-                                    if let Some(generation) = generation {
-                                        record_public_topic_docs_activity_if_current(
-                                            &public_topic_delivery,
-                                            topic.as_str(),
-                                            generation,
-                                            now,
-                                        )
-                                        .await;
-                                        // topic の届き方(docs の活動)が変わった(#1221 R2-D)。
-                                        last_sync.mark(StatusKey::Topic(format!(
-                                            "{}{topic}",
-                                            kukuri_core::wire::HINT_TOPIC_PREFIX
-                                        )));
-                                    }
-                                }
+                                applied = reader.apply_content_hint(&topic, &scope, hint).await;
+                                session_retries.record(hint, 0, applied > 0);
                             }
+                        }
+                    }
+                    _ = n0_future::time::sleep_until(retry.unwrap_or(window_end)), if retry.is_some() => {
+                        if let Some((retried, hint)) = session_retries.take_due() {
+                            applied = reader.apply_content_hint(&topic, &scope, &hint).await;
+                            session_retries.record(&hint, retried, applied > 0);
                         }
                     }
                     _ = window => {
@@ -220,6 +283,24 @@ impl AppService {
                     _ = boundary => reread_and_mark(&reader, &topic, &scope, &last_sync).await,
                     // hint の購読を抜けるのは lease の持ち主(`stop_scope_task`)。
                     else => break,
+                }
+                if applied > 0 {
+                    let now = Utc::now().timestamp_millis();
+                    last_sync.set(now).await;
+                    if let Some(generation) = generation {
+                        record_public_topic_docs_activity_if_current(
+                            &public_topic_delivery,
+                            topic.as_str(),
+                            generation,
+                            now,
+                        )
+                        .await;
+                        // topic の届き方(docs の活動)が変わった(#1221 R2-D)。
+                        last_sync.mark(StatusKey::Topic(format!(
+                            "{}{topic}",
+                            kukuri_core::wire::HINT_TOPIC_PREFIX
+                        )));
+                    }
                 }
             }
         });

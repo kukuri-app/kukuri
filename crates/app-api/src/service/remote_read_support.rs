@@ -550,7 +550,8 @@ impl AppService {
         }
         Ok(replicas)
     }
-    /// `channel` は projection に行が無い session(hint・読み直し・表示で初めて読む)の scope。
+    /// `channel` は projection に行が無い session(hint・読み直し・表示で初めて読む)の scope。`peers` は locator の
+    /// 読み先(`scope_read_peers`。選べなければ手元だけを読む)。
     pub(super) async fn session_target_candidates(
         &self,
         topic_id: &str,
@@ -558,6 +559,7 @@ impl AppService {
         source: Option<(&str, &ReplicaId, i64)>,
         id: &str,
         kind: &str,
+        peers: Option<&[SeedPeer]>,
     ) -> Result<Vec<RemotePostReplica>> {
         let (scope, anchor) = match source {
             Some((PUBLIC_CHANNEL_ID, _, updated_at)) => {
@@ -604,7 +606,7 @@ impl AppService {
         // #1221 R5-H: 現在と直前の bucket の locator が指す replica(日が変わった更新・回転や切替で移した session の
         // state)を先に読む。
         for located in self
-            .session_locators(topic_id, &scope, kind, id)
+            .session_locators(topic_id, &scope, kind, id, peers)
             .await?
             .into_iter()
             .rev()
@@ -623,6 +625,7 @@ impl AppService {
         scope: &TimelineScope,
         kind: &str,
         id: &str,
+        peers: Option<&[SeedPeer]>,
     ) -> Result<Vec<RemotePostReplica>> {
         let key = stable_key(&format!("sessions/{kind}"), &format!("{id}/locator"));
         let channel = match scope {
@@ -637,13 +640,17 @@ impl AppService {
             .filter(|(replica, _)| replica.as_str().starts_with("bucket::"))
         {
             let readers = async {
-                self.remote_post_readers(
+                let Some(peers) = peers else {
+                    return Vec::new();
+                };
+                self.scope_post_readers(
                     topic_id,
                     channel,
                     &bucket,
                     epoch
                         .as_ref()
                         .map(|(id, secret)| (id.as_str(), secret.as_str())),
+                    peers.to_vec(),
                 )
                 .await
                 .unwrap_or_default()
@@ -712,8 +719,16 @@ impl AppService {
     ) -> Result<Vec<SessionTargetReader>> {
         let mut readers = Vec::new();
         let channel = source.map_or(channel, |(channel, _, _)| channel);
+        let scope_channel = (channel != PUBLIC_CHANNEL_ID).then_some(channel);
+        // 1 回の読みは、locator も各 replica も同じ読み先に聞く。replica ごとに選び直すと、近隣が 5 人のとき 1 回の読みで
+        // 選ぶ位置が一周し、読み直しが前と同じ読み先に聞く(#1813)。
+        let peers = self
+            .scope_read_peers(topic_id, scope_channel)
+            .await
+            .inspect_err(|error| warn!(%error, "session target reader selection failed"))
+            .ok();
         for (replica, epoch) in self
-            .session_target_candidates(topic_id, channel, source, id, kind)
+            .session_target_candidates(topic_id, channel, source, id, kind, peers.as_deref())
             .await?
         {
             // private は旧 replica も bucket も、capability を持つ手元の docs から読む(自分が書いた session を、channel の
@@ -734,14 +749,18 @@ impl AppService {
                     DocFetchPolicy::LocalOnly,
                 ));
             }
+            let Some(peers) = &peers else {
+                continue;
+            };
             match self
-                .remote_post_readers(
+                .scope_post_readers(
                     topic_id,
-                    (channel != PUBLIC_CHANNEL_ID).then_some(channel),
+                    scope_channel,
                     &replica,
                     epoch
                         .as_ref()
                         .map(|(id, secret)| (id.as_str(), secret.as_str())),
+                    peers.clone(),
                 )
                 .await
             {
@@ -841,26 +860,53 @@ impl AppService {
         replica: &ReplicaId,
         private_epoch: Option<(&str, &str)>,
     ) -> Result<Vec<Arc<dyn DocsSync>>> {
+        let peers = self.scope_read_peers(topic_id, channel_id).await?;
+        self.scope_post_readers(topic_id, channel_id, replica, private_epoch, peers)
+            .await
+    }
+
+    /// scope の読み先の候補。同じ topic(private は channel)の hint の近隣から、選ぶたびに順に回して最大 4 人。
+    pub(super) async fn scope_read_peers(
+        &self,
+        topic_id: &str,
+        channel_id: Option<&str>,
+    ) -> Result<Vec<SeedPeer>> {
+        let hint_topic = match channel_id {
+            // 同じ topic の参加者(gossip の neighbor)から読む。まだ居なければ全体の台帳から選ぶ(#1395)。
+            None => TopicId::new(topic_id),
+            Some(channel) => {
+                self.ensure_private_channel_access(topic_id, &ChannelId::new(channel))
+                    .await?;
+                private_channel_hint_topic(channel)
+            }
+        };
+        self.hint_transport()
+            .topic_read_candidates(&hint_topic)
+            .await
+    }
+
+    /// `peers`(`scope_read_peers` で選んだ読み先)から読む、post replica の reader。
+    pub(super) async fn scope_post_readers(
+        &self,
+        topic_id: &str,
+        channel_id: Option<&str>,
+        replica: &ReplicaId,
+        private_epoch: Option<(&str, &str)>,
+        peers: Vec<SeedPeer>,
+    ) -> Result<Vec<Arc<dyn DocsSync>>> {
         let kind = post_replica_kind(replica)
             .ok_or_else(|| anyhow::anyhow!("source is not a post replica"))?;
-        let (secret, peers) = match (kind, channel_id, private_epoch) {
+        let secret = match (kind, channel_id, private_epoch) {
             (PostReplicaKind::PublicTopic { topic_id: source }, None, None)
                 if source == topic_id =>
             {
-                // 同じ topic の参加者(gossip の neighbor)から読む。まだ居なければ全体の台帳から選ぶ(#1395)。
-                let peers = self
-                    .hint_transport()
-                    .topic_read_candidates(&TopicId::new(topic_id))
-                    .await?;
-                (None, peers)
+                None
             }
             (
                 PostReplicaKind::PrivateChannel { channel_id: source },
                 Some(channel),
                 Some((epoch_id, secret_hex)),
             ) if source == channel => {
-                self.ensure_private_channel_access(topic_id, &ChannelId::new(channel))
-                    .await?;
                 let mut epoch_secret = [0_u8; 32];
                 hex::decode_to_slice(secret_hex, &mut epoch_secret)?;
                 let secret = if replica.as_str().starts_with("bucket::") {
@@ -877,11 +923,7 @@ impl AppService {
                     );
                     epoch_secret
                 };
-                let peers = self
-                    .hint_transport()
-                    .topic_read_candidates(&private_channel_hint_topic(channel))
-                    .await?;
-                (Some(secret), peers)
+                Some(secret)
             }
             _ => anyhow::bail!("source replica is outside the selected scope"),
         };

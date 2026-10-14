@@ -17,6 +17,8 @@ pub(super) struct CountingDocsSync {
     assist_peer_ids: Vec<String>,
     /// `remote_readers` が返す provider(#1221 R5-C)。無ければ remote の provider は無い。
     remote: Option<Arc<dyn DocsSync>>,
+    /// `remote_readers` が、渡された読み先の近隣ごとに返す provider(#1813)。`remote` より先に使う。
+    peer_remotes: Option<Arc<HashMap<String, Arc<dyn DocsSync>>>>,
 }
 
 impl CountingDocsSync {
@@ -24,6 +26,14 @@ impl CountingDocsSync {
     pub(super) fn reading_from(remote: Arc<dyn DocsSync>) -> Self {
         Self {
             remote: Some(remote),
+            ..Self::default()
+        }
+    }
+
+    /// 手元は空で、読み先の近隣ごとに `providers` の docs を返す docs(#1813)。
+    pub(super) fn reading_from_peers(providers: HashMap<String, Arc<dyn DocsSync>>) -> Self {
+        Self {
+            peer_remotes: Some(Arc::new(providers)),
             ..Self::default()
         }
     }
@@ -170,6 +180,18 @@ impl DocsSync for CountingDocsSync {
         self.inner.local_docs_author().await
     }
 
+    async fn query_local_source(
+        &self,
+        replica: &ReplicaId,
+        key: &str,
+        author: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<kukuri_docs_sync::DocRecord>> {
+        self.inner
+            .query_local_source(replica, key, author, limit)
+            .await
+    }
+
     async fn query_replica_by_author(
         &self,
         replica_id: &ReplicaId,
@@ -207,8 +229,14 @@ impl DocsSync for CountingDocsSync {
         &self,
         _replica: &ReplicaId,
         _private_secret: Option<[u8; 32]>,
-        _scope_peers: Vec<kukuri_transport::SeedPeer>,
+        scope_peers: Vec<kukuri_transport::SeedPeer>,
     ) -> Result<Vec<Arc<dyn DocsSync>>> {
+        if let Some(providers) = &self.peer_remotes {
+            return Ok(scope_peers
+                .iter()
+                .filter_map(|peer| providers.get(&peer.endpoint_id).cloned())
+                .collect());
+        }
         Ok(self.remote.iter().cloned().collect())
     }
 }
@@ -412,6 +440,7 @@ mod scale_independence;
 mod scope_leases;
 mod session_catch_up;
 mod session_event_progress;
+mod session_hint_retry;
 mod session_manifest_fetch;
 mod shadowing_docs;
 pub(super) use shadowing_docs::ShadowingDocsSync;

@@ -196,6 +196,7 @@ Accepted
   envelopeの署名・kind・idを確かめ、contentが指すsessionのstateを個別反映する。署名・owner・scope・manifest一致の既存検証は維持する。
 - 確定的な拒否、docs entry未取得、manifest欠損、検証済みを区別し、sleepを挟む読み直しはしない。
   sessionの反映が0件という理由で窓の追いつきやreplica再同期を依頼しない。
+- 例外（#1813、2026-10-14）: gossipのsessionのhintを受けたleaseのtaskは、そのhintで反映できなかったsession（遠隔の読み先にまだ持つ端末が無かった場合など）を、間を置いて上限つきで読み直す（[ADR 0054](0054-time-bucketed-docs-replicas.md)「読み取り候補」）。上のdocs entryの到着による個別反映には適用しない。
 - entry通知がbytesの到着に先行した場合は、通知のcontent hashが読み出したrecordに含まれるかで区別する。
   待ち先は全体64件までのkey/hashの集合に置き、`ContentReady`で対象を再確認する。同じkeyの不正recordが既存でも、
   通知された正常recordの未取得を確定的拒否と混同しない。窓の外でもこの個別反映を使う。
