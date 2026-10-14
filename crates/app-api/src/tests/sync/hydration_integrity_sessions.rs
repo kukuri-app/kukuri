@@ -231,7 +231,7 @@ async fn unreadable_live_session_record_does_not_break_the_list_of_the_topic() {
 }
 
 /// `write_live_session` と同じ形。
-async fn write_game_room(
+pub(super) async fn write_game_room(
     docs_sync: &dyn DocsSync,
     blob_service: &dyn BlobService,
     replica: &ReplicaId,
@@ -277,7 +277,7 @@ async fn write_game_room(
         .expect("write game state");
 }
 
-fn game_manifest(
+pub(super) fn game_manifest(
     room_id: &str,
     topic: &TopicId,
     channel_id: Option<&ChannelId>,
