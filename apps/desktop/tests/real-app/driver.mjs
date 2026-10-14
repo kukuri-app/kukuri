@@ -60,6 +60,8 @@ export async function launch({ app, root, name, port, env = {}, fresh = true }) 
     pid: child.pid,
     log: join(dir, 'app.log'),
     evaluate: page.evaluate,
+    /// 画面の target へ protocol の命令を送る(webview の設定の上書きなど)。
+    send: page.send,
     /// key の入力を受けるよう、この instance の window に focus を移す(Linux は window manager の下で xdotool、
     /// Windows は CDP で focus を模擬する)。
     focus() {
@@ -111,6 +113,7 @@ async function connectCdp(port) {
       });
       return resultOf(reply);
     },
+    send: call,
     close: () => socket.close(),
   };
 }
@@ -165,6 +168,7 @@ async function connectWebKit(port) {
         await send('Runtime.awaitPromise', { promiseObjectId: promise.result.result.objectId, returnByValue: true })
       );
     },
+    send,
     close: () => socket.close(),
   };
 }

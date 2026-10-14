@@ -14,6 +14,8 @@ const RATE = 48_000;
 const BLOCK = RATE / 50;
 const KEEP_MS = 30_000;
 const ON_MS = 150;
+/// 音の始まりを探す幅(2 ms)。
+const ONSET_WINDOW = RATE / 500;
 /// 話す音の周期。大きさを比べるときは、この倍数の間で平均する。
 export const PERIOD_MS = 400;
 
@@ -119,6 +121,48 @@ export function speak(name, band, sink = `${name}_in`) {
   };
 }
 
+/// `name` の入力へ無音を流し続け、`burst()` で話す音を 1 つ(150 ms)入れる(時刻を測る音。instance ごとの入力が要る)。
+/// 書込みは実時間に合わせ、先へ溜めない(入れた時刻と入力に届く時刻を近づける)。
+export function bursts(name, band) {
+  const frequencies = bins(band);
+  const each = 0.2 / Math.sqrt(frequencies.length);
+  const player = spawn(
+    'pacat',
+    ['--playback', `--device=${name}_in`, '--format=s16le', `--rate=${RATE}`, '--channels=1', '--latency-msec=20'],
+    { stdio: ['pipe', 'ignore', 'ignore'] }
+  );
+  player.stdin.on('error', () => undefined);
+  const begin = Date.now();
+  let written = 0;
+  let left = 0;
+  let phases = [];
+  const timer = setInterval(() => {
+    while (written * 1000 < (Date.now() - begin + 40) * RATE) {
+      const block = Buffer.alloc(BLOCK * 2);
+      for (let i = 0; i < BLOCK && left > 0; i += 1, left -= 1) {
+        const at = (RATE * ON_MS) / 1000 - left;
+        let value = 0;
+        for (const [index, frequency] of frequencies.entries()) {
+          value += Math.sin((2 * Math.PI * frequency * at) / RATE + phases[index]) * each;
+        }
+        block.writeInt16LE(Math.round(value * 32767), i * 2);
+      }
+      player.stdin.write(block);
+      written += BLOCK;
+    }
+  }, 10);
+  return {
+    burst() {
+      phases = frequencies.map(() => Math.random() * 2 * Math.PI);
+      left = (RATE * ON_MS) / 1000;
+    },
+    stop() {
+      clearInterval(timer);
+      player.kill();
+    },
+  };
+}
+
 /// 話す音の 20 ms ずつの PCM(s16le・mono)を返す関数。強さは振幅 0.2 の 1 つの周波数の音と同じ。
 function voice(band) {
   const frequencies = bins(band);
@@ -144,17 +188,22 @@ function voice(band) {
 
 /// `instance` の出力に出た音を記録する(直近 30 秒)。`level(ms, band)` は直近 `ms` の音の大きさ(RMS、共有の線では
 /// peak)。`band` を指定すると、その帯域(`speak` と同じ 50 Hz 刻み)の成分の振幅(instance ごとの出力でだけ測れる)。
-export function record(instance) {
+/// `onsets(since, threshold)` は、`since`(epoch の ms)より後に始まった音の時刻(instance ごとの出力でだけ測れる)。
+/// `device` は記録する先(instance ごとの構成で、出力の代わりに入力などを記録する)。
+export function record(instance, device = `${instance.name}_out.monitor`) {
   const values = [];
+  // 記録の最初の sample の時刻(届いた時刻から、それまでの長さを引いた値の最小)。
+  let origin = Infinity;
+  let received = 0;
   const keep = (value) => {
     const now = Date.now();
-    values.push({ at: now, value });
+    values.push({ at: now, start: received, value });
     while (values.length && values[0].at < now - KEEP_MS) values.shift();
   };
   const recorder = isolated
     ? spawn(
         'parec',
-        [`--device=${instance.name}_out.monitor`, '--format=s16le', `--rate=${RATE}`, '--channels=1', '--latency-msec=20'],
+        [`--device=${device}`, '--format=s16le', `--rate=${RATE}`, '--channels=1', '--latency-msec=20'],
         { stdio: ['ignore', 'pipe', 'ignore'] }
       )
     : spawn(
@@ -181,6 +230,8 @@ export function record(instance) {
       for (let i = 0; i < BLOCK; i += 1) samples[i] = pending.readInt16LE(i * 2) / 32768;
       pending = pending.subarray(BLOCK * 2);
       keep(samples);
+      received += BLOCK;
+      origin = Math.min(origin, Date.now() - (received * 1000) / RATE);
     }
   });
   return {
@@ -193,6 +244,20 @@ export function record(instance) {
           )
         : inside;
       return levels.reduce((sum, value) => sum + value, 0) / levels.length;
+    },
+    onsets(since, threshold) {
+      const found = [];
+      let loud = -Infinity;
+      for (const { start, value } of values) {
+        for (let offset = 0; offset < value.length; offset += ONSET_WINDOW) {
+          const time = origin + ((start + offset) * 1000) / RATE;
+          if (time <= since || rms(value.subarray(offset, offset + ONSET_WINDOW)) <= threshold) continue;
+          // 300 ms の無音の後を、次の音の始まりとする。
+          if (time - loud > 300) found.push(time);
+          loud = time;
+        }
+      }
+      return found;
     },
     stop: () => recorder.kill(),
   };

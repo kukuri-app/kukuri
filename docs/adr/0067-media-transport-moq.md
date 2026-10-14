@@ -204,7 +204,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - Blob 必要有無: manifest の JSON だけ
 - SQLite projection 必要有無: 既存の live の projection。media は持たない
 - 必須 contract: 「対象別の contract」の #1034 の行
-- 必須 scenario: Linux と Windows で、配信者 1・視聴者 2 以上（1 名は途中参加、1 名は転送を受ける）の camera と画面（それぞれ mic つき）、同期、終了
+- 必須 scenario: Linux と Windows の CI で、配布と同じ build の自動の試験（配信者 1・視聴者 2 と、転送を受ける 5 人目。camera と画面・mic・同期・途中参加・終了・転送を、OS の入出力の境界と視聴者の canvas で確かめる。手順は [runbook](../runbooks/live-media.md)、#1800）
 
 ## 対象別の contract
 
