@@ -1,6 +1,7 @@
 // live の転送(#1034 の runbook の手順 10、#1800 AC-4 の LV-10)。配信者 H の直接の視聴者 4 人(V1〜V4)の後の 5 人目(V5)に、
-// 視聴者からの転送で描画と音が届き、LV-3 と同じ範囲に入る。転送している視聴者を止めると、V5 の描画は 10 秒ほどで戻る
-// (配信者か別の視聴者から受け直す)。
+// 視聴者からの転送で描画と音が届く。転送している視聴者を止めると、V5 の描画は 10 秒ほどで戻る(配信者か別の視聴者から
+// 受け直す)。転送された映像と音のずれは記録だけにする(6 つの app が CI の CPU を取り合い、測る値が揺れる。ずれの判定は
+// LV-3。2026-10-14 のユーザー判断)。
 import assert from 'node:assert/strict';
 
 import { eventually } from '../../web-e2e/wait.mjs';
@@ -10,7 +11,6 @@ import {
   createSession,
   drawsSince,
   injectCapture,
-  inSync,
   measureSync,
   observeDraws,
   t,
@@ -63,9 +63,7 @@ export async function run({ launch, log, topic }) {
     let sync = 'not measured';
     if (isolated) {
       voice();
-      const offsets = await measureSync(host, fifth, heard);
-      sync = `${offsets.map(Math.round).join(', ')} ms`;
-      assert.ok(inSync(offsets), `the relayed video is in sync with the sound (${sync})`);
+      sync = `${(await measureSync(host, fifth, heard)).map(Math.round).join(', ')} ms`;
     }
     log(`LV-10: the fifth viewer draws and hears (${level?.toFixed(4)}) through a relay; the video is behind the sound by ${sync}`);
 
