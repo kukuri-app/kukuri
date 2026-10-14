@@ -82,12 +82,13 @@ export async function run({ launch, restart, log, topic }) {
     }
     return Date.now() - since;
   };
-  /// `viewer` の canvas に描かれ続けているか(3 秒の間に 1 秒あたり 5 枚以上)。描いた枚数を返す。
-  const expectDrawing = async (viewer, what) => {
+  /// `viewer` の canvas に描かれ続けているか(3 秒の間に `minimum` 枚以上。camera は 1 秒あたり 5 枚。画面は動かなければ
+  /// 1 秒ごとに送り直すだけなので 2 枚)。描いた枚数を返す。
+  const expectDrawing = async (viewer, what, minimum = 15) => {
     const since = Date.now();
     await sleep(3_000);
     const draws = (await drawsSince(viewer, since)).length;
-    assert.ok(draws >= 15, `${viewer.name} draws ${what} (${draws} frames in 3 s)`);
+    assert.ok(draws >= minimum, `${viewer.name} draws ${what} (${draws} frames in 3 s)`);
     return draws;
   };
   /// `viewer` の canvas に、直近 1 秒に描かれたか。
@@ -147,9 +148,9 @@ export async function run({ launch, restart, log, topic }) {
     // ときを記録する。frame を表示中の <video> から取るため)。
     await click(host, t('media.sources.screen'), { within: CARD });
     const screen = await eventually('the first viewer to draw the screen', async () => (await drawsSince(first, Date.now() - 1_000)).find(isScreen)?.size, 30_000);
-    await expectDrawing(first, 'the screen');
+    await expectDrawing(first, 'the screen', 2);
     first.focus();
-    await expectDrawing(first, 'the screen while the host is behind another window');
+    await expectDrawing(first, 'the screen while the host is behind another window', 2);
     let whileMinimized = 'not checked';
     if (process.platform !== 'win32') {
       const restore = minimize(host);
