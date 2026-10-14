@@ -429,6 +429,93 @@ async fn a_hosted_dome_is_listed_from_the_heartbeat_and_the_owner_control_area()
     owner.shutdown().await;
 }
 
+// #1818: 訪問者が同じ Dome の preset を何度読んでも(画面は Dome の一覧の読み直しのたびに hosting を読む)、owner の
+// 制御領域から読むのは最初の 1 回だけ。2 回目からは検証済みの preset を使う。
+#[tokio::test]
+async fn a_visitor_reads_the_owner_preset_once_for_the_same_reference() {
+    let owner_docs = Arc::new(CountingDocsSync::default());
+    let blobs = Arc::new(MemoryBlobService::default());
+    let app = |docs: Arc<CountingDocsSync>| {
+        let store = Arc::new(MemoryStore::default());
+        let transport = Arc::new(StaticTransport::new(PeerSnapshot::default()));
+        app_service_from_dependencies(
+            store.clone(),
+            store,
+            transport,
+            Arc::new(NoopHintTransport),
+            docs,
+            blobs.clone(),
+            generate_keys(),
+        )
+    };
+    let owner = app(owner_docs.clone());
+    let visitor = app(Arc::new(CountingDocsSync::reading_from(owner_docs.clone())));
+    let context = SpatialContextV1::Topic {
+        topic_id: TopicId::new(TOPIC),
+    };
+    owner
+        .create_metaverse_room(
+            TOPIC,
+            CreateMetaverseRoomInput {
+                title: "visited Dome".into(),
+                description: String::new(),
+                max_peers: Some(4),
+            },
+        )
+        .await
+        .expect("create Dome");
+    let (_, instance) = owner
+        .fetch_dome_instance_manifest(&context, &owner.keys().public_key())
+        .await
+        .expect("read the instance")
+        .expect("the instance exists");
+    // 覚える数は上限つき: 既に上限まで覚えていれば、いちばん古いものを捨てて覚える。
+    let manifest = owner
+        .fetch_dome_preset_manifest(&instance.preset_ref)
+        .await
+        .expect("the owner reads its preset")
+        .expect("the preset exists");
+    let other = |index: usize| DomePresetRefV1 {
+        preset_id: format!("other-preset-{index}"),
+        ..instance.preset_ref.clone()
+    };
+    visitor
+        .dome_presets
+        .lock()
+        .await
+        .extend((0..32).map(|index| (other(index), manifest.clone())));
+    let reads_before = owner_docs.queries().await.len();
+    let first = visitor
+        .fetch_dome_preset_manifest(&instance.preset_ref)
+        .await
+        .expect("read the preset");
+    assert_eq!(
+        first.as_ref(),
+        Some(&manifest),
+        "the visitor reads the owner preset"
+    );
+    let reads = owner_docs.queries().await.len();
+    assert!(reads > reads_before, "the first read goes to the owner");
+    let presets = visitor.dome_presets.lock().await.clone();
+    assert_eq!(presets.len(), 32);
+    assert_eq!(presets.front().map(|(known, _)| known), Some(&other(1)));
+    assert_eq!(
+        presets.back().map(|(known, _)| known),
+        Some(&instance.preset_ref)
+    );
+    let second = visitor
+        .fetch_dome_preset_manifest(&instance.preset_ref)
+        .await
+        .expect("read the preset again");
+    assert_eq!(second, first);
+    assert_eq!(
+        owner_docs.queries().await.len(),
+        reads,
+        "the same reference is not read from the owner again"
+    );
+    owner.shutdown().await;
+}
+
 /// #1221 R5-H: Instance は owner の制御領域の、instance の id の key に置く。
 fn instance_state_key(f: &Fixture) -> String {
     stable_key("metaverse/dome-instances", &format!("{}/state", f.dome_id))

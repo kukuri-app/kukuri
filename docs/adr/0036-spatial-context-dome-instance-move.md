@@ -60,6 +60,8 @@ channel identityにはepoch replica idではなく安定したchannel idを使�
 
 InstanceはPreset manifest hashを参照する。引っ越し先でPresetやasset bytesを複製しない。`GameRoomManifestBlobV1.metaverse`と`game_room_cache.metaverse`はdesktopへ返す解決済みread modelであり、Preset / Instanceのauthorityではない。
 
+Preset refの中身は変わらないので、他のauthorのPresetは、一度読んで検証したmanifestをPreset refごとに覚えて読み直さない（上限32件、古いものから捨てる。#1818、2026-10-14）。訪問者の画面はDomeの一覧の読み直しのたびにhostingを読み、そのたびにownerの制御領域からPresetを読み直していた。自分のPresetは手元から読み、そのたびに検証する。
+
 ### Owner slotとgeneration
 
 Instance idとowner slot keyは`Spatial Context canonical id + owner pubkey`から決定論的に導出する。同じContext replicaの同じowner slotに`active`または`staging`が存在する場合、新規作成・別moveによる上書きを拒否する。tombstoned slotの再利用時はgenerationを増加させ、旧generationのrelationship、session、eventを受理しない。
