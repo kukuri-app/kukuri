@@ -445,7 +445,7 @@ node tests/real-app/run.mjs --app <release build の実行 file> [--scenario <�
 
 - 各 instance は `KUKURI_INSTANCE`・`KUKURI_APP_DATA_DIR`・webview の保存領域を作業 dir の下に分け、`static_peer` で互いの ticket だけでつながる（Community Node・relay・DHT へは出ない）。普段使いの kukuri の profile・deep link の登録には触れない。
 - Windows は WebView2 の診断用の port と疑似のカメラ・画面の起動の設定、Linux は Xvfb・D-Bus の下で WebKit の inspector を使う（`xvfb-run -a dbus-run-session -- node ...`）。
-- 音声の確認は、`REAL_APP_AUDIO` で CI の仮想デバイスの構成を指定したときだけ動く（`pulse`: Linux の PulseAudio に instance ごとの null sink を作る。`vbcable`: Windows の VB-CABLE を全 instance の既定の入出力にする）。手元では付けない（既定の機器を使わないため、付けなければ飛ばす）。空間音声（`spatial-audio`）は instance ごとの入出力が要るので `pulse` だけで動く。Linux は key の入力に window manager（openbox）と xdotool が要る。中身は [metaverse-spatial-audio.md](metaverse-spatial-audio.md)。
+- 音声の確認は、`REAL_APP_AUDIO` で CI の仮想デバイスの構成を指定したときだけ動く（`pulse`: Linux の PulseAudio に instance ごとの null sink を作る。`vbcable`: Windows の VB-CABLE を全 instance の既定の入出力にする）。手元では付けない（既定の機器を使わないため、付けなければ飛ばす）。空間音声（`spatial-audio`）は instance ごとの入出力が要るので `pulse` だけで動く。PulseAudio は desktop の音声の server（rtkit の下の PipeWire・PulseAudio）と同じく real-time の優先度で動かす（CI は runner の上限を上げてから起動する）。優先度が無いと、CPU が埋まったときに server が遅れて app の出力が作り直され、エコーキャンセルが数秒合わず、映像と音のずれも乱れる（#1822）。Linux は key の入力に window manager（openbox）と xdotool が要る。中身は [metaverse-spatial-audio.md](metaverse-spatial-audio.md)。
 
 ## remote-sync 用の環境変数
 ```bash
