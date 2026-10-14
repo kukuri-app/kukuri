@@ -4912,8 +4912,7 @@ dependencies = [
 [[package]]
 name = "moq-audio"
 version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac40fe2c2788dcf3dccadaa6afe31474a2c31d73e04378833041ed2e2e40d46c"
+source = "git+https://github.com/KingYoSun/moq?rev=77553ada566a9b6c3e6bdcf4143f7f9468793086#77553ada566a9b6c3e6bdcf4143f7f9468793086"
 dependencies = [
  "block2",
  "bytes",

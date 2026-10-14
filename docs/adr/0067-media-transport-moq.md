@@ -129,6 +129,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 
 - #1032 の構成（iroh・iroh-base・iroh-dns・iroh-relay の fork `eef6af69364b5df1aa33c30e4c5731aad9d32046`、iroh-docs `e7233d14853cb4db9966e30050bac1e689cdeec8`、iroh-gossip の fork `23cd6cc76d51582b3678b3b743db72d51ce296d4`）を変えない。
 - 追加（#1033 で両方の workspace の `Cargo.lock` に固定）: `moq-net` 0.3.11・`hang` 0.21.12・`moq-mux` 0.10.12・`web-transport-iroh` 0.7.0（既定の feature を外し `ring`。web-transport-trait 0.4 系）・`moq-tokio` 0.19.24（既定の feature を外し `iroh`。増える crate は 8 個）・`moq-audio` 0.1.11（既定の feature を外す。機器の `capture`・`playback`・`aec` は desktop-runtime の `audio-devices` で Tauri の app だけが有効にし、CLI・harness は codec だけを使う）。映像の crate は #1034 AC-1 で決める。
+- `moq-audio` は fork `KingYoSun/moq` の `77553ada566a9b6c3e6bdcf4143f7f9468793086` に固定する（#1805。上流へは PR を出さない）。0.1.11 は echo cancellation の参照の channel を一度も読まないため、再生の mix が canceller へ届かない。fork は 0.1.11 の commit に、channel を作った直後に 1 回読む修正を載せ、moq 系の依存（`hang`・`kio`・`moq-mux`・`moq-net`）を crates.io の同じ版にしたもの（workspace の path のままだと、git の依存では moq-net が crates.io の版と別の crate になる）。moq-audio の版を上げるときは、上流に同じ修正があるかを確かめる。
 - Linux の build は libasound の開発 package、配布物は libasound を要する。
 - aws-lc は既に desktop の build に入っている（str0m 経由）ため、web-transport-iroh の既定の TLS で新しい C の build は増えない。
 - 輻輳制御と QUIC の stream 数の上限は endpoint の既定のままとし、変える必要は #1033・#1034 の計測で示す。
