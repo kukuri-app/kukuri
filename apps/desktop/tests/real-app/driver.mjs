@@ -9,6 +9,17 @@ import { audioEnv } from './audio.mjs';
 
 const WINDOWS = process.platform === 'win32';
 const STARTUP_MS = 60_000;
+/// 利用者の終了と同じ経路で止まるのを待つ上限。
+const STOP_MS = 15_000;
+
+/// process(負なら process group)へ signal を送る。既に終わっていれば何もしない。
+function signal(pid, name) {
+  try {
+    process.kill(pid, name);
+  } catch {
+    // 既に終わっている。
+  }
+}
 
 /// 1 つの instance を起動する。`env` は instance ごとの追加の環境変数。`fresh` が偽なら前の profile のまま起動し直す。
 export async function launch({ app, root, name, port, env = {}, fresh = true }) {
@@ -60,6 +71,8 @@ export async function launch({ app, root, name, port, env = {}, fresh = true }) 
     pid: child.pid,
     log: join(dir, 'app.log'),
     evaluate: page.evaluate,
+    /// 画面の target へ protocol の命令を送る(webview の設定の上書きなど)。
+    send: page.send,
     /// key の入力を受けるよう、この instance の window に focus を移す(Linux は window manager の下で xdotool、
     /// Windows は CDP で focus を模擬する)。
     focus() {
@@ -73,12 +86,24 @@ export async function launch({ app, root, name, port, env = {}, fresh = true }) 
     /// Tauri の command を画面から呼ぶ(画面と Rust の受け渡しの経路を通す)。
     invoke: (command, args = {}) =>
       page.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)}, ${JSON.stringify(args)})`),
+    /// 利用者の終了と同じ経路で止める(Linux は SIGTERM、Windows は閉じたら終了する設定にして window を閉じる)。
+    /// 強制で止めると、相手は古い経路の接続が切れる(QUIC の無通信の期限、約 30 秒)まで新しく接続できない(#1816)。
+    /// 止まらなければ強制で止める。
     async close() {
+      if (WINDOWS) {
+        await page
+          .evaluate(`window.__TAURI_INTERNALS__.invoke('set_window_close_preference', { preference: { behavior: 'quit' } })`)
+          .catch(() => undefined);
+        spawn('taskkill', ['/PID', String(child.pid)], { stdio: 'ignore' });
+      } else {
+        signal(child.pid, 'SIGTERM');
+      }
+      await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, STOP_MS))]);
       page.close();
       if (WINDOWS) {
         spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)], { stdio: 'ignore' });
       } else {
-        process.kill(-child.pid, 'SIGKILL');
+        signal(-child.pid, 'SIGKILL');
       }
       await exited;
     },
@@ -111,6 +136,7 @@ async function connectCdp(port) {
       });
       return resultOf(reply);
     },
+    send: call,
     close: () => socket.close(),
   };
 }
@@ -165,6 +191,7 @@ async function connectWebKit(port) {
         await send('Runtime.awaitPromise', { promiseObjectId: promise.result.result.objectId, returnByValue: true })
       );
     },
+    send,
     close: () => socket.close(),
   };
 }
