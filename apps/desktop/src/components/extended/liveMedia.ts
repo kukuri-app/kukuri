@@ -202,11 +202,12 @@ export function encodeVideo(options: {
     };
     preview.requestVideoFrameCallback(onFrame);
   }
-  const heartbeat = window.setInterval(() => {
-    if (performance.now() * 1000 - lastFrameUs >= HEARTBEAT_US) {
-      encode(preview, preview.videoWidth, preview.videoHeight);
-    }
-  }, HEARTBEAT_US / 1000);
+  // tick ごとに 1 枚送る(直前の frame に近すぎる分は encode が捨てる)。前の frame からの時間で決めると、tick の直前に
+  // 画面が変わったときや tick の揺れで、次の送り直しまで 2 秒近くあく。
+  const heartbeat = window.setInterval(
+    () => encode(preview, preview.videoWidth, preview.videoHeight),
+    HEARTBEAT_US / 1000
+  );
   return {
     stop() {
       stopped = true;

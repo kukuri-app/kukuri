@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 
 import tauriConfig from '../../../src-tauri/tauri.conf.json';
-import { captureErrorKind, createLivePlayer, fitVideoSize, frameToShow, parseLiveVideoBatch } from './liveMedia';
+import { captureErrorKind, createLivePlayer, encodeVideo, fitVideoSize, frameToShow, parseLiveVideoBatch } from './liveMedia';
 
 /// Rust の `encode_screen_batch` と同じ形の応答を作る。
 function batch(state: number, clockUs: number, chunks: Array<[number, boolean, number[]]>) {
@@ -119,5 +119,52 @@ describe('live media', () => {
     expect(captureErrorKind(Object.assign(error('InvokeError'), { code: 'LIVE_BROADCAST_ELSEWHERE' }), 'camera')).toBe(
       'elsewhere'
     );
+  });
+
+  // ADR 0067 §8: 画面が変わらない間も 1 秒ごとに前の frame を送り直す。送り直しの直前に画面が変わって frame が出ても、
+  // 次の frame まで 1 秒を超えてあけない。
+  test('re-sends a still screen every second even right after a changed frame', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    const encoded: number[] = [];
+    vi.stubGlobal(
+      'VideoEncoder',
+      class {
+        state = 'configured';
+        encodeQueueSize = 0;
+        configure() {}
+        encode() {
+          encoded.push(performance.now());
+        }
+        close() {
+          this.state = 'closed';
+        }
+      }
+    );
+    vi.stubGlobal('VideoFrame', class { close() {} });
+    let changed = () => {};
+    const track = { addEventListener: () => {}, stop: () => {} };
+    const capture = encodeVideo({
+      stream: { getVideoTracks: () => [track], getTracks: () => [track] } as unknown as MediaStream,
+      limits: { width: 640, height: 360, framerate: 15, bitrate: 1_000_000 },
+      preview: {
+        videoWidth: 640,
+        videoHeight: 360,
+        play: () => Promise.resolve(),
+        requestVideoFrameCallback: (callback: () => void) => {
+          changed = callback;
+          return 0;
+        },
+      } as unknown as HTMLVideoElement,
+      push: async () => {},
+      onEnded: () => {},
+    });
+    vi.advanceTimersByTime(800);
+    changed();
+    vi.advanceTimersByTime(3_000);
+    capture.stop();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    const gaps = encoded.slice(1).map((at, index) => at - encoded[index]);
+    expect(Math.max(...gaps)).toBeLessThanOrEqual(1_000);
   });
 });
