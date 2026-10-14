@@ -649,7 +649,7 @@ impl AppService {
                     continue;
                 }
                 let newer = projected.is_none_or(|revision| revision < verified.revision());
-                if !newer && self.holds_relayed_copy(policy, verified.relay()).await {
+                if !newer && self.searches_past_projected(policy, verified.relay()).await {
                     settled.get_or_insert(verified);
                     continue;
                 }
@@ -740,7 +740,7 @@ impl AppService {
                     (Some(row), Some(revision)) => row.score_revision.is_none_or(|p| p < revision),
                     (Some(row), None) => row.updated_at < verified.state().updated_at,
                 };
-                if !newer && self.holds_relayed_copy(policy, verified.relay()).await {
+                if !newer && self.searches_past_projected(policy, verified.relay()).await {
                     settled.get_or_insert(verified);
                     continue;
                 }
@@ -759,16 +759,19 @@ impl AppService {
 }
 
 impl AppService {
-    /// 手元の読み取りが返した、他の参加者へ提供するために保持した版か(#1395)。手元の読み取りは保持した版も返す。
-    /// 反映済みと同じ版なら、それで打ち切らずに提供者の新しい版を先に探す(見つからなければその版を使う)。
-    /// 自分の docs author が書いた state(自分の session、訪問者として書いた Dome の state)は手元が正本なので、
-    /// 従来どおり手元で打ち切る。
-    async fn holds_relayed_copy(
+    /// 反映済みと同じ版を読んだとき、それで打ち切らずに残りの読み先から新しい版を先に探すか(見つからなければその版を
+    /// 使う)。遠隔の読み先の版(先に読んだ参加者がまだ古い版を持つことがある。#1816)と、手元の読み取りが返した、他の
+    /// 参加者へ提供するために保持した版(#1395)は探す。自分の docs author が書いた state(自分の session、訪問者として
+    /// 書いた Dome の state)は手元が正本なので、手元で打ち切る。
+    async fn searches_past_projected(
         &self,
         policy: DocFetchPolicy,
         relay: Option<&SessionRelay>,
     ) -> bool {
-        let Some(relay) = relay.filter(|_| policy == DocFetchPolicy::LocalOnly) else {
+        if policy != DocFetchPolicy::LocalOnly {
+            return true;
+        }
+        let Some(relay) = relay else {
             return false;
         };
         let own = self

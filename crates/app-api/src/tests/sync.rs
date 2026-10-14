@@ -442,6 +442,7 @@ mod session_catch_up;
 mod session_event_progress;
 mod session_hint_retry;
 mod session_manifest_fetch;
+mod session_newer_provider;
 mod shadowing_docs;
 pub(super) use shadowing_docs::ShadowingDocsSync;
 mod subscription_catch_up;
