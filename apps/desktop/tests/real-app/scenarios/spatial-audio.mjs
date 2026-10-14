@@ -16,8 +16,11 @@ const STAGE = '.metaverse-room-stage';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /// 大きさを測る間(話す音の周期の倍数)。
 const WINDOW_MS = 5 * PERIOD_MS;
-/// 話者(S・O)と聞き手(L)の声の帯域(Hz)。
+/// 話者 S・O と聞き手 L の声の帯域(Hz。50 Hz 刻みの正弦波の和)。O は S と離れた帯域で話す: S の声を再生している O の
+/// エコーキャンセルは、S と同じ周波数の線の O の声を S の声のエコーと区別できずに消し続け、近い帯域の声もエコーが無いと
+/// 判定するまで(十数秒)抑える(#1817)。
 const VOICE = [300, 950];
+const OTHER_VOICE = [2000, 2950];
 const REPLY = [1500, 2950];
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const gainAt = (cm) => (cm <= 100 ? 1 : 100 / cm);
@@ -82,7 +85,7 @@ export async function run({ launch, restart, log, topic }) {
     assert.ok(heard.level(WINDOW_MS) < 1e-4, 'the listener stays silent');
     plug('other');
     log('SA-2: the microphone stays off without an input device');
-    voices.push(speak('other', VOICE));
+    voices.push(speak('other', OTHER_VOICE));
     await micOn(speaker);
     log('SA-2: the microphone turns on');
 
