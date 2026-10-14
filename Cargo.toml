@@ -135,6 +135,9 @@ iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "23cd6cc
 n0-mainline = { git = "https://github.com/KingYoSun/n0-mainline", rev = "7571f18f69ef03d9ec97ca8d1171e17c8ce4f0c6" }
 # #1632: 既存の DHT を住所の公開・解決へ渡し、hash の発見と同じ socket を共有する。0.6.0 起点。
 iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-address-lookups", rev = "e2740b75997e9e3d0776f6b80846cafc2681fe29" }
+# #1805（fork だけの変更。上流へは PR を出さない）: echo cancellation の参照の channel を作った直後に 1 回読み、
+# 再生の mix が canceller へ届くようにする。moq-audio 0.1.11 起点で、moq 系の依存は crates.io の同じ版にした。
+moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "77553ada566a9b6c3e6bdcf4143f7f9468793086" }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"
