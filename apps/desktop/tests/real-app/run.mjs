@@ -10,6 +10,8 @@ import { launch } from './driver.mjs';
 const SCENARIOS = {
   smoke: () => import('./scenarios/smoke.mjs'),
   'spatial-audio': () => import('./scenarios/spatial-audio.mjs'),
+  live: () => import('./scenarios/live.mjs'),
+  'live-relay': () => import('./scenarios/live-relay.mjs'),
 };
 
 const { values } = parseArgs({
