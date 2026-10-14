@@ -1,12 +1,12 @@
 // 空間音声(#1033 の runbook、#1800 AC-3)。聞き手 L が Dome を作って稼働・入室し、話者 S と O が入る。
 // 音は OS の入出力の境界で確かめる(話者の入力へ入れた音が、聞き手の出力に出るか)。大きさは、最初に測った
-// 「音量 1 あたりの出力」を基準に、距離から決まる音量(1 m 以内は 1、以遠は 1 m / 距離)と比べる。instance ごとに
-// 入出力を分けられない構成では、それを要する項目(SA-2 の開けない構成・SA-3 の減衰の比・SA-4)を飛ばす。
+// 「音量 1 あたりの出力」を基準に、距離から決まる音量(1 m 以内は 1、以遠は 1 m / 距離)と比べる。instance ごとの
+// 仮想の入出力(Linux の CI)でだけ動かす(Windows の runner は 3 つの Dome の 3D の描画で CPU が足りない)。
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { eventually } from '../../web-e2e/wait.mjs';
-import { audioMode, hearOwnOutput, isolated, PERIOD_MS, plug, record, speak, unplug } from '../audio.mjs';
+import { hearOwnOutput, isolated, PERIOD_MS, plug, record, speak, unplug } from '../audio.mjs';
 import { accept, connect, openTopic, waitForPeers } from '../session.mjs';
 import { audioState, choose, click, fill, observeAudio, press, pressed, text } from '../ui.mjs';
 
@@ -19,22 +19,19 @@ const WINDOW_MS = 5 * PERIOD_MS;
 /// 話者(S・O)と聞き手(L)の声の帯域(Hz)。
 const VOICE = [300, 950];
 const REPLY = [1500, 2950];
-/// 3 つの Dome の描画の上限(1 秒あたり)。
-const FRAMES_PER_SECOND = 5;
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const gainAt = (cm) => (cm <= 100 ? 1 : 100 / cm);
 const positionOf = async (instance) => (await audioState(instance)).request.listener_position;
 const logOf = (instance) => readFileSync(instance.log, 'utf8');
 
 export async function run({ launch, restart, log, topic }) {
-  if (!audioMode) {
-    log('skipped: REAL_APP_AUDIO is not set (the CI virtual audio devices are required)');
+  if (!isolated) {
+    log('skipped: needs a virtual audio device per instance (REAL_APP_AUDIO=pulse)');
     return;
   }
   let [listener, speaker, other] = await launch('listener', 'speaker', 'other');
   const all = () => [listener, speaker, other];
-  await Promise.all(all().map((instance) => instance.capFrames(FRAMES_PER_SECOND)));
-  if (isolated) unplug('other'); // SA-2: O の入力デバイスは最初は無い。
+  unplug('other'); // SA-2: O の入力デバイスは最初は無い。
   await Promise.all(all().map(accept));
   await connect(all());
   await Promise.all(all().map((instance) => openTopic(instance, topic, 'game')));
@@ -58,7 +55,6 @@ export async function run({ launch, restart, log, topic }) {
   const heard = record(listener);
   // S と O は話し続ける(O は入力デバイスを付け直してから)。送るかは mic の操作で決まる。
   const voices = [speak('speaker', VOICE)];
-  const failures = [];
   let unit = null; // 音量 1 あたりの、聞き手の出力の大きさ。
   const silent = () => (unit ?? 0.05) * 0.002;
   /// 聞き手の出力に音量 `gain` の音が出るのを待ち、落ち着いてから測った大きさを返す。
@@ -79,15 +75,13 @@ export async function run({ launch, restart, log, topic }) {
   const sameDome = async (instance) => gainAt(distance(await positionOf(listener), await positionOf(instance)));
   try {
     // SA-2: mic を on にすると on。入力デバイスを開けない構成では on にならず、聞き手の出力は無音のまま。
-    if (isolated) {
-      await click(other, t('hud.enableMicrophone'));
-      await eventually('other to fail to open the microphone', () => logOf(other).includes('microphone could not be opened'));
-      await sleep(WINDOW_MS);
-      assert.equal(await pressed(other, t('hud.enableMicrophone')), 'false');
-      assert.ok(heard.level(WINDOW_MS) < 1e-4, 'the listener stays silent');
-      plug('other');
-      log('SA-2: the microphone stays off without an input device');
-    }
+    await click(other, t('hud.enableMicrophone'));
+    await eventually('other to fail to open the microphone', () => logOf(other).includes('microphone could not be opened'));
+    await sleep(WINDOW_MS);
+    assert.equal(await pressed(other, t('hud.enableMicrophone')), 'false');
+    assert.ok(heard.level(WINDOW_MS) < 1e-4, 'the listener stays silent');
+    plug('other');
+    log('SA-2: the microphone stays off without an input device');
     voices.push(speak('other', VOICE));
     await micOn(speaker);
     log('SA-2: the microphone turns on');
@@ -98,43 +92,38 @@ export async function run({ launch, restart, log, topic }) {
     unit = near / gain;
     log(`SA-3: heard the speaker at gain ${gain.toFixed(3)} as ${near.toFixed(4)}`);
 
-    if (isolated) {
-      // SA-4: L も話し、L のスピーカーの音が L の mic に入る部屋でも、S の出力に S 自身の声は戻らない(L のエコー
-      // キャンセル)。L が黙っている間にエコーキャンセルが学び、その後で L が話す(L の声は L の部屋=出力へ流す)。
-      const echo = record(speaker);
-      await micOn(listener);
-      const restore = hearOwnOutput(listener);
-      let voice = () => undefined;
-      try {
-        await sleep(4_000);
-        voice = speak('listener', REPLY, 'listener_out');
-        await sleep(6_000);
-        const own = echo.level(2 * WINDOW_MS, VOICE);
-        const reply = echo.level(2 * WINDOW_MS, REPLY);
-        log(`SA-4: the speaker hears the listener as ${reply.toFixed(4)} and its own voice as ${own.toFixed(4)}`);
-        assert.ok(reply > 0.3 * near, 'the speaker hears the listener');
-        assert.ok(own < 0.05 * reply, 'the own voice of the speaker does not come back');
-      } catch (error) {
-        // 他の項目は続けて確かめ、最後に失敗にする。
-        failures.push(error);
-      } finally {
-        voice();
-        restore();
-        echo.stop();
-      }
-      await micOff(listener);
-
-      // SA-3: 離れると、出力の大きさが音量の比のとおりに減る。
-      await walk(listener, 's', () =>
-        eventually('the listener to walk 4 m away', async () => (await sameDome(speaker)) <= 0.25)
-      );
-      const farGain = await sameDome(speaker);
-      await sleep(1_000 + WINDOW_MS);
-      const far = heard.level(WINDOW_MS);
-      const ratio = far / near / (farGain / gain);
-      log(`SA-3: at gain ${farGain.toFixed(3)} heard as ${far.toFixed(4)} (${ratio.toFixed(2)} of the expected)`);
-      assert.ok(Math.abs(ratio - 1) < 0.2, 'the output follows the attenuation');
+    // SA-4: L も話し、L のスピーカーの音が L の mic に入る部屋でも、S の出力に S 自身の声は戻らない(L のエコー
+    // キャンセル)。L が黙っている間にエコーキャンセルが学び、その後で L が話す(L の声は L の部屋=出力へ流す)。
+    const echo = record(speaker);
+    await micOn(listener);
+    const restore = hearOwnOutput(listener);
+    let voice = () => undefined;
+    try {
+      await sleep(4_000);
+      voice = speak('listener', REPLY, 'listener_out');
+      await sleep(6_000);
+      const own = echo.level(2 * WINDOW_MS, VOICE);
+      const reply = echo.level(2 * WINDOW_MS, REPLY);
+      log(`SA-4: the speaker hears the listener as ${reply.toFixed(4)} and its own voice as ${own.toFixed(4)}`);
+      assert.ok(reply > 0.3 * near, 'the speaker hears the listener');
+      assert.ok(own < 0.05 * reply, 'the own voice of the speaker does not come back');
+    } finally {
+      voice();
+      restore();
+      echo.stop();
     }
+    await micOff(listener);
+
+    // SA-3: 離れると、出力の大きさが音量の比のとおりに減る。
+    await walk(listener, 's', () =>
+      eventually('the listener to walk 4 m away', async () => (await sameDome(speaker)) <= 0.25)
+    );
+    const farGain = await sameDome(speaker);
+    await sleep(1_000 + WINDOW_MS);
+    const far = heard.level(WINDOW_MS);
+    const ratio = far / near / (farGain / gain);
+    log(`SA-3: at gain ${farGain.toFixed(3)} heard as ${far.toFixed(4)} (${ratio.toFixed(2)} of the expected)`);
+    assert.ok(Math.abs(ratio - 1) < 0.2, 'the output follows the attenuation');
 
     // SA-6: L が S を mute すると S の音だけが止まる。presence と移動は変わらない。
     await authorAction(listener, topic, ids.speaker.pubkey, text('common', 'actions.mute'));
@@ -188,7 +177,6 @@ export async function run({ launch, restart, log, topic }) {
 
     // SA-7: 再起動の後の mic は off(O は mic を on のまま止める)。
     other = await restart(other);
-    await other.capFrames(FRAMES_PER_SECOND);
     await accept(other);
     await openTopic(other, topic, 'game');
     await entered(other);
@@ -216,7 +204,6 @@ export async function run({ launch, restart, log, topic }) {
     }
   }
   log(`SA-8: ${established.length} media connection(s) over direct_p2p, no identifiers in the media logs`);
-  if (failures.length) throw failures[0];
 }
 
 async function createDome(instance, title) {

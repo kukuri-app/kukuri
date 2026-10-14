@@ -4,10 +4,9 @@
 
 ## 自動の試験
 
-`apps/desktop/tests/real-app/scenarios/spatial-audio.mjs`。配布と同じ build を 3 つ（聞き手 L・話者 S・O）同じ PC で動かし、L が Dome を作って稼働・入室し、S と O が入る。動かし方は [dev.md](dev.md) の「実際のアプリを複数動かす自動の試験」。CI では Linux package と windows-fast で、関係する PR ごとと毎晩に動く。
+`apps/desktop/tests/real-app/scenarios/spatial-audio.mjs`。配布と同じ build を 3 つ（聞き手 L・話者 S・O）同じ PC で動かし、L が Dome を作って稼働・入室し、S と O が入る。動かし方は [dev.md](dev.md) の「実際のアプリを複数動かす自動の試験」。CI では Linux package で、関係する PR ごとと毎晩に動く。instance ごとの仮想の入出力（`REAL_APP_AUDIO=pulse`、PulseAudio の null sink）を使う。
 
-- Linux（`REAL_APP_AUDIO=pulse`）: instance ごとの仮想の入出力（PulseAudio の null sink）で、全項目を確かめる。
-- Windows（`REAL_APP_AUDIO=vbcable`）: 仮想の線（VB-CABLE）1 本を全 instance が共有するので、instance ごとに入出力を分ける項目（SA-2 の開けない構成・SA-3 の減衰の比・SA-4）は確かめない。出た音は instance の process の音声 session の peak で測る。
+Windows の CI では動かさない（GPU の無い runner では、3 つの Dome の 3D の描画が CPU を埋める。2026-10-14 のユーザー判断）。Windows の音声の機器の経路は、[live の試験](live-media.md)で確かめる（同じ Rust の音声の部品）。
 
 | 項目 | 確かめること | 観測 |
 | --- | --- | --- |
