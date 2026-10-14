@@ -240,10 +240,16 @@ async function micOff(instance) {
   );
 }
 
-/// avatar を `key` の向きへ、`until()` が終わるまで歩かせる(利用者と同じく操作を再開してから押し、Esc でポインタの
-/// 固定を解く)。進む速さは描画の frame の数で変わるので、時間ではなく着いたことで止める。
+/// avatar を `key` の向きへ、`until()` が終わるまで歩かせる(利用者と同じく、window を前に出して Dome の列を選び、操作を
+/// 再開してから押し、Esc でポインタの固定を解く)。window に focus が戻ると、前に focus のあった別の列が選ばれて Dome の
+/// 操作は止まり、Dome の画面の中を押しても列は選ばれない(#1822)。進む速さは描画の frame の数で変わるので、時間ではなく
+/// 着いたことで止める。
 async function walk(instance, key, until) {
-  if (!(await instance.evaluate('document.hasFocus()'))) instance.focus();
+  if (!(await instance.evaluate('document.hasFocus()'))) {
+    instance.focus();
+    await eventually(`${instance.name} to have the window focus`, () => instance.evaluate('document.hasFocus()'));
+  }
+  await instance.evaluate(`(document.querySelector('${STAGE}').closest('[data-column-id]').focus({ preventScroll: true }), true)`);
   await click(instance, t('camera.resume'));
   await press(instance, key, until);
   await press(instance, 'Escape');
