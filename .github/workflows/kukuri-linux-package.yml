@@ -217,10 +217,14 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get install -y xvfb openbox xdotool pulseaudio pulseaudio-utils libasound2-plugins
+          # #1822: 音声の server は desktop(rtkit の下の PipeWire・PulseAudio)と同じく real-time の優先度で動かす。無いと
+          # CPU が埋まったときに server が遅れ、app の出力が作り直されてエコーキャンセルが数秒合わなくなる。
+          sudo prlimit --pid $$ --rtprio=95 --nice=40
           xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- bash -c '
             set -euo pipefail
             openbox &
             pulseaudio --start --exit-idle-time=-1
+            ps -L -o cls= -p "$(pgrep -d, -x pulseaudio)" | grep RR > /dev/null || { echo "PulseAudio has no real-time thread" >&2; exit 1; }
             node apps/desktop/tests/real-app/run.mjs \
               --app apps/desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/kukuri-desktop-tauri \
               --root "$RUNNER_TEMP/real-app"'
