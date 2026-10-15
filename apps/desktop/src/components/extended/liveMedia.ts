@@ -160,7 +160,8 @@ export function encodeVideo(options: {
       forceKeyframe = true;
     }
     let frame: VideoFrame;
-    if (size.width === width && size.height === height) {
+    // WebKitGTK 2.50(Ubuntu 22.04)は `<video>` から作った frame の encode に失敗するので、canvas に描いてから作る(#1834)。
+    if (source instanceof VideoFrame && size.width === width && size.height === height) {
       frame = new VideoFrame(source, { timestamp: capturedUs });
     } else {
       canvas.width = size.width;

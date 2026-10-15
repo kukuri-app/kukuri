@@ -121,6 +121,53 @@ describe('live media', () => {
     );
   });
 
+  // #1834: WebKitGTK 2.50 は `<video>` から作った frame の encode に失敗するので、`<video>` の frame は canvas から作る。
+  test('makes the frames of the preview video from a canvas', () => {
+    const sources: unknown[] = [];
+    vi.stubGlobal(
+      'VideoEncoder',
+      class {
+        state = 'configured';
+        encodeQueueSize = 0;
+        configure() {}
+        encode() {}
+        close() {}
+      }
+    );
+    vi.stubGlobal(
+      'VideoFrame',
+      class {
+        constructor(source: unknown) {
+          sources.push(source);
+        }
+        close() {}
+      }
+    );
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage() {},
+    } as unknown as CanvasRenderingContext2D);
+    let frame = () => {};
+    const track = { addEventListener: () => {}, stop: () => {} };
+    const capture = encodeVideo({
+      stream: { getVideoTracks: () => [track], getTracks: () => [track] } as unknown as MediaStream,
+      limits: { width: 640, height: 360, framerate: 15, bitrate: 1_000_000 },
+      preview: {
+        videoWidth: 640,
+        videoHeight: 360,
+        play: () => Promise.resolve(),
+        requestVideoFrameCallback: (callback: () => void) => ((frame = callback), 0),
+      } as unknown as HTMLVideoElement,
+      push: async () => {},
+      onEnded: () => {},
+    });
+    frame();
+    capture.stop();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toBeInstanceOf(HTMLCanvasElement);
+  });
+
   // ADR 0067 §8: 画面が変わらない間も 1 秒ごとに前の frame を送り直す。送り直しの直前に画面が変わって frame が出ても、
   // 次の frame まで 1 秒を超えてあけない。
   test('re-sends a still screen every second even right after a changed frame', () => {
