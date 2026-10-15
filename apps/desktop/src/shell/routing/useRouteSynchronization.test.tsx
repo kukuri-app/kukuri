@@ -594,5 +594,49 @@ describe('useRouteSynchronization', () => {
       expect(storeApi.getState().workspaceState.columns.map((column) => column.id)).toEqual(idsBefore);
       view.unmount();
     });
+
+    test('does not normalize a stale rendered url back over a newer hash before the router renders it', () => {
+      // 起動直後: topic の無い URL を既定の topic へ正規化する navigate の後、router が描画する前に hash が別の topic へ
+      // 変わる(利用者の戻る・試験の hash の設定)。その間の store の更新で effect が古い描画の URL を処理し直し、正規化を
+      // 予約し直すと、新しい hash を既定の topic で上書きしていた(実アプリの試験の smoke の時間切れ、#1837)。
+      const generalUrl = '/timeline?topic=kukuri%3Atopic%3Ageneral';
+      const testUrl = '/timeline?topic=kukuri%3Atopic%3Atest';
+      const frames: Array<() => void> = [];
+      const storeApi = createDesktopShellStore();
+      const staleLocation = { pathname: '/timeline', search: '' };
+      const args = createHookArgs(storeApi, {
+        lastObservedRouteUrlRef: { current: '/timeline' },
+        resolvedRouteLocation: staleLocation,
+        scheduleAnimationFrame: (callback: () => void) => frames.push(callback),
+        syncRoute: vi.fn(() => {
+          args.pendingRouteUrlRef.current = generalUrl;
+          setWindowHash(generalUrl);
+        }),
+      });
+      const view = renderHook((props: RouteSynchronizationArgs) => useRouteSynchronization(props), {
+        initialProps: args,
+      });
+      act(() => frames.splice(0).forEach((frame) => frame()));
+      expect(args.syncRoute).toHaveBeenCalledTimes(1);
+
+      setWindowHash(testUrl);
+      for (const panel of ['loading', 'ready'] as const) {
+        act(() => {
+          storeApi.getState().patchState({
+            channelPanelStateByTopic: { 'kukuri:topic:general': { status: panel, error: null } },
+          });
+        });
+        view.rerender({
+          ...args,
+          resolvedRouteLocation: { ...staleLocation },
+          state: selectShellRoutingSlice(storeApi.getState()),
+        });
+      }
+      act(() => frames.splice(0).forEach((frame) => frame()));
+
+      expect(args.syncRoute).toHaveBeenCalledTimes(1);
+      expect(window.location.hash).toBe(`#${testUrl}`);
+      view.unmount();
+    });
   });
 });
