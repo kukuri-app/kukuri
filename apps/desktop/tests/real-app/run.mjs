@@ -5,8 +5,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { launch } from './driver.mjs';
+import { launch, within } from './driver.mjs';
 import { TOPIC } from './session.mjs';
+
+/// 失敗時の診断の 1 回の評価を待つ上限(応答しない画面があっても log を残して終わるため。#1842)。
+const DIAGNOSE_MS = 10_000;
 
 const SCENARIOS = {
   smoke: () => import('./scenarios/smoke.mjs'),
@@ -63,24 +66,26 @@ for (const name of names) {
     console.log(`FAIL ${name}: ${error?.stack ?? error}`);
     // 失敗の時点で各 instance の画面に見えているもの(調べるため)。
     for (const instance of started) {
-      const seen = await instance
-        .evaluate(
+      const seen = await within(
+        instance.evaluate(
           `[...document.querySelectorAll('h1, h2, h3, button, [role="status"], [role="alert"]')]` +
             `.filter((node) => node.getClientRects().length > 0)` +
             `.map((node) => (node.getAttribute('aria-label') ?? node.textContent ?? '').trim()).filter(Boolean).join(' | ')`
-        )
-        .catch((reason) => `unavailable: ${reason}`);
+        ),
+        DIAGNOSE_MS
+      ).catch((reason) => `unavailable: ${reason}`);
       console.log(`[${name}] ${instance.name} sees: ${seen}`);
       // window の focus・選ばれている列・keyboard の focus のある列・画面の中の列(列の選ばれ方で止まる失敗を調べるため。#1822)。
-      const columns = await instance
-        .evaluate(
+      const columns = await within(
+        instance.evaluate(
           `JSON.stringify({ focus: document.hasFocus(), ` +
             `selected: document.querySelector('[data-column-id][data-active]')?.dataset.columnId, ` +
             `keyboard: document.activeElement?.closest('[data-column-id]')?.dataset.columnId, ` +
             `onScreen: [...document.querySelectorAll('[data-column-id]')].filter((column) => { ` +
             `const rect = column.getBoundingClientRect(); return rect.right > 0 && rect.left < innerWidth; }).map((column) => column.dataset.columnId) })`
-        )
-        .catch((reason) => `unavailable: ${reason}`);
+        ),
+        DIAGNOSE_MS
+      ).catch((reason) => `unavailable: ${reason}`);
       console.log(`[${name}] ${instance.name} columns: ${columns}`);
     }
   } finally {
