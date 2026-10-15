@@ -895,6 +895,10 @@ export function useRouteSynchronization({
 
     if (shouldNormalize) {
       scheduleAnimationFrame(() => {
+        // router がこの URL を描画した後に hash が別の URL へ進んでいれば(戻る等)、古い URL を正規化して新しい URL を
+        // 上書きしない。新しい URL は描画されたときに処理する。
+        const liveLocation = window.location.hash ? parseHashRouteLocation(window.location.hash) : null;
+        if (liveLocation && `${liveLocation.pathname}${liveLocation.search}` !== currentUrl) return;
         syncRoute('replace', {
           activeTopic: nextTopic,
           composeTarget: privateComposeTarget(nextSelectedChannelId),
