@@ -18,6 +18,57 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.4.5-preview.2] - 2026-10-15
+
+### Features
+
+- KUKURI_INSTANCE を付けた起動は同じ PC の他の instance と同時に動かす（#1800 AC-1） ([#1801](https://github.com/kukuri-app/kukuri/pull/1801))
+- 視聴者どうしの転送と配信者の署名で、直接の枠を超えた視聴者へ届ける（#1034 AC-2b） ([#1794](https://github.com/kukuri-app/kukuri/pull/1794))
+- 配信者から直接届く視聴者へ映像と音声を配信する（#1034 AC-2a） ([#1793](https://github.com/kukuri-app/kukuri/pull/1793))
+- 空間音声を moq-lite の専用 ALPN と Rust の音声処理へ移す（#1033 AC-1） ([#1791](https://github.com/kukuri-app/kukuri/pull/1791))
+
+### Fixes
+
+- WebKitGTK 2.50 で <video> から作った frame が encode できないので、canvas に描いてから作る（#1834 AC-1） ([#1835](https://github.com/kukuri-app/kukuri/pull/1835))
+- 画面が変わらない間の送り直しを、1 秒ごとの tick で毎回送る形にする（#1828 AC-1） ([#1829](https://github.com/kukuri-app/kukuri/pull/1829))
+- 他の author の Dome の preset は、一度読んで検証したものを参照ごとに使い回す（#1818 AC-1） ([#1821](https://github.com/kukuri-app/kukuri/pull/1821))
+- session を読むとき、反映済みと同じ版を返す読み先で打ち切らず、残りの読み先から新しい版を探す（#1816 AC-1） ([#1820](https://github.com/kukuri-app/kukuri/pull/1820))
+- 変更の知らせの時点で取り直せなかった live・game の一覧を、次の store の更新で取り直す（#1815 AC-1） ([#1819](https://github.com/kukuri-app/kukuri/pull/1819))
+- hint の時点で読み先に無かった session を、間を置いて読み直して一覧に出す（#1813 AC-1） ([#1814](https://github.com/kukuri-app/kukuri/pull/1814))
+- 空間音声の echo cancellation が再生の mix を受け取るよう、moq-audio を fork に固定する（#1805 AC-1） ([#1812](https://github.com/kukuri-app/kukuri/pull/1812))
+- 配信をし直しても、見続けている Linux の視聴者に映像を描く（#1809 AC-1） ([#1810](https://github.com/kukuri-app/kukuri/pull/1810))
+- Dome で mute した相手の声を、画面の作者の情報に無くても流さない（#1807 AC-1） ([#1808](https://github.com/kukuri-app/kukuri/pull/1808))
+- 動いている Dome の host を一瞬 offline と読まない（#1803 AC-1） ([#1804](https://github.com/kukuri-app/kukuri/pull/1804))
+- CSP で Tauri の IPC の custom protocol を許し、live の映像を raw のまま受け渡す（#1034 AC-2a） ([#1799](https://github.com/kukuri-app/kukuri/pull/1799))
+- 隣の Dome を読み直しの間も確かめ済みの状態に保ち、空間音声の購読を切らない（#1033 AC-1） ([#1798](https://github.com/kukuri-app/kukuri/pull/1798))
+- AppImage に GStreamer の plugin を同梱して動画の再生と WebCodecs を使えるようにする（#1795） ([#1796](https://github.com/kukuri-app/kukuri/pull/1796))
+- baseline候補集合を現行scanner除外へ同期
+
+### Other
+
+- リリースの版を 0.4.5 にする ([#1833](https://github.com/kukuri-app/kukuri/pull/1833))
+- 空間音声の試験で歩かせる前に、操作を再開できるまで window と Dome の列を置き直す（#1822 AC-1） ([#1832](https://github.com/kukuri-app/kukuri/pull/1832))
+- update doc ([#1831](https://github.com/kukuri-app/kukuri/pull/1831))
+- SA-4 で話者に聞き手の声が届く基準を、話者の声の 10% にする（#1822 AC-4） ([#1830](https://github.com/kukuri-app/kukuri/pull/1830))
+- 実アプリの試験が失敗したとき、各 instance の選ばれている列と focus の位置を log に出す（#1822 AC-3） ([#1827](https://github.com/kukuri-app/kukuri/pull/1827))
+- 実アプリの試験の topic を test にし、外へ出る通信を runbook に正しく書く（#1825 AC-1） ([#1826](https://github.com/kukuri-app/kukuri/pull/1826))
+- live の映像・音声の確認を、OS の入出力の境界と視聴者の canvas までの自動の試験にする（#1800 AC-4） ([#1811](https://github.com/kukuri-app/kukuri/pull/1811))
+- 実アプリの試験の PulseAudio を、desktop と同じく real-time の優先度で動かす（#1822 AC-2） ([#1824](https://github.com/kukuri-app/kukuri/pull/1824))
+- 空間音声の試験で歩かせる前に、window の focus を待って Dome の列を選ぶ（#1822 AC-1） ([#1823](https://github.com/kukuri-app/kukuri/pull/1823))
+- 空間音声の確認を、OS の入出力の境界までの自動の試験にする（#1800 AC-3） ([#1806](https://github.com/kukuri-app/kukuri/pull/1806))
+- 配布と同じ build を同じ PC で複数動かす自動の試験の仕組みを足し、CI で動かす（#1800 AC-2） ([#1802](https://github.com/kukuri-app/kukuri/pull/1802))
+- live の映像の方式・codec・取り込む対象・画質の上限を決める（#1034 AC-1） ([#1792](https://github.com/kukuri-app/kukuri/pull/1792))
+- metaverse の空間音声と live 配信のメディア搬送を決める（#1031 AC-1） ([#1790](https://github.com/kukuri-app/kukuri/pull/1790))
+- 旧大型登録の解消を既存状態として正確に記す
+- リファクタリング成果と次回監査baselineを確定
+- 解消済みDesktopShellPageの大型登録を除去
+- index query の要求準備と結果処理を統合 ([#1787](https://github.com/kukuri-app/kukuri/pull/1787))
+- 完了済みの通信移行とCN回収の現状を同期 ([#1788](https://github.com/kukuri-app/kukuri/pull/1788))
+- declare content commands in one local table ([#1786](https://github.com/kukuri-app/kukuri/pull/1786))
+- 著者タイムラインの正本を著者別mapへ統合 ([#1785](https://github.com/kukuri-app/kukuri/pull/1785))
+- share one subscription generation counter ([#1784](https://github.com/kukuri-app/kukuri/pull/1784))
+- 0.4.4 preview の公開と LP・運用記録 ([#1776](https://github.com/kukuri-app/kukuri/pull/1776))
+
 ## [v0.4.4-preview.1] - 2026-10-12
 
 ### Features
