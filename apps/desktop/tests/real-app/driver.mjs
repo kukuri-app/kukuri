@@ -12,6 +12,10 @@ const STARTUP_MS = 60_000;
 /// 利用者の終了と同じ経路で止まるのを待つ上限。
 const STOP_MS = 15_000;
 
+/// `promise` を `ms` まで待ち、過ぎたら失敗にする(画面の JS が応答しなくても止まらないため。#1842)。
+export const within = (promise, ms) =>
+  Promise.race([promise, new Promise((_, reject) => setTimeout(reject, ms, new Error(`no reply in ${ms} ms`)).unref())]);
+
 /// process(負なら process group)へ signal を送る。既に終わっていれば何もしない。
 function signal(pid, name) {
   try {
@@ -91,9 +95,10 @@ export async function launch({ app, root, name, port, env = {}, fresh = true }) 
     /// 止まらなければ強制で止める。
     async close() {
       if (WINDOWS) {
-        await page
-          .evaluate(`window.__TAURI_INTERNALS__.invoke('set_window_close_preference', { preference: { behavior: 'quit' } })`)
-          .catch(() => undefined);
+        await within(
+          page.evaluate(`window.__TAURI_INTERNALS__.invoke('set_window_close_preference', { preference: { behavior: 'quit' } })`),
+          STOP_MS
+        ).catch(() => undefined);
         spawn('taskkill', ['/PID', String(child.pid)], { stdio: 'ignore' });
       } else {
         signal(child.pid, 'SIGTERM');
