@@ -187,6 +187,7 @@ async fn trust_appeal_and_relation_graph_work_end_to_end() -> Result<()> {
                 verdict_id: verdict.id,
                 verdict_action: "allow".to_string(),
                 critical: false,
+                media_hashes: Vec::new(),
             })
             .await?;
     }

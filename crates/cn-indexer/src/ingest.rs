@@ -781,6 +781,21 @@ impl IngestPipeline {
             .media_targets
             .lock()
             .expect("media reference guard mutex") = Some(media_targets.clone());
+        // 添付 hash の判断（#1062 AC-2）は、その blob を取得・scan する前に照合する。scan の再利用でも同じ。
+        let media_hashes = media_targets
+            .iter()
+            .map(|target| target.hash.clone())
+            .collect::<Vec<_>>();
+        if self
+            .entries
+            .is_media_transmission_prevented(&media_hashes)
+            .await
+            .map_err(transient)?
+        {
+            self.deindex_object(scope_kind, scope_id, object.object_id.as_str())
+                .await?;
+            return Ok(IngestOutcome::Deindexed);
+        }
         let mut derived_tags: Vec<String> = report.derived_tags.clone();
         // content advisory は本文 text と各 blob の和集合（ADR 0028 §8.3）。blob 単位の要素は
         // `subject_kind = blob_cid` のまま post 行へ同梱し、client の hash 単位取得ゲートに使う。
@@ -850,6 +865,7 @@ impl IngestPipeline {
                 verdict_id: verdict_id.to_string(),
                 verdict_action: report.verdict.action.as_str().to_string(),
                 critical: report.verdict.critical,
+                media_hashes,
             })
             .await
             .context("failed to record index entry in the authoritative store")

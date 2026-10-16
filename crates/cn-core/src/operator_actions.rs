@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::config::COMMUNITY_NODE_ADMISSION_SERVICE_NAME;
 use crate::transmission_preventions::{
-    release_malware_restriction_in_tx, restrict_malware_post_in_tx,
+    MalwareSubject, release_malware_restriction_in_tx, restrict_malware_in_tx,
 };
 use crate::{AdmissionConfig, AdmissionMode};
 
@@ -52,13 +52,15 @@ pub enum AdminOperation {
         report_id: String,
         status: OperatorReportStatus,
     },
-    /// malware の通報の投稿を当該 CN で制限し、通報を対応済みにする（#1062）。
-    RestrictMalwarePost {
+    /// malware の通報の対象（投稿・添付の blob hash）を当該 CN で制限し、通報を対応済みにする（#1062）。
+    RestrictMalware {
+        subject: MalwareSubject,
         report_id: String,
     },
-    /// 投稿の malware の制限だけを解除する（#1062）。
+    /// 対象の malware の制限だけを解除する（#1062）。
     ReleaseMalwareRestriction {
-        post_id: String,
+        subject: MalwareSubject,
+        subject_id: String,
         reason: String,
     },
 }
@@ -168,7 +170,8 @@ pub async fn apply_operator_action(
             let (current, reason, decided) = sqlx::query_as::<_, (String, String, bool)>(
                 "SELECT report.status, report.reason, EXISTS (
                      SELECT 1 FROM cn_legal.transmission_preventions decision
-                     WHERE report.subject_kind = 'post' AND decision.subject_kind = 'post'
+                     WHERE decision.subject_kind
+                           = CASE report.subject_kind WHEN 'media' THEN 'blob' ELSE report.subject_kind END
                        AND decision.subject_id = report.subject_id
                        AND decision.basis_category = 'malware')
                  FROM cn_admin.reports report
@@ -200,19 +203,37 @@ pub async fn apply_operator_action(
                 json!({ "status": status.as_str() }),
             )
         }
-        AdminOperation::RestrictMalwarePost { report_id } => {
-            let (post_id, before, after) =
-                restrict_malware_post_in_tx(&mut tx, actor, report_id.trim()).await?;
-            ("malware.restrict_post", "post", post_id, before, after)
+        AdminOperation::RestrictMalware { subject, report_id } => {
+            let (subject_id, before, after) =
+                restrict_malware_in_tx(&mut tx, actor, *subject, report_id.trim()).await?;
+            let action = match subject {
+                MalwareSubject::Post => "malware.restrict_post",
+                MalwareSubject::Blob => "malware.restrict_blob",
+            };
+            (action, subject.as_str(), subject_id, before, after)
         }
-        AdminOperation::ReleaseMalwareRestriction { post_id, reason } => {
-            let post_id = post_id.trim();
-            let (before, after) =
-                release_malware_restriction_in_tx(&mut tx, actor, post_id, reason.trim()).await?;
+        AdminOperation::ReleaseMalwareRestriction {
+            subject,
+            subject_id,
+            reason,
+        } => {
+            let subject_id = subject_id.trim();
+            let (before, after) = release_malware_restriction_in_tx(
+                &mut tx,
+                actor,
+                *subject,
+                subject_id,
+                reason.trim(),
+            )
+            .await?;
+            let action = match subject {
+                MalwareSubject::Post => "malware.release_post",
+                MalwareSubject::Blob => "malware.release_blob",
+            };
             (
-                "malware.release_post",
-                "post",
-                post_id.to_string(),
+                action,
+                subject.as_str(),
+                subject_id.to_string(),
                 before,
                 after,
             )
@@ -248,7 +269,7 @@ pub fn validate_admin_operation(operation: &AdminOperation) -> Result<()> {
             validate_public_topic_id(topic_id).map(|_| ())
         }
         AdminOperation::SetReportStatus { report_id, .. }
-        | AdminOperation::RestrictMalwarePost { report_id } => {
+        | AdminOperation::RestrictMalware { report_id, .. } => {
             let report_id = report_id.trim();
             if report_id.is_empty() {
                 bail!("report id must not be empty");
@@ -258,13 +279,12 @@ pub fn validate_admin_operation(operation: &AdminOperation) -> Result<()> {
             }
             Ok(())
         }
-        AdminOperation::ReleaseMalwareRestriction { post_id, reason } => {
-            let post_id = post_id.trim();
-            if post_id.is_empty() || post_id.len() > 512 || post_id.chars().any(char::is_control) {
-                bail!(
-                    "post id must be present, at most 512 characters, without control characters"
-                );
-            }
+        AdminOperation::ReleaseMalwareRestriction {
+            subject,
+            subject_id,
+            reason,
+        } => {
+            subject.validate_id(subject_id.trim())?;
             if reason.trim().is_empty() || reason.len() > 500 {
                 bail!("release reason must be present and at most 500 characters");
             }

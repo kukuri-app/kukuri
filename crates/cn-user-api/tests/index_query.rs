@@ -134,6 +134,7 @@ impl MemoryIndex {
                 verdict_id,
                 verdict_action: "allow".to_string(),
                 critical: false,
+                media_hashes: Vec::new(),
             })
             .await?;
         self.projection
@@ -196,6 +197,7 @@ impl MemoryIndex {
                 verdict_id,
                 verdict_action: "allow".to_string(),
                 critical: false,
+                media_hashes: Vec::new(),
             })
             .await?;
         self.projection

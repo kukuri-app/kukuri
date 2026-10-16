@@ -92,6 +92,7 @@ async fn index_post(
             verdict_id: verdict.id,
             verdict_action: "allow".to_string(),
             critical: false,
+            media_hashes: Vec::new(),
         },
     )
     .await?;

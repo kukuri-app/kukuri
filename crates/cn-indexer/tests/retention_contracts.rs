@@ -185,6 +185,7 @@ async fn index_row(pool: &PgPool, scope: &str, object: &str, created_at: i64) ->
             verdict_id: verdict.id,
             verdict_action: "allow".into(),
             critical: false,
+            media_hashes: Vec::new(),
         },
     )
     .await?;

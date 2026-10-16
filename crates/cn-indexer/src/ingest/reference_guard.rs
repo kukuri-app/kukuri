@@ -248,6 +248,19 @@ impl ReferenceGuard<'_> {
                 source.media_scan_targets(self.replica, self.object).await? == expected,
                 "media manifest changed during scan"
             );
+            let hashes = expected
+                .into_iter()
+                .map(|target| target.hash)
+                .collect::<Vec<_>>();
+            ensure!(
+                !self
+                    .pipeline
+                    .entries
+                    .is_media_transmission_prevented(&hashes)
+                    .await
+                    .map_err(transient)?,
+                "referenced media is transmission prevented"
+            );
         }
         Ok(())
     }
