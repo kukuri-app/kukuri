@@ -9,7 +9,7 @@ use kukuri_cn_core::{
     TestDatabase, cleanup_expired, configure_case_retention, connect_postgres,
     delete_expired_batch, export_legal_hold, get_community_node_report, get_rights_request,
     get_risk_signal, get_signed_moderation_event, get_tester_feedback, initialize_database,
-    list_operator_actions, migrate_postgres_up_to, start_legal_hold,
+    list_malware_restrictions, list_operator_actions, migrate_postgres_up_to, start_legal_hold,
 };
 use serde_json::Value;
 use sqlx::PgPool;
@@ -83,7 +83,19 @@ const SEED: [&str; 8] = [
      FROM generate_series(1, $2) AS i",
 ];
 
-/// `SEED` で 1 行ずつ入れた起算点の行が、すべて期限切れになったときに消える行の数。
+/// malware の判断を、解除時刻 `$1` の解除済みと判断時刻 `$1` の有効なものを `$2` 件ずつ入れる（#1062）。
+/// 有効な判断は期限で消えない。
+const MALWARE_SEED: &str = "INSERT INTO cn_legal.transmission_preventions
+         (id, subject_kind, subject_id, basis_category, capabilities, decided_by, decided_at,
+          related_report_id, released_at, released_by, release_reason)
+     SELECT 'malware-' || $3 || '-' || s || '-' || i, 'post', 'post-' || $3 || '-' || s || '-' || i,
+            'malware', ARRAY['search'], 'operator', $1, 'report-' || i,
+            CASE s WHEN 'released' THEN $1 END, CASE s WHEN 'released' THEN 'operator' END,
+            CASE s WHEN 'released' THEN 'cleared' END
+     FROM generate_series(1, $2) AS i
+     CROSS JOIN unnest(ARRAY['released', 'active']) AS s";
+
+/// `seed` で 1 行ずつ入れた起算点の行が、すべて期限切れになったときに消える行の数。
 const ONE_EACH: CleanupCounts = CleanupCounts {
     sensitive_items: 4,
     rights_request_events: 3,
@@ -93,10 +105,23 @@ const ONE_EACH: CleanupCounts = CleanupCounts {
     operator_actions: 1,
     moderation_events: 1,
     risk_signals: 1,
+    malware_restrictions: 1,
 };
 
+/// `SEED` と `MALWARE_SEED` を入れる。
 async fn seed(pool: &PgPool, tag: &str, start: DateTime<Utc>, count: i32) -> Result<()> {
-    for sql in SEED {
+    seed_cases(pool, tag, start, count, &SEED).await?;
+    seed_cases(pool, tag, start, count, &[MALWARE_SEED]).await
+}
+
+async fn seed_cases(
+    pool: &PgPool,
+    tag: &str,
+    start: DateTime<Utc>,
+    count: i32,
+    seeds: &[&'static str],
+) -> Result<()> {
+    for &sql in seeds {
         sqlx::query(sql)
             .bind(start)
             .bind(count)
@@ -107,7 +132,7 @@ async fn seed(pool: &PgPool, tag: &str, start: DateTime<Utc>, count: i32) -> Res
     Ok(())
 }
 
-/// 8 表の全行の (表, id, 行の版)。行が書き直されると版（`xmin`）が変わる。
+/// 9 表の全行の (表, id, 行の版)。行が書き直されると版（`xmin`）が変わる。
 async fn row_versions(pool: &PgPool) -> Result<Vec<(String, String, String)>> {
     Ok(sqlx::query_as(
         "SELECT 'reports', id, xmin::text FROM cn_admin.reports
@@ -120,6 +145,8 @@ async fn row_versions(pool: &PgPool) -> Result<Vec<(String, String, String)>> {
          UNION ALL SELECT 'moderation_events', id, xmin::text
              FROM cn_safety.signed_moderation_events
          UNION ALL SELECT 'risk_signals', id, xmin::text FROM cn_safety.risk_signals
+         UNION ALL SELECT 'malware_restrictions', id, xmin::text
+             FROM cn_legal.transmission_preventions
          ORDER BY 1, 2",
     )
     .fetch_all(pool)
@@ -174,6 +201,10 @@ async fn visible(pool: &PgPool, tag: &str) -> Result<Vec<bool>> {
         get_risk_signal(pool, &format!("signal-{tag}-1"))
             .await?
             .is_some(),
+        list_malware_restrictions(pool, 50)
+            .await?
+            .iter()
+            .any(|decision| decision.id == format!("malware-{tag}-released-1")),
     ])
 }
 
@@ -232,7 +263,7 @@ async fn retention_runs_do_not_rewrite_rows() -> Result<()> {
         let now = Utc::now();
         seed(&pool, "live", now - Duration::days(1), 2).await?;
         let before = row_versions(&pool).await?;
-        assert_eq!(before.len(), 2 * (1 + 1 + 4 + 3 + 3 + 1 + 1 + 1));
+        assert_eq!(before.len(), 2 * (1 + 1 + 4 + 3 + 3 + 1 + 1 + 1 + 2));
 
         // 起動時（日数の書込みと期限削除）と毎時（期限削除）の処理は、期限内の行を書き直さない。
         configure_case_retention(&pool, &RetentionPolicy::default()).await?;
@@ -261,14 +292,14 @@ async fn every_category_follows_the_configured_days() -> Result<()> {
 
         // 20 日なら期限内。通常読取りが返し、削除しない。
         configure_case_retention(&pool, &every_category(20)).await?;
-        assert_eq!(visible(&pool, "case").await?, vec![true; 8]);
+        assert_eq!(visible(&pool, "case").await?, vec![true; 9]);
         assert_eq!(cleanup_expired(&pool, now).await?, CleanupCounts::default());
         // 5 日に縮めると、既存の行も期限切れになり、通常読取りが返さない。
         configure_case_retention(&pool, &every_category(5)).await?;
-        assert_eq!(visible(&pool, "case").await?, vec![false; 8]);
+        assert_eq!(visible(&pool, "case").await?, vec![false; 9]);
         // 20 日に戻すと、消えていない行は再び読める。
         configure_case_retention(&pool, &every_category(20)).await?;
-        assert_eq!(visible(&pool, "case").await?, vec![true; 8]);
+        assert_eq!(visible(&pool, "case").await?, vec![true; 9]);
         // 10 日なら、起算点＋10 日の直前は期限内で、ちょうどで期限切れになる。
         configure_case_retention(&pool, &every_category(10)).await?;
         assert_eq!(
@@ -397,6 +428,7 @@ async fn expired_deletes_run_in_bounded_transactions() -> Result<()> {
                 operator_actions: 2,
                 moderation_events: 2,
                 risk_signals: 2,
+                malware_restrictions: 2,
             }
         );
         // 上限まで消せた区分がある間は次の取引を繰り返し、hold と異議の参照の外はすべて消える。
@@ -412,8 +444,17 @@ async fn expired_deletes_run_in_bounded_transactions() -> Result<()> {
                 operator_actions: 5,
                 moderation_events: 5,
                 risk_signals: 5 - 1,
+                malware_restrictions: 5,
             }
         );
+        // 有効な malware の判断は、期限切れの起算点でも消えない。
+        let active: (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), COUNT(*) FILTER (WHERE released_at IS NULL)
+             FROM cn_legal.transmission_preventions",
+        )
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(active, (5, 5));
         let left: (String, String) = sqlx::query_as(
             "SELECT (SELECT string_agg(id, ',') FROM cn_admin.reports),
                     (SELECT string_agg(id, ',') FROM cn_safety.risk_signals)",
@@ -452,8 +493,9 @@ async fn migration_keeps_the_expiry_written_by_the_old_policy() -> Result<()> {
         .execute(&pool)
         .await?;
         let now = Utc::now();
-        seed(&pool, "expired", now - Duration::days(1_000), 1).await?;
-        seed(&pool, "live", now - Duration::days(1), 1).await?;
+        // 旧版の schema には malware の判断が無い。
+        seed_cases(&pool, "expired", now - Duration::days(1_000), 1, &SEED).await?;
+        seed_cases(&pool, "live", now - Duration::days(1), 1, &SEED).await?;
         // 旧版の起動時の書き直し（既定の日数）と同じ式で期限を書く。
         sqlx::raw_sql(
             "BEGIN;
@@ -501,8 +543,15 @@ async fn migration_keeps_the_expiry_written_by_the_old_policy() -> Result<()> {
             operator_actions: expired.5 as u64,
             moderation_events: expired.6 as u64,
             risk_signals: expired.7 as u64,
+            malware_restrictions: 0,
         };
-        assert_eq!(before, ONE_EACH);
+        assert_eq!(
+            before,
+            CleanupCounts {
+                malware_restrictions: 0,
+                ..ONE_EACH
+            }
+        );
 
         // 移行すると期限の列は無くなり、移行前に期限切れだった行だけが消える。
         initialize_database(&pool).await?;
@@ -522,7 +571,7 @@ async fn migration_keeps_the_expiry_written_by_the_old_policy() -> Result<()> {
         .await?;
         assert_eq!(columns, 0);
         assert_eq!(cleanup_expired(&pool, now).await?, before);
-        assert_eq!(visible(&pool, "live").await?, vec![true; 8]);
+        assert_eq!(visible(&pool, "live").await?[..8], [true; 8]);
         anyhow::Ok(())
     }
     .await;

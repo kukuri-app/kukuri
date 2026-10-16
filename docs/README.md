@@ -85,6 +85,7 @@ Issue・PR・セッションの記述だけで「実装済み」「検証成功�
 - 専用OpenAI Moderation・動画抽出・共有内容cacheの運用: `docs/runbooks/community-node-openai-moderation.md`
 - community node GCP Terraform デプロイ（deployment profile: low-cost / managed-db / ha）: `docs/runbooks/community-node-gcp-terraform.md`（実装は `infra/terraform/`）
 - community node 権利侵害申出の受付・審査・送信防止: `docs/runbooks/community-node-rights-infringement-requests.md`
+- community node malware 通報の確認・制限・解除（#1062）: `docs/runbooks/community-node-malware-reports.md`
 - community node 発信者情報開示・案件限定保全: `docs/runbooks/community-node-sender-information-disclosure.md`
 
 ## Architecture

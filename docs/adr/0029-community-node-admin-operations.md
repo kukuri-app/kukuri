@@ -26,6 +26,7 @@ admin listener では、runtime Postgres が canonical source である次の操
 - admission mode の変更
 - public supported topic の追加・除去
 - 受信済み report の状態変更
+- malware の report からの投稿の制限と、その制限の解除（#1062、ADR 0032 §6）
 - 異議申し立て中のリスク判定の認容・棄却・検知情報調整・訂正版再発行
 
 各操作は `preview -> confirm -> apply` の二段階にする。apply 時にも入力を再検証し、対象 state の
@@ -83,6 +84,10 @@ private channel capability は audit payload に含めない。
 
 異議申し立て審査の操作記録には、判定状態、分類、深刻度、確信度、公開範囲、失効時刻、関連通報の
 識別子と状態だけを変更前後として保存する。申し立て本文、申立者の識別情報、連絡先は保存しない。
+
+malware の制限・解除の操作記録（`malware.restrict_post` / `malware.release_post`、対象は投稿）には、
+通報の識別子と状態、判断の識別子・根拠・措置 capability・解除時刻・運営者が入力した解除理由だけを
+保存する（#1062）。通報の本文と連絡先は保存しない。
 
 ### Feature Data Classification
 

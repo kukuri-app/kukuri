@@ -14,8 +14,8 @@ use kukuri_cn_core::{
     OperatorReportStatus, RiskSignalCorrection, RiskSignalMetadataEdit, apply_appeal_review_action,
     apply_operator_action, get_appeal_review, latest_readiness_activation, list_appeal_reviews,
     list_community_node_reports, list_operator_actions, list_supported_topics,
-    load_admission_config, parse_bool_env, validate_admin_operation, validate_optional_confidence,
-    validate_optional_expires_at,
+    load_admission_config, parse_bool_env, posts_with_malware_decisions, validate_admin_operation,
+    validate_optional_confidence, validate_optional_expires_at,
 };
 use serde::Deserialize;
 use tower_http::trace::TraceLayer;
@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 use crate::admin_action_render::{render_action_error_page, render_action_success, render_preview};
 use crate::admin_appeal_render::{render_appeal_preview, render_appeal_reviews};
+use crate::admin_malware::malware_restrictions_page;
 use crate::admin_rights_requests::{
     apply_rights_request_action, preview_rights_request_action, rights_request_detail,
     rights_requests_page,
@@ -55,6 +56,7 @@ pub(crate) fn admin_router(state: UserApiState) -> Router {
         .route("/actions/apply", post(apply_action))
         .route("/rights-requests", get(rights_requests_page))
         .route("/tester-feedback", get(tester_feedback_page))
+        .route("/malware-restrictions", get(malware_restrictions_page))
         .route("/rights-requests/{id}", get(rights_request_detail))
         .route(
             "/rights-requests/actions/preview",
@@ -372,6 +374,10 @@ struct ReportView {
     capability: String,
     reason: String,
     status: String,
+    /// malware の通報の投稿（制限の操作を出す）。
+    restrictable: bool,
+    /// 制限による対応済み（対象の投稿に malware の判断がある）。状態を変えられない。
+    restricted: bool,
 }
 
 #[derive(Debug)]
@@ -412,10 +418,21 @@ async fn load_dashboard(state: &AdminState) -> anyhow::Result<DashboardView> {
             )
         })
         .collect();
-    let reports = list_community_node_reports(&state.runtime.pool, 50, 0)
-        .await?
+    let reports = list_community_node_reports(&state.runtime.pool, 50, 0).await?;
+    let malware_posts = reports
+        .iter()
+        .filter(|report| report.reason == "malware" && report.subject_kind == "post")
+        .map(|report| report.subject_id.clone())
+        .collect::<Vec<_>>();
+    let decided = posts_with_malware_decisions(&state.runtime.pool, &malware_posts).await?;
+    let reports = reports
         .into_iter()
         .map(|report| ReportView {
+            restricted: report.status == "actioned"
+                && report.reason == "malware"
+                && report.subject_kind == "post"
+                && decided.contains(&report.subject_id),
+            restrictable: report.reason == "malware" && report.subject_kind == "post",
             created_at: report.created_at.to_rfc3339(),
             id: report.id,
             subject: format!("{}/{}", report.subject_kind, report.subject_id),
@@ -509,15 +526,29 @@ fn render_dashboard(view: &DashboardView) -> String {
         view.reports
             .iter()
             .map(|report| {
-                let action = if write_enabled {
+                // malware の通報の対応済みは制限の操作だけが作り、戻さない（#1062）。
+                let malware = report.reason == "malware";
+                let action = if !write_enabled {
+                    escape_html(&report.status)
+                } else if report.restricted {
+                    "<a href=\"/malware-restrictions\">制限で対応済み（malware の制限を参照）</a>"
+                        .to_string()
+                } else {
+                    let restrict = if report.restrictable {
+                        format!(
+                            r#"<form method="post" action="/actions/preview" class="compact-form"><input type="hidden" name="csrf_token" value="{}"><input type="hidden" name="action" value="malware.restrict_post"><input type="hidden" name="target_id" value="{}"><button class="secondary" type="submit">投稿の制限を確認</button></form>"#,
+                            escape_html(&view.csrf_token),
+                            escape_html(&report.id),
+                        )
+                    } else {
+                        String::new()
+                    };
                     format!(
-                        r#"<form method="post" action="/actions/preview" class="compact-form"><input type="hidden" name="csrf_token" value="{}"><input type="hidden" name="action" value="report.set_status"><input type="hidden" name="target_id" value="{}"><select aria-label="変更後の状態" name="value">{}</select><button class="secondary" type="submit">変更内容を確認</button></form>"#,
+                        r#"<form method="post" action="/actions/preview" class="compact-form"><input type="hidden" name="csrf_token" value="{}"><input type="hidden" name="action" value="report.set_status"><input type="hidden" name="target_id" value="{}"><select aria-label="変更後の状態" name="value">{}</select><button class="secondary" type="submit">変更内容を確認</button></form>{restrict}"#,
                         escape_html(&view.csrf_token),
                         escape_html(&report.id),
-                        report_status_options(&report.status),
+                        report_status_options(&report.status, malware),
                     )
-                } else {
-                    escape_html(&report.status)
                 };
                 format!(
                     "<tr><td>{}</td><td><code>{}</code></td><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
@@ -569,6 +600,7 @@ fn render_dashboard(view: &DashboardView) -> String {
 <section><h2>権利侵害申出</h2><p>専用 schema の申出、scope 判定、追跡状態を確認します。申出人情報は一覧・監査記録へ表示しません。</p><a class="button secondary" href="/rights-requests">権利侵害申出を確認</a></section>
 <section><h2>テスターフィードバック</h2><p>テスターの利用経験レポートを確認します。送信者の識別情報は保存していません。</p><a class="button secondary" href="/tester-feedback">テスターフィードバックを確認</a></section>
 <section><h2>最近の通報</h2><p>新しい順に 50 件を表示します。補足説明と連絡先は、この一覧と操作記録には表示しません。</p><table><thead><tr><th>受信時刻</th><th>識別子</th><th>対象</th><th>機能</th><th>理由</th><th>状態</th><th>操作</th></tr></thead><tbody>{}</tbody></table></section>
+<section><h2>malware の制限</h2><p>malware の通報から、このノードの索引・検索・発見・推薦で返さなくした投稿の判断を確認・解除します。</p><a class="button secondary" href="/malware-restrictions">malware の制限を確認</a></section>
 <section><h2>異議申し立ての審査</h2>{}</section>
 <section><h2>運営操作の記録</h2><p>画面から行った直近 50 件の操作です。データベースで追記専用に保護されています。</p><table><thead><tr><th>実行時刻</th><th>識別子</th><th>運営者</th><th>操作</th><th>対象</th><th>変更</th></tr></thead><tbody>{}</tbody></table></section>
 <section><h2>運用ログ</h2><p>実行時ログは既存のログ基盤に残します。この画面が秘密情報や生ログを複製することはありません。</p>{}<p><code>sudo journalctl -u kukuri-readiness.service -n 100 --no-pager</code></p></section>
@@ -604,9 +636,10 @@ fn admission_options(current: &str) -> String {
         .collect()
 }
 
-fn report_status_options(current: &str) -> String {
+fn report_status_options(current: &str, malware: bool) -> String {
     ["received", "reviewing", "actioned", "dismissed"]
         .into_iter()
+        .filter(|value| !malware || *value != "actioned")
         .map(|value| option(value, value, value == current))
         .collect()
 }
@@ -650,6 +683,13 @@ fn operation_from_form(form: &AdminActionForm) -> anyhow::Result<AdminOperation>
                 status,
             }
         }
+        "malware.restrict_post" => AdminOperation::RestrictMalwarePost {
+            report_id: form.target_id.trim().to_string(),
+        },
+        "malware.release_post" => AdminOperation::ReleaseMalwareRestriction {
+            post_id: form.target_id.trim().to_string(),
+            reason: form.value.trim().to_string(),
+        },
         _ => bail!("unsupported admin operation"),
     };
     validate_admin_operation(&operation)?;
@@ -719,6 +759,8 @@ mod tests {
                 capability: "report_endpoint".to_string(),
                 reason: "\"quoted\"".to_string(),
                 status: "received".to_string(),
+                restrictable: false,
+                restricted: false,
             }],
             appeals: vec![AppealReview {
                 risk_signal_id: "signal-<script>".to_string(),
@@ -759,6 +801,62 @@ mod tests {
         assert!(html.contains("&quot;quoted&quot;"));
         assert!(!html.contains("<img src=x onerror=alert(1)>"));
         assert!(html.contains("&lt;img src=x onerror=alert(1)&gt;"));
+    }
+
+    #[test]
+    fn malware_reports_are_actioned_only_by_restricting_their_post() {
+        // #1062: malware の通報は汎用の状態変更で actioned にできず、投稿の制限を確認する操作を出す。
+        let report = |id: &str, status: &str, restricted: bool| ReportView {
+            created_at: "now".to_string(),
+            id: id.to_string(),
+            subject: "post/post-1".to_string(),
+            capability: "community_index".to_string(),
+            reason: "malware".to_string(),
+            status: status.to_string(),
+            restrictable: true,
+            restricted,
+        };
+        let html = render_dashboard(&DashboardView {
+            admission_mode: "open".to_string(),
+            readiness: "active".to_string(),
+            topics: Vec::new(),
+            reports: vec![
+                report("report-reviewing", "reviewing", false),
+                report("report-actioned", "actioned", true),
+                // #1062 より前に汎用の状態変更で対応済みにした通報は、状態を変えられ、制限もできる。
+                report("report-legacy", "actioned", false),
+            ],
+            appeals: Vec::new(),
+            audit: Vec::new(),
+            gcp_project: None,
+            actor: Some("ops@example.com".to_string()),
+            csrf_token: "csrf".to_string(),
+            operator_review_enabled: false,
+        });
+        assert!(html.contains(r#"name="action" value="malware.restrict_post"><input type="hidden" name="target_id" value="report-reviewing">"#));
+        assert!(!html.contains(r#"value="report-actioned"><select"#));
+        assert!(!html.contains(r#"<option value="actioned""#));
+        assert!(html.contains(r#"value="report-legacy"><select"#));
+        assert!(html.contains(r#"value="malware.restrict_post"><input type="hidden" name="target_id" value="report-legacy">"#));
+
+        let form = AdminActionForm {
+            action: "malware.release_post".to_string(),
+            target_id: " post-1 ".to_string(),
+            value: " cleared ".to_string(),
+            ..AdminActionForm::default()
+        };
+        assert_eq!(
+            operation_from_form(&form).unwrap(),
+            AdminOperation::ReleaseMalwareRestriction {
+                post_id: "post-1".to_string(),
+                reason: "cleared".to_string(),
+            }
+        );
+        let empty_reason = AdminActionForm {
+            value: " ".to_string(),
+            ..form
+        };
+        assert!(operation_from_form(&empty_reason).is_err());
     }
 
     #[test]
