@@ -27,21 +27,6 @@
     window.__kukuriCspViolations.push(`${event.effectiveDirective} ${event.blockedURI}`)
   );
 
-  // 画面が作った blob の URL から、その Blob を引けるようにする。配信の CSP の `connect-src` は `blob:` を許さないので、表示
-  // した画像の中身は `fetch` でなく Blob から読む。
-  window.__kukuriObjectUrls = new Map();
-  const create = URL.createObjectURL;
-  const revoke = URL.revokeObjectURL;
-  URL.createObjectURL = (object) => {
-    const url = create.call(URL, object);
-    window.__kukuriObjectUrls.set(url, object);
-    return url;
-  };
-  URL.revokeObjectURL = (url) => {
-    window.__kukuriObjectUrls.delete(url);
-    revoke.call(URL, url);
-  };
-
   // WebRTC の session（RTCPeerConnection）を、runtime が DataChannel を作る時点で作った順に控え、WebRTC の経路だけを失わせる
   // 口を持つ（#1220 AC-4）。constructor は差し替えない（下の ICE の候補の除去が prototype の getter を差し替える）。
   // `window.__kukuriCut = { after }` を置くと、1 本の DataChannel で `after` bytes を受け取った時点で、開いている DataChannel を
