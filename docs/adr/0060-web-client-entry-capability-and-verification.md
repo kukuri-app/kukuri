@@ -45,9 +45,9 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 
 ### 2. 配信の条件
 
-- CSP（`_headers`）: `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https: wss:; img-src 'self' blob: data:; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`。
+- CSP（`_headers`）: `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' blob: https: wss:; img-src 'self' blob: data:; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`。
   `style-src` の inline は、依存の UI 部品が `<style>` を差し込むため（Tauri の CSP と同じ）。script の inline は許さない。
-  `connect-src` の `https:`・`wss:` は Community Node の API と iroh relay（WebSocket）のため。第三者の script・analytics を読み込まない。
+  `connect-src` の `https:`・`wss:` は Community Node の API と iroh relay（WebSocket）のため。`blob:` は画面が作った blob の URL を `fetch` で読むため（three の `GLTFLoader` は埋め込みの texture をそう読む。#1141 の desktop と揃える。2026-10-17 の判断、#1858）。第三者の script・analytics を読み込まない。
 - `.wasm` は `Content-Type: application/wasm` で配る。COOP・COEP は付けない（SharedArrayBuffer・thread を使わない）。
   W8 AC-6 では `_headers` の `/*.wasm` の規則で付ける（Cloudflare Pages の `_headers` の文書に、拡張子の規則 `/*.jpg` の例がある）。
 - secret を扱う Web クライアントは LP と別の origin に置く（同じ origin の第三者 script から IndexedDB の vault を守るため。ADR 0059 §1 の信頼境界）。公開の URL・DNS・公開の時期は artifact の完成と別の操作とする（#1220 の Non-goals）。
@@ -110,7 +110,7 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
   - 凍結: 利用者と同じく、非表示 → freeze → resume → 表示の順にする。chromedriver の freeze は page を非表示にしてから凍結し、resume の後も非表示のまま戻さないので、CDP の `Emulation.setFocusEmulationEnabled` で表示へ戻す（画面は非表示の間は列を読み直さない）。freeze で旧い session を閉じ（旧世代の candidate・callback の解放）、復帰では生きた需要の相手とだけ交渉し直す（試行は有界）。
   - 回線全断: chromedriver の回線の模擬（`setNetworkConditions` の offline）。offline の間、接続の案内はつながっていないことと次の手順を示し、DM は送信待ち（Pending）と示す。online の後、DM は同じ id で 1 回だけ届いて Delivered になる。
   - WebRTC の経路だけの喪失（relay は健全）: page より先に動く script で、1 本の DataChannel が画像の半分ほどを受け取った時点で、開いている DataChannel をすべて閉じる（RTCPeerConnection を外から閉じても runtime に event が届かない。1 本だけ閉じると、他の相手との session で relay を通らずに完了しうる。#1549）。画像が出るまでは、新しい session の SDP から ICE の候補を除いて WebRTC の経路を失ったままにする（直接経路が先に戻ると relay を通らずに完了し、判定が時機に依る）。
-    同じ取得が relay で続いて完了する（#1482 J2。閉じた custom path を iroh がすぐ閉じる。ADR 0057 §5）。閉じてから表示まで 10 秒以内で、relay の中継は画像の大きさの 1/4 を超え、画像の大きさ未満（取り直しではない）。表示した画像は原本と同じ hash で、card は 1 つ。hash は、画面が blob の URL を作った Blob から読む（AC-6 の CSP の connect-src は `blob:` を許さないので、`fetch` では読まない）。
+    同じ取得が relay で続いて完了する（#1482 J2。閉じた custom path を iroh がすぐ閉じる。ADR 0057 §5）。閉じてから表示まで 10 秒以内で、relay の中継は画像の大きさの 1/4 を超え、画像の大きさ未満（取り直しではない）。表示した画像は原本と同じ hash で、card は 1 つ。hash は、画像の blob の URL を `fetch` で読んで求める（配信の CSP の `connect-src` が `blob:` を許すことも確かめる。#1858）。
   - 旧 state の再送: 退会した channel は、owner の世代の更新（旧い参加への配布）と reload の後も戻らない。更新した世代は reload の後も読み書きできる。native から見た profile の版は reload で変わらない。
   - 履歴の量: reload と引継ぎの前に native が投稿を足し、2 つの量のどちらでも、最初の頁は 20 件以下、閉じていない WebRTC の session は需要のある相手の数以下になる。件数に比例しないことは、W4（ADR 0059）・W10（ADR 0057）・#1221 の試験に対応付ける（2026-10-04 ユーザー判断）。
   - 復帰の直後の 1 回目の交渉は、閉じた経路が選ばれ続ける間に期限が切れ、直接経路は次の試行（約 30 秒後）で戻っていた。#1482 で、閉じた custom path を iroh がすぐ閉じるようにした（閉じてから 2 秒以内に同じ接続が relay で続くことは #1482 の J1、reset の後の resume が 1 回の交渉で開くことは W10 J4・J5 の `resume_renegotiates_only_the_live_demand` で確かめた）。

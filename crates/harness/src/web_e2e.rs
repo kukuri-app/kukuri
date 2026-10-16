@@ -580,7 +580,7 @@ mod tests {
             .to_str()
             .expect("an ascii header");
         assert!(
-            csp.contains("connect-src http://127.0.0.1:* ws://127.0.0.1:* 'self' https: wss:;")
+            csp.contains("connect-src http://127.0.0.1:* ws://127.0.0.1:* 'self' blob: https: wss:;")
         );
     }
 }
