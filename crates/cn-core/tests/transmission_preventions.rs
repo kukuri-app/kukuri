@@ -8,8 +8,8 @@ use kukuri_cn_core::{
     connect_postgres, filter_surfaceable_objects, get_active_transmission_prevention,
     get_community_node_report, get_index_entry, initialize_database, insert_community_node_report,
     list_community_node_reports, list_malware_restrictions, list_operator_actions,
-    release_transmission_prevention, resolve_rights_request_scope, upsert_index_entry,
-    upsert_scan_verdict,
+    posts_with_malware_decisions, release_transmission_prevention, resolve_rights_request_scope,
+    upsert_index_entry, upsert_scan_verdict,
 };
 use kukuri_cn_protocol::RightsRequestScopeStatus;
 use kukuri_cn_safety::provider::SubjectKind;
@@ -685,6 +685,34 @@ async fn malware_report_restricts_and_releases_only_its_post() -> Result<()> {
                 .await?
                 .iter()
                 .all(|post| post != "post-malware")
+        );
+
+        // #1062 より前に汎用の状態変更で対応済みにした通報（対象に判断が無い）は、状態を変えられ、制限もできる。
+        let legacy = malware_report(&restarted, "post", "post-legacy").await?;
+        sqlx::query("UPDATE cn_admin.reports SET status = 'actioned' WHERE id = $1")
+            .bind(&legacy)
+            .execute(&restarted)
+            .await?;
+        let decided = posts_with_malware_decisions(
+            &restarted,
+            &["post-legacy".to_string(), "post-malware".to_string()],
+        )
+        .await?;
+        assert_eq!(decided.into_iter().collect::<Vec<_>>(), ["post-malware"]);
+        apply_operator_action(
+            &restarted,
+            "ops@node.example",
+            &AdminOperation::SetReportStatus {
+                report_id: legacy.clone(),
+                status: OperatorReportStatus::Reviewing,
+            },
+        )
+        .await?;
+        apply_operator_action(&restarted, "ops@node.example", &restrict(&legacy)).await?;
+        assert_eq!(report_status(&restarted, &legacy).await?, "actioned");
+        assert!(
+            store.is_transmission_prevented("post-legacy").await?,
+            "the legacy report can restrict its post"
         );
 
         // 同じ投稿への同時の制限は、判断を 1 つだけ作る。

@@ -116,7 +116,7 @@ indexer は本文・blob の取得前と Postgres upsert 直前に合成判定�
 malware は自動の検出器を置かず、通報と運営者の確認で扱う。通報の受付（`POST /v1/report`、`reason=malware`）は検出・制限ではない。運営者が admin listener で明示的に制限した場合だけ、当該 node の提供動作が変わる。
 
 - 判断は `cn_legal.transmission_preventions` に根拠カテゴリ `malware` の行として置く。法的な根拠カテゴリとは別の値で、通報 ID（`related_report_id`）を必須にし、失効時刻を持たない。有効な判断の一意性は「法的な判断」と「malware の判断」で分け、同じ投稿に両方が有効でき、片方の解除は他方を変えない。法的な判断の作成・解除（`cn-cli transmission-prevention`、権利侵害申出の措置）は malware の判断を作らず、解除もしない。
-- 制限は期限内の malware 通報（対象が投稿）から作る。判断の保存、通報の `actioned`、audit を同じ transaction で書く。同じ投稿に有効な判断があれば新しく作らずに使い、再送・同時操作・同じ投稿への別の通報でも判断は 1 つに保つ。malware の通報は汎用の状態変更で `actioned` にできず、`actioned` から戻せない。却下は `dismissed` で判断を作らない。通報の件数だけで制限せず、risk signal・trust・著者の扱いは変えない。
+- 制限は期限内の malware 通報（対象が投稿）から作る。判断の保存、通報の `actioned`、audit を同じ transaction で書く。同じ投稿に有効な判断があれば新しく作らずに使い、再送・同時操作・同じ投稿への別の通報でも判断は 1 つに保つ。malware の通報は汎用の状態変更で `actioned` にできず、対象の投稿に malware の判断（有効または解除済み）がある `actioned` は戻せない。判断の無い `actioned`（本節より前に汎用の状態変更で付けたもの）は従来どおり状態を変えられ、制限もできる。却下は `dismissed` で判断を作らない。通報の件数だけで制限せず、risk signal・trust・著者の扱いは変えない。
 - 止める提供面は community index／search／discovery／recommendation。索引の guard（取込の本文取得前、真実源 upsert、query gate の候補照合）は根拠を問わず有効な判断を見るので、同じ照合で止まる。malware の判断は索引の真実源と写しを消さない。候補照合が止めるので、写しが残っても再提供しない。制限中に取込が対象を読むと、既存の取込が索引から外す。
 - 解除は対象の malware の判断だけを失効させ（解除者・時刻・理由を残す）、通報の状態は変えない。他の有効な法的な判断、safety verdict、著者撤回、受入下限は引き続き照合する。索引に残っている投稿はすぐに戻り、制限中に索引から外れた投稿は既存の取込が次に読むときに戻る。全履歴の再取得や再 scan を解除の条件にしない。clean な再 scan や内容 cache の hit は判断を解除しない。
 - 判断は通報の保持期限では消えず、有効な間は残る。解除した判断は operator audit の日数を解除時刻から数えて期限削除する（ADR 0034 §1）。有効な判断の件数の上限は置かない（作成は運営者の明示操作に限る）。

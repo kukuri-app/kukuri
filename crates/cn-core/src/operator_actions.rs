@@ -165,18 +165,25 @@ pub async fn apply_operator_action(
             if report_id.is_empty() {
                 bail!("report id must not be empty");
             }
-            let (current, reason) = sqlx::query_as::<_, (String, String)>(
-                "SELECT status, reason FROM cn_admin.reports
-                 WHERE id = $1 AND created_at > NOW() - cn_admin.retention_interval('report')
+            let (current, reason, decided) = sqlx::query_as::<_, (String, String, bool)>(
+                "SELECT report.status, report.reason, EXISTS (
+                     SELECT 1 FROM cn_legal.transmission_preventions decision
+                     WHERE report.subject_kind = 'post' AND decision.subject_kind = 'post'
+                       AND decision.subject_id = report.subject_id
+                       AND decision.basis_category = 'malware')
+                 FROM cn_admin.reports report
+                 WHERE report.id = $1
+                   AND report.created_at > NOW() - cn_admin.retention_interval('report')
                  FOR UPDATE",
             )
             .bind(report_id)
             .fetch_optional(&mut *tx)
             .await?
             .with_context(|| format!("report `{report_id}` was not found"))?;
-            // malware の通報の対応済みは、制限の判断を保存した操作だけが作り、戻さない（#1062）。
+            // malware の通報の対応済みは、制限の判断を保存した操作だけが作り、対象に判断がある間は戻さない（#1062）。
+            // 判断の無い対応済み（#1062 より前の汎用の状態変更）は、従来どおり変えられる。
             if reason == "malware"
-                && (*status == OperatorReportStatus::Actioned || current == "actioned")
+                && (*status == OperatorReportStatus::Actioned || (current == "actioned" && decided))
             {
                 bail!("a malware report becomes actioned only by restricting its subject");
             }

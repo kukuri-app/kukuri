@@ -14,8 +14,8 @@ use kukuri_cn_core::{
     OperatorReportStatus, RiskSignalCorrection, RiskSignalMetadataEdit, apply_appeal_review_action,
     apply_operator_action, get_appeal_review, latest_readiness_activation, list_appeal_reviews,
     list_community_node_reports, list_operator_actions, list_supported_topics,
-    load_admission_config, parse_bool_env, validate_admin_operation, validate_optional_confidence,
-    validate_optional_expires_at,
+    load_admission_config, parse_bool_env, posts_with_malware_decisions, validate_admin_operation,
+    validate_optional_confidence, validate_optional_expires_at,
 };
 use serde::Deserialize;
 use tower_http::trace::TraceLayer;
@@ -374,8 +374,10 @@ struct ReportView {
     capability: String,
     reason: String,
     status: String,
-    /// malware の通報の投稿で、まだ対応済みでない（制限の操作を出す）。
+    /// malware の通報の投稿（制限の操作を出す）。
     restrictable: bool,
+    /// 制限による対応済み（対象の投稿に malware の判断がある）。状態を変えられない。
+    restricted: bool,
 }
 
 #[derive(Debug)]
@@ -416,13 +418,21 @@ async fn load_dashboard(state: &AdminState) -> anyhow::Result<DashboardView> {
             )
         })
         .collect();
-    let reports = list_community_node_reports(&state.runtime.pool, 50, 0)
-        .await?
+    let reports = list_community_node_reports(&state.runtime.pool, 50, 0).await?;
+    let malware_posts = reports
+        .iter()
+        .filter(|report| report.reason == "malware" && report.subject_kind == "post")
+        .map(|report| report.subject_id.clone())
+        .collect::<Vec<_>>();
+    let decided = posts_with_malware_decisions(&state.runtime.pool, &malware_posts).await?;
+    let reports = reports
         .into_iter()
         .map(|report| ReportView {
-            restrictable: report.reason == "malware"
+            restricted: report.status == "actioned"
+                && report.reason == "malware"
                 && report.subject_kind == "post"
-                && report.status != "actioned",
+                && decided.contains(&report.subject_id),
+            restrictable: report.reason == "malware" && report.subject_kind == "post",
             created_at: report.created_at.to_rfc3339(),
             id: report.id,
             subject: format!("{}/{}", report.subject_kind, report.subject_id),
@@ -520,8 +530,9 @@ fn render_dashboard(view: &DashboardView) -> String {
                 let malware = report.reason == "malware";
                 let action = if !write_enabled {
                     escape_html(&report.status)
-                } else if malware && report.status == "actioned" {
-                    "<a href=\"/malware-restrictions\">制限済み（malware の制限を参照）</a>".to_string()
+                } else if report.restricted {
+                    "<a href=\"/malware-restrictions\">制限で対応済み（malware の制限を参照）</a>"
+                        .to_string()
                 } else {
                     let restrict = if report.restrictable {
                         format!(
@@ -749,6 +760,7 @@ mod tests {
                 reason: "\"quoted\"".to_string(),
                 status: "received".to_string(),
                 restrictable: false,
+                restricted: false,
             }],
             appeals: vec![AppealReview {
                 risk_signal_id: "signal-<script>".to_string(),
@@ -794,20 +806,26 @@ mod tests {
     #[test]
     fn malware_reports_are_actioned_only_by_restricting_their_post() {
         // #1062: malware の通報は汎用の状態変更で actioned にできず、投稿の制限を確認する操作を出す。
-        let report = |status: &str| ReportView {
+        let report = |id: &str, status: &str, restricted: bool| ReportView {
             created_at: "now".to_string(),
-            id: format!("report-{status}"),
+            id: id.to_string(),
             subject: "post/post-1".to_string(),
             capability: "community_index".to_string(),
             reason: "malware".to_string(),
             status: status.to_string(),
-            restrictable: status != "actioned",
+            restrictable: true,
+            restricted,
         };
         let html = render_dashboard(&DashboardView {
             admission_mode: "open".to_string(),
             readiness: "active".to_string(),
             topics: Vec::new(),
-            reports: vec![report("reviewing"), report("actioned")],
+            reports: vec![
+                report("report-reviewing", "reviewing", false),
+                report("report-actioned", "actioned", true),
+                // #1062 より前に汎用の状態変更で対応済みにした通報は、状態を変えられ、制限もできる。
+                report("report-legacy", "actioned", false),
+            ],
             appeals: Vec::new(),
             audit: Vec::new(),
             gcp_project: None,
@@ -818,6 +836,8 @@ mod tests {
         assert!(html.contains(r#"name="action" value="malware.restrict_post"><input type="hidden" name="target_id" value="report-reviewing">"#));
         assert!(!html.contains(r#"value="report-actioned"><select"#));
         assert!(!html.contains(r#"<option value="actioned""#));
+        assert!(html.contains(r#"value="report-legacy"><select"#));
+        assert!(html.contains(r#"value="malware.restrict_post"><input type="hidden" name="target_id" value="report-legacy">"#));
 
         let form = AdminActionForm {
             action: "malware.release_post".to_string(),

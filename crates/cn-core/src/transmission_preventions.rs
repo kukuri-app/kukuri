@@ -453,6 +453,23 @@ pub async fn list_malware_restrictions(
     .collect()
 }
 
+/// 指定した投稿のうち、malware の判断（有効または解除済み）がある投稿（#1062）。運営画面の通報の窓
+/// （最大 50 件）が、制限による対応済みと判断の無い対応済みを区別するのに使う。
+pub async fn posts_with_malware_decisions(
+    pool: &PgPool,
+    post_ids: &[String],
+) -> Result<std::collections::HashSet<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT DISTINCT subject_id FROM cn_legal.transmission_preventions
+         WHERE subject_kind = 'post' AND subject_id = ANY($1) AND basis_category = 'malware'",
+    )
+    .bind(post_ids)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .collect())
+}
+
 /// 対象の有効な判断のうち、malware の判断（`malware`）か、それ以外の判断を読んで行を lock する。
 async fn active_in_tx(
     tx: &mut Transaction<'_, Postgres>,
