@@ -16,6 +16,7 @@ const SCENARIOS = {
   'spatial-audio': () => import('./scenarios/spatial-audio.mjs'),
   live: () => import('./scenarios/live.mjs'),
   'live-relay': () => import('./scenarios/live-relay.mjs'),
+  'dome-avatar': () => import('./scenarios/dome-avatar.mjs'),
 };
 
 const { values } = parseArgs({

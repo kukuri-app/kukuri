@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { eventually } from '../../web-e2e/wait.mjs';
 import { hearOwnOutput, isolated, PERIOD_MS, plug, record, speak, unplug } from '../audio.mjs';
 import { accept, connect, openTopic, waitForPeers } from '../session.mjs';
-import { audioState, choose, click, fill, observeAudio, press, pressed, text } from '../ui.mjs';
+import { audioState, choose, click, createDome, entered, observeAudio, press, pressed, text } from '../ui.mjs';
 
 const t = (key) => text('metaverse', key);
 /// Dome の画面(HUD・メニューを含む)。設定の欄など、同じ文言の別の button と分ける。
@@ -209,19 +209,6 @@ export async function run({ launch, restart, log, topic }) {
     }
   }
   log(`SA-8: ${established.length} media connection(s) over direct_p2p, no identifiers in the media logs`);
-}
-
-async function createDome(instance, title) {
-  await click(instance, t('create.action'));
-  await fill(instance, t('create.titlePlaceholder'), title);
-  await click(instance, t('create.action'), { nth: -1 });
-  await click(instance, t('management.open'));
-  await click(instance, t('management.startAndEnter'));
-  await entered(instance);
-}
-
-function entered(instance) {
-  return eventually(`${instance.name} to enter a Dome`, async () => (await pressed(instance, t('hud.leave'))) !== undefined, 60_000);
 }
 
 async function micOn(instance) {
