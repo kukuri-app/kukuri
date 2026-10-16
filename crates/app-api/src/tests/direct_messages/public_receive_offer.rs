@@ -152,6 +152,7 @@ async fn public_account_offer_rejects_a_signed_private_post() {
         Some(&channel),
         Vec::new(),
         None,
+        None,
     )
     .unwrap();
     assert!(

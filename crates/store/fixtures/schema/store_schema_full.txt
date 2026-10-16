@@ -192,6 +192,7 @@ table live_session_cache
   column cid=13 name=projection_version type=INTEGER notnull=1 default=None pk=0
   column cid=14 name=channel_id type=TEXT notnull=1 default=Some("'public'") pk=0
   column cid=15 name=revision type=INTEGER notnull=1 default=Some("0") pk=0
+  column cid=16 name=start_post_id type=TEXT notnull=0 default=None pk=0
 table muted_authors
   column cid=0 name=author_pubkey type=TEXT notnull=0 default=None pk=1
   column cid=1 name=muted_at type=INTEGER notnull=1 default=None pk=0
@@ -243,6 +244,7 @@ table object_index_cache
   column cid=17 name=attachments_json type=TEXT notnull=1 default=Some("'[]'") pk=0
   column cid=18 name=content_labels_json type=TEXT notnull=1 default=Some("'[]'") pk=0
   column cid=19 name=source_docs_author type=TEXT notnull=0 default=None pk=0
+  column cid=20 name=live_json type=TEXT notnull=0 default=None pk=0
 table object_thread_cache
   column cid=0 name=object_id type=TEXT notnull=0 default=None pk=1
   column cid=1 name=topic_id type=TEXT notnull=1 default=None pk=0

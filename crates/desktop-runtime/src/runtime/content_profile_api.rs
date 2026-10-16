@@ -31,6 +31,7 @@ impl DesktopRuntime {
                 request.reply_to.as_deref(),
                 attachments,
                 request.content_labels,
+                None,
             )
             .await
     }

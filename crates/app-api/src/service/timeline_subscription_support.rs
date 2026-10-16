@@ -119,6 +119,7 @@ impl AppService {
                 root_id: projection.root_object_id.clone(),
                 repost_of: projection.repost_of.clone(),
                 content_labels: projection.content_labels.clone(),
+                live: None,
             })?,
             sig: String::new(),
         }))

@@ -53,33 +53,76 @@ impl AppService {
         )
         .await?;
         self.cleanup_ended_live_presence_tasks(&rows).await;
-        let joined_sessions = self.subscription_registry.live_presence_tasks.lock().await;
         let mut items = Vec::with_capacity(rows.len());
         for row in rows {
-            items.push(LiveSessionView {
-                session_id: row.session_id.clone(),
-                host_pubkey: row.host_pubkey,
-                title: row.title,
-                description: row.description,
-                status: row.status,
-                started_at: row.started_at,
-                ended_at: row.ended_at,
-                viewer_count: row.viewer_count,
-                joined_by_me: joined_sessions.contains_key(
-                    live_presence_task_key(
-                        topic_id,
-                        row.channel_id.as_str(),
-                        row.session_id.as_str(),
-                    )
-                    .as_str(),
-                ),
-                channel_id: channel_id_for_view(row.channel_id.as_str()),
-                audience_label: self
-                    .audience_label_for_storage(topic_id, row.channel_id.as_str())
-                    .await,
-            });
+            items.push(self.live_session_view(row).await);
         }
         Ok(items)
+    }
+
+    /// 1 件の Live を、作成した topic と id で引く(#1839。紹介 post から別の topic の Live を表示する)。手元の行だけを読む。
+    /// まだ無ければ表示要求(`set_session_display`)で読む。限定 channel の Live は、その channel の参加者にだけ返す。
+    pub async fn get_live_session(
+        &self,
+        topic_id: &str,
+        session_id: &str,
+    ) -> Result<Option<LiveSessionView>> {
+        let Some(row) = self
+            .services
+            .projection_store
+            .get_live_session(topic_id, session_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if row.channel_id != PUBLIC_CHANNEL_ID
+            && self
+                .ensure_private_channel_access(topic_id, &ChannelId::new(row.channel_id.as_str()))
+                .await
+                .is_err()
+        {
+            return Ok(None);
+        }
+        if self
+            .current_hidden_author_pubkeys()
+            .await?
+            .contains(row.host_pubkey.as_str())
+        {
+            return Ok(None);
+        }
+        Ok(Some(self.live_session_view(row).await))
+    }
+
+    async fn live_session_view(&self, row: LiveSessionProjectionRow) -> LiveSessionView {
+        let joined_by_me = self
+            .subscription_registry
+            .live_presence_tasks
+            .lock()
+            .await
+            .contains_key(
+                live_presence_task_key(
+                    row.topic_id.as_str(),
+                    row.channel_id.as_str(),
+                    row.session_id.as_str(),
+                )
+                .as_str(),
+            );
+        LiveSessionView {
+            audience_label: self
+                .audience_label_for_storage(row.topic_id.as_str(), row.channel_id.as_str())
+                .await,
+            channel_id: channel_id_for_view(row.channel_id.as_str()),
+            session_id: row.session_id,
+            host_pubkey: row.host_pubkey,
+            title: row.title,
+            description: row.description,
+            status: row.status,
+            started_at: row.started_at,
+            ended_at: row.ended_at,
+            viewer_count: row.viewer_count,
+            joined_by_me,
+            start_post_id: row.start_post_id.map(|id| id.0),
+        }
     }
 
     pub async fn create_live_session(
@@ -105,10 +148,10 @@ impl AppService {
         if title.is_empty() {
             anyhow::bail!("live session title is required");
         }
-        let private_state = match channel_ref {
+        let private_state = match &channel_ref {
             ChannelRef::Public => None,
             ChannelRef::PrivateChannel { channel_id } => Some(
-                self.private_channel_write_state(topic_id, &channel_id)
+                self.private_channel_write_state(topic_id, channel_id)
                     .await?,
             ),
         };
@@ -123,6 +166,22 @@ impl AppService {
             owner_bound_id_suffix(self.current_author_pubkey().as_str())
         );
         let topic = TopicId::new(topic_id);
+        // #1839: 開始 post を先に置き、その id を manifest に入れる(post は Live の id だけを参照するので循環しない)。
+        let start_post_id = self
+            .create_post_object(
+                topic_id,
+                channel_ref,
+                input.start_post.as_str(),
+                None,
+                Vec::new(),
+                Vec::new(),
+                Some(LiveRefV1 {
+                    session_id: session_id.clone(),
+                    topic_id: topic.clone(),
+                    channel_id: channel_id.clone(),
+                }),
+            )
+            .await?;
         let manifest = LiveSessionManifestBlobV1 {
             session_id: session_id.clone(),
             revision: 1,
@@ -140,6 +199,7 @@ impl AppService {
                 .transpose()?
                 .map(|signer| signer.public_key_hex()),
             media_endpoint_id,
+            start_post_id: Some(EnvelopeId::from(start_post_id)),
         };
         let state = self
             .persist_live_session_manifest(&source_replica_id, topic_id, manifest.clone(), now)

@@ -243,6 +243,7 @@ async fn only_an_accepted_session_revision_is_kept_for_other_readers() {
             CreateLiveSessionInput {
                 title: "kept".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
         )
         .await
@@ -320,6 +321,7 @@ async fn live_session_selection_uses_signed_revision() {
             CreateLiveSessionInput {
                 title: "revision target".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
         )
         .await
@@ -442,6 +444,7 @@ async fn session_manifests_without_revision_are_rejected() {
             CreateLiveSessionInput {
                 title: "old live format".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
         )
         .await

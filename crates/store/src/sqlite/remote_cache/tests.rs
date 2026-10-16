@@ -28,6 +28,7 @@ fn remote_post(object_id: &str) -> ObjectProjectionRow {
         source_docs_author: None,
         derived_at: 1,
         projection_version: 3,
+        live: None,
     }
 }
 

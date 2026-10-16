@@ -142,6 +142,7 @@ async fn shared_replica_writes_use_only_registered_key_families() {
         CreateLiveSessionInput {
             title: "live".into(),
             description: "desc".into(),
+            start_post: String::new(),
         },
     )
     .await

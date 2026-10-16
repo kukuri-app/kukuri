@@ -137,6 +137,7 @@ fn parity_projection_row(
         source_docs_author: None,
         derived_at: created_at,
         projection_version: 2,
+        live: None,
     }
 }
 
@@ -205,6 +206,7 @@ fn parity_live_session(
         derived_at: started_at + 2,
         projection_version: 1,
         viewer_count: 0,
+        start_post_id: None,
     }
 }
 

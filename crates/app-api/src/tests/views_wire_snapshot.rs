@@ -198,6 +198,11 @@ fn post_view_full() -> PostView {
             emoji: None,
             custom_asset: Some(custom_reaction_asset()),
         }],
+        live: Some(crate::PostLiveView {
+            session_id: "live-1700000000000-abcd".to_string(),
+            topic_id: "kukuri:topic:origin".to_string(),
+            channel_id: None,
+        }),
     }
 }
 
@@ -234,6 +239,7 @@ fn post_view_minimal() -> PostView {
         audience_label: "Public".to_string(),
         reaction_summary: vec![],
         my_reactions: vec![],
+        live: None,
     }
 }
 

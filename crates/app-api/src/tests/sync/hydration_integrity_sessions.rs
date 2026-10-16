@@ -146,6 +146,7 @@ pub(super) fn live_manifest(
         ended_at: None,
         media_endpoint_id: None,
         media_signing_key: None,
+        start_post_id: None,
     }
 }
 

@@ -18,9 +18,9 @@ use serde::de::DeserializeOwned;
 use crate::{
     ADULT_CONTENT_LABEL, BlobHash, ChannelId, ChannelRef, DirectMessageAckV1, EnvelopeId,
     GossipHint, HintObjectRef, KukuriEnvelope, KukuriPostEnvelopeContentV1,
-    KukuriPostWithdrawalEnvelopeContentV1, ObjectStatus, ObjectVisibility, PayloadRef,
-    PostWithdrawalReason, Pubkey, TimelineScope, TopicId, WithdrawalReasonVisibility,
-    has_adult_content_label,
+    KukuriPostWithdrawalEnvelopeContentV1, LiveRefV1, LiveSessionManifestBlobV1, LiveSessionStatus,
+    ObjectStatus, ObjectVisibility, PayloadRef, PostWithdrawalReason, Pubkey, TimelineScope,
+    TopicId, WithdrawalReasonVisibility, has_adult_content_label,
 };
 
 const PUBKEY_A: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -319,6 +319,7 @@ fn post_envelope_content_snapshot() {
             root_id: None,
             repost_of: None,
             content_labels: Vec::new(),
+            live: None,
         },
         r#"{"object_kind":"post","topic_id":"kukuri:topic:demo","channel_id":null,"payload_ref":{"InlineText":{"text":"hello"}},"attachments":[],"media_manifest_refs":[],"visibility":"public","reply_to":null,"root_id":null,"repost_of":null}"#,
     );
@@ -342,6 +343,7 @@ fn post_envelope_content_labels_snapshot() {
         root_id: None,
         repost_of: None,
         content_labels: vec![ADULT_CONTENT_LABEL.to_string()],
+        live: None,
     };
     assert_wire(
         &labeled,
@@ -349,6 +351,81 @@ fn post_envelope_content_labels_snapshot() {
     );
     assert!(has_adult_content_label(&labeled.content_labels));
     assert!(!has_adult_content_label(&[]));
+}
+
+// #1839: post が参照する Live は `live` として署名対象 content に載る。無い post は従来と同じ bytes で、限定 channel の
+// Live は同じ channel の post からだけ参照できる。
+#[test]
+fn post_envelope_content_live_snapshot() {
+    let live = LiveRefV1 {
+        session_id: "live-1-abc".into(),
+        topic_id: demo_topic(),
+        channel_id: Some(ChannelId::new("chan-1")),
+    };
+    let content = KukuriPostEnvelopeContentV1 {
+        object_kind: "post".to_string(),
+        topic_id: demo_topic(),
+        channel_id: Some(ChannelId::new("chan-1")),
+        payload_ref: PayloadRef::InlineText {
+            text: "hello".to_string(),
+        },
+        attachments: vec![],
+        media_manifest_refs: vec![],
+        visibility: ObjectVisibility::Private,
+        reply_to: None,
+        root_id: None,
+        repost_of: None,
+        content_labels: Vec::new(),
+        live: Some(live.clone()),
+    };
+    assert_wire(
+        &content,
+        r#"{"object_kind":"post","topic_id":"kukuri:topic:demo","channel_id":"chan-1","payload_ref":{"InlineText":{"text":"hello"}},"attachments":[],"media_manifest_refs":[],"visibility":"private","reply_to":null,"root_id":null,"repost_of":null,"live":{"session_id":"live-1-abc","topic_id":"kukuri:topic:demo","channel_id":"chan-1"}}"#,
+    );
+    let other_topic = TopicId::new("kukuri:topic:other");
+    let channel = ChannelId::new("chan-1");
+    assert!(live.allowed_in(&demo_topic(), Some(&channel)));
+    assert!(!live.allowed_in(&demo_topic(), None));
+    assert!(!live.allowed_in(&other_topic, Some(&channel)));
+    assert!(!live.allowed_in(&demo_topic(), Some(&ChannelId::new("chan-2"))));
+    let public = LiveRefV1 {
+        channel_id: None,
+        ..live
+    };
+    assert!(public.allowed_in(&other_topic, None));
+    assert!(public.allowed_in(&other_topic, Some(&channel)));
+}
+
+// #1839: manifest の `start_post_id` は owner の署名対象。開始 post の無い旧版の manifest は無いまま読める。
+#[test]
+fn live_manifest_start_post_snapshot() {
+    let manifest = LiveSessionManifestBlobV1 {
+        session_id: "live-1-abc".into(),
+        revision: 1,
+        topic_id: demo_topic(),
+        channel_id: None,
+        owner_pubkey: Pubkey::from("a".repeat(64)),
+        title: "t".into(),
+        description: String::new(),
+        status: LiveSessionStatus::Live,
+        started_at: 1,
+        ended_at: None,
+        media_endpoint_id: None,
+        media_signing_key: None,
+        start_post_id: Some(EnvelopeId::from("post-1")),
+    };
+    let owner = "a".repeat(64);
+    assert_wire(
+        &manifest,
+        &format!(
+            r#"{{"session_id":"live-1-abc","revision":1,"topic_id":"kukuri:topic:demo","channel_id":null,"owner_pubkey":"{owner}","title":"t","description":"","status":"Live","started_at":1,"ended_at":null,"start_post_id":"post-1"}}"#
+        ),
+    );
+    let legacy = format!(
+        r#"{{"session_id":"live-1-abc","revision":1,"topic_id":"kukuri:topic:demo","channel_id":null,"owner_pubkey":"{owner}","title":"t","description":"","status":"Live","started_at":1,"ended_at":null}}"#
+    );
+    let parsed: LiveSessionManifestBlobV1 = serde_json::from_str(&legacy).expect("legacy manifest");
+    assert_eq!(parsed.start_post_id, None);
 }
 
 #[test]
@@ -363,6 +440,7 @@ fn post_envelope_content_accepts_legacy_json_without_defaulted_fields() {
     assert_eq!(parsed.media_manifest_refs, Vec::<String>::new());
     assert_eq!(parsed.visibility, ObjectVisibility::Public);
     assert_eq!(parsed.repost_of, None);
+    assert_eq!(parsed.live, None);
 }
 
 #[test]

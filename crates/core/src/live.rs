@@ -43,6 +43,30 @@ pub struct LiveSessionManifestBlobV1 {
     /// 変えたら、視聴者はこの鍵で見分ける。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media_signing_key: Option<String>,
+    /// 開始 post の id(#1839)。この Live への返信・リアクションはこの post に付く。開始 post の無い旧版の manifest には無い。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_post_id: Option<EnvelopeId>,
+}
+
+/// post が参照する Live(#1839)。Live の id と、取得・認可に使う元の場所(作成した topic・限定なら channel)。
+/// 参照は Live の権限を変えない。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LiveRefV1 {
+    pub session_id: String,
+    pub topic_id: TopicId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<ChannelId>,
+}
+
+impl LiveRefV1 {
+    /// この場所(topic・channel)の post が参照してよい Live か。限定 channel の Live は、その channel の post からだけ参照できる
+    /// (非公開投稿を repost できないのと同じ。公開の場所に限定 channel の id と Live の id を載せない)。
+    pub fn allowed_in(&self, topic_id: &TopicId, channel_id: Option<&ChannelId>) -> bool {
+        match &self.channel_id {
+            None => true,
+            Some(channel) => self.topic_id == *topic_id && Some(channel) == channel_id,
+        }
+    }
 }
 
 /// live の配信の frame の署名鍵(owner の鍵から session ごとに導く。`KukuriKeys::derive_live_media_signer`)。

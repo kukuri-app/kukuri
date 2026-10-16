@@ -18,6 +18,11 @@ Accepted
   - `restart_restores_live_session_manifest`
   - `live_presence_expires_without_heartbeat`
   - `ended_live_session_rejects_new_viewers`
+  - `start_post_and_live_resolve_from_another_device_and_restore`（#1839）
+  - `third_party_introduces_the_same_live_in_another_topic`（#1839）
+  - `limited_live_stays_in_its_channel`（#1839）
+  - `legacy_live_without_a_start_post_is_read_as_is`（#1839）
+  - `resolving_a_live_does_not_grow_with_unrelated_records`（#1839）
 - 必須 scenario:
   - live session panel 導入後に `create live -> join -> viewer count visible -> end -> restart -> restored ended state` を追加する
 
@@ -44,6 +49,22 @@ Accepted
   規則のまま。無いときは JSON に出さない。
 - 鍵の無い manifest は、`media_endpoint_id` があっても media の無い session として扱う（視聴者は購読せず、配信者は配信を始めるときに理由を
   示して断る）。
+
+### 追補: 開始 post・紹介 post と作成場所からの権限（#1839 AC-1、2026-10-17）
+- Live の識別子は既存の `session_id` とし、Live の正本はこの session のまま変えない。別の registry は作らない。
+- manifest に任意の `start_post_id`（開始 post の envelope id）を足す。owner の署名と revision は既存の manifest の規則のまま。無いときは JSON に出さない。
+  開始 post の無い旧版の manifest は、開始 post の無い Live として読み、移行も破棄もしない。
+- post の署名対象 content に任意の `live`（`session_id`、Live を作成した `topic_id`、限定なら `channel_id`）を足す。無い post は従来と同じ bytes で、
+  旧版は知らない項目として読み飛ばし、通常の投稿として表示する。開始 post と紹介 post は同じ項目を使う。
+- 作成は、`session_id` を決め、`live` を持つ開始 post を Live の作成場所に置き、その id を `start_post_id` に入れた revision 1 の manifest を置く順に行う。
+  post は Live の id しか参照しないので、互いの hash を待つ循環は無い。開始 post は id が `start_post_id` と一致し、著者が owner の post に限る。
+  それ以外の `live` を持つ post は紹介 post で、紹介者は Live の操作の権限を得ない。Live への返信・リアクションは開始 post に付ける。
+- Live の公開範囲は作成場所（manifest の topic・channel）で決まり、紹介 post の場所・紹介者・閲覧中の topic では変わらない。限定 channel の Live は、
+  その channel の post からだけ参照できる。作成時に拒否し、受信した post の参照も同じ規則（`LiveRefV1::allowed_in`）に合わなければ捨てる。
+  非公開投稿を repost できないのと同じく、公開の場所に限定 channel の id と Live の id を載せない。
+- 別の topic の Live は、表示中の post の参照ごとに既存の表示要求（`set_session_display`、Live の topic と scope を指定）で、その 1 件だけを読む。
+  表示用の行は `session_id` が主キーなので、無関係な投稿・Live の件数に比例して読まない。限定 channel の Live の行は、その channel に参加している間だけ返す。
+- 表示用の行は SQLite の `object_index_cache.live_json` と `live_session_cache.start_post_id` に置く（migration `20261017000000`）。Web の行は serde の既定値で読む。
 
 ## Consequences
 - 映像・音声の搬送は [ADR 0067](0067-media-transport-moq.md) に従う。manifest の descriptor は上の追補による（分類は ADR 0067 の Feature Data Classification）。

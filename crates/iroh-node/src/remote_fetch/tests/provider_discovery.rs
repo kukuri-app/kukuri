@@ -92,6 +92,7 @@ async fn publish(store: &SqliteStore, hash: iroh_blobs::Hash) -> Result<()> {
             source_docs_author: None,
             derived_at: 1,
             projection_version: 3,
+            live: None,
         })
         .await
 }

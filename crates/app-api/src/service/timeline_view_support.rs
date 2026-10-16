@@ -266,6 +266,15 @@ impl AppService {
             audience_label,
             reaction_summary: reaction_state.reaction_summary,
             my_reactions: reaction_state.my_reactions,
+            live: if is_withdrawn {
+                None
+            } else {
+                row.live.map(|live| PostLiveView {
+                    session_id: live.session_id,
+                    topic_id: live.topic_id.as_str().to_string(),
+                    channel_id: live.channel_id.map(|channel| channel.as_str().to_string()),
+                })
+            },
         })
     }
 
@@ -516,6 +525,7 @@ impl AppService {
                 audience_label,
                 reaction_summary: reaction_state.reaction_summary,
                 my_reactions: reaction_state.my_reactions,
+                live: None,
             },
         })
     }
@@ -643,6 +653,7 @@ impl AppService {
             audience_label: "Public".into(),
             reaction_summary: Vec::new(),
             my_reactions: Vec::new(),
+            live: None,
         })
     }
 
@@ -738,6 +749,7 @@ impl AppService {
             audience_label: "Public".into(),
             reaction_summary: Vec::new(),
             my_reactions: Vec::new(),
+            live: None,
         })
     }
 

@@ -48,6 +48,7 @@ fn private_post(
         Some(channel),
         Vec::new(),
         None,
+        None,
     )
     .unwrap()
 }

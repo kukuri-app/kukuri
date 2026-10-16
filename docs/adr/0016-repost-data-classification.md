@@ -177,6 +177,8 @@ private channel repost は later scope に送る。
 - private audience の capability / encryption / relay semantics を repost v1 に混ぜない
 - v1 を public durable object に固定して canonical read path を先に固める
 
+Live の紹介 post（#1839）も同じ境界に従う。限定 channel の Live は、その channel の post からだけ紹介でき、公開の場所には置かない（ADR 0005 の追補）。
+
 ## 7. Validation
 
 必須 contract は上記「Feature Data Classification」を単一の正とし、ここでは再掲しない。

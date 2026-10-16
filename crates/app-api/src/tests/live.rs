@@ -20,6 +20,7 @@ async fn late_joiner_backfills_live_session_manifest() {
             CreateLiveSessionInput {
                 title: "late live".into(),
                 description: "watch along".into(),
+                start_post: String::new(),
             },
         )
         .await
@@ -76,6 +77,7 @@ async fn live_presence_expires_without_heartbeat() {
             CreateLiveSessionInput {
                 title: "presence".into(),
                 description: "ttl".into(),
+                start_post: String::new(),
             },
         )
         .await
@@ -147,6 +149,7 @@ async fn live_presence_heartbeat_stops_when_its_projection_ends() {
             CreateLiveSessionInput {
                 title: "heartbeat".into(),
                 description: "self stop".into(),
+                start_post: String::new(),
             },
         )
         .await
@@ -200,6 +203,7 @@ async fn ended_live_session_rejects_new_viewers() {
             CreateLiveSessionInput {
                 title: "ended".into(),
                 description: "session".into(),
+                start_post: String::new(),
             },
         )
         .await
@@ -228,6 +232,7 @@ async fn muted_author_is_filtered_from_live_and_game_lists() {
             CreateLiveSessionInput {
                 title: "muted live".into(),
                 description: "hidden".into(),
+                start_post: String::new(),
             },
         )
         .await
@@ -296,6 +301,7 @@ async fn blocked_author_is_filtered_from_live_and_game_lists_in_both_directions(
             CreateLiveSessionInput {
                 title: "blocked live".into(),
                 description: "hidden".into(),
+                start_post: String::new(),
             },
         )
         .await
@@ -385,6 +391,7 @@ async fn listing_live_session_without_viewers_keeps_topic_subscription() {
             CreateLiveSessionInput {
                 title: "no viewers".into(),
                 description: "host only".into(),
+                start_post: String::new(),
             },
         )
         .await
@@ -426,6 +433,7 @@ async fn lease_start_rereads_existing_live_sessions_and_game_rooms() {
             CreateLiveSessionInput {
                 title: "existing live".into(),
                 description: "before the lease".into(),
+                start_post: String::new(),
             },
         )
         .await
@@ -504,6 +512,7 @@ async fn private_live_session_reaches_a_member_through_the_channel_hint() {
             CreateLiveSessionInput {
                 title: "private live".into(),
                 description: "members only".into(),
+                start_post: String::new(),
             },
             None,
         )
@@ -568,6 +577,7 @@ async fn successive_session_hints_reach_the_viewer() {
             CreateLiveSessionInput {
                 title: "successive".into(),
                 description: "create then end".into(),
+                start_post: String::new(),
             },
         )
         .await

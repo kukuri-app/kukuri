@@ -180,6 +180,7 @@ pub(crate) async fn run_desktop_smoke_scenario(
                             CreateLiveSessionInput {
                                 title: title.clone(),
                                 description: description.clone(),
+                                start_post: String::new(),
                             },
                         )
                         .await?;

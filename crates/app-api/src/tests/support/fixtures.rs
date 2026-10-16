@@ -1,7 +1,6 @@
 use super::super::*;
 
 /// 実peerのsessionを表示するtest consumer。manifest取得は一覧のpollではなくこの表示要求が所有する。
-#[cfg(feature = "iroh-integration-tests")]
 pub(crate) async fn display_remote_session(app: &AppService, topic: &str, id: &str, kind: &str) {
     app.set_session_display(crate::SessionDisplayRequest {
         topic: topic.into(),

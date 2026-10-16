@@ -136,7 +136,7 @@ impl SqliteStore {
         let rows = sqlx::query(
             "SELECT rowid, object_id, topic_id, author_pubkey, created_at, object_kind, root_object_id, \
              reply_to_object_id, channel_id, payload_ref_json, content, attachments_json, repost_of_json, \
-             content_labels_json, source_replica_id, source_key, source_envelope_id, source_blob_hash, \
+             content_labels_json, live_json, source_replica_id, source_key, source_envelope_id, source_blob_hash, \
              derived_at, projection_version, source_docs_author \
              FROM object_index_cache WHERE rowid > ?1 ORDER BY rowid LIMIT ?2",
         )

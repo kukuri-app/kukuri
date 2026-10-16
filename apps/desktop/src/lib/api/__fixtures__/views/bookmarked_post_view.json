@@ -31,6 +31,7 @@
     "channel_id": null,
     "audience_label": "Public",
     "reaction_summary": [],
-    "my_reactions": []
+    "my_reactions": [],
+    "live": null
   }
 }

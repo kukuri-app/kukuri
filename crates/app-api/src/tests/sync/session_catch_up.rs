@@ -140,6 +140,7 @@ async fn session_lists_are_filled_without_a_replica_scan() {
             CreateLiveSessionInput {
                 title: "a session".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
         )
         .await

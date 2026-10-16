@@ -4,7 +4,7 @@ const LIVE_SESSION_SELECT: &str = r#"
     SELECT lsc.session_id, lsc.revision, lsc.topic_id, lsc.host_pubkey, lsc.title, lsc.description,
            lsc.channel_id, lsc.status, lsc.started_at, lsc.ended_at, lsc.updated_at,
            lsc.source_replica_id, lsc.source_key, lsc.manifest_blob_hash, lsc.derived_at,
-           lsc.projection_version,
+           lsc.projection_version, lsc.start_post_id,
            CASE
              WHEN lsc.status = 'ended' THEN 0
              ELSE COALESCE((
@@ -70,9 +70,9 @@ impl LiveGameProjectionStore for SqliteStore {
             INSERT INTO live_session_cache (
               session_id, revision, topic_id, channel_id, host_pubkey, title, description, status,
               started_at, ended_at, updated_at, source_replica_id, source_key, manifest_blob_hash,
-              derived_at, projection_version
+              derived_at, projection_version, start_post_id
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
             ON CONFLICT(session_id) DO UPDATE SET
               revision = excluded.revision,
               topic_id = excluded.topic_id,
@@ -88,7 +88,8 @@ impl LiveGameProjectionStore for SqliteStore {
               source_key = excluded.source_key,
               manifest_blob_hash = excluded.manifest_blob_hash,
               derived_at = excluded.derived_at,
-              projection_version = excluded.projection_version
+              projection_version = excluded.projection_version,
+              start_post_id = excluded.start_post_id
             WHERE excluded.revision > live_session_cache.revision
             "#,
         )
@@ -108,6 +109,7 @@ impl LiveGameProjectionStore for SqliteStore {
         .bind(row.manifest_blob_hash.as_str())
         .bind(row.derived_at)
         .bind(row.projection_version)
+        .bind(row.start_post_id.as_ref().map(EnvelopeId::as_str))
         .execute(&self.pool)
         .await?;
         Ok(())

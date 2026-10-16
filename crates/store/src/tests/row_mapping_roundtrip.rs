@@ -158,6 +158,11 @@ fn object_projection_max() -> ObjectProjectionRow {
         source_docs_author: None,
         derived_at: 1_700_000_001_500,
         projection_version: 7,
+        live: Some(kukuri_core::LiveRefV1 {
+            session_id: "live-1-abc".into(),
+            topic_id: TopicId::new("kukuri:topic:rt"),
+            channel_id: Some(kukuri_core::ChannelId::new("ch:rt")),
+        }),
     }
 }
 
@@ -186,6 +191,7 @@ fn object_projection_min() -> ObjectProjectionRow {
         source_docs_author: None,
         derived_at: 0,
         projection_version: 0,
+        live: None,
     }
 }
 

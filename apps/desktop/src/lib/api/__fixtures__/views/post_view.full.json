@@ -139,5 +139,10 @@
         "height": 64
       }
     }
-  ]
+  ],
+  "live": {
+    "session_id": "live-1700000000000-abcd",
+    "topic_id": "kukuri:topic:origin",
+    "channel_id": null
+  }
 }

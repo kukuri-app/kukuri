@@ -144,6 +144,7 @@ async fn the_switched_writer_puts_each_record_in_its_bucket_and_not_in_the_legac
             CreateLiveSessionInput {
                 title: "live".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
         )
         .await

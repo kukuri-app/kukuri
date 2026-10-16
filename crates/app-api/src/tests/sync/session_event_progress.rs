@@ -191,6 +191,7 @@ impl SessionFixture {
                     CreateLiveSessionInput {
                         title: "live".into(),
                         description: String::new(),
+                        start_post: String::new(),
                     },
                 )
                 .await
@@ -660,6 +661,7 @@ async fn private_channel_removal_cancels_displayed_fetch_and_rejects_stale_regis
             CreateLiveSessionInput {
                 title: "private live".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
             None,
         )

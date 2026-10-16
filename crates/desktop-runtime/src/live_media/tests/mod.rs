@@ -113,6 +113,7 @@ async fn swarm() -> Swarm {
             CreateLiveSessionInput {
                 title: "live".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
             Some(broadcaster.id()),
         )
