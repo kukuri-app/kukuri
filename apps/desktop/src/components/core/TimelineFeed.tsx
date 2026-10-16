@@ -192,6 +192,11 @@ export function TimelineFeed({
 
   const canApplyPending = (pendingCount > 0 || returnToLatest) && typeof onApplyPending === 'function';
 
+  // 縦に scroll するのは一覧ではなく列の body。途中で上へ scroll しただけで新着の適用(保留が無ければ先頭のページからの
+  // 読み直し)を呼ぶと、読み込んだ続きのページを捨てる(#1851)。
+  const scrolledDown = (list: HTMLElement) =>
+    (list.closest<HTMLElement>('.shell-column-body') ?? list).scrollTop > 0;
+
   const handleOverscrollIntent = () => {
     if (!onApplyPending) {
       return;
@@ -204,8 +209,7 @@ export function TimelineFeed({
     if (!onApplyPending || posts.length === 0) {
       return;
     }
-    const target = event.currentTarget;
-    if (target.scrollTop > 0 || event.deltaY >= 0) {
+    if (scrolledDown(event.currentTarget) || event.deltaY >= 0) {
       overscrollAccumulationRef.current = 0;
       return;
     }
@@ -225,7 +229,7 @@ export function TimelineFeed({
     }
     const startY = touchStartYRef.current;
     const currentY = event.touches[0]?.clientY ?? null;
-    if (startY === null || currentY === null || event.currentTarget.scrollTop > 0) {
+    if (startY === null || currentY === null || scrolledDown(event.currentTarget)) {
       return;
     }
     if (currentY - startY >= 80) {
