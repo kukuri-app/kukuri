@@ -353,6 +353,7 @@ fn projection(id: &str, created_at: i64) -> ObjectProjectionRow {
         attachments: Vec::new(),
         repost_of: None,
         content_labels: Vec::new(),
+        live: None,
         source_replica_id: ReplicaId::new(format!("topic::{TOPIC}")),
         source_key: format!("objects/{id}"),
         source_envelope_id: EnvelopeId::from(id),

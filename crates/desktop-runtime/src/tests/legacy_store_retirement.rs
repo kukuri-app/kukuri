@@ -295,6 +295,7 @@ fn remote_projection(
         source_docs_author: None,
         derived_at,
         projection_version: 2,
+        live: None,
     }
 }
 

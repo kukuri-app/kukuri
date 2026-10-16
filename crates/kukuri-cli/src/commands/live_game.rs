@@ -226,7 +226,8 @@ fn live_schema() -> Value {
         "status": {"enum": ["Scheduled", "Live", "Paused", "Ended"]},
         "started_at": {"type": "integer"}, "ended_at": schema::nullable(json!({"type": "integer"})),
         "viewer_count": {"type": "integer", "minimum": 0}, "joined_by_me": {"type": "boolean"},
-        "channel_id": schema::nullable(json!({"type": "string"})), "audience_label": {"type": "string"}}),
+        "channel_id": schema::nullable(json!({"type": "string"})), "audience_label": {"type": "string"},
+        "start_post_id": schema::nullable(json!({"type": "string"}))}),
         &[
             "session_id",
             "host_pubkey",
@@ -239,6 +240,7 @@ fn live_schema() -> Value {
             "joined_by_me",
             "channel_id",
             "audience_label",
+            "start_post_id",
         ],
     )
 }

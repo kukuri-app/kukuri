@@ -70,6 +70,7 @@ mod dome_session;
 mod game;
 mod game_projection_freshness;
 mod live;
+mod live_object;
 mod media;
 mod media_adult_gating;
 mod notifications;

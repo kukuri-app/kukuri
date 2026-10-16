@@ -67,7 +67,13 @@ export type ContentProvenanceView = { canonical_source: string, observed_via: Ar
 
 export type PostWithdrawalView = { withdrawn_at: number, replacement_object_id?: string | null, reason_visibility: string, reason?: string | null, };
 
-export type PostView = { object_id: string, envelope_id: string, author_pubkey: string, author_name?: string | null, author_display_name?: string | null, author_picture_asset?: ProfileAssetView | null, author_nip05?: string | null, following: boolean, followed_by: boolean, mutual: boolean, friend_of_friend: boolean, provenance?: ContentProvenanceView | null, withdrawal?: PostWithdrawalView | null, content: string, content_status: BlobViewStatus, attachments: Array<AttachmentView>, content_labels?: Array<string> | null, created_at: number, reply_to?: string | null, reply_preview?: ReplyPreviewView | null, root_id?: string | null, object_kind: string, published_topic_id?: string | null, origin_topic_id?: string | null, repost_of?: RepostSourceView | null, repost_commentary?: string | null, is_threadable: boolean, channel_id?: string | null, audience_label: string, reaction_summary?: Array<ReactionSummaryView> | null, my_reactions?: Array<ReactionKeyView> | null, };
+export type PostLiveView = { session_id: string, topic_id: string, channel_id?: string | null, };
+
+export type PostView = { object_id: string, envelope_id: string, author_pubkey: string, author_name?: string | null, author_display_name?: string | null, author_picture_asset?: ProfileAssetView | null, author_nip05?: string | null, following: boolean, followed_by: boolean, mutual: boolean, friend_of_friend: boolean, provenance?: ContentProvenanceView | null, withdrawal?: PostWithdrawalView | null, content: string, content_status: BlobViewStatus, attachments: Array<AttachmentView>, content_labels?: Array<string> | null, created_at: number, reply_to?: string | null, reply_preview?: ReplyPreviewView | null, root_id?: string | null, object_kind: string, published_topic_id?: string | null, origin_topic_id?: string | null, repost_of?: RepostSourceView | null, repost_commentary?: string | null, is_threadable: boolean, channel_id?: string | null, audience_label: string, reaction_summary?: Array<ReactionSummaryView> | null, my_reactions?: Array<ReactionKeyView> | null, 
+/**
+ * 投稿が開始・紹介する Live(#1839)。開始 post か紹介 post かは、Live の `start_post_id` で決まる。
+ */
+live?: PostLiveView | null, };
 
 export type BookmarkedPostView = { bookmarked_at: number, post: PostView, };
 
@@ -134,7 +140,11 @@ export type AccountSyncStatus = { no_peers: boolean, fetch_failed: boolean, behi
 
 export type LiveSessionStatus = "Scheduled" | "Live" | "Paused" | "Ended";
 
-export type LiveSessionView = { session_id: string, host_pubkey: string, title: string, description: string, status: LiveSessionStatus, started_at: number, ended_at?: number | null, viewer_count: number, joined_by_me: boolean, channel_id?: string | null, audience_label: string, };
+export type LiveSessionView = { session_id: string, host_pubkey: string, title: string, description: string, status: LiveSessionStatus, started_at: number, ended_at?: number | null, viewer_count: number, joined_by_me: boolean, channel_id?: string | null, audience_label: string, 
+/**
+ * 開始 post の id(#1839)。返信・リアクションはこの post に付ける。開始 post の無い Live は `None`。
+ */
+start_post_id?: string | null, };
 
 export type GameRoomStatus = "Waiting" | "Running" | "Paused" | "Ended";
 

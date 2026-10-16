@@ -32,6 +32,7 @@ fn projection_row(
         source_docs_author: None,
         derived_at: created_at,
         projection_version: 2,
+        live: None,
     }
 }
 
@@ -191,6 +192,7 @@ async fn projection_rebuild_from_docs_blobs_only() {
             source_docs_author: None,
             derived_at: 10,
             projection_version: 2,
+            live: None,
         },
         ObjectProjectionRow {
             object_id: reply_id.clone(),
@@ -217,6 +219,7 @@ async fn projection_rebuild_from_docs_blobs_only() {
             source_docs_author: None,
             derived_at: 11,
             projection_version: 2,
+            live: None,
         },
     ];
 

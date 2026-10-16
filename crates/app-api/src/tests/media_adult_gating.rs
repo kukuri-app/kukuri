@@ -84,6 +84,7 @@ async fn adult_labeled_repost_source_notification_preview_is_hidden_until_displa
             None,
             Vec::new(),
             vec![kukuri_core::ADULT_CONTENT_LABEL.to_string()],
+            None,
         )
         .await
         .expect("create adult repost source");
@@ -176,6 +177,7 @@ async fn adult_labeled_media_payload_is_blocked_until_display_enabled() {
                 role: AssetRole::ImageOriginal,
             }],
             vec![kukuri_core::ADULT_CONTENT_LABEL.to_string()],
+            None,
         )
         .await
         .expect("create labeled post");
@@ -299,6 +301,7 @@ async fn create_post_rejects_unknown_content_labels() {
             None,
             Vec::new(),
             vec!["nsfw-unknown".to_string()],
+            None,
         )
         .await
         .expect_err("unknown label must be rejected");

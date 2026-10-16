@@ -30,6 +30,7 @@ fn row(topic: &str, channel_id: &str, object_id: &str, created_at: i64) -> Objec
         source_docs_author: None,
         derived_at: created_at,
         projection_version: 3,
+        live: None,
     }
 }
 

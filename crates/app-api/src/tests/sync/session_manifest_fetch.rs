@@ -62,6 +62,7 @@ impl Fixture {
                     CreateLiveSessionInput {
                         title: "live".into(),
                         description: String::new(),
+                        start_post: String::new(),
                     },
                 )
                 .await

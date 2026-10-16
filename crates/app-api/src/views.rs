@@ -83,6 +83,19 @@ pub struct PostView {
     #[serde(default)]
     #[cfg_attr(feature = "ts", ts(as = "Option<Vec<ReactionKeyView>>"))]
     pub my_reactions: Vec<ReactionKeyView>,
+    /// 投稿が開始・紹介する Live(#1839)。開始 post か紹介 post かは、Live の `start_post_id` で決まる。
+    #[serde(default)]
+    pub live: Option<PostLiveView>,
+}
+
+/// 投稿が参照する Live の id と、取得・認可に使う元の場所(#1839)。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct PostLiveView {
+    pub session_id: String,
+    pub topic_id: String,
+    pub channel_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -462,6 +475,8 @@ pub struct LiveSessionView {
     pub joined_by_me: bool,
     pub channel_id: Option<String>,
     pub audience_label: String,
+    /// 開始 post の id(#1839)。返信・リアクションはこの post に付ける。開始 post の無い Live は `None`。
+    pub start_post_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -497,6 +512,8 @@ pub struct GameScoreView {
 pub struct CreateLiveSessionInput {
     pub title: String,
     pub description: String,
+    /// 開始 post の本文(#1839。空でもよい)。
+    pub start_post: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

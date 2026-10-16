@@ -43,6 +43,7 @@ fn row(index: usize, author: &str, derived_at: i64) -> ObjectProjectionRow {
         source_docs_author: None,
         derived_at,
         projection_version: 2,
+        live: None,
     }
 }
 

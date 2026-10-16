@@ -2,7 +2,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AssetRef, BlobHash, ChannelId, EnvelopeId, KukuriEnvelope, KukuriKeys, Pubkey, TopicId,
+    AssetRef, BlobHash, ChannelId, EnvelopeId, KukuriEnvelope, KukuriKeys, LiveRefV1, Pubkey,
+    TopicId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +106,9 @@ pub struct KukuriPostEnvelopeContentV1 {
     /// 投稿者自己申告のラベル(既知値は `adult` のみ)。旧 envelope には無いため default。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub content_labels: Vec<String>,
+    /// この投稿が開始・紹介する Live(#1839)。無い投稿は従来と同じ bytes。旧版は知らない項目として読み飛ばす。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live: Option<LiveRefV1>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,6 +181,8 @@ pub struct KukuriPostObjectV1 {
     pub repost_of: Option<RepostSourceSnapshotV1>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub content_labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live: Option<LiveRefV1>,
     pub status: ObjectStatus,
     pub signature: String,
 }
@@ -331,6 +337,7 @@ impl KukuriEnvelope {
             root: content.root_id,
             repost_of: content.repost_of,
             content_labels: content.content_labels,
+            live: content.live,
             status: ObjectStatus::Active,
             signature: self.sig.clone(),
         }))
@@ -405,6 +412,7 @@ pub fn build_post_envelope_with_payload_in_channel(
         channel_id,
         content_labels,
         None,
+        None,
     )
 }
 
@@ -422,6 +430,7 @@ pub fn build_post_envelope_with_docs_author(
     channel_id: Option<&ChannelId>,
     content_labels: Vec<String>,
     docs_author: Option<&str>,
+    live: Option<LiveRefV1>,
 ) -> Result<KukuriEnvelope> {
     let thread = reply_to
         .and_then(KukuriEnvelope::thread_ref)
@@ -455,6 +464,7 @@ pub fn build_post_envelope_with_docs_author(
         root_id: root_id.clone(),
         repost_of: None,
         content_labels,
+        live,
     };
     let mut tags = vec![
         vec!["topic".into(), topic.as_str().into()],
@@ -513,6 +523,7 @@ pub fn build_repost_envelope_with_docs_author(
         // 元投稿から引き継ぐ(引用表示のテキスト・メディア双方を覆う)。
         content_labels: repost_of.content_labels.clone(),
         repost_of: Some(repost_of.clone()),
+        live: None,
     };
     let mut tags = vec![
         vec!["topic".into(), topic.as_str().into()],

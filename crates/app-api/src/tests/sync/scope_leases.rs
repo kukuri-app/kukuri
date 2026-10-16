@@ -260,6 +260,7 @@ async fn leaving_a_screen_and_ending_participation_are_separate() {
             CreateLiveSessionInput {
                 title: "live".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
         )
         .await
@@ -528,6 +529,7 @@ async fn shutdown_leaves_no_presence_heartbeat_or_subscription_running() {
             CreateLiveSessionInput {
                 title: "live".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
         )
         .await
@@ -583,6 +585,7 @@ async fn participation_over_the_limit_is_refused_without_saving_state() {
             CreateLiveSessionInput {
                 title: "live".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
         )
         .await

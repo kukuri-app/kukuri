@@ -130,6 +130,7 @@ async fn private_post_media_requires_current_channel_membership() {
                 role: AssetRole::ImageOriginal,
             }],
             Vec::new(),
+            None,
         )
         .await
         .unwrap();

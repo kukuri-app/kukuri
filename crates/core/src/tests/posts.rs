@@ -130,6 +130,7 @@ fn post_envelope_declares_the_docs_author_in_a_signed_tag() {
             None,
             Vec::new(),
             docs_author,
+            None,
         )
     };
     let tagged = build(Some(docs_author.as_str())).expect("tagged envelope");

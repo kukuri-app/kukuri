@@ -77,6 +77,9 @@ pub(crate) fn row_to_object_projection(
             .map(|value| serde_json::from_str(value.as_str()))
             .transpose()?
             .unwrap_or_default(),
+        live: opt_col::<String>(&row, "live_json")
+            .map(|value| serde_json::from_str(value.as_str()))
+            .transpose()?,
         source_replica_id: ReplicaId::new(row.get::<String, _>("source_replica_id")),
         source_key: row.get("source_key"),
         source_envelope_id: row.get::<String, _>("source_envelope_id").into(),
@@ -314,6 +317,7 @@ pub(crate) fn row_to_live_session_projection(
         derived_at: row.get("derived_at"),
         projection_version: row.get("projection_version"),
         viewer_count: row.get::<i64, _>("viewer_count") as usize,
+        start_post_id: opt_col::<String>(&row, "start_post_id").map(EnvelopeId::from),
     })
 }
 

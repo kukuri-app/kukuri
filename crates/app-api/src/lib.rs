@@ -39,6 +39,7 @@ pub use sync::{
 };
 mod media;
 mod notifications;
+mod post_create;
 mod private_channel_indexing;
 mod private_channel_rendezvous;
 mod private_channel_rotation;

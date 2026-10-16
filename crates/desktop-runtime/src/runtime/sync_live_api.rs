@@ -164,6 +164,7 @@ impl DesktopRuntime {
                 CreateLiveSessionInput {
                     title: request.title,
                     description: request.description,
+                    start_post: String::new(),
                 },
                 media_endpoint_id,
             )

@@ -44,6 +44,7 @@ fn live_session_max() -> LiveSessionProjectionRow {
         derived_at: 3_600,
         projection_version: 5,
         viewer_count: 99,
+        start_post_id: Some(EnvelopeId::from("post-start")),
     }
 }
 
@@ -67,6 +68,7 @@ fn live_session_min() -> LiveSessionProjectionRow {
         derived_at: 2_100,
         projection_version: 1,
         viewer_count: 0,
+        start_post_id: None,
     }
 }
 
@@ -90,6 +92,7 @@ fn live_session_ended() -> LiveSessionProjectionRow {
         derived_at: 1_600,
         projection_version: 2,
         viewer_count: 0,
+        start_post_id: None,
     }
 }
 

@@ -170,6 +170,7 @@ fn export_ipc_types() {
         ContentObservationView,
         ContentProvenanceView,
         PostWithdrawalView,
+        PostLiveView,
         PostView,
         BookmarkedPostView,
         BookmarkedPostPageView,

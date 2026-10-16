@@ -346,6 +346,7 @@ fn filler_row(
         source_docs_author: None,
         derived_at: 0,
         projection_version: kukuri_store::VERIFIED_OBJECT_PROJECTION_VERSION,
+        live: None,
     }
 }
 

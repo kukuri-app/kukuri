@@ -165,8 +165,9 @@ pub use link_preview::{
     build_link_preview_envelope, link_preview_image_mime, verify_link_preview,
 };
 pub use live::{
-    LiveMediaSigner, LiveMediaVerifier, LiveSessionManifestBlobV1, LiveSessionStateDocV1,
-    LiveSessionStatus, LiveSignalKind, build_live_session_envelope, live_media_broadcast_path,
+    LiveMediaSigner, LiveMediaVerifier, LiveRefV1, LiveSessionManifestBlobV1,
+    LiveSessionStateDocV1, LiveSessionStatus, LiveSignalKind, build_live_session_envelope,
+    live_media_broadcast_path,
 };
 pub use media::{
     AssetRef, AssetRole, DOME_INSTANCE_MANIFEST_MIME, DOME_PRESET_MANIFEST_MIME,

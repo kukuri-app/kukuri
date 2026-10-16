@@ -1,6 +1,6 @@
 use kukuri_core::{
     AssetRef, BlobHash, CustomReactionAssetSnapshotV1, DirectMessageAttachmentManifestV1,
-    EnvelopeId, GameRoomKind, GameRoomStatus, GameScoreEntry, LiveSessionStatus,
+    EnvelopeId, GameRoomKind, GameRoomStatus, GameScoreEntry, LiveRefV1, LiveSessionStatus,
     MetaverseRoomStateV1, ObjectStatus, PayloadRef, PostWithdrawalReason, ReactionKeyKind,
     ReplicaId, RepostSourceSnapshotV1, WithdrawalReasonVisibility,
 };
@@ -58,6 +58,9 @@ pub struct ObjectProjectionRow {
     /// 投稿者自己申告のラベル(#858、ADR 0046)。旧 projection 行には無いため default。
     #[serde(default)]
     pub content_labels: Vec<String>,
+    /// 投稿が開始・紹介する Live(#1839)。受信側の規則(`LiveRefV1::allowed_in`)に合うものだけを置く。旧い行は `None`。
+    #[serde(default)]
+    pub live: Option<LiveRefV1>,
     pub source_replica_id: ReplicaId,
     pub source_key: String,
     pub source_envelope_id: EnvelopeId,
@@ -225,6 +228,9 @@ pub struct LiveSessionProjectionRow {
     pub derived_at: i64,
     pub projection_version: i64,
     pub viewer_count: usize,
+    /// manifest の開始 post の id(#1839)。開始 post の無い Live と旧い行は `None`。
+    #[serde(default)]
+    pub start_post_id: Option<EnvelopeId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

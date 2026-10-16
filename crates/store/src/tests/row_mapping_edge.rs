@@ -363,6 +363,7 @@ async fn object_projection_blank_root_and_reply_map_to_none() {
             source_docs_author: None,
             derived_at: 1001,
             projection_version: 2,
+            live: None,
         }
     );
 

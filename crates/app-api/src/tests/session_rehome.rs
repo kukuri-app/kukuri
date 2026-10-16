@@ -74,6 +74,7 @@ async fn pre_switch_sessions_move_out_of_the_legacy_replica_on_the_first_switche
             CreateLiveSessionInput {
                 title: "live".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
         )
         .await
@@ -319,6 +320,7 @@ async fn a_session_updated_on_a_later_day_stays_readable() {
             CreateLiveSessionInput {
                 title: "live".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
         )
         .await

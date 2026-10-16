@@ -613,6 +613,7 @@ pub(crate) fn live_projection_row(verified: &VerifiedLiveSession) -> LiveSession
         derived_at: Utc::now().timestamp_millis(),
         projection_version: kukuri_store::VERIFIED_SESSION_PROJECTION_VERSION,
         viewer_count: 0,
+        start_post_id: manifest.start_post_id.clone(),
     }
 }
 
@@ -668,6 +669,11 @@ pub(crate) fn projection_row_from_post(
         attachments: header.attachments.clone(),
         repost_of: header.repost_of.clone(),
         content_labels: header.content_labels.clone(),
+        // #1839: 限定 channel の Live を別の場所から参照する post は、作成時と同じ規則で参照を捨てる。
+        live: header
+            .live
+            .clone()
+            .filter(|live| live.allowed_in(&header.topic_id, header.channel_id.as_ref())),
         source_replica_id: source_replica_id.clone(),
         source_key: stable_key("objects", &format!("{}/state", header.object_id.as_str())),
         source_envelope_id: header.envelope_id.clone(),

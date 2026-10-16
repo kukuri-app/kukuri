@@ -310,6 +310,7 @@ async fn a_history_transfer_reflects_the_selected_records_and_blobs() {
         None,
         Vec::new(),
         None,
+        None,
     )
     .unwrap();
     let missing_key = format!("objects/{}/envelope", missing.id.as_str());

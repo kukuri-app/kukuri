@@ -83,6 +83,7 @@ async fn redisplay_after_the_provider_stops(content_labels: Vec<String>) -> anyh
         None,
         content_labels,
         None,
+        None,
     )
     .unwrap();
     receiver_store

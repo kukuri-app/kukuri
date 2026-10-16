@@ -81,6 +81,7 @@ impl Author {
             None,
             Vec::new(),
             Some(&self.docs_author),
+            None,
         )?;
         let replica = BucketReplica::new(
             BucketScope::Topic {
@@ -657,6 +658,7 @@ async fn later_reader_gets_an_offline_owners_sessions_from_a_topic_peer() -> Res
             CreateLiveSessionInput {
                 title: "relayed live".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
         )
         .await?;

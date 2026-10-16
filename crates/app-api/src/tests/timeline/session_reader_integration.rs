@@ -26,6 +26,7 @@ async fn real_iroh_session_target_reads_its_bucket_without_importing_it() -> Res
             CreateLiveSessionInput {
                 title: "remote session".into(),
                 description: String::new(),
+                start_post: String::new(),
             },
         )
         .await?;

@@ -59,6 +59,7 @@ pub fn post(
         source_docs_author: None,
         derived_at: 1,
         projection_version: crate::VERIFIED_OBJECT_PROJECTION_VERSION,
+        live: None,
     }
 }
 

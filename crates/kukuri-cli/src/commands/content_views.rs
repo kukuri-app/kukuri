@@ -146,7 +146,8 @@ fn post() -> Value {
         "object_kind": string(), "published_topic_id": optional_string(), "origin_topic_id": optional_string(),
         "repost_of": nullable(repost_source()), "repost_commentary": optional_string(), "is_threadable": boolean(),
         "channel_id": optional_string(), "audience_label": string(), "reaction_summary": array(reaction(Some("count"))),
-        "my_reactions": array(reaction(None))}),
+        "my_reactions": array(reaction(None)),
+        "live": nullable(view(json!({"session_id": string(), "topic_id": string(), "channel_id": optional_string()})))}),
     )
 }
 

@@ -26,6 +26,7 @@ fn observation_projection_row(object_id: &str) -> ObjectProjectionRow {
         source_docs_author: None,
         derived_at: 1,
         projection_version: 2,
+        live: None,
     }
 }
 

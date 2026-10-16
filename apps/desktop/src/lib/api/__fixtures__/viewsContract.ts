@@ -166,7 +166,12 @@ export const postViewFull = {
         "height": 64
       }
     }
-  ]
+  ],
+  "live": {
+    "session_id": "live-1700000000000-abcd",
+    "topic_id": "kukuri:topic:origin",
+    "channel_id": null
+  }
 } satisfies PostView;
 
 // post_view.minimal.json
@@ -201,7 +206,8 @@ export const postViewMinimal = {
   "channel_id": null,
   "audience_label": "Public",
   "reaction_summary": [],
-  "my_reactions": []
+  "my_reactions": [],
+  "live": null
 } satisfies PostView;
 
 // timeline_view.json
@@ -238,7 +244,8 @@ export const timelineView = {
       "channel_id": null,
       "audience_label": "Public",
       "reaction_summary": [],
-      "my_reactions": []
+      "my_reactions": [],
+      "live": null
     }
   ],
   "next_cursor": {
@@ -282,7 +289,8 @@ export const bookmarkedPostView = {
     "channel_id": null,
     "audience_label": "Public",
     "reaction_summary": [],
-    "my_reactions": []
+    "my_reactions": [],
+    "live": null
   }
 } satisfies BookmarkedPostView;
 

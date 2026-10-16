@@ -3,7 +3,7 @@ use super::*;
 const TIMELINE_SELECT: &str = r#"
     SELECT object_id, topic_id, author_pubkey, created_at, object_kind, root_object_id,
            reply_to_object_id, channel_id, payload_ref_json, content, attachments_json,
-           repost_of_json, content_labels_json, source_replica_id, source_key,
+           repost_of_json, content_labels_json, live_json, source_replica_id, source_key,
            source_envelope_id, source_blob_hash, derived_at, projection_version,
            source_docs_author
 "#;
@@ -12,7 +12,7 @@ const THREAD_SELECT: &str = r#"
     SELECT oic.object_id, oic.topic_id, oic.author_pubkey, oic.created_at, oic.object_kind,
            oic.root_object_id, oic.reply_to_object_id, oic.channel_id,
            oic.payload_ref_json, oic.content, oic.attachments_json, oic.repost_of_json,
-           oic.content_labels_json, oic.source_replica_id, oic.source_key,
+           oic.content_labels_json, oic.live_json, oic.source_replica_id, oic.source_key,
            oic.source_docs_author, oic.source_envelope_id, oic.source_blob_hash, oic.derived_at,
            oic.projection_version
     FROM object_thread_cache tc
@@ -247,6 +247,7 @@ impl SqliteStore {
             let payload_json = serde_json::to_string(&row.payload_ref)?;
             let attachments_json = serde_json::to_string(&row.attachments)?;
             let content_labels_json = serde_json::to_string(&row.content_labels)?;
+            let live_json = row.live.as_ref().map(serde_json::to_string).transpose()?;
             let repost_json = row
                 .repost_of
                 .as_ref()
@@ -257,11 +258,11 @@ impl SqliteStore {
                 INSERT INTO object_index_cache (
                   object_id, topic_id, channel_id, author_pubkey, created_at, object_kind,
                   root_object_id, reply_to_object_id, payload_ref_json, content, attachments_json,
-                  repost_of_json, content_labels_json, source_replica_id, source_key,
+                  repost_of_json, content_labels_json, live_json, source_replica_id, source_key,
                   source_envelope_id, source_blob_hash, derived_at, projection_version,
                   source_docs_author
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
                 ON CONFLICT(object_id) DO UPDATE SET
                   topic_id = excluded.topic_id,
                   channel_id = excluded.channel_id,
@@ -275,6 +276,7 @@ impl SqliteStore {
                   attachments_json = excluded.attachments_json,
                   repost_of_json = excluded.repost_of_json,
                   content_labels_json = excluded.content_labels_json,
+                  live_json = excluded.live_json,
                   source_replica_id = excluded.source_replica_id,
                   source_key = excluded.source_key,
                   source_envelope_id = excluded.source_envelope_id,
@@ -297,6 +299,7 @@ impl SqliteStore {
             .bind(attachments_json)
             .bind(repost_json.as_deref())
             .bind(content_labels_json)
+            .bind(live_json.as_deref())
             .bind(row.source_replica_id.as_str())
             .bind(row.source_key.as_str())
             .bind(row.source_envelope_id.as_str())
@@ -400,7 +403,7 @@ impl ObjectProjectionStore for SqliteStore {
             r#"
             SELECT object_id, topic_id, author_pubkey, created_at, object_kind, root_object_id,
                    reply_to_object_id, channel_id, payload_ref_json, content, attachments_json,
-                   repost_of_json, content_labels_json, source_replica_id, source_key,
+                   repost_of_json, content_labels_json, live_json, source_replica_id, source_key,
                    source_envelope_id, source_blob_hash, derived_at, projection_version,
                    source_docs_author
             FROM object_index_cache
@@ -434,7 +437,7 @@ impl ObjectProjectionStore for SqliteStore {
             r#"
             SELECT object_id, topic_id, author_pubkey, created_at, object_kind, root_object_id,
                    reply_to_object_id, channel_id, payload_ref_json, content, attachments_json,
-                   repost_of_json, content_labels_json, source_replica_id, source_key,
+                   repost_of_json, content_labels_json, live_json, source_replica_id, source_key,
                    source_envelope_id, source_blob_hash, derived_at, projection_version,
                    source_docs_author
             FROM object_index_cache
