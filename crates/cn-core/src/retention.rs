@@ -68,6 +68,7 @@ pub struct CleanupCounts {
     pub operator_actions: u64,
     pub moderation_events: u64,
     pub risk_signals: u64,
+    pub malware_restrictions: u64,
 }
 
 /// operator config の保持日数を、保持区分ごとの日数の行へ書く。書く行の数は区分の数で決まる。
@@ -140,7 +141,7 @@ const EXPIRED_RIGHTS_REQUESTS: &str = "DELETE FROM cn_legal.rights_requests WHER
 /// 表ごとの期限削除の文と、その表の保持区分（子から親の順）。`$1` は基準時刻、`$2` は保持区分、`$3` は
 /// 消す行の上限で、どの文も起算点の索引の範囲から期限切れの行を古い順に上限まで選び、その行の位置
 /// （`ctid`）で消す（主キーの索引を引かない）。
-pub const EXPIRED_DELETES: [(&[&str], &str); 8] = [
+pub const EXPIRED_DELETES: [(&[&str], &str); 9] = [
     (
         &[
             "report_contact",
@@ -222,6 +223,15 @@ pub const EXPIRED_DELETES: [(&[&str], &str); 8] = [
            )
          ORDER BY signal.persisted_at LIMIT $3))",
     ),
+    // 解除した malware の判断は、解除の監査と同じ日数で解除時刻から数えて消す。有効な判断は消さない（#1062）。
+    (
+        &["operator_audit"],
+        "DELETE FROM cn_legal.transmission_preventions WHERE ctid = ANY(ARRAY(
+         SELECT ctid FROM cn_legal.transmission_preventions
+         WHERE basis_category = 'malware'
+           AND released_at <= $1 - cn_admin.retention_interval($2)
+         ORDER BY released_at LIMIT $3))",
+    ),
 ];
 
 /// 期限切れ（hold の外）を、1 取引で保持区分ごとに `limit` 件まで子から親の順に消し、`counts` に足す。
@@ -245,6 +255,7 @@ pub async fn delete_expired_batch(
         &mut counts.operator_actions,
         &mut counts.moderation_events,
         &mut counts.risk_signals,
+        &mut counts.malware_restrictions,
     ];
     let mut more = false;
     for (count, (categories, sql)) in tables.into_iter().zip(EXPIRED_DELETES) {

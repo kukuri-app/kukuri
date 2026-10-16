@@ -1,4 +1,7 @@
 //! Durable, node-local legal transmission-prevention decisions (#761).
+//!
+//! malware の通報に対する運営者の手動判断（#1062）も根拠 `malware` の行として同じ表に置き、索引の guard を
+//! 共有する。権利侵害の判断とは一意性・作成・解除の経路を分ける。
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
@@ -18,6 +21,8 @@ pub enum TransmissionPreventionBasis {
     PersonalityRights,
     Trademark,
     OtherRights,
+    /// malware の通報を運営者が確認した判断（#1062）。法的な判断ではなく、通報からだけ作る。
+    Malware,
 }
 
 impl TransmissionPreventionBasis {
@@ -28,6 +33,7 @@ impl TransmissionPreventionBasis {
             Self::PersonalityRights => "personality_rights",
             Self::Trademark => "trademark",
             Self::OtherRights => "other_rights",
+            Self::Malware => "malware",
         }
     }
 
@@ -38,6 +44,7 @@ impl TransmissionPreventionBasis {
             "personality_rights" => Ok(Self::PersonalityRights),
             "trademark" => Ok(Self::Trademark),
             "other_rights" => Ok(Self::OtherRights),
+            "malware" => Ok(Self::Malware),
             _ => bail!("unknown transmission-prevention basis `{value}`"),
         }
     }
@@ -144,7 +151,7 @@ pub(crate) async fn apply_transmission_prevention_in_tx(
     validate_actor(actor)?;
     validate_input(input)?;
     lock_subject(tx, &input.subject_id).await?;
-    if let Some(current) = active_in_tx(tx, &input.subject_kind, &input.subject_id).await? {
+    if let Some(current) = active_in_tx(tx, &input.subject_kind, &input.subject_id, false).await? {
         let before = audit_snapshot(&current);
         let expired = sqlx::query(
             "UPDATE cn_legal.transmission_preventions
@@ -237,7 +244,7 @@ pub async fn release_transmission_prevention(
     }
     let mut tx = pool.begin().await?;
     lock_subject(&mut tx, subject_id).await?;
-    let current = active_in_tx(&mut tx, subject_kind, subject_id)
+    let current = active_in_tx(&mut tx, subject_kind, subject_id, false)
         .await?
         .context("active transmission-prevention decision was not found")?;
     let before = audit_snapshot(&current);
@@ -328,18 +335,140 @@ pub async fn is_transmission_prevented_for_any(
     .await?)
 }
 
+/// malware の判断が当該 CN で止める提供面（#1062）。索引の guard がこの capability を見る。
+const MALWARE_POST_CAPABILITIES: [&str; 4] =
+    ["community_index", "search", "discovery", "recommendation"];
+
+/// malware の通報から、運営者が投稿を当該 CN の索引・検索・発見・推薦で制限する（#1062）。
+///
+/// 期限内の malware 通報を読み、判断を保存して通報を `actioned` にする。監査は呼び出し側が同じ取引で追記する。
+/// 同じ投稿に有効な判断があれば新しく作らずに使うので、再送や同じ投稿への別の通報でも判断は 1 つに保つ。
+/// 索引の行は消さない。候補の読取りと取込が判断を照合するので、解除はこの行の失効だけで直ちに効く。
+/// 返り値は対象の投稿 ID と監査の変更前・変更後。
+pub(crate) async fn restrict_malware_post_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &str,
+    report_id: &str,
+) -> Result<(String, serde_json::Value, serde_json::Value)> {
+    let report = sqlx::query(
+        "SELECT subject_kind, subject_id, reason, status FROM cn_admin.reports
+         WHERE id = $1 AND created_at > NOW() - cn_admin.retention_interval('report')
+         FOR UPDATE",
+    )
+    .bind(report_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .with_context(|| format!("report `{report_id}` was not found"))?;
+    let subject_kind: String = report.try_get("subject_kind")?;
+    let post_id: String = report.try_get("subject_id")?;
+    let reason: String = report.try_get("reason")?;
+    let status: String = report.try_get("status")?;
+    if reason != "malware" {
+        bail!("only a malware report can restrict a post");
+    }
+    if subject_kind != "post" {
+        bail!("this operation restricts a post; the report subject is `{subject_kind}`");
+    }
+    lock_subject(tx, &post_id).await?;
+    let current = active_in_tx(tx, "post", &post_id, true).await?;
+    let before = json!({
+        "report_id": report_id,
+        "report_status": status,
+        "restriction": current.as_ref().map_or_else(|| json!({ "active": false }), audit_snapshot),
+    });
+    let decision = match current {
+        Some(current) => current,
+        None => from_row(
+            &sqlx::query(
+                "INSERT INTO cn_legal.transmission_preventions
+                    (id, subject_kind, subject_id, basis_category, capabilities, decided_by,
+                     related_report_id)
+                 VALUES ($1, 'post', $2, 'malware', $3, $4, $5) RETURNING *",
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(&post_id)
+            .bind(&MALWARE_POST_CAPABILITIES[..])
+            .bind(actor.trim())
+            .bind(report_id)
+            .fetch_one(&mut **tx)
+            .await?,
+        )?,
+    };
+    sqlx::query("UPDATE cn_admin.reports SET status = 'actioned' WHERE id = $1")
+        .bind(report_id)
+        .execute(&mut **tx)
+        .await?;
+    let after = json!({
+        "report_id": report_id,
+        "report_status": "actioned",
+        "decision_id": decision.id,
+        "restriction": audit_snapshot(&decision),
+    });
+    Ok((post_id, before, after))
+}
+
+/// 投稿の malware の判断だけを解除する（#1062）。権利侵害の判断・safety verdict・撤回は変えず、通報の状態も
+/// 変えない。監査は呼び出し側が同じ取引で追記する。返り値は監査の変更前・変更後。
+pub(crate) async fn release_malware_restriction_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &str,
+    post_id: &str,
+    reason: &str,
+) -> Result<(serde_json::Value, serde_json::Value)> {
+    lock_subject(tx, post_id).await?;
+    let current = active_in_tx(tx, "post", post_id, true)
+        .await?
+        .context("this post has no active malware restriction")?;
+    let row = sqlx::query(
+        "UPDATE cn_legal.transmission_preventions
+         SET released_at = NOW(), released_by = $2, release_reason = $3
+         WHERE id = $1 RETURNING *",
+    )
+    .bind(&current.id)
+    .bind(actor.trim())
+    .bind(reason)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok((audit_snapshot(&current), audit_snapshot(&from_row(&row)?)))
+}
+
+/// 運営画面に出す malware の判断を新しい順に最大 `limit` 件返す（#1062。部分索引の範囲だけを読む）。解除した
+/// 判断は、期限削除と同じ operator audit の日数を過ぎたら読まない（ADR 0034 §4）。
+pub async fn list_malware_restrictions(
+    pool: &PgPool,
+    limit: i64,
+) -> Result<Vec<TransmissionPrevention>> {
+    sqlx::query(
+        "SELECT * FROM cn_legal.transmission_preventions
+         WHERE basis_category = 'malware'
+           AND (released_at IS NULL
+                OR released_at > NOW() - cn_admin.retention_interval('operator_audit'))
+         ORDER BY decided_at DESC LIMIT $1",
+    )
+    .bind(limit.clamp(1, 50))
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(from_row)
+    .collect()
+}
+
+/// 対象の有効な判断のうち、malware の判断（`malware`）か、それ以外の判断を読んで行を lock する。
 async fn active_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     subject_kind: &str,
     subject_id: &str,
+    malware: bool,
 ) -> Result<Option<TransmissionPrevention>> {
     let row = sqlx::query(
         "SELECT * FROM cn_legal.transmission_preventions
          WHERE subject_kind = $1 AND subject_id = $2 AND released_at IS NULL
+           AND (basis_category = 'malware') = $3
          ORDER BY decided_at DESC LIMIT 1 FOR UPDATE",
     )
     .bind(subject_kind.trim())
     .bind(subject_id.trim())
+    .bind(malware)
     .fetch_optional(&mut **tx)
     .await?;
     row.as_ref().map(from_row).transpose()
@@ -405,6 +534,9 @@ fn validate_input(input: &NewTransmissionPrevention) -> Result<()> {
     }
     if input.capabilities.is_empty() {
         bail!("capabilities must not be empty");
+    }
+    if input.basis == TransmissionPreventionBasis::Malware {
+        bail!("a malware restriction is decided from a malware report");
     }
     Ok(())
 }

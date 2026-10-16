@@ -75,6 +75,20 @@ fn operation_summary(operation: &AdminOperation) -> (&'static str, String, Strin
                 status.as_str()
             ),
         ),
+        AdminOperation::RestrictMalwarePost { report_id } => (
+            "malware の通報の投稿を制限しますか",
+            report_id.clone(),
+            "投稿を制限し、通報を actioned".to_string(),
+            "この通報の投稿を、このノードの索引・検索・発見・推薦で返さなくします。同じ投稿に有効な制限があれば、それを使います。P2P 上の投稿と他のノードは変わりません。解除するまで続き、通報の保持期限では解除されません。"
+                .to_string(),
+        ),
+        AdminOperation::ReleaseMalwareRestriction { post_id, reason } => (
+            "投稿の malware の制限を解除しますか",
+            post_id.clone(),
+            format!("解除（理由: {reason}）"),
+            "この投稿の malware の制限だけを解除します。権利侵害による送信防止、安全性の判定、著者の撤回は引き続き適用されます。索引に残っている投稿はすぐに戻り、制限中に索引から外れた投稿は次に取り込まれたときに戻ります。"
+                .to_string(),
+        ),
     }
 }
 

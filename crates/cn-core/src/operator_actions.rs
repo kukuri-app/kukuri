@@ -12,6 +12,9 @@ use sqlx::postgres::{PgPool, PgRow};
 use uuid::Uuid;
 
 use crate::config::COMMUNITY_NODE_ADMISSION_SERVICE_NAME;
+use crate::transmission_preventions::{
+    release_malware_restriction_in_tx, restrict_malware_post_in_tx,
+};
 use crate::{AdmissionConfig, AdmissionMode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +51,15 @@ pub enum AdminOperation {
     SetReportStatus {
         report_id: String,
         status: OperatorReportStatus,
+    },
+    /// malware の通報の投稿を当該 CN で制限し、通報を対応済みにする（#1062）。
+    RestrictMalwarePost {
+        report_id: String,
+    },
+    /// 投稿の malware の制限だけを解除する（#1062）。
+    ReleaseMalwareRestriction {
+        post_id: String,
+        reason: String,
     },
 }
 
@@ -153,8 +165,8 @@ pub async fn apply_operator_action(
             if report_id.is_empty() {
                 bail!("report id must not be empty");
             }
-            let current = sqlx::query_scalar::<_, String>(
-                "SELECT status FROM cn_admin.reports
+            let (current, reason) = sqlx::query_as::<_, (String, String)>(
+                "SELECT status, reason FROM cn_admin.reports
                  WHERE id = $1 AND created_at > NOW() - cn_admin.retention_interval('report')
                  FOR UPDATE",
             )
@@ -162,6 +174,12 @@ pub async fn apply_operator_action(
             .fetch_optional(&mut *tx)
             .await?
             .with_context(|| format!("report `{report_id}` was not found"))?;
+            // malware の通報の対応済みは、制限の判断を保存した操作だけが作り、戻さない（#1062）。
+            if reason == "malware"
+                && (*status == OperatorReportStatus::Actioned || current == "actioned")
+            {
+                bail!("a malware report becomes actioned only by restricting its subject");
+            }
             sqlx::query("UPDATE cn_admin.reports SET status = $2 WHERE id = $1")
                 .bind(report_id)
                 .bind(status.as_str())
@@ -173,6 +191,23 @@ pub async fn apply_operator_action(
                 report_id.to_string(),
                 json!({ "status": current }),
                 json!({ "status": status.as_str() }),
+            )
+        }
+        AdminOperation::RestrictMalwarePost { report_id } => {
+            let (post_id, before, after) =
+                restrict_malware_post_in_tx(&mut tx, actor, report_id.trim()).await?;
+            ("malware.restrict_post", "post", post_id, before, after)
+        }
+        AdminOperation::ReleaseMalwareRestriction { post_id, reason } => {
+            let post_id = post_id.trim();
+            let (before, after) =
+                release_malware_restriction_in_tx(&mut tx, actor, post_id, reason.trim()).await?;
+            (
+                "malware.release_post",
+                "post",
+                post_id.to_string(),
+                before,
+                after,
             )
         }
     };
@@ -205,13 +240,26 @@ pub fn validate_admin_operation(operation: &AdminOperation) -> Result<()> {
         | AdminOperation::RemoveSupportedPublicTopic { topic_id } => {
             validate_public_topic_id(topic_id).map(|_| ())
         }
-        AdminOperation::SetReportStatus { report_id, .. } => {
+        AdminOperation::SetReportStatus { report_id, .. }
+        | AdminOperation::RestrictMalwarePost { report_id } => {
             let report_id = report_id.trim();
             if report_id.is_empty() {
                 bail!("report id must not be empty");
             }
             if report_id.len() > 128 {
                 bail!("report id is too long");
+            }
+            Ok(())
+        }
+        AdminOperation::ReleaseMalwareRestriction { post_id, reason } => {
+            let post_id = post_id.trim();
+            if post_id.is_empty() || post_id.len() > 512 || post_id.chars().any(char::is_control) {
+                bail!(
+                    "post id must be present, at most 512 characters, without control characters"
+                );
+            }
+            if reason.trim().is_empty() || reason.len() > 500 {
+                bail!("release reason must be present and at most 500 characters");
             }
             Ok(())
         }

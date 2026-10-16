@@ -6,6 +6,8 @@ Accepted
 
 **2026-10-09 改訂**（#1698）: §3 の判断記録の項目と、外部へ返す状態の範囲を実装（#761）に合わせた。当初の §3 は、判断記録に対象著者を持ち、状態を認証済み公開鍵と対象著者が一致する本人だけに返すとしていたが、実装は著者を持たず、状態を認証なしで返していた。本人だけに返す形と対象著者の保持は失効し、認証なしの状態取得を仕様とする。著者は自分の投稿への措置を認証なしで確かめられ、対象 ID を知る第三者にも措置の有無と根拠カテゴリが分かる。保存データと API の形は変わらないので、移行は無い。
 
+**2026-10-16 追補**（#1062 AC-1）: malware の通報に対する運営者の手動判断を §6 に追加した。判断は同じ表に根拠カテゴリ `malware` の別の行として置き、法的な判断とは一意性・作成・解除の経路と保持を分ける。§3 の状態取得は根拠カテゴリとして `malware` も返す。§4 の「適用時に索引真実源を非許可化し写しを消す」と「解除後は fresh scan まで復活しない」は法的な判断に限り、malware の判断は索引の行を消さず、照合だけで止める（§6）。既存の法的な判断の行と API の形は変わらない。
+
 ## Date
 
 2026-08-25
@@ -41,6 +43,18 @@ safety 判定、法的判断、著者撤回、operator policy は根拠・author
 - SQLite projection 必要有無: 無
 - 必須 contract: authority scope、適用・解除 transaction、全 index surface の fail-closed gate、cache evict／deny、認証なしの状態取得、解除後の fresh scan
 - 必須 scenario: 適用後に search／discovery／recommendation／cache から消え、restart／backfill／再投影で復活せず、解除後も fresh `allow` までは復活しない
+
+- Feature 名: Community Node 内の malware の制限（#1062）
+- Durable / Transient: Durable
+- Canonical Source: 当該 node の Postgres にある node-local decision record（`cn_legal.transmission_preventions` の根拠 `malware` の行）
+- Replicated?: No
+- Rebuildable From: 運営者の判断と append-only audit。通報・対象本文・scan 結果からは再構築しない
+- Public Replica / Private Replica / Local Only: Local Only
+- Gossip Hint 必要有無: 無
+- Blob 必要有無: 無。添付・外部 URL を取得・実行しない
+- SQLite projection 必要有無: 無
+- 必須 contract: 通報からの明示操作だけで作る、判断・通報状態・audit の同一 transaction、再送・同時操作で判断を 1 つに保つ、権利侵害の判断との併存と個別の解除、索引の候補の読取りと取込の照合、clean な再 scan で解除しない、件数に依らない読取り
+- 必須 scenario: 制限後に search／discovery／recommendation から消え、restart・再 scan で復活せず、解除後は他の有効な抑止が無ければ索引に残る投稿がすぐに戻る
 
 ## Decision
 
@@ -96,6 +110,19 @@ indexer は本文・blob の取得前と Postgres upsert 直前に合成判定�
 | Direct P2P | 対応 client が撤回事象を解釈して表示停止 | Community Node による直接経路の遮断 |
 
 `blob_cache=true` の配備は、削除と再取得拒否を実行できる backend を readiness で必須にする。現行の scan 用一時取得経路は抑止対象を取得せず、local store を `Missing` のまま保つ。
+
+### 6. malware の通報に対する運営者の手動判断（#1062）
+
+malware は自動の検出器を置かず、通報と運営者の確認で扱う。通報の受付（`POST /v1/report`、`reason=malware`）は検出・制限ではない。運営者が admin listener で明示的に制限した場合だけ、当該 node の提供動作が変わる。
+
+- 判断は `cn_legal.transmission_preventions` に根拠カテゴリ `malware` の行として置く。法的な根拠カテゴリとは別の値で、通報 ID（`related_report_id`）を必須にし、失効時刻を持たない。有効な判断の一意性は「法的な判断」と「malware の判断」で分け、同じ投稿に両方が有効でき、片方の解除は他方を変えない。法的な判断の作成・解除（`cn-cli transmission-prevention`、権利侵害申出の措置）は malware の判断を作らず、解除もしない。
+- 制限は期限内の malware 通報（対象が投稿）から作る。判断の保存、通報の `actioned`、audit を同じ transaction で書く。同じ投稿に有効な判断があれば新しく作らずに使い、再送・同時操作・同じ投稿への別の通報でも判断は 1 つに保つ。malware の通報は汎用の状態変更で `actioned` にできず、`actioned` から戻せない。却下は `dismissed` で判断を作らない。通報の件数だけで制限せず、risk signal・trust・著者の扱いは変えない。
+- 止める提供面は community index／search／discovery／recommendation。索引の guard（取込の本文取得前、真実源 upsert、query gate の候補照合）は根拠を問わず有効な判断を見るので、同じ照合で止まる。malware の判断は索引の真実源と写しを消さない。候補照合が止めるので、写しが残っても再提供しない。制限中に取込が対象を読むと、既存の取込が索引から外す。
+- 解除は対象の malware の判断だけを失効させ（解除者・時刻・理由を残す）、通報の状態は変えない。他の有効な法的な判断、safety verdict、著者撤回、受入下限は引き続き照合する。索引に残っている投稿はすぐに戻り、制限中に索引から外れた投稿は既存の取込が次に読むときに戻る。全履歴の再取得や再 scan を解除の条件にしない。clean な再 scan や内容 cache の hit は判断を解除しない。
+- 判断は通報の保持期限では消えず、有効な間は残る。解除した判断は operator audit の日数を解除時刻から数えて期限削除する（ADR 0034 §1）。有効な判断の件数の上限は置かない（作成は運営者の明示操作に限る）。
+- 運営画面は通報の最新 50 件と、malware の判断の最新 50 件の窓を入口にし、窓の外の判断は投稿 ID を指定して解除する。1 操作は 1 件の判断と audit の保存で、対象の全参照や全 topic の列挙を待たない。
+
+本節は投稿を対象にする。検証済み blob hash を対象にした判断（#1062 AC-2）は別に定める。
 
 ## Consequences
 
