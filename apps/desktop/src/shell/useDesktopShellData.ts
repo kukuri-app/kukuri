@@ -33,6 +33,7 @@ import { useDesktopShellSectionLoaders } from '@/shell/data/loaders/useDesktopSh
 import { useQueuedLoadTopics } from '@/shell/data/useQueuedLoadTopics';
 import { applyJoinedChannels, refreshedJoinedChannels } from '@/shell/data/joinedChannelPages';
 import {
+  cursorIsBeyond,
   hasReadPastHeadPage,
   mergeRefreshedVisiblePosts,
   mergeUniquePosts,
@@ -570,33 +571,35 @@ export function useDesktopShellData({
           const timeline = timelineResult.value;
           const normalizedTimelineItems = uniquePostsByIdentity(timeline.items);
           const baselinePosts = currentState.timelinesByKey[timelineKey] ?? EMPTY_POSTS;
+          const storedTimelineCursor = currentState.timelineNextCursorByKey[timelineKey];
           const preserveTimelinePages =
             mode === 'buffer' &&
             hasReadPastHeadPage(
               baselinePosts,
               normalizedTimelineItems,
-              currentState.timelineNextCursorByKey[timelineKey],
+              storedTimelineCursor,
               timeline.next_cursor,
               'desc'
             );
           const resolvedTimelineCursor = preserveTimelinePages
-            ? (currentState.timelineNextCursorByKey[timelineKey] ?? null)
+            ? (storedTimelineCursor ?? null)
             : (timeline.next_cursor ?? null);
           const visiblePostIds = new Set(baselinePosts.map((post) => postIdentityKey(post)));
-          const authoritativeIds = new Set(
-            baselinePosts
-              .filter((post) => !post.local_state)
-              .map((post) => postIdentityKey(post))
+          // 新着は表示中の先頭より新しい行だけ。反映の途中で先頭のページが欠けて表示された後に届く、それより古い行は
+          // 新着ではない。保留すると、表示中の一覧は続きの位置を持たないまま残り、続きを読めない(#1851)。
+          const newestShown = baselinePosts.find((post) => !post.local_state);
+          const isNewer = (post: PostView) => !newestShown || cursorIsBeyond(
+            { created_at: newestShown.created_at, object_id: newestShown.object_id },
+            { created_at: post.created_at, object_id: post.object_id },
+            'desc'
           );
-          const hasAuthoritativeBaseline = authoritativeIds.size > 0;
-          const pendingTimelineItems = normalizedTimelineItems.filter(
-            (post) => !visiblePostIds.has(postIdentityKey(post))
-          );
-          const pendingCount = pendingTimelineItems.length;
+          const pendingCount = normalizedTimelineItems.filter(
+            (post) => !visiblePostIds.has(postIdentityKey(post)) && isNewer(post)
+          ).length;
           // Flow モードの Column が表示する scope は、新着を保留せずに反映する(#1647)。
           const flow = currentState.workspaceState.columns.some((column) => column.timelineFlow &&
             column.scope?.topicId === topic && column.scope.channelId === selectedChannelId);
-          const shouldBuffer = mode === 'buffer' && !flow && hasAuthoritativeBaseline && pendingCount > 0;
+          const shouldBuffer = mode === 'buffer' && !flow && Boolean(newestShown) && pendingCount > 0;
 
           if (shouldBuffer) {
             setPendingTimelineSnapshotsByKey(setRecordEntry(timelineKey, normalizedTimelineItems));
@@ -605,22 +608,29 @@ export function useDesktopShellData({
             setPendingTimelineUnavailableByKey(
               setRecordEntry(timelineKey, timeline.unavailable_count ?? 0)
             );
-          } else {
-            setTimelinesByKey(updateRecordEntry(timelineKey, (prev) => mergeRefreshedVisiblePosts(
-                prev ?? EMPTY_POSTS,
-                normalizedTimelineItems,
-                preserveTimelinePages
-              )));
-            setTimelineNextCursorByKey(setTimelineCursorEntry(timelineKey, resolvedTimelineCursor));
-            // 読んだ範囲を残すときは、その範囲の数も残す(#1239 AC-4)。
-            if (!preserveTimelinePages) {
-              setTimelineWindowHeadCursorByKey(setRecordEntry(timelineKey, timelineHeadCursor));
-              setTimelineUnavailableByKey(
-                setRecordEntry(timelineKey, timeline.unavailable_count ?? 0)
-              );
-            }
-            clearPendingTimeline(timelineKey);
           }
+          // 保留するときも、表示中の先頭から続く行と続きの位置は表示へ反映する。
+          const shownItems = shouldBuffer
+            ? normalizedTimelineItems.filter((post) => !isNewer(post))
+            : normalizedTimelineItems;
+          const preserveShown = shouldBuffer
+            ? hasReadPastHeadPage(baselinePosts, shownItems, storedTimelineCursor, timeline.next_cursor, 'desc')
+            : preserveTimelinePages;
+          setTimelinesByKey(updateRecordEntry(timelineKey, (prev) => mergeRefreshedVisiblePosts(
+              prev ?? EMPTY_POSTS,
+              shownItems,
+              preserveShown
+            )));
+          setTimelineNextCursorByKey(setTimelineCursorEntry(timelineKey,
+            preserveShown ? (storedTimelineCursor ?? null) : (timeline.next_cursor ?? null)));
+          // 読んだ範囲を残すときは、その範囲の数も残す(#1239 AC-4)。
+          if (!preserveShown) {
+            setTimelineWindowHeadCursorByKey(setRecordEntry(timelineKey, timelineHeadCursor));
+            setTimelineUnavailableByKey(
+              setRecordEntry(timelineKey, timeline.unavailable_count ?? 0)
+            );
+          }
+          if (!shouldBuffer) clearPendingTimeline(timelineKey);
         }
 
         if (publicTimelineResult.status === 'fulfilled' && publicTimelineResult.value) {
