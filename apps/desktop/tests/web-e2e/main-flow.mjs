@@ -1320,7 +1320,7 @@ const shownImage = (browser, text) =>
     const articles = [...(column?.querySelectorAll('article') ?? [])].filter((node) => node.innerText.includes(value));
     const image = articles[0]?.querySelector('img[src^="blob:"]');
     if (!image) return { cards: articles.length, sha256: null };
-    const digest = await crypto.subtle.digest('SHA-256', await window.__kukuriObjectUrls.get(image.src).arrayBuffer());
+    const digest = await crypto.subtle.digest('SHA-256', await (await fetch(image.src)).arrayBuffer());
     return { cards: articles.length, sha256: [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('') };
   }, text);
 
