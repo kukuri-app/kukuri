@@ -78,6 +78,26 @@ export async function choose(instance, label, option) {
   );
 }
 
+/// Metaverse の列で Dome を作り、稼働させて入る。
+export async function createDome(instance, title) {
+  const t = (key) => text('metaverse', key);
+  await click(instance, t('create.action'));
+  await fill(instance, t('create.titlePlaceholder'), title);
+  await click(instance, t('create.action'), { nth: -1 });
+  await click(instance, t('management.open'));
+  await click(instance, t('management.startAndEnter'));
+  await entered(instance);
+}
+
+/// Dome に入る(退出の button が出る)のを待つ。
+export function entered(instance) {
+  return eventually(
+    `${instance.name} to enter a Dome`,
+    async () => (await pressed(instance, text('metaverse', 'hud.leave'))) !== undefined,
+    60_000
+  );
+}
+
 /// `key` を押し、`hold()` が終わったら離す(window への key の event。画面は focus のある window の入力だけを受ける)。
 /// 押している間は、実際の key と同じく繰り返しの keydown を送る(画面が押している key を一度忘れても続く)。
 export async function press(instance, key, hold = async () => undefined) {
