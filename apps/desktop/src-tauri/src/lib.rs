@@ -6,6 +6,8 @@ mod desktop_lifecycle;
 #[cfg(target_os = "linux")]
 mod file_dialog;
 mod invoke_gate;
+#[cfg(target_os = "linux")]
+mod linux_deep_link;
 mod media_previews;
 mod restore_lifecycle;
 mod state;
@@ -20,7 +22,7 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
-#[cfg(any(all(windows, not(feature = "microsoft-store")), target_os = "linux"))]
+#[cfg(all(windows, not(feature = "microsoft-store")))]
 use tauri_plugin_deep_link::DeepLinkExt;
 
 use crate::{
@@ -342,7 +344,10 @@ pub fn run() {
             // MSIX owns protocol registration through its package manifest.
             #[cfg(any(all(windows, not(feature = "microsoft-store")), target_os = "linux"))]
             if !separate_instance {
+                #[cfg(windows)]
                 app.deep_link().register_all()?;
+                #[cfg(target_os = "linux")]
+                linux_deep_link::register(app.handle())?;
             }
             if initialize_runtime {
                 let app_handle = app.handle().clone();
