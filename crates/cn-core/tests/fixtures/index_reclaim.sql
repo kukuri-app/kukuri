@@ -79,7 +79,7 @@ DECLARE
     total constant bigint := retired + others;
 BEGIN
     PERFORM set_config('session_replication_role', 'replica', true);
-    TRUNCATE cn_index.index_entries;
+    TRUNCATE cn_index.index_entries CASCADE;
     INSERT INTO cn_index.index_entries
         (scope_kind, scope_id, object_id, author_pubkey, created_at, source_replica_id,
          verdict_id, verdict_action, critical, indexed_at)

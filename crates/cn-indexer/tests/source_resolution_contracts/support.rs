@@ -242,6 +242,9 @@ impl IndexEntryStore for ObservedEntries {
     async fn is_transmission_prevented(&self, id: &str) -> Result<bool> {
         self.inner.is_transmission_prevented(id).await
     }
+    async fn is_media_transmission_prevented(&self, hashes: &[String]) -> Result<bool> {
+        self.inner.is_media_transmission_prevented(hashes).await
+    }
 }
 
 pub(super) struct ObservedProjection {

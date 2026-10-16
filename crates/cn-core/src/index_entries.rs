@@ -60,7 +60,15 @@ pub struct NewIndexEntry {
     pub verdict_action: String,
     /// index 時点の critical フラグ（DB CHECK により false のみ通る）。
     pub critical: bool,
+    /// 投稿が参照する添付の blob hash（#1062 AC-2。添付 hash の判断の照合に使う）。
+    pub media_hashes: Vec<String>,
 }
+
+/// 添付 hash のいずれかに、索引の提供面を止める有効な判断があるか（#1062 AC-2。根拠を問わない）。
+const MEDIA_PREVENTED_SQL: &str = "SELECT EXISTS (SELECT 1 FROM cn_legal.transmission_preventions
+     WHERE subject_kind = 'blob' AND subject_id = ANY($1) AND released_at IS NULL
+       AND (expires_at IS NULL OR expires_at > NOW())
+       AND capabilities && ARRAY['community_index','search','discovery','recommendation']::text[])";
 
 /// 永続化された index entry。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,10 +97,17 @@ pub async fn upsert_index_entry(pool: &PgPool, entry: &NewIndexEntry) -> Result<
         bail!("index entry scope_id must not be empty");
     }
     let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 761))")
-        .bind(&entry.object_id)
-        .execute(&mut *tx)
-        .await?;
+    // 判断の作成と同じ鍵で投稿と各 hash を順に lock し、判断の保存と行の書込が交差しないようにする。
+    let mut subjects = entry.media_hashes.clone();
+    subjects.sort();
+    subjects.dedup();
+    subjects.insert(0, entry.object_id.clone());
+    for subject in &subjects {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 761))")
+            .bind(subject)
+            .execute(&mut *tx)
+            .await?;
+    }
     let prevented: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM cn_legal.transmission_preventions
          WHERE subject_kind = 'post' AND subject_id = $1 AND released_at IS NULL
@@ -102,7 +117,12 @@ pub async fn upsert_index_entry(pool: &PgPool, entry: &NewIndexEntry) -> Result<
     .bind(&entry.object_id)
     .fetch_one(&mut *tx)
     .await?;
-    if prevented {
+    if prevented
+        || sqlx::query_scalar::<_, bool>(MEDIA_PREVENTED_SQL)
+            .bind(&entry.media_hashes)
+            .fetch_one(&mut *tx)
+            .await?
+    {
         bail!("index entry is blocked by an active transmission-prevention decision");
     }
     let row = sqlx::query(
@@ -133,6 +153,25 @@ pub async fn upsert_index_entry(pool: &PgPool, entry: &NewIndexEntry) -> Result<
     .fetch_one(&mut *tx)
     .await?;
     let stored = index_entry_from_row(&row)?;
+    sqlx::query(
+        "DELETE FROM cn_index.index_entry_media
+         WHERE scope_kind = $1 AND scope_id = $2 AND object_id = $3",
+    )
+    .bind(entry.scope_kind.as_str())
+    .bind(&entry.scope_id)
+    .bind(&entry.object_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO cn_index.index_entry_media (scope_kind, scope_id, object_id, blob_hash)
+         SELECT $1, $2, $3, hash FROM UNNEST($4::text[]) AS hash ON CONFLICT DO NOTHING",
+    )
+    .bind(entry.scope_kind.as_str())
+    .bind(&entry.scope_id)
+    .bind(&entry.object_id)
+    .bind(&entry.media_hashes)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(stored)
 }
@@ -207,6 +246,7 @@ pub async fn get_index_entry(
 /// - 真実源 `index_entries` に entry が存在する（投影残留 / ghost を落とす）
 /// - `verdict_id` が指す**最新** verdict（対象ごとに upsert される行）が `allow` かつ非 critical
 ///   （scan し直しで verdict が変わり、de-index がまだ追いついていない場合もここで落ちる）
+/// - 投稿にも、行が参照する添付 hash にも、索引の提供面を止める有効な判断が無い（#1062 AC-2）
 ///
 /// 候補は limit で有界（検索 1 回分）である前提。返り値は入力と同じ `(scope_id, object_id)` の組。
 pub async fn filter_surfaceable_objects(
@@ -242,6 +282,16 @@ pub async fn filter_surfaceable_objects(
                  AND p.released_at IS NULL
                  AND (p.expires_at IS NULL OR p.expires_at > NOW())
                  AND p.capabilities && ARRAY['community_index','search','discovery','recommendation']::text[]
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM cn_index.index_entry_media m
+               JOIN cn_legal.transmission_preventions p
+                 ON p.subject_kind = 'blob' AND p.subject_id = m.blob_hash
+                AND p.released_at IS NULL
+                AND (p.expires_at IS NULL OR p.expires_at > NOW())
+                AND p.capabilities && ARRAY['community_index','search','discovery','recommendation']::text[]
+               WHERE m.scope_kind = e.scope_kind AND m.scope_id = e.scope_id
+                 AND m.object_id = e.object_id
            )",
     )
     .bind(scope_kind.as_str())
@@ -334,6 +384,9 @@ pub trait IndexEntryStore: Send + Sync {
 
     /// Active legal decisions are checked before any body or media fetch.
     async fn is_transmission_prevented(&self, object_id: &str) -> Result<bool>;
+
+    /// 添付 hash のいずれかに有効な判断があるか（#1062 AC-2）。添付の取得・scan の前に照合する。
+    async fn is_media_transmission_prevented(&self, media_hashes: &[String]) -> Result<bool>;
 }
 
 /// Postgres 実装。`cn_index.index_entries` の persist API に委譲する。
@@ -471,6 +524,13 @@ impl IndexEntryStore for PgIndexEntryStore {
         )
         .await
     }
+
+    async fn is_media_transmission_prevented(&self, media_hashes: &[String]) -> Result<bool> {
+        Ok(sqlx::query_scalar(MEDIA_PREVENTED_SQL)
+            .bind(media_hashes)
+            .fetch_one(&self.pool)
+            .await?)
+    }
 }
 
 /// contract test 用の in-memory 実装。
@@ -546,6 +606,14 @@ impl MemoryIndexEntryStore {
             .retain(|(_, _, entry_object_id), _| entry_object_id != &object_id);
     }
 
+    /// 添付 hash の判断（#1062 AC-2）。Postgres と同じく索引の行は消さず、照合だけで止める。
+    pub fn prevent_media(&self, blob_hash: impl Into<String>) {
+        self.prevented
+            .lock()
+            .expect("prevented mutex poisoned")
+            .insert(blob_hash.into());
+    }
+
     pub fn release_subject(&self, object_id: &str) {
         self.prevented
             .lock()
@@ -565,14 +633,16 @@ impl IndexEntryStore for MemoryIndexEntryStore {
     }
 
     async fn upsert_entry(&self, entry: &NewIndexEntry) -> Result<()> {
-        if self
-            .prevented
-            .lock()
-            .expect("prevented mutex poisoned")
-            .contains(&entry.object_id)
+        let prevented = self.prevented.lock().expect("prevented mutex poisoned");
+        if prevented.contains(&entry.object_id)
+            || entry
+                .media_hashes
+                .iter()
+                .any(|hash| prevented.contains(hash))
         {
             bail!("index entry is blocked by an active transmission-prevention decision");
         }
+        drop(prevented);
         // Postgres の CHECK / FK 制約と同じ不変条件を模す（fail-closed contract の等価性）。
         if entry.verdict_action != "allow" {
             bail!(
@@ -678,10 +748,18 @@ impl IndexEntryStore for MemoryIndexEntryStore {
         candidates: &[(String, String)],
     ) -> Result<Vec<SurfaceableEntry>> {
         let entries = self.entries.lock().expect("entries mutex poisoned");
+        let prevented = self.prevented.lock().expect("prevented mutex poisoned");
         Ok(candidates
             .iter()
             .filter_map(|(scope_id, object_id)| {
                 let entry = entries.get(&(scope_kind, scope_id.clone(), object_id.clone()))?;
+                if entry
+                    .media_hashes
+                    .iter()
+                    .any(|hash| prevented.contains(hash))
+                {
+                    return None;
+                }
                 // Postgres 実装の join（verdict_id → 最新 verdict）と同じセマンティクス。
                 let stored = self
                     .verdicts
@@ -723,6 +801,11 @@ impl IndexEntryStore for MemoryIndexEntryStore {
             .lock()
             .expect("prevented mutex poisoned")
             .contains(object_id))
+    }
+
+    async fn is_media_transmission_prevented(&self, media_hashes: &[String]) -> Result<bool> {
+        let prevented = self.prevented.lock().expect("prevented mutex poisoned");
+        Ok(media_hashes.iter().any(|hash| prevented.contains(hash)))
     }
 }
 

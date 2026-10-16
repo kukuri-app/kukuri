@@ -150,6 +150,7 @@ fn entry(scope_id: &str, object_id: &str, verdict_id: &str) -> NewIndexEntry {
         verdict_id: verdict_id.to_string(),
         verdict_action: "allow".to_string(),
         critical: false,
+        media_hashes: Vec::new(),
     }
 }
 

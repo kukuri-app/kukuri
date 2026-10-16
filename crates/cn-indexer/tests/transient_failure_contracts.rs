@@ -261,6 +261,11 @@ impl IndexEntryStore for FlakyEntries {
         self.read()?;
         self.inner.is_transmission_prevented(object_id).await
     }
+
+    async fn is_media_transmission_prevented(&self, hashes: &[String]) -> Result<bool> {
+        self.read()?;
+        self.inner.is_media_transmission_prevented(hashes).await
+    }
 }
 
 struct Fixture {

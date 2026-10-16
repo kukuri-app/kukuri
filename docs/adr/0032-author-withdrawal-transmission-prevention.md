@@ -8,6 +8,8 @@ Accepted
 
 **2026-10-16 追補**（#1062 AC-1）: malware の通報に対する運営者の手動判断を §6 に追加した。判断は同じ表に根拠カテゴリ `malware` の別の行として置き、法的な判断とは一意性・作成・解除の経路と保持を分ける。§3 の状態取得は根拠カテゴリとして `malware` も返す。§4 の「適用時に索引真実源を非許可化し写しを消す」と「解除後は fresh scan まで復活しない」は法的な判断に限り、malware の判断は索引の行を消さず、照合だけで止める（§6）。既存の法的な判断の行と API の形は変わらない。
 
+**2026-10-16 追補**（#1062 AC-2）: malware の判断の対象に、検証済みの添付の blob hash を加えた（§6.1）。索引の真実源は行ごとに参照する添付の hash を記録し（`cn_index.index_entry_media`）、query gate・取込・真実源 upsert は投稿の判断に加えて、その hash の有効な判断を根拠を問わず照合する。これにより、対象 `blob` の法的な判断で索引系の capability を持つもの（従来は索引に効いていなかった）も同じ照合で効く。記録の導入前に索引へ入った行には hash の記録が無く、再取込か索引の保持期限で入れ替わるまで hash の判断の照合の外にある。
+
 ## Date
 
 2026-08-25
@@ -53,8 +55,19 @@ safety 判定、法的判断、著者撤回、operator policy は根拠・author
 - Gossip Hint 必要有無: 無
 - Blob 必要有無: 無。添付・外部 URL を取得・実行しない
 - SQLite projection 必要有無: 無
-- 必須 contract: 通報からの明示操作だけで作る、判断・通報状態・audit の同一 transaction、再送・同時操作で判断を 1 つに保つ、権利侵害の判断との併存と個別の解除、索引の候補の読取りと取込の照合、clean な再 scan で解除しない、件数に依らない読取り
-- 必須 scenario: 制限後に search／discovery／recommendation から消え、restart・再 scan で復活せず、解除後は他の有効な抑止が無ければ索引に残る投稿がすぐに戻る
+- 必須 contract: 通報からの明示操作だけで作る、判断・通報状態・audit の同一 transaction、再送・同時操作で判断を 1 つに保つ、権利侵害の判断との併存と個別の解除、索引の候補の読取りと取込の照合（投稿と、行が参照する添付 hash）、添付 hash の判断がある blob を取得・scan しない、clean な再 scan で解除しない、件数に依らない読取り（同じ hash の参照の数にも依らない）
+- 必須 scenario: 制限後に search／discovery／recommendation から消え、restart・再 scan で復活せず、解除後は他の有効な抑止が無ければ索引に残る投稿がすぐに戻る。添付 hash の制限は、その hash を参照する投稿だけを止め、別の hash の添付・同じ著者の他の投稿を止めない
+
+- Feature 名: 索引の行が参照する添付の hash（#1062 AC-2）
+- Durable / Transient: Durable（索引の行の派生）
+- Canonical Source: 当該 node の Postgres の `cn_index.index_entry_media`。索引の行と同じ鍵で、行の削除に連鎖して消える
+- Replicated?: No
+- Rebuildable From: replica の再取込（署名済み投稿の attachments と media manifest の展開）
+- Public Replica / Private Replica / Local Only: Local Only
+- Gossip Hint 必要有無: 無
+- Blob 必要有無: 無。hash だけを持ち、blob の内容を保存しない
+- SQLite projection 必要有無: 無
+- 必須 contract: 索引の行の upsert と同じ transaction で書き直す、索引の行の削除に連鎖して消える、候補ごとに索引で引く
 
 ## Decision
 
@@ -122,7 +135,14 @@ malware は自動の検出器を置かず、通報と運営者の確認で扱う
 - 判断は通報の保持期限では消えず、有効な間は残る。解除した判断は operator audit の日数を解除時刻から数えて期限削除する（ADR 0034 §1）。有効な判断の件数の上限は置かない（作成は運営者の明示操作に限る）。
 - 運営画面は通報の最新 50 件と、malware の判断の最新 50 件の窓を入口にし、窓の外の判断は投稿 ID を指定して解除する。1 操作は 1 件の判断と audit の保存で、対象の全参照や全 topic の列挙を待たない。
 
-本節は投稿を対象にする。検証済み blob hash を対象にした判断（#1062 AC-2）は別に定める。
+#### 6.1 添付の blob hash を対象にした判断（#1062 AC-2）
+
+- 添付の通報（`subject_kind=media`、ID は blob hash）から、同じ手順で根拠 `malware`・対象 `blob` の判断を作る。hash は内容から検証できる BLAKE3 の 16 進 64 桁（小文字）に限り、形の誤った ID からは判断を作らない。この node がその blob を扱ったことは条件にしない（未取得の添付も先に止め、取込はその blob を取得しない）。
+- 判断は hash 1 件に 1 行で、hash を参照する投稿の数によらず保存だけで効く。制限・解除の応答は参照の列挙・索引の書き換えを待たない。
+- 索引の真実源は行ごとに、その投稿が参照する添付の hash（attachments、media manifest の item と thumbnail）を `cn_index.index_entry_media` に記録する。query gate は候補ごとに、その行の hash に有効な判断があれば返さない（根拠を問わず、索引系の capability を持つ判断）。取込は添付の hash を解決した後、blob の取得・scan（scan の再利用を含む）の前に照合し、判断があれば索引から外す。参照 guard と真実源 upsert も同じ照合を行う。
+- 止めるのは、その hash を参照する投稿の索引・検索・発見・推薦での提供だけで、別の hash の添付、同じ著者の他の投稿、他の node、P2P 上の投稿・blob は変わらない。現行の node は永続の blob cache を提供しない（`blob_cache=true` は readiness を満たさない）ので、cache の削除・再取得拒否は対象外とする。
+- 投稿の判断・法的な判断と併存し、それぞれ個別に解除できる。解除後は他の有効な抑止が無ければ、索引に残る投稿はすぐに戻り、制限中に索引から外れた投稿は既存の取込が次に読むときに戻る。
+- `cn_index.index_entry_media` の導入前に索引へ入った行には hash の記録が無い。その行は変更による再取込か索引の保持期限（`indexer_retention_days`）で入れ替わるまで hash の判断の照合の外にあり、急ぐ場合は投稿の判断を使う。既存の行を一括で再取込して記録を埋めることはしない。
 
 ## Consequences
 

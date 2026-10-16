@@ -4,7 +4,7 @@
 //! 隠し入力と `preview -> confirm -> apply` の契約(ADR 0029)は `admin.rs` のハンドラが担い、
 //! ここでは表示だけを扱う。preview の「変更前」は DB から読まず、apply 時の再取得に委ねる。
 
-use kukuri_cn_core::{AdminOperation, OperatorAction};
+use kukuri_cn_core::{AdminOperation, MalwareSubject, OperatorAction};
 
 use crate::admin::{AdminActionForm, escape_html};
 use crate::admin_shell::{
@@ -75,18 +75,38 @@ fn operation_summary(operation: &AdminOperation) -> (&'static str, String, Strin
                 status.as_str()
             ),
         ),
-        AdminOperation::RestrictMalwarePost { report_id } => (
+        AdminOperation::RestrictMalware {
+            subject: MalwareSubject::Post,
+            report_id,
+        } => (
             "malware の通報の投稿を制限しますか",
             report_id.clone(),
             "投稿を制限し、通報を actioned".to_string(),
             "この通報の投稿を、このノードの索引・検索・発見・推薦で返さなくします。同じ投稿に有効な制限があれば、それを使います。P2P 上の投稿と他のノードは変わりません。解除するまで続き、通報の保持期限では解除されません。"
                 .to_string(),
         ),
-        AdminOperation::ReleaseMalwareRestriction { post_id, reason } => (
-            "投稿の malware の制限を解除しますか",
-            post_id.clone(),
+        AdminOperation::RestrictMalware {
+            subject: MalwareSubject::Blob,
+            report_id,
+        } => (
+            "malware の通報の添付を制限しますか",
+            report_id.clone(),
+            "添付の hash を制限し、通報を actioned".to_string(),
+            "この通報の hash（内容から検証できる添付の識別子）の添付を参照する投稿を、このノードの索引・検索・発見・推薦で返さなくします。同じ投稿の別の添付、別の hash の添付、同じ著者の他の投稿は変わりません。P2P 上の投稿・添付と他のノードは変わらず、このノードは添付の cache を提供していないので cache の削除はありません。この機能の導入前に索引へ入った投稿は、再取込か索引の保持期限で入れ替わるまで対象外です（急ぐ場合は投稿を制限してください）。解除するまで続き、通報の保持期限では解除されません。"
+                .to_string(),
+        ),
+        AdminOperation::ReleaseMalwareRestriction {
+            subject,
+            subject_id,
+            reason,
+        } => (
+            match subject {
+                MalwareSubject::Post => "投稿の malware の制限を解除しますか",
+                MalwareSubject::Blob => "添付の hash の malware の制限を解除しますか",
+            },
+            subject_id.clone(),
             format!("解除（理由: {reason}）"),
-            "この投稿の malware の制限だけを解除します。権利侵害による送信防止、安全性の判定、著者の撤回は引き続き適用されます。索引に残っている投稿はすぐに戻り、制限中に索引から外れた投稿は次に取り込まれたときに戻ります。"
+            "この対象の malware の制限だけを解除します。権利侵害による送信防止、安全性の判定、著者の撤回、ほかの malware の制限は引き続き適用されます。索引に残っている投稿はすぐに戻り、制限中に索引から外れた投稿は次に取り込まれたときに戻ります。"
                 .to_string(),
         ),
     }

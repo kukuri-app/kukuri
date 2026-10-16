@@ -308,6 +308,9 @@ fail-closed indexing 本体（DB 制約 + query 境界）は #404 で実装し�
   `cn_index.index_entries`（index の真実源）。§2.5 の「index entry は対応する safety verdict state を
   必ず伴う」を NOT NULL FK で、「`allow` verdict の content のみ」を `CHECK (verdict_action = 'allow')`
   と `CHECK (NOT critical)` で **DB 制約として**固定した。ArcadeDB 投影は真実源の derived な写像。
+- **添付の hash の記録**（#1062 AC-2、ADR 0032 §6.1）: `cn_index.index_entry_media` は真実源の行が参照する添付の
+  blob hash を同じ鍵で持ち、行の upsert と同じ transaction で書き直し、行の削除に連鎖して消える。1 行あたりの数は取込が
+  scan する添付の数と同じ。query 境界はこの hash の有効な判断も候補ごとに照合する。
 - **query 境界**: `cn-indexer` の `IndexQuery`（topic 内検索 / 横断検索 / 新着列挙）+
   `FailClosedIndexQuery`（唯一のユーザー向け読み口。投影 hit を真実源 + 最新 verdict と突合して
   非 allow / critical / 残留 hit を落とす）。`cn-user-api` の `GET /v1/index/{search,discovery,recommendations}`

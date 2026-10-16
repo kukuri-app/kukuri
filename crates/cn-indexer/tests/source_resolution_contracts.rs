@@ -433,3 +433,49 @@ async fn mixed_scope_reingest_never_fetches_withdrawn_prevented_deleted_or_inval
     }
     Ok(())
 }
+
+/// #1062 AC-2: 判断のある添付 hash を参照する投稿は、その添付を取得・scan せずに外す。同じ投稿の別の添付の hash
+/// だけを参照する投稿は索引に入り、hash の判断を解除した後の取込で外した投稿も戻る。
+#[tokio::test]
+async fn prevented_media_hash_is_neither_fetched_nor_scanned_and_spares_other_hashes() -> Result<()>
+{
+    let f = Fixture::new(IndexScopeKind::PublicTopic).await?;
+    let prevented = blob_hash(b"reported attachment");
+    let other = blob_hash(b"other attachment");
+    let asset = |hash: &kukuri_core::BlobHash| AssetRef {
+        hash: hash.clone(),
+        mime: "image/png".into(),
+        bytes: 4,
+        role: AssetRole::Attachment,
+    };
+    let inline = |text: &str| PayloadRef::InlineText { text: text.into() };
+    let restricted = f.post_with(
+        inline("restricted"),
+        vec![asset(&prevented), asset(&other)],
+        vec![],
+    )?;
+    let spared = f.post_with(inline("spared"), vec![asset(&other)], vec![])?;
+    f.persist(&restricted).await?;
+    f.persist(&spared).await?;
+    f.entries.inner.prevent_media(prevented.as_str());
+
+    let summary = f.ingest().await?;
+    assert_eq!((summary.indexed, summary.deindexed), (1, 1));
+    let io = f.observed();
+    assert_no_durable_blob_io(&io);
+    assert!(io.ephemeral.is_empty());
+    assert!(
+        io.scans
+            .iter()
+            .all(|request| request.subject_id.as_deref() != Some(prevented.as_str())),
+        "a prevented attachment is never sent to the provider"
+    );
+    assert_eq!(io.entry_upserts, vec![spared.id.clone()]);
+    assert!(!f.entries.inner.contains(f.kind, SCOPE, &restricted.id));
+
+    f.entries.inner.release_subject(prevented.as_str());
+    f.clear_io();
+    assert_eq!(f.ingest().await?.indexed, 2);
+    assert!(f.entries.inner.contains(f.kind, SCOPE, &restricted.id));
+    Ok(())
+}

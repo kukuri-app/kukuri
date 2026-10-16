@@ -169,6 +169,7 @@ async fn index_read(pool: &PgPool, post_id: &str) -> Result<Vec<ContentAdvisory>
             verdict_id: verdict.id,
             verdict_action: "allow".to_string(),
             critical: false,
+            media_hashes: Vec::new(),
         },
     )
     .await?;

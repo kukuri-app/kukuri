@@ -1,7 +1,8 @@
 //! Durable, node-local legal transmission-prevention decisions (#761).
 //!
 //! malware の通報に対する運営者の手動判断（#1062）も根拠 `malware` の行として同じ表に置き、索引の guard を
-//! 共有する。権利侵害の判断とは一意性・作成・解除の経路を分ける。
+//! 共有する。権利侵害の判断とは一意性・作成・解除の経路を分ける。対象は投稿と添付の blob hash で、blob hash の
+//! 判断は索引の行が参照する hash（`cn_index.index_entry_media`）で照合する。
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
@@ -336,18 +337,72 @@ pub async fn is_transmission_prevented_for_any(
 }
 
 /// malware の判断が当該 CN で止める提供面（#1062）。索引の guard がこの capability を見る。
-const MALWARE_POST_CAPABILITIES: [&str; 4] =
+const MALWARE_CAPABILITIES: [&str; 4] =
     ["community_index", "search", "discovery", "recommendation"];
 
-/// malware の通報から、運営者が投稿を当該 CN の索引・検索・発見・推薦で制限する（#1062）。
+/// malware の判断の対象（#1062）。投稿（AC-1）と、検証済みの添付の blob hash（AC-2）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MalwareSubject {
+    Post,
+    Blob,
+}
+
+impl MalwareSubject {
+    /// 判断の対象の種別（`cn_legal.transmission_preventions.subject_kind`）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Post => "post",
+            Self::Blob => "blob",
+        }
+    }
+
+    /// 通報の対象の種別（`cn_admin.reports.subject_kind`）。添付は `media` で、ID は blob hash。
+    pub fn report_kind(self) -> &'static str {
+        match self {
+            Self::Post => "post",
+            Self::Blob => "media",
+        }
+    }
+
+    pub fn from_report_kind(kind: &str) -> Option<Self> {
+        match kind {
+            "post" => Some(Self::Post),
+            "media" => Some(Self::Blob),
+            _ => None,
+        }
+    }
+
+    /// 対象 ID の形を確かめる。blob hash は内容から検証できる BLAKE3 の 16 進 64 桁（小文字）に限る。
+    pub fn validate_id(self, id: &str) -> Result<()> {
+        match self {
+            Self::Post if id.is_empty() || id.len() > 512 || id.chars().any(char::is_control) => {
+                bail!("post id must be present, at most 512 characters, without control characters")
+            }
+            Self::Blob
+                if id.len() != 64
+                    || !id
+                        .bytes()
+                        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')) =>
+            {
+                bail!("blob hash must be 64 lowercase hexadecimal characters")
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// malware の通報から、運営者が対象を当該 CN の索引・検索・発見・推薦で制限する（#1062）。
 ///
 /// 期限内の malware 通報を読み、判断を保存して通報を `actioned` にする。監査は呼び出し側が同じ取引で追記する。
-/// 同じ投稿に有効な判断があれば新しく作らずに使うので、再送や同じ投稿への別の通報でも判断は 1 つに保つ。
-/// 索引の行は消さない。候補の読取りと取込が判断を照合するので、解除はこの行の失効だけで直ちに効く。
-/// 返り値は対象の投稿 ID と監査の変更前・変更後。
-pub(crate) async fn restrict_malware_post_in_tx(
+/// 同じ対象に有効な判断があれば新しく作らずに使うので、再送や同じ対象への別の通報でも判断は 1 つに保つ。
+/// 索引の行は消さない。候補の読取りと取込が判断を照合するので、解除はこの行の失効だけで直ちに効く。blob hash
+/// の判断は、その hash を参照する投稿の数によらず 1 行の保存で済み、参照の列挙を待たない。
+/// 返り値は対象 ID と監査の変更前・変更後。
+pub(crate) async fn restrict_malware_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     actor: &str,
+    subject: MalwareSubject,
     report_id: &str,
 ) -> Result<(String, serde_json::Value, serde_json::Value)> {
     let report = sqlx::query(
@@ -359,18 +414,22 @@ pub(crate) async fn restrict_malware_post_in_tx(
     .fetch_optional(&mut **tx)
     .await?
     .with_context(|| format!("report `{report_id}` was not found"))?;
-    let subject_kind: String = report.try_get("subject_kind")?;
-    let post_id: String = report.try_get("subject_id")?;
+    let report_kind: String = report.try_get("subject_kind")?;
+    let subject_id: String = report.try_get("subject_id")?;
     let reason: String = report.try_get("reason")?;
     let status: String = report.try_get("status")?;
     if reason != "malware" {
-        bail!("only a malware report can restrict a post");
+        bail!("only a malware report can restrict its subject");
     }
-    if subject_kind != "post" {
-        bail!("this operation restricts a post; the report subject is `{subject_kind}`");
+    if report_kind != subject.report_kind() {
+        bail!(
+            "this operation restricts a `{}` report; the report subject is `{report_kind}`",
+            subject.report_kind()
+        );
     }
-    lock_subject(tx, &post_id).await?;
-    let current = active_in_tx(tx, "post", &post_id, true).await?;
+    subject.validate_id(&subject_id)?;
+    lock_subject(tx, &subject_id).await?;
+    let current = active_in_tx(tx, subject.as_str(), &subject_id, true).await?;
     let before = json!({
         "report_id": report_id,
         "report_status": status,
@@ -383,11 +442,12 @@ pub(crate) async fn restrict_malware_post_in_tx(
                 "INSERT INTO cn_legal.transmission_preventions
                     (id, subject_kind, subject_id, basis_category, capabilities, decided_by,
                      related_report_id)
-                 VALUES ($1, 'post', $2, 'malware', $3, $4, $5) RETURNING *",
+                 VALUES ($1, $2, $3, 'malware', $4, $5, $6) RETURNING *",
             )
             .bind(Uuid::new_v4().to_string())
-            .bind(&post_id)
-            .bind(&MALWARE_POST_CAPABILITIES[..])
+            .bind(subject.as_str())
+            .bind(&subject_id)
+            .bind(&MALWARE_CAPABILITIES[..])
             .bind(actor.trim())
             .bind(report_id)
             .fetch_one(&mut **tx)
@@ -404,21 +464,27 @@ pub(crate) async fn restrict_malware_post_in_tx(
         "decision_id": decision.id,
         "restriction": audit_snapshot(&decision),
     });
-    Ok((post_id, before, after))
+    Ok((subject_id, before, after))
 }
 
-/// 投稿の malware の判断だけを解除する（#1062）。権利侵害の判断・safety verdict・撤回は変えず、通報の状態も
+/// 対象の malware の判断だけを解除する（#1062）。権利侵害の判断・safety verdict・撤回は変えず、通報の状態も
 /// 変えない。監査は呼び出し側が同じ取引で追記する。返り値は監査の変更前・変更後。
 pub(crate) async fn release_malware_restriction_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     actor: &str,
-    post_id: &str,
+    subject: MalwareSubject,
+    subject_id: &str,
     reason: &str,
 ) -> Result<(serde_json::Value, serde_json::Value)> {
-    lock_subject(tx, post_id).await?;
-    let current = active_in_tx(tx, "post", post_id, true)
+    lock_subject(tx, subject_id).await?;
+    let current = active_in_tx(tx, subject.as_str(), subject_id, true)
         .await?
-        .context("this post has no active malware restriction")?;
+        .with_context(|| {
+            format!(
+                "this {} has no active malware restriction",
+                subject.as_str()
+            )
+        })?;
     let row = sqlx::query(
         "UPDATE cn_legal.transmission_preventions
          SET released_at = NOW(), released_by = $2, release_reason = $3
@@ -453,17 +519,29 @@ pub async fn list_malware_restrictions(
     .collect()
 }
 
-/// 指定した投稿のうち、malware の判断（有効または解除済み）がある投稿（#1062）。運営画面の通報の窓
+/// 通報の対象 `(種別, ID)` のうち、malware の判断（有効または解除済み）がある対象（#1062）。運営画面の通報の窓
 /// （最大 50 件）が、制限による対応済みと判断の無い対応済みを区別するのに使う。
-pub async fn posts_with_malware_decisions(
+pub async fn reported_subjects_with_malware_decisions(
     pool: &PgPool,
-    post_ids: &[String],
-) -> Result<std::collections::HashSet<String>> {
-    Ok(sqlx::query_scalar(
-        "SELECT DISTINCT subject_id FROM cn_legal.transmission_preventions
-         WHERE subject_kind = 'post' AND subject_id = ANY($1) AND basis_category = 'malware'",
+    subjects: &[(String, String)],
+) -> Result<std::collections::HashSet<(String, String)>> {
+    let kinds = subjects
+        .iter()
+        .map(|(kind, _)| kind.as_str())
+        .collect::<Vec<_>>();
+    let ids = subjects
+        .iter()
+        .map(|(_, id)| id.as_str())
+        .collect::<Vec<_>>();
+    Ok(sqlx::query_as(
+        "SELECT DISTINCT reported.kind, reported.id
+         FROM UNNEST($1::text[], $2::text[]) AS reported (kind, id)
+         JOIN cn_legal.transmission_preventions decision
+           ON decision.subject_kind = CASE reported.kind WHEN 'media' THEN 'blob' ELSE reported.kind END
+          AND decision.subject_id = reported.id AND decision.basis_category = 'malware'",
     )
-    .bind(post_ids)
+    .bind(&kinds)
+    .bind(&ids)
     .fetch_all(pool)
     .await?
     .into_iter()

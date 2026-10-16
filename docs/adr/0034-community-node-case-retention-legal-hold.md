@@ -41,7 +41,7 @@ Community Node は通報、権利侵害申出、moderation artifact、operator a
 | 証拠参照 | 180日 | 受付または追加時刻 | 暗号化した sensitive item |
 | 判断・通知履歴 | 365日 | 記録時刻 | `cn_legal.rights_request_events`。申出本体を外部キーで参照せず、本体とは別の期限で消す。本体の物理削除は履歴の残りを待たない（#1706） |
 | operator audit | 365日 | 操作時刻 | `cn_admin.operator_actions`。機微本文を複製しない |
-| 解除した malware の判断 | operator audit の日数 | 解除時刻 | `cn_legal.transmission_preventions` の根拠 `malware` の行。有効な判断は解除まで残し、通報の期限では消さない（#1062、ADR 0032 §6） |
+| 解除した malware の判断 | operator audit の日数 | 解除時刻 | `cn_legal.transmission_preventions` の根拠 `malware` の行（投稿・添付の hash）。有効な判断は解除まで残し、通報の期限では消さない（#1062、ADR 0032 §6） |
 | signed moderation event | 180日 | 永続化時刻 | `cn_safety.signed_moderation_events` |
 | risk signal | 180日 | 永続化時刻 | `cn_safety.risk_signals`。より早い `expires_at` を優先。著者の対応（`cn_safety.risk_signal_subject_authors`）は、その内容の risk signal の行が無くなった時点で同じ取引で消し、risk signal の行が無い内容には作らない（#1699） |
 | legal hold の記録 | 解除まで | 開始時刻 | `cn_legal.legal_holds`。解除で行を消す。開始・解除・export の記録は operator audit に残る（#1706） |

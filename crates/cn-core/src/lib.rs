@@ -192,11 +192,12 @@ pub use tester_feedback::{
     list_tester_feedback,
 };
 pub use transmission_preventions::{
-    NewTransmissionPrevention, REMOVE_PREVENTED_POST_INDEX_SQL, TransmissionPrevention,
-    TransmissionPreventionBasis, TransmissionPreventionCapability, TransmissionPreventionMutation,
-    apply_transmission_prevention, get_active_transmission_prevention, is_transmission_prevented,
-    is_transmission_prevented_for_any, list_malware_restrictions, posts_with_malware_decisions,
-    release_transmission_prevention,
+    MalwareSubject, NewTransmissionPrevention, REMOVE_PREVENTED_POST_INDEX_SQL,
+    TransmissionPrevention, TransmissionPreventionBasis, TransmissionPreventionCapability,
+    TransmissionPreventionMutation, apply_transmission_prevention,
+    get_active_transmission_prevention, is_transmission_prevented,
+    is_transmission_prevented_for_any, list_malware_restrictions, release_transmission_prevention,
+    reported_subjects_with_malware_decisions,
 };
 pub use trust_inputs::{
     TRUST_BASIS_PAGE_SIZE, TRUST_BASIS_PAGE_SQL, TRUST_REBUILD_BATCH, TRUST_SWEEP_BATCH,

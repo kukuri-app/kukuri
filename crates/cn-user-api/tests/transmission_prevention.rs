@@ -2,9 +2,10 @@
 
 use anyhow::Result;
 use kukuri_cn_core::{
-    AdminOperation, NewCommunityNodeReport, NewTransmissionPrevention, TransmissionPreventionBasis,
-    TransmissionPreventionCapability, apply_operator_action, apply_transmission_prevention,
-    connect_postgres, insert_community_node_report, release_transmission_prevention,
+    AdminOperation, MalwareSubject, NewCommunityNodeReport, NewTransmissionPrevention,
+    TransmissionPreventionBasis, TransmissionPreventionCapability, apply_operator_action,
+    apply_transmission_prevention, connect_postgres, insert_community_node_report,
+    release_transmission_prevention,
 };
 use reqwest::{Client, StatusCode};
 
@@ -90,59 +91,69 @@ async fn public_status_explains_a_malware_restriction_until_it_is_released() -> 
     };
     let server = TestServer::spawn(admin_url.as_str(), "malware-restriction-status").await?;
     let pool = connect_postgres(server.database.database_url.as_str()).await?;
-    let report = insert_community_node_report(
-        &pool,
-        &NewCommunityNodeReport {
-            subject_kind: "post".to_string(),
-            subject_id: "post-1062-status".to_string(),
-            capability: "community_index".to_string(),
-            reason: "malware".to_string(),
-            ..NewCommunityNodeReport::default()
-        },
-        None,
-    )
-    .await?;
-    let status = || async {
-        anyhow::Ok(
-            Client::new()
-                .get(format!(
-                    "{}/v1/transmission-preventions/post/post-1062-status",
-                    server.base_url
-                ))
-                .send()
-                .await?
-                .json::<serde_json::Value>()
-                .await?,
+    // 投稿（AC-1）と添付の blob hash（AC-2）の判断を、同じ公開の状態取得で説明する。
+    let hash = "b".repeat(64);
+    for (subject, subject_id) in [
+        (MalwareSubject::Post, "post-1062-status".to_string()),
+        (MalwareSubject::Blob, hash),
+    ] {
+        let report = insert_community_node_report(
+            &pool,
+            &NewCommunityNodeReport {
+                subject_kind: subject.report_kind().to_string(),
+                subject_id: subject_id.clone(),
+                capability: "community_index".to_string(),
+                reason: "malware".to_string(),
+                ..NewCommunityNodeReport::default()
+            },
+            None,
         )
-    };
-    assert_eq!(status().await?["active"], false);
-    apply_operator_action(
-        &pool,
-        "ops@example.net",
-        &AdminOperation::RestrictMalwarePost {
-            report_id: report.id.clone(),
-        },
-    )
-    .await?;
-    let body = status().await?;
-    assert_eq!(body["active"], true);
-    assert_eq!(body["basis"], "malware");
-    assert_eq!(
-        body["capabilities"],
-        serde_json::json!(["community_index", "search", "discovery", "recommendation"])
-    );
-    assert!(!body.to_string().contains(&report.id));
-    assert!(!body.to_string().contains("ops@example.net"));
+        .await?;
+        let status = || async {
+            anyhow::Ok(
+                Client::new()
+                    .get(format!(
+                        "{}/v1/transmission-preventions/{}/{subject_id}",
+                        server.base_url,
+                        subject.as_str()
+                    ))
+                    .send()
+                    .await?
+                    .json::<serde_json::Value>()
+                    .await?,
+            )
+        };
+        assert_eq!(status().await?["active"], false);
+        apply_operator_action(
+            &pool,
+            "ops@example.net",
+            &AdminOperation::RestrictMalware {
+                subject,
+                report_id: report.id.clone(),
+            },
+        )
+        .await?;
+        let body = status().await?;
+        assert_eq!(body["active"], true);
+        assert_eq!(body["basis"], "malware");
+        assert_eq!(
+            body["capabilities"],
+            serde_json::json!(["community_index", "search", "discovery", "recommendation"])
+        );
+        assert!(!body.to_string().contains(&report.id));
+        assert!(!body.to_string().contains("ops@example.net"));
 
-    apply_operator_action(
-        &pool,
-        "ops@example.net",
-        &AdminOperation::ReleaseMalwareRestriction {
-            post_id: "post-1062-status".to_string(),
-            reason: "cleared".to_string(),
-        },
-    )
-    .await?;
-    assert_eq!(status().await?["active"], false);
+        apply_operator_action(
+            &pool,
+            "ops@example.net",
+            &AdminOperation::ReleaseMalwareRestriction {
+                subject,
+                subject_id: subject_id.clone(),
+                reason: "cleared".to_string(),
+            },
+        )
+        .await?;
+        assert_eq!(status().await?["active"], false);
+    }
     server.shutdown().await
 }
