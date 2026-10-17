@@ -188,7 +188,7 @@ export function SmartReferenceText({
             const fallbackLabel = referenceLabel(segment.reference, t);
             // 公開スレッドは、知っていればタイトルを出す(#1840 判断 10)。
             const label = segment.reference.kind === 'public_thread' && publicThreads
-              ? publicThreads.withTitle(segment.reference.channelId, (title) => title ?? fallbackLabel)
+              ? publicThreads.renderChipTitle(segment.reference.topic, segment.reference.channelId, fallbackLabel)
               : fallbackLabel;
             const button = (
               <button

@@ -911,6 +911,10 @@ describe('audienceLabelForChannelRef', () => {
     expect(
       audienceLabelForChannelRef({ kind: 'private_channel', channel_id: 'channel-x' }, [])
     ).toBe('Private channel');
+    // #1840: 公開スレッドは参加中の channel を探さない。
+    expect(
+      audienceLabelForChannelRef({ kind: 'public_channel', channel_id: 'pc-1-0123456789abcdef' }, joined)
+    ).toBe('Public thread');
   });
 });
 
@@ -925,6 +929,9 @@ describe('audienceLabelForTimelineScope', () => {
       'Private channel'
     );
     expect(audienceLabelForTimelineScope({ kind: 'public' }, [])).toBe('Public');
+    expect(
+      audienceLabelForTimelineScope({ kind: 'public_channel', channel_id: 'pc-1-0123456789abcdef' }, joined)
+    ).toBe('Public thread');
   });
 });
 

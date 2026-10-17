@@ -116,7 +116,7 @@ kind ごとの desktop 既定値は次とする。具体的な unit、gap、brea
 
 | Column kind | Desktop default | Mobile |
 |---|---:|---:|
-| Timeline / Notifications / Profile / Thread | 1 span | 1 viewport |
+| Timeline / Notifications / Profile / Thread / Public threads | 1 span | 1 viewport |
 | Messages / Conversation | 1〜2 span | 1 viewport |
 | Stream | 2 span | 1 viewport |
 | Metaverse | 3 span | 1 viewport |

@@ -626,13 +626,13 @@
       "created": "最新创建在前"
     },
     "create": {
-      "action": "创建帖子",
+      "action": "创建公开帖子",
       "title": "创建公开帖子",
-      "description": "在 {{topic}} 中创建任何人都可以阅读和发帖的帖子。标题无法更改，帖子也无法删除。",
+      "description": "在 {{topic}} 中创建任何人都可以阅读和发帖的公开帖子。标题无法更改，公开帖子也无法删除。",
       "titleLabel": "标题",
       "firstPostLabel": "首帖（可留空）",
       "submit": "创建",
-      "failed": "无法创建帖子，请重试。"
+      "failed": "无法创建公开帖子，请重试。"
     },
     "list": {
       "loading": "正在加载公开帖子…",
@@ -641,11 +641,12 @@
       "emptyHint": "添加标题，即可开始任何人都可以阅读和参与的对话。",
       "createdAt": "创建于 {{time}}",
       "lastPostAt": "最后发帖 {{time}}",
-      "unavailable_one": "此范围内有 {{count}} 个帖子尚未获取。获取后，重新加载即可显示。",
-      "unavailable_other": "此范围内有 {{count}} 个帖子尚未获取。获取后，重新加载即可显示。",
-      "loadMoreFailed": "无法加载更多帖子。"
+      "unavailable_one": "此范围内有 {{count}} 个公开帖子尚未获取。获取后，重新加载即可显示。",
+      "unavailable_other": "此范围内有 {{count}} 个公开帖子尚未获取。获取后，重新加载即可显示。",
+      "loadMoreFailed": "无法加载更多公开帖子。"
     },
     "detailEmpty": "这个公开帖子里还没有内容。",
+    "titleUnavailable": "无法获取标题",
     "card": {
       "loading": "正在加载公开帖子…",
       "unavailable": "无法获取此公开帖子"

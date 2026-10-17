@@ -30,7 +30,7 @@ async function openGeneralThreads(page: Page) {
 
 async function createThread(page: Page, title: string, firstPost: string) {
   const list = activeColumn(page, 'Public threads');
-  await list.locator('.shell-column-footer').getByRole('button', { name: 'Create thread' }).click();
+  await list.locator('.shell-column-footer').getByRole('button', { name: 'Create public thread' }).click();
   const dialog = page.getByRole('dialog', { name: 'Create a public thread' });
   await dialog.getByRole('textbox', { name: 'Title' }).fill(title);
   await dialog.getByRole('textbox', { name: 'First post (optional)' }).fill(firstPost);
@@ -87,7 +87,9 @@ test('a public thread is created from its topic, written to in its detail and fo
   await page.keyboard.press('Enter');
   const menu = page.getByRole('menu', { name: 'Sort order' });
   await expect(menu.getByRole('menuitemradio', { name: 'Latest post first' })).toHaveAttribute('aria-checked', 'true');
-  await menu.getByRole('menuitemradio', { name: 'Newest first' }).click();
+  await expect(menu.getByRole('menuitemradio', { name: 'Latest post first' })).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
   await expect(back.getByRole('button', { name: 'Sort order: Newest first' })).toBeVisible();
 });
 

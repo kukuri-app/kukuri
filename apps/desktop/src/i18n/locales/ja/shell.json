@@ -646,6 +646,7 @@
       "loadMoreFailed": "続きを読み込めませんでした。"
     },
     "detailEmpty": "このスレッドにはまだ投稿がありません。",
+    "titleUnavailable": "タイトルを取得できません",
     "card": {
       "loading": "公開スレッドを読み込み中…",
       "unavailable": "公開スレッドを取得できません"

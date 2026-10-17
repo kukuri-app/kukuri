@@ -626,13 +626,13 @@
       "created": "Newest first"
     },
     "create": {
-      "action": "Create thread",
+      "action": "Create public thread",
       "title": "Create a public thread",
       "description": "Creates a thread in {{topic}} that anyone can read and post to. The title can't be changed, and the thread can't be deleted.",
       "titleLabel": "Title",
       "firstPostLabel": "First post (optional)",
       "submit": "Create",
-      "failed": "Couldn't create the thread. Try again."
+      "failed": "Couldn't create the public thread. Try again."
     },
     "list": {
       "loading": "Loading public threads…",
@@ -643,9 +643,10 @@
       "lastPostAt": "Last post {{time}}",
       "unavailable_one": "{{count}} thread in this range hasn't arrived yet. Once it arrives, it appears when you reload.",
       "unavailable_other": "{{count}} threads in this range haven't arrived yet. Once they arrive, they appear when you reload.",
-      "loadMoreFailed": "Couldn't load more threads."
+      "loadMoreFailed": "Couldn't load more public threads."
     },
     "detailEmpty": "No posts in this thread yet.",
+    "titleUnavailable": "Couldn't load the title",
     "card": {
       "loading": "Loading the public thread…",
       "unavailable": "Couldn't load this public thread"

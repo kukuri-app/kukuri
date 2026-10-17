@@ -14,6 +14,7 @@ import type { PublicChannelOrder, PublicChannelView } from '@/lib/api';
 import { useColumnRuntime } from '@/shell/ColumnRuntimeContext';
 import { VISIBLE_TIMELINE_LIMIT } from '@/shell/pagination';
 import { authorDisplayLabel } from '@/shell/presentation';
+import { isHiddenAuthor, knownPublicThreadTitle } from '@/shell/slices/publicThreads';
 import { setColumnPublicThreadOrder, type ColumnState } from '@/shell/slices/workspace';
 import { REFRESH_INTERVAL_MS, useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
 
@@ -68,8 +69,12 @@ export function PublicThreadList({ column }: { column: ColumnState }) {
   useEffect(() => {
     if (visible && !loaded) void loadHead(true);
   }, [visible, loaded, loadHead]);
+  // 作った直後だけ先頭から読み直す(並びの切替で作り直した列は、最初の読み込みだけにする)。
+  const handledCreated = useRef(createdHere);
   useEffect(() => {
-    if (createdHere) void loadHead(true);
+    if (!createdHere || createdHere === handledCreated.current) return;
+    handledCreated.current = createdHere;
+    void loadHead(true);
   }, [createdHere, loadHead]);
   useEffect(() => {
     if (!visible) return;
@@ -95,11 +100,13 @@ export function PublicThreadList({ column }: { column: ColumnState }) {
       setState((current) => ({ ...current, loadingMore: false, loadMoreFailed: true }));
     }
   }, [api, remember, topic, order, cursor, loadingMore]);
-  // 行の位置の保持は投稿の一覧の hook を使う(行の id を投稿の id の形で渡す)。
-  const anchorRows = useMemo(
-    () => state.rows.map((row) => ({ post: { object_id: row.channel_id } })),
-    [state.rows]
+  // 作成者を非表示にした行(mute・block)は、次に読んだページが除く前でも出さない(読み込んだ続きの行を含む)。
+  const rows = useMemo(
+    () => state.rows.filter((row) => !isHiddenAuthor(knownAuthorsByPubkey[row.creator_pubkey])),
+    [state.rows, knownAuthorsByPubkey]
   );
+  // 行の位置の保持は投稿の一覧の hook を使う(行の id を投稿の id の形で渡す)。
+  const anchorRows = useMemo(() => rows.map((row) => ({ post: { object_id: row.channel_id } })), [rows]);
   const { listRef, loadMore } = useWindowScrollAnchor(anchorRows, loadNext, loadingMore);
   const { sentinelRef, canAutoLoad, manualFallback } = useInfiniteScrollSentinel({
     hasMore: Boolean(cursor) && !state.loadMoreFailed,
@@ -121,7 +128,7 @@ export function PublicThreadList({ column }: { column: ColumnState }) {
     <div className='shell-column-content'>
       {state.status === 'loading' ? <Notice>{t('shell:publicThreads.list.loading')}</Notice> : null}
       {state.status === 'error' ? <Notice tone='destructive'>{t('shell:publicThreads.list.failed')}</Notice> : null}
-      {state.status === 'ready' && state.rows.length === 0 && !cursor && state.unavailable === 0 ? (
+      {state.status === 'ready' && rows.length === 0 && !cursor && state.unavailable === 0 ? (
         <EmptyStateGuidance
           title={t('shell:publicThreads.list.empty')}
           steps={[{ id: 'create', content: t('shell:publicThreads.list.emptyHint') }]}
@@ -144,7 +151,7 @@ export function PublicThreadList({ column }: { column: ColumnState }) {
             </Button>
           </li>
         ) : null}
-        {state.rows.map((row) => (
+        {rows.map((row) => (
           <li key={row.channel_id} data-post-id={row.channel_id}>
             {/* 文言の間の空白は、読み上げの名前を区切る(grid・flex の中なので見た目は変えない)。 */}
             <button type='button' className='public-thread-row' onClick={() => actions.open(topic, row.channel_id)}>
@@ -236,30 +243,32 @@ export function PublicThreadOrderMenu({ column }: { column: ColumnState }) {
   );
 }
 
-/** 公開スレッドの詳細の列の上部。リンクをコピーし(判断 5)、タイトルを知らなければ表示中に 1 回読む。 */
+/** 公開スレッドの詳細の列の上部。リンクをコピーし(判断 5)、タイトルを知らなければ表示中に ID から読む。読めなければその旨を出す。 */
 export function PublicThreadScopeActions({ topic, channelId }: { topic: string; channelId: string }) {
-  const { t } = useTranslation('common');
+  const { t } = useTranslation(['common', 'shell']);
   const actions = useContext(PublicThreadActionsContext);
-  const api = actions?.api;
-  const remember = actions?.remember;
+  const load = actions?.load;
   const { visible } = useColumnRuntime();
-  const known = useDesktopShellStore((state) => channelId in state.publicThreadsById);
+  const known = useDesktopShellStore(
+    (state) => knownPublicThreadTitle(state.publicThreadsById, state.knownAuthorsByPubkey, channelId) !== undefined
+  );
+  const [unavailable, setUnavailable] = useState(false);
   useEffect(() => {
-    if (!api || !remember || known || !visible) return;
+    if (!load || known || !visible) return;
     let cancelled = false;
-    void api
-      .getPublicChannel(topic, channelId)
-      .then((thread) => {
-        if (!cancelled && thread) remember([thread]);
-      })
-      .catch(() => undefined);
+    void load(topic, channelId).then((thread) => {
+      if (!cancelled) setUnavailable(!thread);
+    });
     return () => {
       cancelled = true;
     };
-  }, [api, remember, known, visible, topic, channelId]);
+  }, [load, known, visible, topic, channelId]);
   if (!actions) return null;
   return (
     <div className='shell-column-scope-actions'>
+      {unavailable && !known ? (
+        <span className='shell-column-header-summary'>{t('shell:publicThreads.titleUnavailable')}</span>
+      ) : null}
       <Button
         variant='ghost'
         size='sm'
@@ -268,7 +277,7 @@ export function PublicThreadScopeActions({ topic, channelId }: { topic: string; 
         onClick={() => actions.copyLink(topic, channelId)}
       >
         <Link2 className='size-4' aria-hidden='true' />
-        {t('actions.copyLink')}
+        {t('common:actions.copyLink')}
       </Button>
     </div>
   );

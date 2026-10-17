@@ -1,7 +1,8 @@
-import { type FormEvent, type ReactNode, useCallback, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { PublicThreadSlot, type PublicThreadSlotValue } from '@/components/core/publicThreadSlot';
+import { useOnScreen } from '@/components/core/useOnScreen';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -17,7 +18,11 @@ import { Textarea } from '@/components/ui/textarea';
 import type { DesktopApi, PublicChannelView } from '@/lib/api';
 import { buildPublicThreadLink } from '@/lib/internalLinks';
 import { topicDisplayName } from '@/lib/topicId';
-import { rememberPublicThreads } from '@/shell/slices/publicThreads';
+import {
+  KNOWN_PUBLIC_THREAD_LIMIT,
+  knownPublicThreadTitle,
+  rememberPublicThreads,
+} from '@/shell/slices/publicThreads';
 import { useDesktopShellStore, useDesktopShellStoreApi } from '@/shell/store';
 
 import { PublicThreadActionsContext, type PublicThreadActions } from './publicThreadActions';
@@ -43,6 +48,30 @@ export function PublicThreadProviders({ api, open, copyLink, children }: PublicT
       storeApi.getState().setField('publicThreadsById', (current) => rememberPublicThreads(current, threads)),
     [storeApi]
   );
+  // 読めたスレッドは覚える数と同じだけ使い回す(古いものから外す)。読めなかったものは外し、次に表示したときに読む。
+  const loads = useRef(new Map<string, Promise<PublicChannelView | null>>());
+  const load = useCallback(
+    (topic: string, channelId: string) => {
+      const pending = loads.current.get(channelId);
+      if (pending) return pending;
+      const forget = () => {
+        loads.current.delete(channelId);
+        return null;
+      };
+      const request = api.getPublicChannel(topic, channelId).then((thread) => {
+        if (!thread) return forget();
+        remember([thread]);
+        return thread;
+      }, forget);
+      loads.current.set(channelId, request);
+      for (const key of loads.current.keys()) {
+        if (loads.current.size <= KNOWN_PUBLIC_THREAD_LIMIT) break;
+        loads.current.delete(key);
+      }
+      return request;
+    },
+    [api, remember]
+  );
   const actions = useMemo<PublicThreadActions>(
     () => ({
       api,
@@ -50,9 +79,10 @@ export function PublicThreadProviders({ api, open, copyLink, children }: PublicT
       create: setCreating,
       copyLink: (topic, channelId) => copyLink(buildPublicThreadLink(topic, channelId)),
       remember,
+      load,
       lastCreated,
     }),
-    [api, open, copyLink, remember, lastCreated]
+    [api, open, copyLink, remember, load, lastCreated]
   );
   return (
     <PublicThreadActionsContext.Provider value={actions}>
@@ -80,8 +110,17 @@ export function PublicThreadProviders({ api, open, copyLink, children }: PublicT
 // 本文の部品は値を変えずに受け取り、タイトルは chip ごとに store から読む(覚えたスレッドが増えても投稿を描き直さない)。
 const SLOT: PublicThreadSlotValue = {
   withTitle: (channelId, render) => <PublicThreadTitle channelId={channelId} render={render} />,
+  renderChipTitle: (topic, channelId, fallback) => (
+    <PublicThreadChipTitle topic={topic} channelId={channelId} fallback={fallback} />
+  ),
   renderCard: (topic, channelId) => <PublicThreadLinkCard topic={topic} channelId={channelId} />,
 };
+
+function useKnownTitle(channelId: string) {
+  return useDesktopShellStore((state) =>
+    knownPublicThreadTitle(state.publicThreadsById, state.knownAuthorsByPubkey, channelId)
+  );
+}
 
 function PublicThreadTitle({
   channelId,
@@ -90,7 +129,19 @@ function PublicThreadTitle({
   channelId: string;
   render: (title: string | undefined) => ReactNode;
 }) {
-  return render(useDesktopShellStore((state) => state.publicThreadsById[channelId]?.title));
+  return render(useKnownTitle(channelId));
+}
+
+function PublicThreadChipTitle({ topic, channelId, fallback }: { topic: string; channelId: string; fallback: string }) {
+  const load = useContext(PublicThreadActionsContext)?.load;
+  const title = useKnownTitle(channelId);
+  const ref = useRef<HTMLSpanElement>(null);
+  const onScreen = useOnScreen(ref, channelId);
+  const known = title !== undefined;
+  useEffect(() => {
+    if (load && onScreen && !known) void load(topic, channelId);
+  }, [load, onScreen, known, topic, channelId]);
+  return <span ref={ref}>{title ?? fallback}</span>;
 }
 
 /** 一覧の列の「スレッドを作る」。タイトル(1〜200 文字)と最初の投稿(空でもよい)を書く(判断 3)。 */

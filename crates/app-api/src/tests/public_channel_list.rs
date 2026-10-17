@@ -207,6 +207,13 @@ async fn hidden_creators_threads_are_left_out_of_the_list() {
         listed_until(&b, PublicChannelOrder::Created, |ids| ids.len() == 1).await,
         [mine.channel_id]
     );
+    // ID からも返さない(本文のリンクの card と詳細の見出しに出さない。AC-3)。
+    assert_eq!(
+        b.get_public_channel(TOPIC, &hidden.channel_id)
+            .await
+            .expect("get the hidden creator's channel"),
+        None
+    );
 }
 
 // topic の lease を持つ端末には作成の知らせが届き、一覧を開く前に行が置かれる。

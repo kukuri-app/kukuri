@@ -67,6 +67,7 @@ import { applySavedWorkspaceLayout } from '@/shell/savedWorkspaceLayouts';
 import { ColumnScopeLeases } from '@/shell/page/ColumnScopeLeases';
 import { ControllerPendingNotice } from '@/shell/page/ControllerPendingNotice';
 import { PublicThreadActionsContext } from '@/shell/page/publicThreadActions';
+import { columnTitle, usePublicThreadColumnTitles, type ColumnTitles } from '@/shell/page/columnTitles';
 import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 import { usePwaShellStore } from '@/lib/pwaShell';
 
@@ -84,7 +85,7 @@ type DesktopShellControlCenterProps = TopicListProps & {
   onAcceptCommunityNodeConsents: AcceptCommunityNodeConsents;
   topicItems: TopicDiagnosticSummary[];
   topicInput: string;
-  titles: Record<ColumnKind, string>;
+  titles: ColumnTitles;
   updateAvailable: boolean;
   onTopicInputChange: (value: string) => void;
   onAddTopic: () => void | Promise<void>;
@@ -145,7 +146,6 @@ export function DesktopShellControlCenter({
     developerModeEnabled,
     joinedChannelsByTopic,
     notificationStatus,
-    publicThreadsById,
     syncStatus,
     syncStatusRead,
     workspaceState,
@@ -157,7 +157,6 @@ export function DesktopShellControlCenter({
       developerModeEnabled: state.developerModeEnabled,
       joinedChannelsByTopic: state.joinedChannelsByTopic,
       notificationStatus: state.notificationStatus,
-      publicThreadsById: state.publicThreadsById,
       syncStatus: state.syncStatus,
       syncStatusRead: state.syncStatusRead,
       workspaceState: state.workspaceState,
@@ -165,9 +164,11 @@ export function DesktopShellControlCenter({
   );
   const activeScope = activeWorkspaceScope(workspaceState);
   const activeTopic = activeScope.topicId;
-  const selectedChannelId = activeScope.channelId;
+  // 共有のボタンは private channel のもの(公開スレッドは詳細の列の「リンクをコピー」。#1840)。
+  const selectedChannelId = isPublicChannelId(activeScope.channelId) ? null : activeScope.channelId;
   const setWorkspaceState = useDesktopShellFieldSetter('workspaceState');
   const publicThreads = useContext(PublicThreadActionsContext);
+  const publicThreadTitles = usePublicThreadColumnTitles();
   const communityNodeNeedsAttention = communityNodeStatuses.some((status) => status.last_error);
   // #1192: 設定画面へ行かずに、各コミュニティノードの規約同意モーダルを開けるようにする。
   // per-node の境界を保つため一括操作は持たず、開く対象は行ごとに固定する。
@@ -239,7 +240,7 @@ export function DesktopShellControlCenter({
     if (!column.scope) return null;
     const channelId = column.scope.channelId;
     const channel = isPublicChannelId(channelId)
-      ? publicThreadsById[channelId]?.title ?? t('shell:publicThreads.title')
+      ? publicThreadTitles[channelId] ?? titles.publicThread
       : channelId
         ? joinedChannelsByTopic[column.scope.topicId]?.find(
             (candidate) => candidate.channel_id === channelId
@@ -425,13 +426,13 @@ export function DesktopShellControlCenter({
                         className='shell-control-center-column-focus'
                         type='button'
                         aria-label={t('shell:controlCenter.focusColumn', {
-                          title: titles[column.kind],
+                          title: columnTitle(titles, column),
                         })}
                         aria-current={active ? 'true' : undefined}
                         onClick={() => focusColumn(column)}
                       >
                         <span>
-                          {index + 1}. {titles[column.kind]}
+                          {index + 1}. {columnTitle(titles, column)}
                         </span>
                         {scopeLabel(column) ? <small>{scopeLabel(column)}</small> : null}
                       </button>
@@ -443,7 +444,7 @@ export function DesktopShellControlCenter({
                           column.pinned
                             ? 'shell:controlCenter.unpinColumn'
                             : 'shell:controlCenter.pinColumn',
-                          { title: titles[column.kind] }
+                          { title: columnTitle(titles, column) }
                         )}
                         aria-pressed={column.pinned}
                         onClick={() =>
@@ -464,7 +465,7 @@ export function DesktopShellControlCenter({
                         type='button'
                         disabled={workspaceState.columns.length <= 1}
                         label={t('shell:controlCenter.closeColumn', {
-                          title: titles[column.kind],
+                          title: columnTitle(titles, column),
                         })}
                         onClick={() => closeManagedColumn(column.id)}
                       >

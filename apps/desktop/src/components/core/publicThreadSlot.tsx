@@ -6,6 +6,8 @@ import { firstPublicThreadLink } from '@/lib/internalLinks';
 export type PublicThreadSlotValue = {
   /** 知っているスレッドのタイトル(知らなければ `undefined`)を受け取って描く(本文の chip と公開範囲の icon)。 */
   withTitle: (channelId: string, render: (title: string | undefined) => ReactNode) => ReactNode;
+  /** 本文の chip の文言。知らなければ `fallback` を出し、画面内にある間に ID から読む（判断 10: どのリンクもタイトル）。 */
+  renderChipTitle: (topic: string, channelId: string, fallback: string) => ReactNode;
   /** 本文の下に出す、タイトルと最初の投稿の card。 */
   renderCard: (topic: string, channelId: string) => ReactNode;
 };

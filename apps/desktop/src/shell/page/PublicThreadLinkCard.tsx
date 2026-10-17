@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 
 import { useOnScreen } from '@/components/core/useOnScreen';
 import type { PublicChannelView } from '@/lib/api';
+import { isHiddenAuthor } from '@/shell/slices/publicThreads';
+import { useDesktopShellStore } from '@/shell/store';
 
 import { PublicThreadActionsContext } from './publicThreadActions';
 
@@ -16,22 +18,27 @@ export function PublicThreadLinkCard({ topic, channelId }: { topic: string; chan
   const { t } = useTranslation('shell');
   const actions = useContext(PublicThreadActionsContext);
   const api = actions?.api;
-  const remember = actions?.remember;
+  const load = actions?.load;
   const ref = useRef<HTMLDivElement>(null);
   const onScreen = useOnScreen(ref, channelId);
-  const [state, setState] = useState<CardState>({ status: 'loading' });
+  const [loaded, setState] = useState<CardState>({ status: 'loading' });
+  // 作成者を非表示にしたら(mute・block)、読めたスレッドも出さない(一覧と同じ)。
+  const creator = loaded.status === 'available' ? loaded.thread.creator_pubkey : null;
+  const creatorHidden = useDesktopShellStore((store) =>
+    creator ? isHiddenAuthor(store.knownAuthorsByPubkey[creator]) : false
+  );
+  const state: CardState = creatorHidden ? { status: 'unavailable' } : loaded;
   useEffect(() => {
-    if (!api || !remember || !onScreen) return;
+    if (!api || !load || !onScreen) return;
     let cancelled = false;
     void (async () => {
       try {
-        const thread = await api.getPublicChannel(topic, channelId);
+        const thread = await load(topic, channelId);
         if (cancelled) return;
         if (!thread) {
           setState({ status: 'unavailable' });
           return;
         }
-        remember([thread]);
         // 最初の投稿は、スレッドの取得が手元へ読む(作成者を非表示にしていれば返信ツリーが返さない)。
         const root = thread.first_post_id
           ? (await api.listThread(topic, thread.first_post_id, null, 1)).items.find(
@@ -47,7 +54,7 @@ export function PublicThreadLinkCard({ topic, channelId }: { topic: string; chan
     return () => {
       cancelled = true;
     };
-  }, [api, remember, onScreen, topic, channelId]);
+  }, [api, load, onScreen, topic, channelId]);
   if (!actions) return null;
   return (
     <div ref={ref} className='link-preview-slot' data-state={state.status}>

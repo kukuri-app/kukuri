@@ -281,6 +281,9 @@ export function audienceLabelForChannelRef(
   if (channelRef.kind === 'public') {
     return translate('common:audience.public');
   }
+  if (channelRef.kind === 'public_channel') {
+    return translate('common:audience.publicThread');
+  }
   return (
     joinedChannels.find((channel) => channel.channel_id === channelRef.channel_id)?.label ??
     translate('common:audience.privateChannel')
@@ -297,7 +300,7 @@ export function audienceLabelForTimelineScope(
       translate('common:audience.privateChannel')
     );
   }
-  return translate('common:audience.public');
+  return translate(scope.kind === 'public_channel' ? 'common:audience.publicThread' : 'common:audience.public');
 }
 
 export function formatSeedPeer(peer: DiscoveryConfig['seed_peers'][number]): string {

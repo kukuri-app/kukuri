@@ -48,7 +48,6 @@ import {
   setColumnPinned,
   setColumnSpan,
   setColumnTimelineFilter,
-  type ColumnKind,
   type ColumnState,
 } from '@/shell/slices/workspace';
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
@@ -59,6 +58,7 @@ import {
   PublicThreadOrderMenu,
   PublicThreadScopeActions,
 } from '@/shell/page/PublicThreadList';
+import { columnTitle, usePublicThreadColumnTitles, type ColumnTitles } from '@/shell/page/columnTitles';
 import {
   projectColumnRuntime,
   releaseColumnAudioFocus,
@@ -109,7 +109,7 @@ type DesktopShellColumnWorkspaceProps = {
   scopeLabel: string;
   renderThreadSurface: (column: ColumnState) => ReactNode;
   timelineViewItems: Array<{ id: TimelineViewId; label: string }>;
-  titles: Record<ColumnKind, string>;
+  titles: ColumnTitles;
 };
 
 export function DesktopShellColumnWorkspace({
@@ -166,7 +166,7 @@ export function DesktopShellColumnWorkspace({
   const profileSaving = useDesktopShellStore((state) => state.profileSaving);
   const notificationStatus = useDesktopShellStore((state) => state.notificationStatus);
   const knownAuthorsByPubkey = useDesktopShellStore((state) => state.knownAuthorsByPubkey);
-  const publicThreadsById = useDesktopShellStore((state) => state.publicThreadsById);
+  const publicThreadTitles = usePublicThreadColumnTitles();
   const mediaObjectUrls = useDesktopShellStore((state) => state.mediaObjectUrls);
   const communityNodeConfig = useDesktopShellStore((state) => state.communityNodeConfig);
   const communityNodeStatuses = useDesktopShellStore((state) => state.communityNodeStatuses);
@@ -386,7 +386,7 @@ export function DesktopShellColumnWorkspace({
     const topicLabel = column.scope.topicId.split(':').filter(Boolean).at(-1) ?? column.scope.topicId;
     const channelId = column.scope.channelId;
     const channel = isPublicChannelId(channelId)
-      ? publicThreadsById[channelId]?.title ?? t('publicThreads.title')
+      ? publicThreadTitles[channelId] ?? titles.publicThread
       : channelId
         ? joinedChannelsByTopic[column.scope.topicId]?.find(
             (candidate) => candidate.channel_id === channelId
@@ -394,11 +394,6 @@ export function DesktopShellColumnWorkspace({
         : localizeAudienceLabel('Public');
     return `${channel} · ${topicLabel}`;
   };
-  // 公開スレッドの詳細は timeline の列で、見出しを「公開スレッド」にする(#1840)。
-  const columnTitle = (column: ColumnState) =>
-    column.kind === 'timeline' && isPublicChannelId(column.scope?.channelId)
-      ? t('publicThreads.title')
-      : titles[column.kind];
   function conversationLabel(peerPubkey: string) {
     const conversation = directMessages.find((item) => item.peer_pubkey === peerPubkey);
     const author = knownAuthorsByPubkey[peerPubkey];
@@ -602,7 +597,7 @@ export function DesktopShellColumnWorkspace({
           >
             <ColumnSurface
               columnId={column.id}
-              title={columnTitle(column)}
+              title={columnTitle(titles, column)}
               scopeLabel={columnScopeLabel(column)}
               position={index + 1}
               total={workspaceState.columns.length}

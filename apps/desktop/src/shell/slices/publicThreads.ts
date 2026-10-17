@@ -1,4 +1,4 @@
-import type { PublicChannelView } from '@/lib/api';
+import type { AuthorSocialView, PublicChannelView } from '@/lib/api';
 
 /// 覚えておく公開スレッドの数。超えたら、古く覚えたものから外す。
 export const KNOWN_PUBLIC_THREAD_LIMIT = 256;
@@ -32,4 +32,19 @@ export function rememberPublicThreads(
     delete next[key];
   }
   return next;
+}
+
+/// 非表示の作者（mute と、どちらの向きの block）。一覧と ID からの取得が除く作者と同じ（#1840 AC-3）。
+export function isHiddenAuthor(author: AuthorSocialView | undefined): boolean {
+  return Boolean(author && (author.muted || author.blocking || author.blocked_by));
+}
+
+/// 覚えた公開スレッドのタイトル。知らないか、作成者を非表示にしていれば `undefined`。
+export function knownPublicThreadTitle(
+  threads: Record<string, PublicChannelView>,
+  authors: Record<string, AuthorSocialView>,
+  channelId: string
+): string | undefined {
+  const thread = threads[channelId];
+  return thread && !isHiddenAuthor(authors[thread.creator_pubkey]) ? thread.title : undefined;
 }

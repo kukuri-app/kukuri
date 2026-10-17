@@ -78,7 +78,11 @@ test('a public thread is created from the topic list, opens its detail and keeps
   expect(await within(list).findByText('No public threads in this topic yet.')).toBeInTheDocument();
 
   // 列の下部の「スレッドを作る」。タイトルが空の間は作れない。
-  await user.click(within(list.querySelector<HTMLElement>('.shell-column-footer') ?? list).getByRole('button', { name: 'Create thread' }));
+  await user.click(
+    within(list.querySelector<HTMLElement>('.shell-column-footer') ?? list).getByRole('button', {
+      name: 'Create public thread',
+    })
+  );
   const dialog = await screen.findByRole('dialog', { name: 'Create a public thread' });
   expect(within(dialog).getByRole('button', { name: 'Create' })).toBeDisabled();
   await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Release notes');
@@ -112,10 +116,32 @@ test('a public thread is created from the topic list, opens its detail and keeps
   );
   expect(await within(detail).findByText('second post')).toBeInTheDocument();
 
+  // 公開スレッドの中で返信する。返信ツリーの列は公開スレッドの scope のままで、返信も同じスレッドへ送る。
+  await user.click(within(detail).getAllByRole('button', { name: 'Reply' })[0]!);
+  const replyTree = await screen.findByRole('region', { name: /^Thread Column,/ });
+  await waitFor(() =>
+    expect(replyTree.querySelector('.shell-column-header')).toHaveTextContent('Thread · Release notes · general')
+  );
+  const replyInput = await within(replyTree).findByPlaceholderText('Write a reply');
+  await user.type(replyInput, 'a reply in the thread');
+  await user.click(within(replyInput.closest('form')!).getByRole('button', { name: 'Reply' }));
+  await waitFor(() =>
+    expect(createPost.mock.lastCall?.slice(0, 5)).toEqual([
+      TOPIC,
+      'a reply in the thread',
+      expect.any(String),
+      expect.any(Array),
+      { kind: 'public_channel', channel_id: created.channel_id },
+    ])
+  );
+  await user.click(within(replyTree).getByRole('button', { name: 'Close Thread' }));
+  await waitFor(() => expect(getActiveColumn('Public thread')).toBe(detail));
+
   // 公開スレッドの投稿は topic のタイムラインに出さない(判断 4)。
   const timeline = screen.getByRole('region', { name: /^Timeline Column,/ });
   expect(within(timeline).queryByText('What changed in 0.5')).not.toBeInTheDocument();
   expect(within(timeline).queryByText('second post')).not.toBeInTheDocument();
+  expect(within(timeline).queryByText('a reply in the thread')).not.toBeInTheDocument();
 
   // 詳細の列を閉じると、一覧の列へ戻り、作ったスレッドが並ぶ。
   await user.click(within(detail).getByRole('button', { name: 'Close Public thread' }));
@@ -123,7 +149,7 @@ test('a public thread is created from the topic list, opens its detail and keeps
   await waitFor(() => expect(rowTitles(back)).toEqual(['Release notes']));
 }, 30_000);
 
-test('the list order is chosen from the header menu, stored with the column and restored after a restart', async () => {
+test('the list order is chosen with the keyboard, stored with the pinned column and restored after a restart', async () => {
   const user = userEvent.setup();
   const seedPublicChannels = {
     [TOPIC]: [
@@ -145,10 +171,17 @@ test('the list order is chosen from the header menu, stored with the column and 
     ['Latest post first', 'true'],
     ['Newest first', 'false'],
   ]);
-  await user.click(options[1]!);
+  await waitFor(() => expect(options[0]).toHaveFocus());
+  await user.keyboard('{ArrowDown}');
+  expect(options[1]).toHaveFocus();
+  await user.keyboard('{Enter}');
   await waitFor(() => expect(rowTitles(getActiveColumn('Public threads'))).toEqual(['Newer thread', 'Older thread']));
+  await user.click(within(getActiveColumn('Public threads')).getByRole('button', { name: 'Pin Public threads' }));
   await waitFor(() =>
-    expect(persistedColumns().find((column) => column.kind === 'publicThreads')?.publicThreadOrder).toBe('created')
+    expect(persistedColumns().find((column) => column.kind === 'publicThreads')).toMatchObject({
+      publicThreadOrder: 'created',
+      pinned: true,
+    })
   );
 
   first.unmount();
@@ -157,19 +190,24 @@ test('the list order is chosen from the header menu, stored with the column and 
   const restored = await waitFor(() => getActiveColumn('Public threads'));
   await waitFor(() => expect(rowTitles(restored)).toEqual(['Newer thread', 'Older thread']));
   expect(within(restored).getByRole('button', { name: 'Sort order: Newest first' })).toBeInTheDocument();
+  expect(within(restored).getByRole('button', { name: 'Unpin Public threads' })).toBeInTheDocument();
   expect(window.location.hash).toBe(LIST_ROUTE);
 }, 30_000);
 
-test('a public thread link in a post shows the title and the first post, and opens the thread under its list', async () => {
+test('public thread links in a post show their titles and the first post, and open the thread under its list', async () => {
   const user = userEvent.setup();
   const link = buildPublicThreadLink(TOPIC, CHANNEL);
+  const other = buildPublicThreadLink(TOPIC, 'pc-1700000500000-fedcba9876543210');
   const api = createDesktopMockApi({
     seedPublicChannels: {
-      [TOPIC]: [{ ...thread(CHANNEL, 'Weekly sync', 1_700_000_000_000, 1_700_000_000_000), first_post_id: 'first-post' }],
+      [TOPIC]: [
+        { ...thread(CHANNEL, 'Weekly sync', 1_700_000_000_000, 1_700_000_000_000), first_post_id: 'first-post' },
+        thread('pc-1700000500000-fedcba9876543210', 'Design review', 1_700_000_500_000, 1_700_000_500_000),
+      ],
     },
     seedPosts: {
       [TOPIC]: [
-        post('share', `Join us ${link}`, null, 1_700_000_100_000),
+        post('share', `Join us ${link} and ${other}`, null, 1_700_000_100_000),
         post('first-post', 'Agenda for this week', CHANNEL, 1_700_000_000_000),
       ],
     },
@@ -186,7 +224,14 @@ test('a public thread link in a post shows the title and the first post, and ope
     return found;
   });
   await waitFor(() => expect(card).toHaveAccessibleName('Public thread Weekly sync Agenda for this week'));
-  await waitFor(() => expect(share.querySelector('.smart-reference-chip')).toHaveTextContent('Weekly sync'));
+  // どのリンクもタイトルの chip になる。card は最初の 1 件だけ。
+  await waitFor(() =>
+    expect([...share.querySelectorAll('.smart-reference-chip')].map((chip) => chip.textContent)).toEqual([
+      'Weekly sync',
+      'Design review',
+    ])
+  );
+  expect(share.querySelectorAll('.public-thread-card')).toHaveLength(1);
   expect(within(timeline).queryByText('Agenda for this week', { selector: '.post-title *' })).not.toBeInTheDocument();
 
   await user.click(card);
@@ -197,7 +242,7 @@ test('a public thread link in a post shows the title and the first post, and ope
   await waitFor(() => expect(getActiveColumn('Public threads')).toBeInTheDocument());
 }, 30_000);
 
-test('a direct link opens the thread with its list, copies its link and is restored after a restart', async () => {
+test('a direct link opens the thread under its list, copies its link and is restored after a restart', async () => {
   const user = userEvent.setup();
   const writeText = vi.fn().mockResolvedValue(undefined);
   Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText } });
@@ -218,4 +263,6 @@ test('a direct link opens the thread with its list, copies its link and is resto
   const restored = await waitFor(() => getActiveColumn('Public thread'));
   await waitFor(() => expect(within(restored).getAllByText('Weekly sync · general').length).toBeGreaterThan(0));
   expect(window.location.hash).toBe(link);
+  await user.click(within(restored).getByRole('button', { name: 'Close Public thread' }));
+  await waitFor(() => expect(getActiveColumn('Public threads')).toBeInTheDocument());
 }, 30_000);

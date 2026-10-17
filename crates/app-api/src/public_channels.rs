@@ -209,6 +209,7 @@ impl AppService {
     /// 公開 channel を ID から 1 件読む。手元(保持した他人の record を含む)を先に読み、無ければ channel と topic の
     /// 読み先から読む。検証に通った record は保持し、他の参加者へ提供する(#1395)。見つからなければ `None`。
     /// 作成時の最初の投稿も、作成日(と翌日)の bucket から 1 件読んで反映する(ID から返信ツリーを開けるように)。
+    /// 非表示の作者(mute と、どちらの向きの block)の channel は、一覧と同じく返さない(#1840 AC-3)。
     pub async fn get_public_channel(
         &self,
         topic_id: &str,
@@ -217,6 +218,13 @@ impl AppService {
         let Some(channel) = self.read_public_channel(topic_id, channel_id).await? else {
             return Ok(None);
         };
+        if self
+            .current_hidden_author_pubkeys()
+            .await?
+            .contains(&channel.creator_pubkey)
+        {
+            return Ok(None);
+        }
         if let Some(first_post_id) = &channel.first_post_id
             && let Err(error) = self
                 .ensure_object_projection_near(
