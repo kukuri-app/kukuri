@@ -18,6 +18,7 @@ enum Operation {
     ListSessionCandidates,
     SetSessionDisplay,
     ListLive,
+    GetLive,
     CreateLive,
     EndLive,
     JoinLive,
@@ -55,6 +56,12 @@ impl CommandHandler for Handler {
             Operation::ListLive => encode(
                 runtime
                     .list_live_sessions(decode::<ListLiveSessionsRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            Operation::GetLive => encode(
+                runtime
+                    .get_live_session(decode::<LiveSessionCommandRequest>(payload)?)
                     .await
                     .map_err(command_error)?,
             ),
@@ -177,10 +184,18 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
             CreateLive,
             schema::object(
                 json!({"topic": {"type": "string"}, "channel_ref": schema::channel_ref(),
-            "title": {"type": "string"}, "description": {"type": "string"}}),
+            "title": {"type": "string"}, "description": {"type": "string"},
+            "start_post": {"type": "string"}}),
                 &["topic", "title", "description"],
             ),
             json!({"type": "string", "description": "session_id"}),
+        ),
+        (
+            "get_live_session",
+            Read,
+            GetLive,
+            session(),
+            schema::nullable(live_schema()),
         ),
         (
             "end_live_session",

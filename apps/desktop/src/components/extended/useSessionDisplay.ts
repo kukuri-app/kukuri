@@ -2,10 +2,14 @@ import { type RefObject, useEffect, useId, useRef, useState } from 'react';
 import type { DesktopApi, TimelineScope } from '@/lib/api';
 export type SessionDisplayContext = { api: DesktopApi; topic: string; scope: TimelineScope };
 
-export function useSessionDisplay<T extends HTMLElement>({ context, sessionId, kind, replicaId = '', target }: {
+/** `onDisplayed` は表示の要求が読み終えた(手元の行が新しくなりえた)ときに呼ぶ。 */
+export function useSessionDisplay<T extends HTMLElement>({ context, sessionId, kind, replicaId = '', target, onDisplayed }: {
   context?: SessionDisplayContext; sessionId: string; kind: string; replicaId?: string; target?: RefObject<T | null>;
+  onDisplayed?: () => void;
 }) {
   const ownElement = useRef<T>(null);
+  const displayed = useRef(onDisplayed);
+  useEffect(() => { displayed.current = onDisplayed; });
   const element = target ?? ownElement;
   const observerId = useId();
   const generation = useRef(0);
@@ -35,6 +39,7 @@ export function useSessionDisplay<T extends HTMLElement>({ context, sessionId, k
           try {
             await api.setSessionDisplay({ topic, scope, replica_id: replicaId, session_id: sessionId,
               kind, observer: observerKey, visible: request.visible && !disposed, retry: request.retry });
+            if (request.visible && !disposed) displayed.current?.();
           } catch { if (!disposed) setFailed(true); }
         }
         running = false;

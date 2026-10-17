@@ -309,6 +309,7 @@ async fn private_channel_invite_restores_after_restart_without_reimport() {
             channel_ref: private_channel_ref.clone(),
             attachments: vec![],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("create private post");
@@ -375,6 +376,7 @@ async fn private_channel_invite_restores_after_restart_without_reimport() {
             channel_ref: ChannelRef::Public,
             attachments: vec![],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("create private reply");
@@ -417,6 +419,7 @@ async fn private_channel_invite_restores_after_restart_without_reimport() {
             channel_ref: private_channel_ref.clone(),
             title: "core live".into(),
             description: "private stream".into(),
+            start_post: String::new(),
         })
         .await
         .expect("create private live session");

@@ -220,7 +220,7 @@ fn baseline_inventory_is_classified_once() {
         manifest.scope_revision,
         "2026-10-11-1197-ac4a-notification-id"
     );
-    assert_eq!(manifest.entries.len(), 195);
+    assert_eq!(manifest.entries.len(), 196);
     check_inventory(&gui_commands(), &manifest.entries).expect("全入口の分類");
 }
 

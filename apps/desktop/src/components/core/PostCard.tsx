@@ -44,6 +44,7 @@ import { AuthorIdentityButton } from './AuthorIdentityButton';
 import { MediaViewerDialog } from './MediaViewerDialog';
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { PostMedia } from './PostMedia';
+import { PostLiveOutlet } from './postLiveSlot';
 import { MediaFetchFailure } from './MediaFetchFailure';
 import { usePostReload } from './usePostReload';
 import { PostReactionChip } from './PostReactionChip';
@@ -623,6 +624,7 @@ export function PostCard({
           }
         />
       ) : null}
+      {!isWithdrawn && !view.adultContentGated ? <PostLiveOutlet post={post} /> : null}
 
       {readOnly || !canOpenThread ? (
         <div

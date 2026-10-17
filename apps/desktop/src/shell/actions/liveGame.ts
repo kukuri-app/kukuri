@@ -103,13 +103,16 @@ export function createLiveGameActions({
       setLiveError(translate('live:errors.titleRequired'));
       return;
     }
+    // #1839: 開始 post の本文。dialog を閉じると form ごと消えるので、store に持たない。
+    const startPost = String(new FormData(event.currentTarget).get('start_post') ?? '').trim();
     setLiveCreatePending(true);
     try {
       await api.createLiveSession(
         activeTopic,
         liveTitle.trim(),
         liveDescription.trim(),
-        activeComposeChannel
+        activeComposeChannel,
+        startPost
       );
       setLiveTitle('');
       setLiveDescription('');

@@ -260,6 +260,7 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size0(DesktopRuntime::get_discovery_config),
         ),
         ("get_dome_hosting", size1(DesktopRuntime::get_dome_hosting)),
+        ("get_live_session", size1(DesktopRuntime::get_live_session)),
         ("get_my_profile", size0(DesktopRuntime::get_my_profile)),
         ("get_notification", size1(DesktopRuntime::get_notification)),
         (

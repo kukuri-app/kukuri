@@ -53,7 +53,7 @@ export function createPostsMock(runtime: MockRuntime): PostsMock {
   };
 
   return {
-    async createPost(topic, content, replyTo, attachments, channelRef = { kind: 'public' }) {
+    async createPost(topic, content, replyTo, attachments, channelRef = { kind: 'public' }, _labels, live = null) {
       runtime.sequence += 1;
       const objectId = `${topic}-${runtime.sequence}`;
       const posts = postsByTopic[topic] ?? [];
@@ -88,6 +88,7 @@ export function createPostsMock(runtime: MockRuntime): PostsMock {
           origin_topic_id: topic,
           channel_id: channelId,
           audience_label: channelId ? 'Private channel' : 'Public',
+          live,
         }),
         ...posts,
       ];

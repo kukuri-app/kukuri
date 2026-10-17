@@ -89,27 +89,17 @@ test('browser mock shell can run profile, private channel, live, and game flows'
   await liveDescription.fill('watch along');
   await expect(liveDescription).toHaveValue('watch along');
   await liveDialog.getByRole('button', { name: 'Start Live' }).click();
-  const liveCard = page.locator('article.post-card').filter({ has: page.getByText('Launch Party') });
+  // #1839: 開始 post の中にも同じ Live が出るので、Live の一覧のカードに絞る。
+  const liveCard = activeColumn(page, 'Live')
+    .locator('article[data-live-session-id]')
+    .filter({ has: page.getByText('Launch Party') });
   await expect(liveCard).toBeVisible();
   // #1034: 主催者の card には映像の配信の操作がある(取り込みは押した後だけ)。
   await expect(liveCard.getByRole('button', { name: 'Start video broadcast' })).toBeVisible();
-  await page
-    .locator('article.post-card')
-    .filter({ has: page.getByText('Launch Party') })
-    .getByRole('button', { name: 'Join', exact: true })
-    .click();
-  await expect(page.getByText('viewers: 1')).toBeVisible();
-  await page
-    .locator('article.post-card')
-    .filter({ has: page.getByText('Launch Party') })
-    .getByRole('button', { name: 'End', exact: true })
-    .click();
-  await expect(
-    page
-      .locator('article.post-card')
-      .filter({ has: page.getByText('Launch Party') })
-      .getByText('Ended', { exact: true })
-  ).toBeVisible();
+  await liveCard.getByRole('button', { name: 'Join', exact: true }).click();
+  await expect(liveCard.getByText('viewers: 1')).toBeVisible();
+  await liveCard.getByRole('button', { name: 'End', exact: true }).click();
+  await expect(liveCard.getByText('Ended', { exact: true })).toBeVisible();
 
   await page.goto('/#/game');
   await expect(page.getByRole('heading', { name: 'Metaverse Rooms' })).toBeVisible();

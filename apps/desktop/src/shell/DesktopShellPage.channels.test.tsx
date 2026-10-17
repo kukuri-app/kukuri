@@ -37,30 +37,32 @@ test('desktop shell can create, join, leave, and end a live session', async () =
   await user.type(within(liveDialog).getByPlaceholderText('short session summary'), 'watch along');
   await user.click(within(liveDialog).getByRole('button', { name: 'Start Live' }));
 
+  // Live の一覧のカード(開始 post の中にも同じ Live が出る。#1839)。
+  const listCard = () => {
+    const card = screen
+      .queryAllByText('Launch Party')
+      .map((title) => title.closest('article'))
+      .find((article) => article instanceof HTMLElement && !article.closest('.post-live'));
+    if (!(card instanceof HTMLElement)) throw new Error('live session card not found');
+    return card;
+  };
+  await waitFor(() => listCard());
+  expect(within(listCard()).getByText('watch along')).toBeInTheDocument();
+
+  await user.click(within(listCard()).getByRole('button', { name: 'Join' }));
   await waitFor(() => {
-    expect(screen.getByText('Launch Party')).toBeInTheDocument();
+    expect(within(listCard()).getByText('viewers: 1')).toBeInTheDocument();
   });
-  expect(screen.getByText('watch along')).toBeInTheDocument();
+  expect(within(listCard()).getByRole('button', { name: 'Leave' })).toBeInTheDocument();
 
-  const liveCard = screen.getByText('Launch Party').closest('article');
-  if (!(liveCard instanceof HTMLElement)) {
-    throw new Error('live session card not found');
-  }
-
-  await user.click(within(liveCard).getByRole('button', { name: 'Join' }));
+  await user.click(within(listCard()).getByRole('button', { name: 'Leave' }));
   await waitFor(() => {
-    expect(screen.getByText('viewers: 1')).toBeInTheDocument();
-  });
-  expect(within(liveCard).getByRole('button', { name: 'Leave' })).toBeInTheDocument();
-
-  await user.click(within(liveCard).getByRole('button', { name: 'Leave' }));
-  await waitFor(() => {
-    expect(screen.getByText('viewers: 0')).toBeInTheDocument();
+    expect(within(listCard()).getByText('viewers: 0')).toBeInTheDocument();
   });
 
-  await user.click(within(liveCard).getByRole('button', { name: 'End' }));
+  await user.click(within(listCard()).getByRole('button', { name: 'End' }));
   await waitFor(() => {
-    expect(screen.getByText('Ended')).toBeInTheDocument();
+    expect(within(listCard()).getByText('Ended')).toBeInTheDocument();
   });
 });
 

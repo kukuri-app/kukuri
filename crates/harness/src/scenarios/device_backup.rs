@@ -46,6 +46,7 @@ pub(crate) async fn run_device_backup_restore(
                 attachment_bytes,
             )],
             content_labels: Vec::new(),
+            live: None,
         })
         .await?;
     source_runtime

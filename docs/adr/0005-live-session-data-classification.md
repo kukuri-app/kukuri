@@ -65,6 +65,9 @@ Accepted
 - 別の topic の Live は、表示中の post の参照ごとに既存の表示要求（`set_session_display`、Live の topic と scope を指定）で、その 1 件だけを読む。
   表示用の行は `session_id` が主キーなので、無関係な投稿・Live の件数に比例して読まない。限定 channel の Live の行は、その channel に参加している間だけ返す。
 - 表示用の行は SQLite の `object_index_cache.live_json` と `live_session_cache.start_post_id` に置く（migration `20261017000000`）。Web の行は serde の既定値で読む。
+- 画面（#1839 AC-2）: 作成 Dialog で開始 post の本文を受け取り、投稿の中の Live は画面に入ったときに表示要求で読む。参照の `channel_id` と読めた Live の
+  `channel_id` が一致しない参照は展開しない。紹介 post は出し先を選ぶ Dialog で作り、限定 channel の Live はその channel に固定する。UI の記録は
+  `docs/ui-reviews/2026-10-17-1839-live-object.md`。
 
 ## Consequences
 - 映像・音声の搬送は [ADR 0067](0067-media-transport-moq.md) に従う。manifest の descriptor は上の追補による（分類は ADR 0067 の Feature Data Classification）。

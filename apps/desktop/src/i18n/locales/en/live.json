@@ -1,5 +1,7 @@
 {
   "actions": {
+    "introduce": "Share",
+    "openStartPost": "Open original post",
     "start": "Start Live"
   },
   "empty": "No live sessions",
@@ -14,9 +16,17 @@
     "description": "Live Description",
     "placeholders": {
       "description": "short session summary",
+      "startPost": "Tell people about the live session (optional)",
       "title": "Friday stream"
     },
+    "startPost": "Post text",
     "title": "Live Title"
+  },
+  "intro": {
+    "content": "Text",
+    "placeholder": "Add a note (optional)",
+    "target": "Post to",
+    "title": "Share live session"
   },
   "loading": "Loading live sessions…",
   "media": {
@@ -54,5 +64,6 @@
     "Scheduled": "Scheduled"
   },
   "summary": "{{count}} active",
-  "title": "Live Sessions"
+  "title": "Live Sessions",
+  "unavailable": "This live session can't be loaded"
 }

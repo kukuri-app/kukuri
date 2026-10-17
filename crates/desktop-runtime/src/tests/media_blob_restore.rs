@@ -22,6 +22,7 @@ async fn late_joiner_backfills_timeline_from_docs() {
             channel_ref: ChannelRef::Public,
             attachments: vec![],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("create post before join");
@@ -96,6 +97,7 @@ async fn late_joiner_backfills_image_post_from_docs() {
                 b"late-image-runtime",
             )],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("create image post before join");
@@ -188,6 +190,7 @@ async fn late_joiner_backfills_video_media_payload() {
                 ),
             ],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("create video post before join");
@@ -288,6 +291,7 @@ async fn blob_media_payload_roundtrip() {
                 b"blob-media-roundtrip",
             )],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("create image post");
@@ -369,6 +373,7 @@ async fn sqlite_deletion_does_not_lose_shared_state() {
             channel_ref: ChannelRef::Public,
             attachments: vec![],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("root post");
@@ -380,6 +385,7 @@ async fn sqlite_deletion_does_not_lose_shared_state() {
             channel_ref: ChannelRef::Public,
             attachments: vec![],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("reply post");
@@ -440,6 +446,7 @@ async fn restart_restores_from_docs_blobs_without_sqlite_seed() {
             channel_ref: ChannelRef::Public,
             attachments: vec![],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("create post");
@@ -497,6 +504,7 @@ async fn restart_restores_image_post_preview() {
                 b"restart-image-preview",
             )],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("create image post");
@@ -572,6 +580,7 @@ async fn restart_restores_video_media_payload() {
                 ),
             ],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("create video post");
@@ -650,6 +659,7 @@ async fn restart_restores_live_session_manifest() {
             channel_ref: ChannelRef::Public,
             title: "restart live".into(),
             description: "session".into(),
+            start_post: String::new(),
         })
         .await
         .expect("create live session");

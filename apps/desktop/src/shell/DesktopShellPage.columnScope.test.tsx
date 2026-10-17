@@ -112,7 +112,8 @@ test('non-active な private Column の投稿本文クリックで開いた Thre
       expect.any(String),
       expect.any(Array),
       { kind: 'private_channel', channel_id: 'channel-1' },
-      []
+      [],
+      null
     );
   });
 }, 15_000); // 複数Columnの作成・切替・返信を含む実行枠。個々のwaitForは維持する。
@@ -149,7 +150,8 @@ test('non-active な private Column の Reply ボタンで開いた Thread も p
       expect.any(String),
       expect.any(Array),
       { kind: 'private_channel', channel_id: 'channel-1' },
-      []
+      [],
+      null
     );
   });
 });

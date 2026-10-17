@@ -301,6 +301,7 @@ pub(crate) async fn run_community_node_index_query_client(
                                 Vec::new()
                             },
                             content_labels: Vec::new(),
+                            live: None,
                         })
                         .await?;
                     *index_state.object_override.lock().await = Some((

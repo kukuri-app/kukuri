@@ -774,7 +774,11 @@ export type CreatePostRequest = { topic: string, content: string, reply_to?: str
 /**
  * #858: 投稿者自己申告のラベル(既知値は `adult` のみ)。
  */
-content_labels: Array<string>, };
+content_labels: Array<string>, 
+/**
+ * #1839: 紹介する Live。
+ */
+live?: PostLiveView | null, };
 
 export type WithdrawalReasonVisibilityRequest = "public" | "private";
 
@@ -858,7 +862,11 @@ export type CreateAccountRequest = { account_id: string, operation_id: string, }
 
 export type ListLiveSessionsRequest = { topic: string, scope: TimelineScope, };
 
-export type CreateLiveSessionRequest = { topic: string, channel_ref: ChannelRef, title: string, description: string, };
+export type CreateLiveSessionRequest = { topic: string, channel_ref: ChannelRef, title: string, description: string, 
+/**
+ * #1839: 開始 post の本文(空でもよい)。
+ */
+start_post: string, };
 
 export type LiveSessionCommandRequest = { topic: string, session_id: string, };
 
