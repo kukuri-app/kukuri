@@ -94,6 +94,20 @@ impl LiveGameProjectionStore for MemoryStore {
             .await
     }
 
+    async fn live_session_channel(
+        &self,
+        topic_id: &str,
+        session_id: &str,
+    ) -> Result<Option<String>> {
+        Ok(self
+            .live_session_rows
+            .read()
+            .await
+            .get(session_id)
+            .filter(|row| row.topic_id == topic_id)
+            .map(|row| row.channel_id.clone()))
+    }
+
     async fn get_live_session(
         &self,
         topic_id: &str,

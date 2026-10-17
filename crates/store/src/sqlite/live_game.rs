@@ -178,6 +178,20 @@ impl LiveGameProjectionStore for SqliteStore {
         row.map(row_to_live_session_projection).transpose()
     }
 
+    async fn live_session_channel(
+        &self,
+        topic_id: &str,
+        session_id: &str,
+    ) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT channel_id FROM live_session_cache WHERE topic_id = ?1 AND session_id = ?2",
+        )
+        .bind(topic_id)
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
     async fn upsert_game_room_cache(&self, row: GameRoomProjectionRow) -> Result<()> {
         let scores_json = serde_json::to_string(&row.scores)?;
         let metaverse_json = row

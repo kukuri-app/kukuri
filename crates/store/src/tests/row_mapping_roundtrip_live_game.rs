@@ -117,6 +117,19 @@ async fn assert_live_now_sessions(store: &dyn LiveGameProjectionStore) {
     let live_now = |limit| store.list_channel_live_now_sessions(LIVE_TOPIC, THREAD, limit);
     assert_eq!(ids(live_now(8).await.expect("live now")), ["new", "old"]);
     assert_eq!(ids(live_now(1).await.expect("live now")), ["new"]);
+    // presence の結び付けは、session の channel だけを読む(別の topic の session は無い扱い)。
+    let channel = |topic, session| store.live_session_channel(topic, session);
+    assert_eq!(
+        channel(LIVE_TOPIC, "old")
+            .await
+            .expect("channel")
+            .as_deref(),
+        Some(THREAD)
+    );
+    assert_eq!(
+        channel("kukuri:topic:other", "old").await.expect("channel"),
+        None
+    );
     store
         .upsert_live_session_cache(row("new", 2, 3_000, LiveSessionStatus::Ended))
         .await

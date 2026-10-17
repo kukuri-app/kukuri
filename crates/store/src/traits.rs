@@ -306,6 +306,12 @@ pub trait LiveGameProjectionStore: Send + Sync {
         topic_id: &str,
         session_id: &str,
     ) -> Result<Option<LiveSessionProjectionRow>>;
+    /// session の channel だけを読む(視聴者は数えない。受け取った presence を Live の行に結び付ける。#1840 AC-4)。
+    async fn live_session_channel(
+        &self,
+        topic_id: &str,
+        session_id: &str,
+    ) -> Result<Option<String>>;
     async fn upsert_game_room_cache(&self, row: GameRoomProjectionRow) -> Result<()>;
     async fn list_channel_game_rooms(
         &self,
