@@ -295,6 +295,9 @@ async fn receive(
                     continue;
                 }
                 let (_, decoder, (_, output)) = audio.as_mut().expect("audio is open");
+                output
+                    .volume()
+                    .set(f32::from_bits(cx.gain.load(Ordering::Relaxed)));
                 let decoded = decoder.decode(payload)?;
                 output.write(&decoded.samples, AUDIO_PLAYOUT)?;
                 let heard = timestamp_us.saturating_add(OPUS_FRAME_MICROS);

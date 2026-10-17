@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type { LiveSessionView } from '@/lib/api';
 import { LiveSessionMedia } from './LiveSessionMedia';
 import { createLivePlayer } from './liveMedia';
+import { LIVE_VOLUME_LIMIT, setLiveWatchVolume } from './liveWatch';
 
 vi.mock('./liveMedia', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./liveMedia')>()),
@@ -19,6 +20,7 @@ function api(nextState = 2) {
       return batch;
     }),
     stopWatchingLiveMedia: vi.fn(async () => undefined),
+    setLiveVolume: vi.fn(async () => undefined),
   };
 }
 
@@ -94,5 +96,64 @@ describe('LiveSessionMedia', () => {
     );
     expect(container).toBeEmptyDOMElement();
     expect(media.watchLiveMedia).not.toHaveBeenCalled();
+  });
+
+  // #1839 AC-4: 同じ Live の 2 つの表示は 1 つの視聴(購読・音声)を共有し、映像は両方の canvas へ届く。片方を閉じても
+  // 続き、最後を閉じると止める。
+  test('two views of the same live session share one watch until the last one closes', async () => {
+    const media = api(0);
+    // 視聴中の(空の)映像を少しずつ返す。
+    media.nextLiveVideo.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new ArrayBuffer(11);
+    });
+    const players = [0, 1].map(() => ({ push: vi.fn(), reset: vi.fn(), close: vi.fn() }));
+    vi.mocked(createLivePlayer).mockReturnValueOnce(players[0]).mockReturnValueOnce(players[1]);
+    const joined = session({ joined_by_me: true });
+    const first = render(<LiveSessionMedia api={media} topic={request.topic} session={joined} isOwner={false} />);
+    const second = render(<LiveSessionMedia api={media} topic={request.topic} session={joined} isOwner={false} />);
+    await waitFor(() => expect(players[0].push).toHaveBeenCalled());
+    await waitFor(() => expect(players[1].push).toHaveBeenCalled());
+    expect(media.watchLiveMedia).toHaveBeenCalledTimes(1);
+    first.unmount();
+    await Promise.resolve();
+    expect(media.stopWatchingLiveMedia).not.toHaveBeenCalled();
+    second.unmount();
+    await waitFor(() => expect(media.stopWatchingLiveMedia).toHaveBeenCalledTimes(1));
+    expect(media.stopWatchingLiveMedia).toHaveBeenCalledWith(request);
+  });
+
+  // 音量は Live ごと。同じ Live の表示は同じ音量を示し、別の Live の音量は変わらない。0 で無音にできる。
+  test('the volume is set per live session and shared by its views', async () => {
+    const media = api();
+    const other = { ...request, session_id: 'live-2' };
+    const joined = session({ joined_by_me: true });
+    render(
+      <>
+        <LiveSessionMedia api={media} topic={request.topic} session={joined} isOwner={false} />
+        <LiveSessionMedia api={media} topic={request.topic} session={joined} isOwner={false} />
+        <LiveSessionMedia api={media} topic={request.topic} session={session({ session_id: 'live-2', joined_by_me: true })} isOwner={false} />
+      </>
+    );
+    await waitFor(() => expect(media.watchLiveMedia).toHaveBeenCalledTimes(2));
+    const sliders = screen.getAllByRole('slider', { name: 'Volume' });
+    fireEvent.change(sliders[0], { target: { value: '0' } });
+    expect(media.setLiveVolume).toHaveBeenLastCalledWith({ session_id: 'live-1', volume: 0 });
+    expect(sliders.map((slider) => (slider as HTMLInputElement).value)).toEqual(['0', '0', '100']);
+    setLiveWatchVolume(media, other, 0.4);
+    expect(media.setLiveVolume).toHaveBeenLastCalledWith({ session_id: 'live-2', volume: 0.4 });
+    expect((sliders[0] as HTMLInputElement).value).toBe('0');
+  });
+
+  // 端末に残す音量は最近変えた Live の上限件数だけ(古いものから消す)。
+  test('keeps only the most recently changed volumes', () => {
+    const media = api();
+    for (let index = 0; index < LIVE_VOLUME_LIMIT + 5; index += 1) {
+      setLiveWatchVolume(media, { ...request, session_id: `live-${index}` }, 0.5);
+    }
+    const saved = JSON.parse(localStorage.getItem('kukuri.desktop.live-volume') ?? '{}') as Record<string, number>;
+    expect(Object.keys(saved)).toHaveLength(LIVE_VOLUME_LIMIT);
+    expect(saved['live-0']).toBeUndefined();
+    expect(saved[`live-${LIVE_VOLUME_LIMIT + 4}`]).toBe(0.5);
   });
 });

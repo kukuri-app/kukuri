@@ -990,6 +990,8 @@ microphone: boolean, limits: LiveVideoLimits, };
 
 export type LiveMediaRequest = { topic: string, session_id: string, };
 
+export type LiveVolumeRequest = { session_id: string, volume: number, };
+
 export type MoveDomeRequest = { source_topic: string, move_id: string, source_instance_id: string, target_context: SpatialContextV1, };
 
 export type ListDomeConnectionTopologyRequest = { spatial_context: SpatialContextV1, };

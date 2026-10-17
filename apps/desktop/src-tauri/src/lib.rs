@@ -384,6 +384,7 @@ pub fn run() {
             commands::live_media::watch_live_media,
             commands::live_media::next_live_video,
             commands::live_media::stop_watching_live_media,
+            commands::live_media::set_live_volume,
             commands::app_consent::get_app_consent_status,
             commands::app_consent::accept_app_consents,
             commands::identity::get_account_display,

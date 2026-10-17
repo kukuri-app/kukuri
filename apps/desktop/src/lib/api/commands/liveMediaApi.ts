@@ -15,6 +15,7 @@ export const liveMediaApi: Pick<
   | 'watchLiveMedia'
   | 'nextLiveVideo'
   | 'stopWatchingLiveMedia'
+  | 'setLiveVolume'
 > = {
   setLiveBroadcast: command('setLiveBroadcast', (request) =>
     invokeDesktop<LiveBroadcastStatus>('set_live_broadcast', { request })),
@@ -39,4 +40,6 @@ export const liveMediaApi: Pick<
     invokeDesktop<ArrayBuffer>('next_live_video', { request })),
   stopWatchingLiveMedia: command('stopWatchingLiveMedia', (request) =>
     invokeDesktop<void>('stop_watching_live_media', { request })),
+  setLiveVolume: command('setLiveVolume', (request) =>
+    invokeDesktop<void>('set_live_volume', { request })),
 };

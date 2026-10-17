@@ -59,7 +59,8 @@
       "no_media": "配信者はまだ映像を送っていません"
     },
     "stopBroadcast": "映像の配信を止める",
-    "video": "配信の映像"
+    "video": "配信の映像",
+    "volume": "音量"
   },
   "statuses": {
     "Ended": "終了",

@@ -12,7 +12,7 @@ mod watch;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard, Weak};
 use std::time::Duration;
 
@@ -116,6 +116,14 @@ pub struct LiveBroadcastStatus {
 pub struct LiveMediaRequest {
     pub topic: String,
     pub session_id: String,
+}
+
+/// 視聴中の live の音量(#1839 AC-4)。0〜1。この端末だけの設定で、共有しない。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct LiveVolumeRequest {
+    pub session_id: String,
+    pub volume: f32,
 }
 
 /// 視聴の状態(画面へ映像と一緒に code で渡す)。
@@ -394,6 +402,8 @@ impl Drop for ChildSlot {
 /// 視聴中の session。落とすと購読・再生・転送を止める。
 struct Viewer {
     screen: Arc<ScreenQueue>,
+    /// 音量(f32 の bits)。視聴の task が音声の出力へ渡す。
+    gain: Arc<AtomicU32>,
     /// 転送の口(視聴の task が持ち、task が終われば子の接続は評価し直しで閉じる)。
     fanout: Weak<Fanout>,
     _task: AbortOnDropHandle<()>,
@@ -407,6 +417,7 @@ struct Watch {
     session_id: String,
     screen: Arc<ScreenQueue>,
     fanout: Arc<Fanout>,
+    gain: Arc<AtomicU32>,
 }
 
 impl LiveMedia {
@@ -595,6 +606,7 @@ impl LiveMedia {
         let node = node.context("the iroh stack is not running")?;
         let mut viewers = self.viewers.lock().await;
         let screen = Arc::new(ScreenQueue::default());
+        let gain = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let fanout = Fanout::new(request.topic.clone(), MAX_FORWARDED_VIEWERS, Vec::new());
         let viewer_fanout = Arc::downgrade(&fanout);
         let task = n0_future::task::spawn(watch::watch_session(Watch {
@@ -604,11 +616,13 @@ impl LiveMedia {
             session_id: request.session_id.clone(),
             screen: Arc::clone(&screen),
             fanout,
+            gain: Arc::clone(&gain),
         }));
         viewers.insert(
             request.session_id,
             Viewer {
                 screen,
+                gain,
                 fanout: viewer_fanout,
                 _task: AbortOnDropHandle::new(task),
             },
@@ -630,6 +644,15 @@ impl LiveMedia {
                 encode_screen_batch(watch, audio_clock_us, &chunks)
             }
             None => encode_screen_batch(LiveWatchState::Ended, 0, &[]),
+        }
+    }
+
+    /// 視聴中の session の音量を変える(0〜1)。視聴していなければ何もしない。
+    pub(crate) async fn set_volume(&self, session_id: &str, volume: f32) {
+        if let Some(viewer) = self.viewers.lock().await.get(session_id) {
+            viewer
+                .gain
+                .store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
         }
     }
 

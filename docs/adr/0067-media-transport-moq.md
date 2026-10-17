@@ -240,6 +240,9 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
   - 配信の開始（camera か画面）は主催者の card（Live の列・投稿の中）に置く。取り込み・圧縮・送信は、画面の表示から離れた 1 つの controller が持ち、配信中の操作（camera／画面の切替・mic・停止）は配信中の間だけ shell の上部の bar に出す。この端末から同時に配信するのは 1 つの Live だけ。
   - 配信が止まるのは、bar の停止、Live の終了（どの画面の「終了」も同じ処理を通る）、shell を離れるとき（アカウントの切替・app の終了）だけ。列を閉じる、別の画面・topic へ移る、投稿の card が画面外へ出ることでは止めない。
   - 明示の開始、取り込みが拒否されたときの送信 0、再起動の後に自動では始めないことは変えない。
+- §9 の視聴（1 つの card が `watch`・`next_video`・`stop_watching` を直接呼ぶ）は、#1839 AC-4 で次に置き換わる。
+  - 同じ Live の表示（Live の列・開始 post・紹介 post）は、画面の 1 つの視聴の需要を共有する。最初の表示で `watch` し、映像は表示ごとの canvas へ同じものを配り（復号と描画は表示ごと）、最後の表示が消えたら `stop_watching` する。runtime の購読・音声の再生・転送は Live ごとに 1 つ。
+  - 音量は Live ごとにこの端末で設定し（0〜1、0 で無音）、runtime が音声の出力に掛ける。端末には最近変えた 64 件まで残し、共有の状態には書かない（2026-10-17 のユーザー判断 4）。
 
 - ADR 0043「Presence and audio」の音声の部分（音声を `MetaverseRoomEventV1` で presence と共用する、16 kHz・mono・PCM16・1 frame 最大 320 sample）は、#1033 の merge でこの ADR に置き換わる。presence の扱い、距離減衰、mute、access の規則は ADR 0043 のまま。
 - ADR 0041 の「Player / spatial audio / signed PCM16 frame」の測り方と、「Client / spatial audio / mute/drop oldest」の超えたときの扱いは、#1033 の merge で §4 に置き換わる。

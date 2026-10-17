@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use kukuri_desktop_runtime::{
-    LiveBroadcastStatus, LiveMediaRequest, LiveVideoSource, SetLiveBroadcastRequest,
+    LiveBroadcastStatus, LiveMediaRequest, LiveVideoSource, LiveVolumeRequest, SetLiveBroadcastRequest,
 };
 use tauri::webview::{PermissionKind, PermissionResponse};
 
@@ -150,6 +150,19 @@ pub async fn stop_watching_live_media(
     state
         .runtime()
         .stop_watching_live_media(request)
+        .await
+        .map_err(map_error)
+}
+
+/// 視聴中の live の音量(#1839 AC-4)。この端末だけの設定。
+#[tauri::command]
+pub async fn set_live_volume(
+    state: tauri::State<'_, DesktopState>,
+    request: LiveVolumeRequest,
+) -> Result<(), CommandError> {
+    state
+        .runtime()
+        .set_live_volume(request)
         .await
         .map_err(map_error)
 }
