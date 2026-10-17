@@ -58,11 +58,10 @@ impl AppService {
             envelope.clone(),
         )
         .await?;
-        ObjectProjectionStore::put_object_projection(
-            self.services.projection_store.as_ref(),
-            projection_row_from_post(&post, content),
-        )
-        .await?;
+        // 他人の投稿と同じ保存の関数を通す(公開 channel の投稿は、一覧の行の最後の投稿の時刻も進める。#1840)。
+        self.services
+            .put_post_projection(projection_row_from_post(&post, content))
+            .await?;
         self.last_sync_ts.set(Utc::now().timestamp_millis()).await;
         Ok(())
     }

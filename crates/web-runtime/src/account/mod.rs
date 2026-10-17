@@ -29,6 +29,7 @@ mod live_game;
 mod notifications;
 mod peer_candidates;
 mod private_channels;
+mod public_channels;
 mod public_refs;
 mod reactions;
 mod social;
@@ -247,30 +248,49 @@ impl IndexedDbCache {
     }
 
     /// 回収期限を過ぎた remote の行を除き、使った時刻が古い行は更新する（native の `available_remote_projections`）。
-    async fn available(&self, rows: Vec<ObjectProjectionRow>) -> Result<Vec<ObjectProjectionRow>> {
-        if rows.is_empty() {
-            return Ok(rows);
+    async fn available(
+        &self,
+        mut rows: Vec<ObjectProjectionRow>,
+    ) -> Result<Vec<ObjectProjectionRow>> {
+        let keys = rows
+            .iter()
+            .map(|row| row.object_id.as_str().to_owned())
+            .collect();
+        let expired = self.expired_remote_keys("projection", keys).await?;
+        rows.retain(|row| !expired.contains(row.object_id.as_str()));
+        Ok(rows)
+    }
+
+    /// `kind` の内容のうち、回収期限を過ぎた remote の内容の key を返す。残る内容の使った時刻が古ければ更新する
+    /// （native の `expired_remote_keys`）。
+    pub(crate) async fn expired_remote_keys(
+        &self,
+        kind: &'static str,
+        keys: Vec<String>,
+    ) -> Result<HashSet<String>> {
+        if keys.is_empty() {
+            return Ok(HashSet::new());
         }
         self.run(move |db| async move {
             let tx = Tx::begin(&db)?;
             let now = now_ms()?;
-            let mut kept = Vec::with_capacity(rows.len());
-            for row in rows {
-                match tx.row("projection", row.object_id.as_str()).await? {
+            let mut expired = HashSet::new();
+            for key in keys {
+                match tx.row(kind, &key).await? {
                     Some(cached)
-                        if !cached.protected && cached.used <= now - REMOTE_CACHE_UNUSED_MS => {}
-                    Some(mut cached) => {
-                        if cached.used <= now - REMOTE_CACHE_TOUCH_INTERVAL_MS {
-                            cached.used = now;
-                            tx.put_row(&cached)?;
-                        }
-                        kept.push(row);
+                        if !cached.protected && cached.used <= now - REMOTE_CACHE_UNUSED_MS =>
+                    {
+                        expired.insert(key);
                     }
-                    None => kept.push(row),
+                    Some(mut cached) if cached.used <= now - REMOTE_CACHE_TOUCH_INTERVAL_MS => {
+                        cached.used = now;
+                        tx.put_row(&cached)?;
+                    }
+                    _ => {}
                 }
             }
             tx.commit().await?;
-            Ok(kept)
+            Ok(expired)
         })
         .await
     }

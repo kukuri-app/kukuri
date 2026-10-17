@@ -9,21 +9,32 @@ use kukuri_core::{
 };
 use kukuri_docs_sync::{BucketReplica, BucketScope, MemoryDocsSync, TimeBucket};
 
-const TOPIC: &str = "kukuri:topic:public-threads";
+pub(super) const TOPIC: &str = "kukuri:topic:public-threads";
 
 /// 自分の docs に書き、相手の docs を provider として読む端末。hint は同じ試験用の network で届き、blob は共有する。
-fn device(
+pub(super) fn device(
     name: &str,
     network: &FakeNetwork,
     own: MemoryDocsSync,
     peer: MemoryDocsSync,
     blobs: Arc<MemoryBlobService>,
 ) -> AppService {
+    device_with_store(name, network, own, peer, blobs).0
+}
+
+/// `device` と、その端末の手元の store。
+pub(super) fn device_with_store(
+    name: &str,
+    network: &FakeNetwork,
+    own: MemoryDocsSync,
+    peer: MemoryDocsSync,
+    blobs: Arc<MemoryBlobService>,
+) -> (AppService, Arc<MemoryStore>) {
     let store = Arc::new(MemoryStore::default());
     let transport = Arc::new(FakeTransport::new(name, network.clone()));
     let app = app_service_from_dependencies(
         store.clone(),
-        store,
+        store.clone(),
         transport.clone(),
         transport,
         Arc::new(CountingDocsSync::reading_with(own, Arc::new(peer))),
@@ -31,7 +42,7 @@ fn device(
         generate_keys(),
     );
     app.switch_writer(1);
-    app
+    (app, store)
 }
 
 /// 公開 channel の詳細の列を開く(topic と channel の lease を取り、channel の hint を受ける)。
@@ -48,7 +59,7 @@ async fn open_channel(app: &AppService, channel_id: &str) {
     .expect("open the public channel column");
 }
 
-fn channel_ref(channel_id: &str) -> ChannelRef {
+pub(super) fn channel_ref(channel_id: &str) -> ChannelRef {
     ChannelRef::PublicChannel {
         channel_id: ChannelId::new(channel_id),
     }
@@ -353,7 +364,9 @@ async fn the_first_post_of_an_older_public_channel_resolves_by_id() {
         .apply_doc_op(
             &bucket,
             DocOp::SetJson {
-                key: format!("channels/list/{}", channel_id.as_str()),
+                key: crate::public_channels::public_channel_location(TOPIC, &channel_id)
+                    .expect("location")
+                    .1,
                 value: serde_json::to_value(&metadata).expect("json"),
             },
         )

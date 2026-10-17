@@ -15,6 +15,7 @@ mod pagination;
 pub mod parity;
 mod peer_candidates;
 mod private_channel_keys;
+mod public_channels;
 // SQLite の実装は native だけ（ADR 0056 §5）。
 #[cfg(not(target_family = "wasm"))]
 mod row_mapping;
@@ -58,6 +59,10 @@ pub use peer_candidates::{
 pub use private_channel_keys::{
     PrivateChannelEpochRange, PrivateChannelEpochRow, PrivateChannelFilter, PrivateChannelKeyStore,
     PrivateChannelRow,
+};
+pub use public_channels::{
+    PublicChannelCursor, PublicChannelOrder, PublicChannelRow, PublicChannelStore,
+    next_public_channel_cursor,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use sqlite::{

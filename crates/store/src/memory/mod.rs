@@ -111,6 +111,8 @@ pub struct MemoryStore {
     private_channel_key_rows_touched: Arc<std::sync::atomic::AtomicUsize>,
     /// 公開参照にしたリンクプレビュー画像（投稿の id → 画像の hash。試験が確かめる。#1632）。
     link_preview_images: Arc<RwLock<HashMap<String, String>>>,
+    /// 公開 channel の一覧の行（channel ID → 行。#1840）。
+    public_channels: Arc<RwLock<HashMap<String, crate::PublicChannelRow>>>,
 }
 
 impl MemoryStore {
@@ -153,6 +155,7 @@ mod notifications;
 mod observations;
 mod private_channel_keys;
 mod projections;
+mod public_channels;
 mod social;
 mod withdrawals;
 

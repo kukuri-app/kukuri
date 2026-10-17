@@ -13,6 +13,10 @@ export type BookmarkCursor = { bookmarked_at: number, source_object_id: string, 
 
 export type NotificationCursor = { received_at: number, notification_id: string, };
 
+export type PublicChannelCursor = { at: number, channel_id: string, };
+
+export type PublicChannelOrder = "last_post" | "created";
+
 export type ChannelAudienceKind = "invite_only" | "friend_only" | "friend_plus";
 
 export type ChannelSharingState = "open" | "frozen";
@@ -120,7 +124,18 @@ created_at: number,
 /**
  * 作成と同時に書いた最初の投稿。本文を空にして作った channel には無い。
  */
-first_post_id?: string, };
+first_post_id?: string, 
+/**
+ * この端末が知っている最後の投稿の時刻(ミリ秒)。投稿を知らなければ作成時刻。
+ */
+last_post_at: number, };
+
+export type PublicChannelListView = { items: Array<PublicChannelView>, next_cursor?: PublicChannelCursor | null, 
+/**
+ * 照合した範囲の索引にあるが、metadata か最後の投稿を読めない・確かめられないスレッドの数。0 なら、画面は何も
+ * 示さない。
+ */
+unavailable_count?: number | null, };
 
 export type PrivateChannelControllerState = "this_device" | "other_device" | "moving" | "unknown";
 
@@ -911,6 +926,8 @@ export type CreatePrivateChannelRequest = { topic: string, label: string, audien
 export type CreatePublicChannelRequest = { topic: string, title: string, first_post: string, };
 
 export type GetPublicChannelRequest = { topic: string, channel_id: string, };
+
+export type ListPublicChannelsRequest = { topic: string, order: PublicChannelOrder, cursor?: PublicChannelCursor | null, limit?: number | null, };
 
 export type ExportPrivateChannelInviteRequest = { topic: string, channel_id: string, expires_at?: number | null, };
 

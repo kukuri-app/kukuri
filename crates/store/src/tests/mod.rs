@@ -25,6 +25,7 @@ mod private_channel_keys;
 mod private_channel_participants;
 mod private_index_grants;
 mod protected_migration;
+mod public_channels;
 mod row_mapping_edge;
 mod row_mapping_enums;
 mod row_mapping_roundtrip;

@@ -16,9 +16,9 @@ pub struct TimelineCursor {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Page<T> {
+pub struct Page<T, C = TimelineCursor> {
     pub items: Vec<T>,
-    pub next_cursor: Option<TimelineCursor>,
+    pub next_cursor: Option<C>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

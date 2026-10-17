@@ -69,11 +69,11 @@ fn export_ipc_types() {
         LeavePrivateChannelRequest, ListBookmarkedPostsRequest, ListDirectMessageMessagesRequest,
         ListDomeConnectionTopologyRequest, ListGameRoomsRequest, ListJoinedPrivateChannelsRequest,
         ListLiveSessionsRequest, ListMetaverseRoomEventsRequest, ListNotificationsPageRequest,
-        ListProfileTimelineRequest, ListRecentReactionsRequest, ListSocialConnectionsRequest,
-        ListThreadRequest, ListTimelineRequest, LiveBroadcastStatus, LiveMediaRequest,
-        LiveSessionCommandRequest, LiveVideoLimits, LiveVideoSource, LiveVolumeRequest,
-        MetaverseAudioNeighbor, MetaverseAudioRoom, MetaverseAudioSpeaker, MetaverseAudioStatus,
-        MetaverseMicrophoneStatus, MoveDomeRequest, NotificationIdRequest,
+        ListProfileTimelineRequest, ListPublicChannelsRequest, ListRecentReactionsRequest,
+        ListSocialConnectionsRequest, ListThreadRequest, ListTimelineRequest, LiveBroadcastStatus,
+        LiveMediaRequest, LiveSessionCommandRequest, LiveVideoLimits, LiveVideoSource,
+        LiveVolumeRequest, MetaverseAudioNeighbor, MetaverseAudioRoom, MetaverseAudioSpeaker,
+        MetaverseAudioStatus, MetaverseMicrophoneStatus, MoveDomeRequest, NotificationIdRequest,
         PostWithdrawalReasonRequest, PrepareDomeTransitionRequest, PreviewAccountKeyImportRequest,
         PreviewChannelAccessTokenRequest, PreviewDeviceBackupRequest,
         PublishMetaverseRoomEventRequest, ReactionKeyRequest, RelationNeighborsResponse,
@@ -127,7 +127,9 @@ fn export_ipc_types() {
         PrivateChannelInvitePreview, Profile, Pubkey, SharedRoomObjectV1, SpatialContextV1,
         TimelineScope, TopicId,
     };
-    use kukuri_store::{BookmarkCursor, NotificationCursor, TimelineCursor};
+    use kukuri_store::{
+        BookmarkCursor, NotificationCursor, PublicChannelCursor, PublicChannelOrder, TimelineCursor,
+    };
     use kukuri_transport::{ConnectMode, ConnectionPath, DiscoveryMode, SeedPeer};
 
     let cfg = ts_rs::Config::from_env();
@@ -144,6 +146,8 @@ fn export_ipc_types() {
         TimelineCursor,
         BookmarkCursor,
         NotificationCursor,
+        PublicChannelCursor,
+        PublicChannelOrder,
         ChannelAudienceKind,
         ChannelSharingState,
         DiscoveryMode,
@@ -186,6 +190,7 @@ fn export_ipc_types() {
         DirectMessageTimelineView,
         JoinedPrivateChannelView,
         kukuri_app_api::PublicChannelView,
+        kukuri_app_api::PublicChannelListView,
         PrivateChannelControllerState,
         PrivateChannelControllerTake,
         kukuri_app_api::JoinedPrivateChannelPage,
@@ -432,6 +437,7 @@ fn export_ipc_types() {
         CreatePrivateChannelRequest,
         CreatePublicChannelRequest,
         GetPublicChannelRequest,
+        ListPublicChannelsRequest,
         ExportPrivateChannelInviteRequest,
         ImportPrivateChannelInviteRequest,
         ExportChannelAccessTokenRequest,

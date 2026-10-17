@@ -45,6 +45,7 @@ use kukuri_core::{
 mod lists;
 mod live_game;
 mod pagination;
+mod public_channels;
 pub mod public_refs;
 mod social_edges;
 mod trust_observations;
@@ -73,6 +74,7 @@ pub async fn check_backend<S: Store + ProjectionStore>(make: impl AsyncFn() -> S
     pagination::projection_timeline_pagination_matches_between_backends(&make).await;
     pagination::projection_thread_pagination_matches_between_backends(&make).await;
     pagination::direct_message_pagination_and_tombstones_match_between_backends(&make).await;
+    public_channels::public_channel_lists_match_between_backends(&make).await;
 }
 
 /// cursor 走査の暴走(divergence による無限ループ)を止める上限ページ数。

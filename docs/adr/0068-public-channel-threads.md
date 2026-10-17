@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（2026-10-17、#1840）。#1840 の AC-1 で識別・署名・置き場所・投稿の経路を実装した。一覧（AC-2）、画面（AC-3）、配信中の Live（AC-4）は同じ Issue の後続の PR でこの ADR に追記する。
+Accepted（2026-10-17、#1840）。#1840 の AC-1 で識別・署名・置き場所・投稿の経路を、AC-2 で topic ごとの一覧（§6）を実装した。画面（AC-3）と配信中の Live（AC-4）は、同じ Issue の後続の PR でこの ADR に追記する。
 
 ## Context
 
@@ -30,12 +30,16 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 
 | record | key | bucket |
 | --- | --- | --- |
-| metadata | `channels/list/<channel ID>` | ID の作成時刻 |
+| metadata | `channels/list/<作成時刻の秒 20 桁>-<channel ID>/<channel ID>` | ID の作成時刻 |
 | 投稿・返信 | `objects/<id>/{state,envelope}`（既存と同じ） | 署名した作成時刻 |
 | channel の時刻順の索引 | `channels/<channel ID>/timeline/<並びの key>/<object id>` | 同上 |
+| 最後の投稿の索引 | `channels/activity/<投稿の作成時刻 20 桁>-<channel ID>.<投稿 ID>/<channel ID>.<投稿 ID>` | 同上 |
 | 返信の索引 | `indexes/thread/<root>/…`（既存と同じ） | 同上 |
 | 添付の manifest・リアクション・取り下げ・リンクプレビュー | 既存と同じ | 既存と同じ |
 
+- metadata の key と最後の投稿の索引は、タイムラインの索引と同じ形（時刻 20 桁の 0 埋め）にする。作成の新しい順と最後の投稿の新しい順に、既存の時刻の索引の読み出しで有界に読める。ID からは、作成時刻から key を作って 1 件読む。
+  - AC-1 で使った `channels/list/<channel ID>` は公開していない版なので、移行は無い。
+  - 最後の投稿の索引の id は channel ID と投稿 ID の組なので、投稿の本体を読まずに channel ごとにまとめられる。
 - 投稿の envelope は既存の項目で表す（`channel_id` に公開 channel の ID、`visibility` に Public）。envelope の形は変えない。
 - 公開 channel の投稿は、topic のタイムラインの索引（`indexes/timeline/`）にもプロフィールの索引にも載せない。topic のタイムラインとプロフィールの投稿一覧には出ない（2026-10-17 ユーザー判断）。
 - Community Node は topic の bucket の「channel_id あり」の投稿と `channels/` の key を読まないので、公開 channel の投稿は CN の検索に出ない（同日、受け入れ済み）。
@@ -49,6 +53,7 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 ### 4. hint・購読・読み先
 
 - channel の中の投稿・リアクション・取り下げの hint は、channel ごとの hint の topic（`hint/public-channel/<channel ID>`）に送る。rendezvous には公開の鍵を使う。この topic は topic の一覧・診断・CN の公開 topic の索引に出さない（`wire::is_non_public_topic`）。
+- 作成者は、作成を topic の hint の `SessionChanged`（種類 `public-channel`、`session_id` に channel ID）で知らせる。topic の lease を持つ端末は metadata を 1 件読んで一覧の行に置く（§6）。旧版は未知の種類として読まない。
 - 公開 channel の列は `Topic(topic)` と `PublicChannel(topic, channel)` の 2 つの lease を取る（[ADR 0055](0055-demand-owned-network-work.md) §1.1）。`PublicChannel` の task は channel の hint だけを購読し、topic の gossip の停止に従う。topic の lease だけの端末は channel の投稿を受け取らない。
 - channel のページと対象の取得は、channel の hint の近隣を先に、足りない分を topic の近隣で埋めて有界に読む（最大 4）。他の参加者が検証して保持した内容の提供（ADR 0054 §4、#1395）は topic の bucket に働くので、提供側の変更は要らない。保持する側は、書き手と同じ関数で §2 の索引を導く。
 
@@ -59,16 +64,35 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 - 公開 channel の投稿は repost できない（既存の channel の投稿と同じ。同日のユーザー判断）。
 - Live・ゲーム・metaverse（Dome）は公開 channel を受け付けない。Live は #1840 AC-4 で扱う。
 
+### 6. 一覧（#1840 AC-2）
+
+- `list_public_channels(topic, order, cursor, limit)` は、topic の公開 channel を新しい順に返す。order は「最後の投稿」（既定）と「作成」の 2 つ（2026-10-17 のユーザー判断 2）。戻り値は行・続きの位置・取得できなかった数（`unavailable_count`）。
+- 表示は手元の行だけを読む（[ADR 0052](0052-scale-independent-timeline-sync.md) §2）。
+  - 行は SQLite の `public_channels`（索引は (topic, 作成時刻, ID) と (topic, 最後の投稿の時刻, ID)）と、Web の IndexedDB の版 3 の store（同日の判断 7）に置く。
+  - 非表示の作者（mute と、どちらの向きでも有効な block）のスレッドは除く。読み飛ばすのは 4 ページまで（ADR 0052 §5）。
+- 行の最後の投稿の時刻は、公開 channel の投稿を projection に反映するたびに新しい方へ進める（自分の投稿も同じ）。非表示の作者の投稿は数えない。
+- 照合（ページの範囲の照合と同じ扱い）:
+  - 先頭のページは背景で照合を始めて 300 ms だけ待ち、続きのページは照合を待つ（タイムラインと同じ。#1624）。同じ範囲は 30 秒の間隔の内では繰り返さない。
+  - 作成の新しい順は、cursor の日（無ければ現在）から古い側へ 4 日分の bucket の metadata の索引を、topic の近隣（最大 4 台）から、読み先と bucket ごとに `limit` 件まで読む。
+  - 最後の投稿の新しい順は、現在の日（続きは cursor の日）と前日の bucket の、最後の投稿の索引（読み先と bucket ごとに `limit` の 5 倍）と metadata の索引を読む。
+  - channel ごとに最も新しい記録だけを残す。手元の行が無いもの、または行より新しいものだけを、記録を読んだ読み先から確かめてから反映する（1 回 20 件まで、全体で 30 秒）。確かめるのは、metadata の署名と、最後の投稿の記録なら指している投稿の署名・channel・時刻。
+  - 読めない・確かめられない記録の数を `unavailable_count` で返す。投稿の多いスレッドが最後の投稿の索引の新しい側を占めると、ほかのスレッドの新しい投稿を拾いきれないことがある（同日の判断 2 で受け入れた）。
+  - 続きは手元の行の続きから読み、その位置の日から照合する（タイムラインと同じ）。この端末が知らない、照合の範囲より前のスレッドは、手元の行が尽きると一覧に出ない。リンクと通知からは開ける（2026-10-17 のユーザー判断 13。照合した範囲の前から続ける位置を返す案は、前のページの行を次のページに繰り返すので採らない）。
+- 一覧は channel の投稿を読まず、channel ごとの hint も購読しない。一覧の列が取るのは topic の lease だけ。
+- 保持: 他人が作った行は remote cache の種類 `public_channel` として容量を数え、7 日使わなければ回収する。一覧で返した行と、照合や ID から引いた行は、使った時刻を更新する（1 時間ごと）。自分が作った行は数えず、回収しない。期限を過ぎてまだ回収されていない行は無いものとして扱い、次の照合が確かめて置き直す（投稿の行と同じ）。
+
 ## 互換
 
 | 対象 | 変更 | 旧版・既存データへの影響 |
 | --- | --- | --- |
 | 投稿の envelope | 形は変えない。「channel_id あり + Public」の組を新たに使う | 旧版は受け付けず、表示しない |
 | channel の metadata | 新しい種類の署名つき envelope | 旧版は読まない |
-| docs の key | topic の bucket に `channels/list/…` と `channels/<ID>/timeline/…` を足す | 旧版と CN は読まない |
-| hint | channel ごとの hint の topic を新設する | 旧版は購読しない |
-| API・CLI | `ChannelRef`・`TimelineScope` に種類を足し、作成と取得の command を足す | 既存の値と出力の意味は変えない |
-| backup・account 同期 | 変えない（公開 channel には参加の状態が無い） | — |
+| docs の key | topic の bucket に `channels/list/…`・`channels/activity/…`・`channels/<ID>/timeline/…` を足す | 旧版と CN は読まない |
+| hint | channel ごとの hint の topic を新設する。作成の知らせは既存の `SessionChanged` に種類を足す | 旧版は購読しない。未知の種類は読まない |
+| API・CLI | `ChannelRef`・`TimelineScope` に種類を足し、作成・取得・一覧の command を足す | 既存の値と出力の意味は変えない |
+| SQLite | 一覧の表 `public_channels` と migration を足し、remote cache に種類 `public_channel` を足す | 既存の表は変えない |
+| IndexedDB | 版を 2 から 3 に上げ、一覧の store を足す | 更新の間は「データの移行中です」で待つ。更新した database を旧版で開くことは扱わない（2026-10-08 の決まり） |
+| backup・account 同期 | 変えない（公開 channel には参加の状態が無い。一覧の行は account の SQLite に入る） | — |
 
 ## Feature Data Classification
 
@@ -80,9 +104,9 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 - Public Replica / Private Replica / Local Only: Public Replica（所属 topic の時間 bucket）
 - Gossip Hint 必要有無: あり（channel ごとの hint の topic）
 - Blob 必要有無: 投稿の本文と添付（既存の投稿と同じ）
-- SQLite projection 必要有無: 投稿は既存の projection（channel の値は公開 channel の ID）
+- SQLite projection 必要有無: 投稿は既存の projection（channel の値は公開 channel の ID）。一覧の行は `public_channels`（§6）
 - 必須 contract: 公開 channel の ID の形と結び付き、metadata の署名、topic の bucket での受け入れと拒否（`crates/core/src/tests/public_channels.rs`、`hydration_integrity_contract.rs`）
-- 必須 scenario: 招待の無い端末が ID から読み、投稿・返信・リアクションし、作成者に同じ channel の文脈で届く（`crates/app-api/src/tests/public_channels.rs`）
+- 必須 scenario: 招待の無い端末が ID から読み、投稿・返信・リアクションし、作成者に同じ channel の文脈で届く（`crates/app-api/src/tests/public_channels.rs`）。別の端末のスレッドを 2 つの並び順で一覧から取得し、新しい投稿で上へ移り、読めない記録を数え、無関係なデータで読む量が増えない（`crates/app-api/src/tests/public_channel_list.rs`）
 
 ## References
 

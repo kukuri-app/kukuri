@@ -394,6 +394,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::list_profile_timeline),
         ),
         (
+            "list_public_channels",
+            size1(DesktopRuntime::list_public_channels),
+        ),
+        (
             "list_recent_reactions",
             size1(DesktopRuntime::list_recent_reactions),
         ),

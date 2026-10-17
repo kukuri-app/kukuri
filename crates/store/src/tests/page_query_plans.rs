@@ -48,9 +48,12 @@ fn reply(
     reply
 }
 
-const EXPLAIN: &str = "EXPLAIN QUERY PLAN ";
+pub(super) const EXPLAIN: &str = "EXPLAIN QUERY PLAN ";
 
-async fn plan(store: &SqliteStore, mut builder: sqlx::QueryBuilder<sqlx::Sqlite>) -> String {
+pub(super) async fn plan(
+    store: &SqliteStore,
+    mut builder: sqlx::QueryBuilder<sqlx::Sqlite>,
+) -> String {
     builder
         .build()
         .fetch_all(store.pool())
@@ -62,7 +65,7 @@ async fn plan(store: &SqliteStore, mut builder: sqlx::QueryBuilder<sqlx::Sqlite>
         .join(" | ")
 }
 
-fn assert_range_read(name: &str, plan: &str) {
+pub(super) fn assert_range_read(name: &str, plan: &str) {
     assert!(
         !plan.contains("TEMP B-TREE"),
         "{name}: the page must be read in index order, without sorting the matching rows: {plan}"

@@ -45,6 +45,8 @@ pub(crate) const TRUST_OBSERVATION_PENDING: &str = "trust_observation_pending";
 pub(crate) const PEER_CANDIDATES: &str = "peer_candidates";
 /// 公開参照の索引（#1632 AC-6）。key は `[種類, 記録の id, blob の hash]`、`hash` の索引で参照の有無を引く。
 pub(crate) const PUBLIC_REFS: &str = "public_refs";
+/// 公開 channel の一覧の行（#1840）。並び順ごとに (topic, 時刻, ID) の索引を持つ。
+pub(crate) const PUBLIC_CHANNELS: &str = "public_channels";
 pub(crate) const META: &str = "meta";
 
 fn paths(parts: &[&str]) -> JsValue {
@@ -361,7 +363,8 @@ pub(super) fn create_projection_stores(db: &IdbDatabase) -> Result<(), JsValue> 
             ("learned", &["learned"]),
         ],
     )?;
-    create_public_refs(db)
+    create_public_refs(db)?;
+    create_public_channels(db)
 }
 
 /// 公開参照の索引（版 2 で足した store。版 1 の database には、これだけを足す）。
@@ -371,6 +374,23 @@ pub(super) fn create_public_refs(db: &IdbDatabase) -> Result<(), JsValue> {
         PUBLIC_REFS,
         &["r.kind", "r.source_id", "r.blob_hash"],
         &[("hash", &["r.blob_hash"])],
+    )?;
+    Ok(())
+}
+
+/// 公開 channel の一覧の行（版 3 で足した store）。
+pub(super) fn create_public_channels(db: &IdbDatabase) -> Result<(), JsValue> {
+    table(
+        db,
+        PUBLIC_CHANNELS,
+        &["r.channel_id"],
+        &[
+            ("created", &["r.topic_id", "r.created_at", "r.channel_id"]),
+            (
+                "last_post",
+                &["r.topic_id", "r.last_post_at", "r.channel_id"],
+            ),
+        ],
     )?;
     Ok(())
 }

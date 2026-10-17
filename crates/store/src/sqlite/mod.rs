@@ -51,6 +51,7 @@ mod private_index_grants;
 pub(crate) mod projections;
 mod protected_migration;
 mod public_blobs;
+pub(crate) mod public_channels;
 mod remote_cache;
 pub(crate) mod social;
 mod trust_observations;
