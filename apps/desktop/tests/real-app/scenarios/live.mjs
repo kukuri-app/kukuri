@@ -9,6 +9,7 @@ import { audioMode, isolated, PERIOD_MS, record, speak } from '../audio.mjs';
 import {
   BAR,
   CARD,
+  closeLiveColumn,
   createSession,
   drawsSince,
   injectCapture,
@@ -17,6 +18,7 @@ import {
   isScreen,
   measureSync,
   observeDraws,
+  reopenLiveColumn,
   startBroadcast,
   statusOf,
   t,
@@ -104,13 +106,12 @@ export async function run({ launch, restart, log, topic }) {
     unit = await expectSound('the host');
     log(`LV-2: the viewer draws the camera (${frames} frames in 3 s)${unit === null ? '' : ` and hears the host as ${unit.toFixed(4)}`}`);
 
-    // LV-11(#1839 AC-3): H が live の列を離れても(列が閉じても)、配信は続き、視聴者に描かれて音が出る。
-    await openTopic(host, topic, 'timeline');
-    await eventually('the host to leave the live column', async () => !(await host.evaluate(`Boolean(document.querySelector('${CARD}'))`)), 30_000);
-    const awayFrames = await expectDrawing(first, 'the camera while the host is away from the live column');
-    await expectSound('the host while away from the live column');
-    log(`LV-11: the broadcast goes on after the host leaves the live column (${awayFrames} frames in 3 s)`);
-    await openTopic(host, topic, 'live');
+    // LV-11(#1839 AC-3): H が live の列を閉じても、配信は続き、視聴者に描かれて音が出る。
+    await closeLiveColumn(host);
+    const awayFrames = await expectDrawing(first, 'the camera while the host has closed the live column');
+    await expectSound('the host while the live column is closed');
+    log(`LV-11: the broadcast goes on after the host closes the live column (${awayFrames} frames in 3 s)`);
+    await reopenLiveColumn(host, topic);
 
     // LV-3: 視聴者が描いた frame と出た音の時刻の差が、映像の遅れ 45 ms・進み 150 ms の範囲に入る。
     if (isolated) {
