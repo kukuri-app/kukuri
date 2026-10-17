@@ -101,11 +101,21 @@ test('a live started in a public thread shows in the detail header and the list 
   expect(after.querySelector('.post-live')).not.toBeNull();
 }, 30_000);
 
-test('the list row of a public thread is marked while a live is on', async () => {
+// 一覧の行の印と詳細の上部の行を出すだけでは、Live に参加せず、映像・音声を受信も送信もしない。
+test('the list row is marked and the detail header lists the live without receiving or sending media', async () => {
+  const user = userEvent.setup();
   const api = createDesktopMockApi();
+  const media = [
+    vi.spyOn(api, 'joinLiveSession'),
+    vi.spyOn(api, 'watchLiveMedia'),
+    vi.spyOn(api, 'setLiveBroadcast'),
+  ];
   const thread = await api.createPublicChannel(TOPIC, 'Watch party', '');
   await api.createLiveSession(TOPIC, 'Night stream', '', { kind: 'public_channel', channel_id: thread.channel_id });
   renderAtHash('#/timeline?topic=kukuri%3Atopic%3Ageneral&context=publicThreads', api);
   const list = await waitFor(() => getActiveColumn('Public threads'));
-  expect(await within(list).findByRole('button', { name: /^Watch party .* Live$/ })).toBeInTheDocument();
+  await user.click(await within(list).findByRole('button', { name: /^Watch party .* Live$/ }));
+  const detail = await waitFor(() => getActiveColumn('Public thread'));
+  expect(await within(detail).findByRole('button', { name: /^Live Night stream / })).toBeInTheDocument();
+  for (const call of media) expect(call).not.toHaveBeenCalled();
 });
