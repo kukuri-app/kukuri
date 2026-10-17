@@ -1,30 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Camera, Mic, MicOff, MonitorUp, Radio, Square } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
-import { IconButton } from '@/components/ui/icon-button';
-import type { DesktopApi, LiveMediaRequest, LiveSessionView, LiveVideoSource } from '@/lib/api';
+import type { DesktopApi, LiveMediaRequest, LiveSessionView } from '@/lib/api';
 import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
-import {
-  captureErrorKind,
-  captureVideo,
-  createLivePlayer,
-  encodeVideo,
-  parseLiveVideoBatch,
-  type LiveWatchState,
-} from './liveMedia';
+import { createLivePlayer, parseLiveVideoBatch, type LiveWatchState } from './liveMedia';
 
-type LiveMediaApi = Pick<
-  DesktopApi,
-  | 'setLiveBroadcast'
-  | 'pushLiveVideo'
-  | 'stopLiveBroadcast'
-  | 'watchLiveMedia'
-  | 'nextLiveVideo'
-  | 'stopWatchingLiveMedia'
->;
+type LiveMediaApi = Pick<DesktopApi, 'watchLiveMedia' | 'nextLiveVideo' | 'stopWatchingLiveMedia'>;
 
 /// 空きが見つからない・映像の無い間・止まった後に、視聴を試し直す間隔(視聴中に親を失ったときは runtime が参加し直す)。
 const RETRY_MS = 5_000;
@@ -36,155 +18,14 @@ type LiveSessionMediaProps = {
   isOwner: boolean;
 };
 
-/// 配信中の live session の映像(#1034、ADR 0067 §9)。主催者には配信の操作、参加した視聴者には映像を出す。Web は扱わない。
+/// 配信中の live session の映像(#1034、ADR 0067 §9)。参加した視聴者に映像を出す。配信の操作は shell の上部の
+/// `LiveBroadcastBar`(#1839)。Web は扱わない。
 export function LiveSessionMedia({ api, topic, session, isOwner }: LiveSessionMediaProps) {
-  if (IS_WEB_RUNTIME || session.status !== 'Live') return null;
-  const request = { topic, session_id: session.session_id };
-  if (isOwner) return <LiveBroadcastControls api={api} request={request} />;
-  return session.joined_by_me ? <LiveViewer api={api} request={request} /> : null;
+  if (IS_WEB_RUNTIME || session.status !== 'Live' || isOwner || !session.joined_by_me) return null;
+  return <LiveViewer api={api} request={{ topic, session_id: session.session_id }} />;
 }
 
 type MediaProps = { api: LiveMediaApi; request: LiveMediaRequest };
-
-function LiveBroadcastControls({ api, request }: MediaProps) {
-  const { t } = useTranslation('live');
-  const [source, setSource] = useState<LiveVideoSource>('camera');
-  const [microphone, setMicrophone] = useState(true);
-  const [phase, setPhase] = useState<'idle' | 'starting' | 'live'>('idle');
-  const [notice, setNotice] = useState<string | null>(null);
-  const previewRef = useRef<HTMLVideoElement>(null);
-  const encodingRef = useRef<{ stop(): void } | null>(null);
-  const aliveRef = useRef(true);
-  const { topic, session_id: sessionId } = request;
-
-  const stopEncoding = () => {
-    encodingRef.current?.stop();
-    encodingRef.current = null;
-  };
-  const stop = async () => {
-    stopEncoding();
-    setPhase('idle');
-    await api.stopLiveBroadcast(request).catch(() => undefined);
-  };
-  // 画面を離れた後に終わった操作は、配信を止めて捨てる(取り込みも mic も残さない)。
-  const abandoned = () => {
-    if (aliveRef.current) return false;
-    void api.stopLiveBroadcast(request).catch(() => undefined);
-    return true;
-  };
-  // mic は取り込みが始まってから開く(取り込みが拒否されたら mic も開かない)。配信中の source の切替では mic を閉じない。
-  const start = async (nextSource: LiveVideoSource, nextMicrophone: boolean) => {
-    const keepMicrophone = phase === 'live' && nextMicrophone;
-    stopEncoding();
-    setPhase('starting');
-    setNotice(null);
-    try {
-      const status = await api.setLiveBroadcast({ ...request, source: nextSource, microphone: keepMicrophone });
-      if (abandoned()) return;
-      const stream = await captureVideo(nextSource, status.limits);
-      if (abandoned()) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-      encodingRef.current = encodeVideo({
-        stream,
-        limits: status.limits,
-        preview: previewRef.current!,
-        push: (keyframe, ageUs, data) => api.pushLiveVideo(request.session_id, keyframe, ageUs, data),
-        onEnded: () => void stop(),
-      });
-      if (nextMicrophone && !keepMicrophone) {
-        const opened = await api.setLiveBroadcast({ ...request, source: nextSource, microphone: true });
-        if (abandoned()) return;
-        setMicrophone(opened.microphone);
-        if (!opened.microphone) setNotice(t('media.microphoneUnavailable'));
-      }
-      setPhase('live');
-    } catch (error) {
-      if (abandoned()) return;
-      await stop();
-      setNotice(t(`media.errors.${captureErrorKind(error, nextSource)}`));
-    }
-  };
-  const toggleMicrophone = async () => {
-    const next = !microphone;
-    setMicrophone(next);
-    if (phase !== 'live') return;
-    const status = await api.setLiveBroadcast({ ...request, source, microphone: next });
-    if (abandoned()) return;
-    setMicrophone(status.microphone);
-    setNotice(next && !status.microphone ? t('media.microphoneUnavailable') : null);
-  };
-  const selectSource = (next: LiveVideoSource) => {
-    setSource(next);
-    if (phase === 'live') void start(next, microphone);
-  };
-  // 画面を離れたら取り込みと配信を止める(再起動の後も自動では始めない)。
-  useEffect(() => {
-    const encoding = encodingRef;
-    const alive = aliveRef;
-    alive.current = true;
-    return () => {
-      alive.current = false;
-      encoding.current?.stop();
-      void api.stopLiveBroadcast({ topic, session_id: sessionId }).catch(() => undefined);
-    };
-  }, [api, topic, sessionId]);
-
-  const busy = phase === 'starting';
-  return (
-    <div className='flex flex-col gap-2' aria-busy={busy}>
-      <video
-        ref={previewRef}
-        muted
-        playsInline
-        hidden={phase === 'idle'}
-        aria-label={t('media.preview')}
-        className='aspect-video w-full max-w-sm rounded-[var(--radius-input)] bg-[var(--surface-panel-muted)] object-contain'
-      />
-      <div className='post-actions'>
-        <div className='post-actions' role='group' aria-label={t('media.source')}>
-          {(['camera', 'screen'] as const).map((each) => (
-            <Button
-              key={each}
-              variant={source === each ? 'primary' : 'secondary'}
-              type='button'
-              aria-pressed={source === each}
-              disabled={busy}
-              onClick={() => selectSource(each)}
-            >
-              {each === 'camera' ? <Camera className='size-4' aria-hidden='true' /> : <MonitorUp className='size-4' aria-hidden='true' />}
-              {t(`media.sources.${each}`)}
-            </Button>
-          ))}
-        </div>
-        <IconButton
-          variant={microphone ? 'primary' : 'ghost'}
-          type='button'
-          label={t(microphone ? 'media.disableMicrophone' : 'media.enableMicrophone')}
-          aria-pressed={microphone}
-          disabled={busy}
-          onClick={() => void toggleMicrophone()}
-        >
-          {microphone ? <Mic className='size-4' aria-hidden='true' /> : <MicOff className='size-4' aria-hidden='true' />}
-        </IconButton>
-        {phase === 'idle' ? (
-          <Button variant='primary' type='button' onClick={() => void start(source, microphone)}>
-            <Radio className='size-4' aria-hidden='true' />
-            {t('media.startBroadcast')}
-          </Button>
-        ) : (
-          <Button variant='secondary' type='button' disabled={busy} onClick={() => void stop()}>
-            <Square className='size-4' aria-hidden='true' />
-            {t('media.stopBroadcast')}
-          </Button>
-        )}
-      </div>
-      {phase === 'live' ? <p role='status'>{t('media.broadcasting')}</p> : null}
-      {notice ? <p role='alert' className='error error-inline'>{notice}</p> : null}
-    </div>
-  );
-}
 
 function LiveViewer({ api, request }: MediaProps) {
   const { t } = useTranslation('live');

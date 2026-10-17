@@ -8,6 +8,8 @@ import { click, fill, text } from './ui.mjs';
 export const t = (key) => text('live', key);
 /// live の列の session の card(視聴・配信の操作と状態はこの中)。投稿の中の Live(#1839)は除く。
 export const CARD = 'article[data-live-session-id]:not(.post-live article)';
+/// 配信者の配信の操作(shell の上部の bar。#1839 AC-3)。
+export const BAR = 'section.shell-live-broadcast';
 /// 配信者が話す音の帯域(Hz)。
 export const VOICE = [300, 950];
 const VIDEO = t('media.video');
@@ -86,11 +88,17 @@ export const observeDraws = (viewer) =>
 /// `viewer` の canvas に `since`(epoch の ms)より後に描かれた frame。
 export const drawsSince = (viewer, since) => viewer.evaluate(`(window.__draws ?? []).filter((each) => each.at > ${since})`);
 
-/// card の状態の表示(配信・視聴の状態と、失敗の理由)。
+/// card と配信の操作の bar の状態の表示(配信・視聴の状態と、失敗の理由)。
 export const statusOf = (instance) =>
   instance.evaluate(
-    `[...document.querySelectorAll('${CARD} [role="status"], ${CARD} [role="alert"]')].map((node) => node.textContent).join(' | ')`
+    `[...document.querySelectorAll('${CARD} [role="status"], ${CARD} [role="alert"], ${BAR} [role="status"], ${BAR} [role="alert"]')].map((node) => node.textContent).join(' | ')`
   );
+
+/// H が配信の操作を開き、配信を始める。
+export async function startBroadcast(host) {
+  await click(host, t('media.openBroadcast'), { within: CARD });
+  await click(host, t('media.startBroadcast'), { within: BAR });
+}
 
 /// H が live session を作る。
 export async function createSession(host, title) {

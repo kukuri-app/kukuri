@@ -49,6 +49,10 @@
       "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
     },
     {
+      "lines": 1047,
+      "path": "apps/desktop/src/styles/shell-scoped-overrides.css"
+    },
+    {
       "lines": 1045,
       "path": "crates/cn-user-api/tests/trust_relation.rs"
     },
@@ -59,10 +63,6 @@
     {
       "lines": 1044,
       "path": "crates/harness/src/scenarios/desktop_smoke.rs"
-    },
-    {
-      "lines": 1042,
-      "path": "apps/desktop/src/styles/shell-scoped-overrides.css"
     },
     {
       "lines": 1033,

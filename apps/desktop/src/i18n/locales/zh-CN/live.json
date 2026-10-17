@@ -31,6 +31,7 @@
   "loading": "正在加载直播会话…",
   "media": {
     "broadcasting": "正在直播画面",
+    "controls": "{{title}} 的直播控制",
     "disableMicrophone": "关闭麦克风",
     "enableMicrophone": "开启麦克风",
     "errors": {
@@ -41,6 +42,7 @@
       "unsupported": "此环境无法直播画面。"
     },
     "microphoneUnavailable": "无法使用麦克风，仅直播画面。",
+    "openBroadcast": "打开直播控制",
     "preview": "我的画面",
     "source": "直播的画面",
     "sources": {

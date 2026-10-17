@@ -37,7 +37,7 @@
   }
 
   .shell-phase1 .shell-column-canvas {
-    height: calc(100dvh - env(safe-area-inset-top));
+    height: calc(100dvh - env(safe-area-inset-top) - var(--live-broadcast-reserve, 0px));
     gap: 0;
     padding: env(safe-area-inset-top) 0 var(--space-sm);
     scroll-padding-inline: 0;

@@ -14,9 +14,15 @@ export type LiveActions = {
   leave: (topic: string, sessionId: string) => Promise<void>;
   end: (topic: string, sessionId: string) => Promise<void>;
   introduce: (live: PostLiveView, title: string) => void;
+  // #1839 AC-3: shell の上部の配信の操作。この端末から同時に配信するのは 1 つだけ。
+  broadcast: LiveBroadcastTarget | null;
+  openBroadcast: (target: LiveBroadcastTarget) => void;
+  closeBroadcast: () => void;
   openPost: (topic: string, postId: string) => void;
   copyLink: (link: string) => void;
   activateReference: (reference: InternalSmartReference) => void;
 };
+
+export type LiveBroadcastTarget = { topic: string; sessionId: string; title: string };
 
 export const LiveActionsContext = createContext<LiveActions | null>(null);

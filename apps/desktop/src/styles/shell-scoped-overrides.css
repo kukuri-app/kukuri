@@ -364,6 +364,11 @@
   min-width: 0;
 }
 
+/* #1839 AC-3: 配信の操作の bar(shell の上部)を開いている間だけ、その高さを Column の高さから差し引く。 */
+.shell-phase1:has(> .shell-live-broadcast) {
+  --live-broadcast-reserve: 4rem;
+}
+
 .shell-phase1 .shell-column-canvas {
   /* ADR 0031 §2 / §5: Column が Canvas に収まる間は中央寄せし、溢れたら start 揃えへ倒す。
      下端は左下 Control Center trigger(2.75rem + 余白)の分だけ予約し、
@@ -377,7 +382,7 @@
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  height: calc(100vh - (var(--space-lg) * 2) - var(--control-center-reserve));
+  height: calc(100vh - (var(--space-lg) * 2) - var(--control-center-reserve) - var(--live-broadcast-reserve, 0px));
   overflow-x: auto;
   overflow-y: hidden;
   padding: 0 var(--space-lg) var(--space-sm);

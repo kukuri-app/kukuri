@@ -4,7 +4,7 @@
 
 ## 自動の試験
 
-`apps/desktop/tests/real-app/scenarios/live.mjs`（LV-1〜LV-9。配信者 H・視聴者 V1・V2）と `live-relay.mjs`（LV-10。H・V1〜V5）。部品は `live-media.mjs`。動かし方は [dev.md](dev.md) の「実際のアプリを複数動かす自動の試験」。CI では Linux package と windows-fast で、関係する PR ごとと毎晩に動く。
+`apps/desktop/tests/real-app/scenarios/live.mjs`（LV-1〜LV-9・LV-11。配信者 H・視聴者 V1・V2）と `live-relay.mjs`（LV-10。H・V1〜V5）。部品は `live-media.mjs`。動かし方は [dev.md](dev.md) の「実際のアプリを複数動かす自動の試験」。CI では Linux package と windows-fast で、関係する PR ごとと毎晩に動く。
 
 - 取り込み: camera は、webview の取り込みの API が返す映像を試験の映像（canvas）に置き換える（API は本物を呼び、許可の経路を通す）。画面は Windows では本物（画面全体の自動の選択）で、Linux の CI には画面の取り込みの portal が無いので置き換える。選択の取り消しは API の拒否で模擬する。Linux の webview の疑似 camera（inspector で有効にする）の frame は encode できないので、映像には使わない。
 - 映像: 視聴者の canvas に描かれた frame（描いた時刻・画素の色・大きさ）を記録して確かめる。
@@ -21,6 +21,7 @@
 | LV-7 | V2 が退出すると描画と音が止まる。配信の停止で V1 の描画と音が 5 秒以内に止まる。終了の後は参加できない | canvas・出力・参加の button |
 | LV-8 | H の app を起動し直しても、配信は自動では始まらない | H の表示・canvas |
 | LV-9 | log の経路は `direct_p2p`。視聴者の識別子は media の log に出ない | 各 instance の log |
+| LV-11 | 配信中に H が live の列を離れても（列が閉じる）、V1 に描かれ続け、音が出る（#1839 AC-3） | canvas・出力 |
 | LV-10 | 直接の視聴者 4 人の後の 5 人目に、転送で描画と音が届く。転送している視聴者を止めると、5 人目の描画は 10 秒ほどで戻る。転送された映像と音のずれは LV-3 と同じ方法で測って log に残すだけ（6 つの app が CI の 4 vCPU を取り合い、測る値が揺れるため。2026-10-14 のユーザー判断） | canvas・出力 |
 
 ## 既知の制約
@@ -28,7 +29,7 @@
 - 直接の視聴者は 4 人まで、各視聴者が転送するのは 2 人まで。参加の問い合わせが 16 段で尽きると「視聴の空きが見つからないため参加できません」と出て、5 秒ごとに試し直す。
 - 転送する視聴者は、上り回線を子の数 × 配信の bitrate（最大約 5 Mbps）使う。
 - 配信できるのは、この端末で作った session だけ（manifest の配信者の端末の id）。
-- 主催者が live の列を離れる（列を閉じる・別の画面へ移る）と、取り込みと配信は止まる。
+- 配信の操作は shell の上部の bar にある（#1839）。主催者が live の列を離れても（列を閉じる・別の画面へ移る）配信は続き、bar の停止・閉じる、live の終了で止まる。この端末から同時に配信できるのは 1 つだけ。
 - Windows の WebView2 は camera の許可を保存するので、一度 camera で配信した後は、移行用の QR の読み取り（#1628）でも camera の確認が出ない。
 - Linux（WebKitGTK）の decoder は、配信の途中で映像の大きさが変わっても最初の大きさで出す（camera から画面へ切り替えると、画面は camera の大きさに縮んで描かれる）。
 - 配信者の app が配信中に止まると、視聴者が気付いて参加し直すまで約 35 秒、描画に戻るまで約 1 分かかる（2026-10-14 の測定）。

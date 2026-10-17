@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { eventually } from '../../web-e2e/wait.mjs';
 import { audioMode, isolated, PERIOD_MS, record, speak } from '../audio.mjs';
 import {
+  BAR,
   CARD,
   createSession,
   drawsSince,
@@ -16,6 +17,7 @@ import {
   isScreen,
   measureSync,
   observeDraws,
+  startBroadcast,
   statusOf,
   t,
   VOICE,
@@ -95,12 +97,20 @@ export async function run({ launch, restart, log, topic }) {
   const drawing = async (viewer) => (await drawsSince(viewer, Date.now() - 1_000)).length > 0;
   try {
     // LV-2: camera で配信すると、視聴者の canvas に frame が描かれ続け、視聴者の出力に配信者の音が出る。
-    await click(host, t('media.startBroadcast'), { within: CARD });
+    await startBroadcast(host);
     await eventually('the host to broadcast', async () => (await statusOf(host)).includes(t('media.broadcasting')), 30_000);
     await eventually('the first viewer to draw the camera', async () => (await drawsSince(first, Date.now() - 1_000)).some(isCamera), 30_000);
     const frames = await expectDrawing(first, 'the camera');
     unit = await expectSound('the host');
     log(`LV-2: the viewer draws the camera (${frames} frames in 3 s)${unit === null ? '' : ` and hears the host as ${unit.toFixed(4)}`}`);
+
+    // LV-11(#1839 AC-3): H が live の列を離れても(列が閉じても)、配信は続き、視聴者に描かれて音が出る。
+    await openTopic(host, topic, 'timeline');
+    await eventually('the host to leave the live column', async () => !(await host.evaluate(`Boolean(document.querySelector('${CARD}'))`)), 30_000);
+    const awayFrames = await expectDrawing(first, 'the camera while the host is away from the live column');
+    await expectSound('the host while away from the live column');
+    log(`LV-11: the broadcast goes on after the host leaves the live column (${awayFrames} frames in 3 s)`);
+    await openTopic(host, topic, 'live');
 
     // LV-3: 視聴者が描いた frame と出た音の時刻の差が、映像の遅れ 45 ms・進み 150 ms の範囲に入る。
     if (isolated) {
@@ -119,10 +129,10 @@ export async function run({ launch, restart, log, topic }) {
 
     // LV-4: H が mic を off にすると音だけが止まり、描画は続く。on で音が戻る。
     if (heard) {
-      await click(host, t('media.disableMicrophone'), { within: CARD });
+      await click(host, t('media.disableMicrophone'), { within: BAR });
       const silentAfter = await expectSilence('the muted host', 5_000);
       await expectDrawing(first, 'the camera while the microphone is off');
-      await click(host, t('media.enableMicrophone'), { within: CARD });
+      await click(host, t('media.enableMicrophone'), { within: BAR });
       await expectSound('the host again');
       log(`LV-4: the microphone off silences the viewer in ${silentAfter} ms while the video goes on, and on brings the sound back`);
     }
@@ -146,7 +156,7 @@ export async function run({ launch, restart, log, topic }) {
 
     // LV-5: 画面で配信すると視聴者に描かれる。H の window を他の window の後ろに回しても止まらない(Linux は最小化した
     // ときを記録する。frame を表示中の <video> から取るため)。
-    await click(host, t('media.sources.screen'), { within: CARD });
+    await click(host, t('media.sources.screen'), { within: BAR });
     const screen = await eventually('the first viewer to draw the screen', async () => (await drawsSince(first, Date.now() - 1_000)).find(isScreen)?.size, 30_000);
     await expectDrawing(first, 'the screen', 2);
     first.focus();
@@ -160,24 +170,24 @@ export async function run({ launch, restart, log, topic }) {
       restore();
     }
     log(`LV-5: the viewer draws the screen (${screen}), also behind another window; while minimized: ${whileMinimized}`);
-    await click(host, t('media.sources.camera'), { within: CARD });
+    await click(host, t('media.sources.camera'), { within: BAR });
     await eventually('the first viewer to draw the camera again', async () => (await drawsSince(first, Date.now() - 1_000)).some(isCamera), 30_000);
 
     // LV-5: 画面の選択の取り消しで配信が止まり、理由が出る。
     await host.evaluate('(window.__capture.deny = true, true)');
-    await click(host, t('media.sources.screen'), { within: CARD });
+    await click(host, t('media.sources.screen'), { within: BAR });
     await eventually('the host to show why the broadcast stopped', async () => (await statusOf(host)).includes(t('media.errors.denied')), 30_000);
     const deniedAt = Date.now();
     await eventually('the first viewer to stop drawing', async () => !(await drawing(first)), 10_000);
     log(`LV-5: cancelling the screen selection stops the broadcast with the reason (the viewer stopped in ${Date.now() - deniedAt} ms)`);
     await host.evaluate('(window.__capture.deny = false, true)');
-    await click(host, t('media.sources.camera'), { within: CARD });
-    await click(host, t('media.startBroadcast'), { within: CARD });
+    await click(host, t('media.sources.camera'), { within: BAR });
+    await click(host, t('media.startBroadcast'), { within: BAR });
     await eventually('the first viewer to draw after starting again', () => drawing(first), 30_000);
     await expectSound('the host after starting again');
 
     // LV-7: 配信の停止で、視聴者の描画と音が 5 秒以内に止まる。
-    await click(host, t('media.stopBroadcast'), { within: CARD });
+    await click(host, t('media.stopBroadcast'), { within: BAR });
     const stoppedAt = Date.now();
     await expectSilence('the host after stopping', 5_000);
     await eventually('the viewer to stop drawing', async () => !(await drawing(first)), 5_000);

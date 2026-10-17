@@ -731,7 +731,6 @@ export function DesktopShellPrimarySurface({
                       topic={surfaceTopic}
                       session={session}
                       targeted={selectedLiveSessionId === session.session_id}
-                      broadcastControls
                     />
                   </SessionVisibility>
                   );

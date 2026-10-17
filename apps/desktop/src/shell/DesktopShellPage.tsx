@@ -62,7 +62,7 @@ import { CommunityNodeOnboarding } from '@/shell/page/CommunityNodeOnboarding';
 import { DesktopShellColumnWorkspace } from '@/shell/page/DesktopShellColumnWorkspace';
 import { DesktopShellControlCenter } from '@/shell/page/DesktopShellControlCenter';
 import { DesktopShellPrimarySurface } from '@/shell/page/DesktopShellPrimaryWorkspace';
-import { LiveProviders } from '@/shell/page/LiveProviders';
+import { LiveBroadcastSlot, LiveProviders } from '@/shell/page/LiveProviders';
 import { DesktopShellSettingsDrawer } from '@/shell/page/DesktopShellSettingsDrawer';
 import { useFocusScroll } from '@/shell/page/useFocusScroll';
 import { useSharePreview } from '@/shell/page/useSharePreview';
@@ -884,6 +884,7 @@ export function DesktopShellPage({
           <a className='shell-skip-link' href={`#${SHELL_WORKSPACE_ID}`}>
             {t('shell:workspace.skipToWorkspace')}
           </a>
+          <LiveBroadcastSlot />
           <main
             id={SHELL_WORKSPACE_ID}
             className='shell-column-workspace-main'
