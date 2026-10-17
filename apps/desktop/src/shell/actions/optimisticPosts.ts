@@ -15,7 +15,7 @@ import {
   type DesktopShellStoreApi,
   type DraftMediaItem,
 } from '@/shell/store';
-import { publishedTopicIdForPost } from '@/shell/presentation';
+import { channelComposeTarget, channelIdOfRef, publishedTopicIdForPost } from '@/shell/presentation';
 import {
   activeWorkspaceScope,
 } from '@/shell/slices/workspace';
@@ -147,10 +147,8 @@ export function createOptimisticPostActions({
   }): PostView {
     const { createdAt, localId, draft, draftMedia, replyPost = null, repostPost = null } = args;
     const isRepost = draft.kind === 'repost' && repostPost;
-    const channelId =
-      draft.kind === 'post' && draft.channel_ref?.kind === 'private_channel'
-        ? draft.channel_ref.channel_id
-        : null;
+    const channelId = draft.kind === 'post' ? channelIdOfRef(draft.channel_ref) : null;
+    const publicThread = draft.kind === 'post' && draft.channel_ref?.kind === 'public_channel';
     const channelLabel = channelId
       ? storeApi
           .getState()
@@ -216,7 +214,7 @@ export function createOptimisticPostActions({
       channel_id: channelId,
       audience_label:
         replyPost?.audience_label ??
-        (channelId ? channelLabel ?? 'Private channel' : 'Public'),
+        (publicThread ? 'Public thread' : channelId ? channelLabel ?? 'Private channel' : 'Public'),
       reaction_summary: [],
       my_reactions: [],
       local_id: localId,
@@ -296,7 +294,7 @@ export function createOptimisticPostActions({
       void refreshVisibleTimelineAfterPublish(
         draft.topic,
         draft.reply_to ? post.root_id ?? draft.reply_to : null,
-        draft.channel_ref?.kind === 'private_channel' ? draft.channel_ref.channel_id : null
+        channelIdOfRef(draft.channel_ref)
       );
       return true;
     } catch (publishError) {
@@ -327,7 +325,7 @@ export function createOptimisticPostActions({
         kind: 'post',
         topic,
         content,
-        channel_ref: channelId ? { kind: 'private_channel', channel_id: channelId } : PUBLIC_CHANNEL_REF,
+        channel_ref: channelComposeTarget(channelId),
         live,
       },
       draftMedia: [],

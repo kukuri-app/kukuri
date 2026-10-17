@@ -83,7 +83,9 @@
     "privateChannel": "私密频道",
     "privateNamed": "私密：{{channel}}",
     "public": "公开",
-    "viewing": "正在查看 {{audience}}"
+    "viewing": "正在查看 {{audience}}",
+    "publicThread": "公开帖子",
+    "publicThreadNamed": "公开帖子：{{title}}"
   },
   "errors": {
     "failedToAcceptConsents": "接受同意失败",

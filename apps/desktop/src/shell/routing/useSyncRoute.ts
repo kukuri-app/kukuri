@@ -7,6 +7,7 @@ import {
   type DesktopShellRouteOverrides,
   type HashRouteLocation,
 } from '@/shell/routes';
+import { channelIdOfRef, channelIdOfScope } from '@/shell/presentation';
 import type { DesktopShellStoreApi } from '@/shell/store';
 import { routeStateForColumn } from '@/shell/routing/initialWorkspaceRoute';
 import { activeWorkspaceColumn } from '@/shell/slices/workspace';
@@ -37,6 +38,9 @@ export function useSyncRoute({
         overrides?.primarySection ?? columnRoute?.primarySection ?? 'timeline';
       const nextTimelineView =
         overrides?.timelineView ?? columnRoute?.timelineView ?? 'feed';
+      const nextPublicThreadList = hasOverride('publicThreadList')
+        ? Boolean(overrides?.publicThreadList)
+        : Boolean(columnRoute?.publicThreadList);
       const nextProfileMode =
         overrides?.profileMode ?? currentState.shellChromeState.profileMode;
       const nextProfileConnectionsView =
@@ -68,15 +72,9 @@ export function useSyncRoute({
       let nextSelectedChannelId = columnRoute?.selectedChannelId ?? null;
 
       if (hasOverride('composeTarget')) {
-        nextSelectedChannelId =
-          overrides?.composeTarget?.kind === 'private_channel'
-            ? overrides.composeTarget.channel_id
-            : null;
+        nextSelectedChannelId = channelIdOfRef(overrides?.composeTarget);
       } else if (hasOverride('timelineScope')) {
-        nextSelectedChannelId =
-          overrides?.timelineScope?.kind === 'channel'
-            ? overrides.timelineScope.channel_id
-            : null;
+        nextSelectedChannelId = channelIdOfScope(overrides?.timelineScope);
       }
 
       const nextUrl = buildShellUrl({
@@ -94,6 +92,7 @@ export function useSyncRoute({
         settingsOpen: nextSettingsOpen,
         settingsSection: nextSettingsSection,
         timelineView: nextTimelineView,
+        publicThreadList: nextPublicThreadList,
       });
       // HashRouter は hash を同期更新し、location の render は後から追いつく。
       // A → B → A の再選択を古い render の A と比較すると、最後の navigate を落とす。

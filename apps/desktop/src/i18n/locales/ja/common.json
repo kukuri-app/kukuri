@@ -83,7 +83,9 @@
     "privateChannel": "プライベートチャンネル",
     "privateNamed": "プライベート: {{channel}}",
     "public": "公開",
-    "viewing": "{{audience}} を表示中"
+    "viewing": "{{audience}} を表示中",
+    "publicThread": "公開スレッド",
+    "publicThreadNamed": "公開スレッド: {{title}}"
   },
   "errors": {
     "failedToAcceptConsents": "同意の受諾に失敗しました",

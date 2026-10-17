@@ -63,6 +63,8 @@ import type {
   NotificationCursor,
   PrivateChannelControllerTake,
   PrivateChannelInvitePreview,
+  PublicChannelListView,
+  PublicChannelView,
   Profile,
   ReactionStateView,
   RecentReactionView,
@@ -95,6 +97,7 @@ import type {
   ContentDisplaySettings,
   CreatePostRequest,
   CreatePrivateChannelRequest,
+  CreatePublicChannelRequest,
   CreateRepostRequest,
   DelegateDomeHostingRequest,
   DeleteDirectMessageMessageRequest,
@@ -119,8 +122,10 @@ import type {
   ListDirectMessageMessagesRequest,
   ListDomeConnectionTopologyRequest,
   ListGameRoomsRequest,
+  GetPublicChannelRequest,
   ListJoinedPrivateChannelsRequest,
   ListLiveSessionsRequest,
+  ListPublicChannelsRequest,
   ListMetaverseRoomEventsRequest,
   ListProfileTimelineRequest,
   ListRecentReactionsRequest,
@@ -653,6 +658,21 @@ export const runtimeApi: DesktopApi = {
   listJoinedPrivateChannels: command('listJoinedPrivateChannels', async (topic, cursor) => {
     return invokeDesktop('list_joined_private_channels', {
       request: { topic, cursor: cursor ?? null } satisfies ListJoinedPrivateChannelsRequest,
+    });
+  }),
+  createPublicChannel: command('createPublicChannel', async (topic, title, firstPost) => {
+    return invokeDesktop<PublicChannelView>('create_public_channel', {
+      request: { topic, title, first_post: firstPost } satisfies CreatePublicChannelRequest,
+    });
+  }),
+  getPublicChannel: command('getPublicChannel', async (topic, channelId) => {
+    return invokeDesktop<PublicChannelView | null>('get_public_channel', {
+      request: { topic, channel_id: channelId } satisfies GetPublicChannelRequest,
+    });
+  }),
+  listPublicChannels: command('listPublicChannels', async (topic, order, cursor = null, limit = 20) => {
+    return invokeDesktop<PublicChannelListView>('list_public_channels', {
+      request: { topic, order, cursor, limit } satisfies ListPublicChannelsRequest,
     });
   }),
   updateGameRoom: command('updateGameRoom', async (topic, roomId, status, phaseLabel, scores) => {

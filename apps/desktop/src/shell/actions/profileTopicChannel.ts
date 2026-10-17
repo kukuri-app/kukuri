@@ -23,8 +23,8 @@ import {
   communityNodesToDraftNodes,
   joinedChannelFromAccessTokenPreview,
   messageFromError,
-  privateComposeTarget,
-  privateTimelineScope,
+  channelComposeTarget,
+  channelTimelineScope,
   profileInputFromProfile,
   seedPeersToEditorValue,
   syncCommunityNodeConfigWithStatus,
@@ -379,8 +379,8 @@ export function createProfileTopicChannelActions({
     syncRoute('replace', {
       activeTopic: topicId,
       primarySection: 'timeline',
-      timelineScope: privateTimelineScope(selectedChannelIdByTopic[topicId] ?? null),
-      composeTarget: privateComposeTarget(selectedChannelIdByTopic[topicId] ?? null),
+      timelineScope: channelTimelineScope(selectedChannelIdByTopic[topicId] ?? null),
+      composeTarget: channelComposeTarget(selectedChannelIdByTopic[topicId] ?? null),
       selectedAuthorPubkey: null,
       selectedThread: null,
     });

@@ -29,16 +29,15 @@ import { CLIPBOARD_COPY_EVENT, copyTextToClipboard } from '@/lib/utils';
 import {
   SHELL_WORKSPACE_ID,
   type DesktopShellPageProps,
-  PUBLIC_CHANNEL_REF,
-  PUBLIC_TIMELINE_SCOPE,
   useDesktopShellFieldSetter,
   useDesktopShellStore,
   useDesktopShellStoreApi,
 } from '@/shell/store';
 import {
   messageFromError,
-  privateComposeTarget,
-  privateTimelineScope,
+  channelComposeTarget,
+  channelTimelineScope,
+  scopeRouteOverrides,
 } from '@/shell/presentation';
 import { selectShellPageSlice } from '@/shell/storeSelectors';
 import { setRecordEntry } from '@/shell/stateUpdates';
@@ -63,6 +62,7 @@ import { DesktopShellColumnWorkspace } from '@/shell/page/DesktopShellColumnWork
 import { DesktopShellControlCenter } from '@/shell/page/DesktopShellControlCenter';
 import { DesktopShellPrimarySurface } from '@/shell/page/DesktopShellPrimaryWorkspace';
 import { LiveBroadcastSlot, LiveProviders } from '@/shell/page/LiveProviders';
+import { PublicThreadProviders } from '@/shell/page/PublicThreadProviders';
 import { DesktopShellSettingsDrawer } from '@/shell/page/DesktopShellSettingsDrawer';
 import { useFocusScroll } from '@/shell/page/useFocusScroll';
 import { useSharePreview } from '@/shell/page/useSharePreview';
@@ -77,11 +77,11 @@ import {
   setColumnTimelineView,
   toggleColumnTimelineFlow,
   setTimelineColumnTopic,
-  type ColumnKind,
   type ColumnState,
   type ColumnTimelineView,
 } from '@/shell/slices/workspace';
 import { routeStateForColumn } from '@/shell/routing/initialWorkspaceRoute';
+import { columnTitlesFor } from '@/shell/page/columnTitles';
 import { PostRecoveryProviders } from '@/components/core/PostRecoveryProviders';
 import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
@@ -315,8 +315,8 @@ export function DesktopShellPage({
       if (!trackedTopics.includes(topic)) {
         setTrackedTopics(nextTopics);
       }
-      setTimelineScopeByTopic(setRecordEntry(topic, privateTimelineScope(channelId)));
-      setComposeChannelByTopic(setRecordEntry(topic, privateComposeTarget(channelId)));
+      setTimelineScopeByTopic(setRecordEntry(topic, channelTimelineScope(channelId)));
+      setComposeChannelByTopic(setRecordEntry(topic, channelComposeTarget(channelId)));
       const scope = { topicId: topic, channelId };
       const columnId = columnIdentityId('timeline', scope);
       setWorkspaceState((current) =>
@@ -347,6 +347,11 @@ export function DesktopShellPage({
     translate,
   });
   const handleOpenSharePreview = sharePreview.openPreview;
+  // 公開スレッドの一覧(`channelId` が null)か詳細の列を開く。詳細は route の反映が一覧の列を親にする(#1840)。
+  const openPublicThread = useCallback((topic: string, channelId: string | null) => {
+    if (!trackedTopics.includes(topic)) setTrackedTopics([...trackedTopics, topic]);
+    syncRoute('push', scopeRouteOverrides(topic, channelId, channelId === null));
+  }, [setTrackedTopics, syncRoute, trackedTopics]);
   const handleActivateReference = useCallback(
     async (reference: InternalSmartReference) => {
       if (reference.kind === 'reaction_set') return handleImportCustomReactionSet(reference.setHash);
@@ -354,23 +359,12 @@ export function DesktopShellPage({
         await handleOpenSharePreview(reference.token);
         return;
       }
+      if (reference.kind === 'public_thread') return openPublicThread(reference.topic, reference.channelId);
       if (reference.kind === 'topic') {
         await syncTopicContext(reference.topic, null);
         setSelectedLiveSessionId(null);
         setSelectedGameRoomId(null);
-        syncRoute('push', {
-          activeTopic: reference.topic,
-          composeTarget: PUBLIC_CHANNEL_REF,
-          focusedObjectId: null,
-          primarySection: 'timeline',
-          selectedAuthorPubkey: null,
-          selectedDirectMessagePeerPubkey: null,
-          selectedGameRoomId: null,
-          selectedLiveSessionId: null,
-          selectedThread: null,
-          timelineScope: PUBLIC_TIMELINE_SCOPE,
-          timelineView: 'feed',
-        });
+        syncRoute('push', scopeRouteOverrides(reference.topic, null));
         return;
       }
       if (reference.kind === 'post') {
@@ -390,7 +384,7 @@ export function DesktopShellPage({
         setSelectedGameRoomId(null);
         syncRoute('push', {
           activeTopic: reference.topic,
-          composeTarget: privateComposeTarget(reference.channelId),
+          composeTarget: channelComposeTarget(reference.channelId),
           focusedObjectId: null,
           primarySection: 'timeline',
           selectedAuthorPubkey: null,
@@ -398,7 +392,7 @@ export function DesktopShellPage({
           selectedGameRoomId: null,
           selectedLiveSessionId: null,
           selectedThread: null,
-          timelineScope: privateTimelineScope(reference.channelId),
+          timelineScope: channelTimelineScope(reference.channelId),
         });
         return;
       }
@@ -419,7 +413,7 @@ export function DesktopShellPage({
         );
         syncRoute('push', {
           activeTopic: reference.topic,
-          composeTarget: privateComposeTarget(reference.channelId),
+          composeTarget: channelComposeTarget(reference.channelId),
           focusedObjectId: null,
           primarySection: 'live',
           selectedAuthorPubkey: null,
@@ -427,7 +421,7 @@ export function DesktopShellPage({
           selectedGameRoomId: null,
           selectedLiveSessionId: reference.sessionId,
           selectedThread: null,
-          timelineScope: privateTimelineScope(reference.channelId),
+          timelineScope: channelTimelineScope(reference.channelId),
         });
         return;
       }
@@ -447,7 +441,7 @@ export function DesktopShellPage({
       );
       syncRoute('push', {
         activeTopic: reference.topic,
-        composeTarget: privateComposeTarget(reference.channelId),
+        composeTarget: channelComposeTarget(reference.channelId),
         focusedObjectId: null,
         primarySection: 'game',
         selectedAuthorPubkey: null,
@@ -455,13 +449,14 @@ export function DesktopShellPage({
         selectedGameRoomId: reference.roomId,
         selectedLiveSessionId: null,
         selectedThread: null,
-        timelineScope: privateTimelineScope(reference.channelId),
+        timelineScope: channelTimelineScope(reference.channelId),
       });
     },
     [
       developerModeEnabled,
       handleImportCustomReactionSet,
       handleOpenSharePreview,
+      openPublicThread,
       openThread,
       setSelectedGameRoomId,
       setSelectedLiveSessionId,
@@ -751,8 +746,8 @@ export function DesktopShellPage({
     setWorkspaceState((current) =>
       activateColumn(setTimelineColumnTopic(current, column.id, topicId), column.id)
     );
-    setTimelineScopeByTopic(setRecordEntry(topicId, privateTimelineScope(null)));
-    setComposeChannelByTopic(setRecordEntry(topicId, privateComposeTarget(null)));
+    setTimelineScopeByTopic(setRecordEntry(topicId, channelTimelineScope(null)));
+    setComposeChannelByTopic(setRecordEntry(topicId, channelComposeTarget(null)));
     await activateWorkspaceColumn(nextColumn);
   };
   const refreshNotificationsColumn = useCallback(() => {
@@ -783,18 +778,7 @@ export function DesktopShellPage({
     },
     [api, refreshConversationColumn, setDirectMessageError, translate]
   );
-  const columnTitles: Record<ColumnKind, string> = {
-    timeline: t('shell:primarySections.timeline'),
-    notifications: t('shell:primarySections.notifications'),
-    thread: t('shell:context.thread'),
-    profile: t('shell:primarySections.profile'),
-    explore: t('shell:primarySections.explore'),
-    messages: t('shell:primarySections.messages'),
-    conversation: 'Conversation',
-    stream: t('shell:primarySections.live'),
-    game: t('shell:primarySections.game'),
-    metaverse: 'Metaverse',
-  };
+  const columnTitles = columnTitlesFor(t);
   const channelEntries = usePrivateChannelEntries({ dialogs, shellActions, activateWorkspaceColumn });
   const workspace = (
     <DesktopShellColumnWorkspace
@@ -880,6 +864,7 @@ export function DesktopShellPage({
         leave={shellActions.handleLeaveLiveSession} end={shellActions.handleEndLiveSession}
         publishLiveIntro={shellActions.publishLiveIntro} openThread={(id, options) => void openThread(id, options)}
         copyLink={handleCopyInternalLink} activateReference={(reference) => void handleActivateReference(reference)}>
+        <PublicThreadProviders api={api} open={openPublicThread} copyLink={handleCopyInternalLink}>
         <div className='shell-phase1' data-workspace-layout='column'>
           <a className='shell-skip-link' href={`#${SHELL_WORKSPACE_ID}`}>
             {t('shell:workspace.skipToWorkspace')}
@@ -989,6 +974,7 @@ export function DesktopShellPage({
           handleCreateCustomReactionAsset={shellActions.handleCreateCustomReactionAsset}
           handleRemoveBookmarkedCustomReaction={shellActions.handleRemoveBookmarkedCustomReaction}
         />
+        </PublicThreadProviders>
       </LiveProviders>
     </PostRecoveryProviders>
   );

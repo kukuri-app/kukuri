@@ -28,6 +28,13 @@ pub struct PublicChannelView {
     pub first_post_id: Option<String>,
     /// この端末が知っている最後の投稿の時刻(ミリ秒)。投稿を知らなければ作成時刻。
     pub last_post_at: i64,
+    /// 作成者の profile の名前(手元に profile が無ければ無い。一覧の行の表示。#1840 AC-3)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub creator_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub creator_display_name: Option<String>,
 }
 
 impl From<PublicChannelRow> for PublicChannelView {
@@ -40,6 +47,8 @@ impl From<PublicChannelRow> for PublicChannelView {
             created_at: row.created_at,
             first_post_id: row.first_post_id,
             last_post_at: row.last_post_at,
+            creator_name: None,
+            creator_display_name: None,
         }
     }
 }
@@ -160,7 +169,41 @@ impl AppService {
         {
             warn!(%error, "failed to announce a public channel");
         }
-        Ok(row.into())
+        Ok(self
+            .with_creator_names(topic_id, vec![row.into()])
+            .await?
+            .remove(0))
+    }
+
+    /// 作成者の名前を手元の profile から付ける。手元に無い profile は、タイムラインの投稿と同じく背景で読む
+    /// (読めたら次の取得で付く)。読むのは渡した行の作成者だけ。
+    pub(crate) async fn with_creator_names(
+        &self,
+        topic_id: &str,
+        mut views: Vec<PublicChannelView>,
+    ) -> Result<Vec<PublicChannelView>> {
+        let mut creators = views
+            .iter()
+            .map(|view| view.creator_pubkey.clone())
+            .collect::<Vec<_>>();
+        creators.sort();
+        creators.dedup();
+        let profiles = self.services.store.get_profiles(&creators).await?;
+        let local = self.current_author_pubkey();
+        self.request_missing_profiles(
+            creators
+                .into_iter()
+                .filter(|creator| !profiles.contains_key(creator) && *creator != local.as_str())
+                .map(|creator| (creator, Some(topic_id.to_owned()))),
+        )
+        .await;
+        for view in &mut views {
+            if let Some(profile) = profiles.get(&view.creator_pubkey) {
+                view.creator_name = profile.name.clone();
+                view.creator_display_name = profile.display_name.clone();
+            }
+        }
+        Ok(views)
     }
 
     /// 公開 channel を ID から 1 件読む。手元(保持した他人の record を含む)を先に読み、無ければ channel と topic の
@@ -190,7 +233,10 @@ impl AppService {
         {
             warn!(%error, "failed to read the first post of a public channel");
         }
-        Ok(Some(channel))
+        Ok(self
+            .with_creator_names(topic_id, vec![channel])
+            .await?
+            .pop())
     }
 
     /// metadata を ID から 1 件読み、一覧の行に置く(手元を先に、無ければ channel と topic の読み先から)。

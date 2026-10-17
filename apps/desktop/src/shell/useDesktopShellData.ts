@@ -61,7 +61,7 @@ import { useShallow } from 'zustand/react/shallow';
 import {
   mergeKnownAuthors,
   messageFromError,
-  privateTimelineScope,
+  channelTimelineScope,
 } from '@/shell/presentation';
 import { selectShellDataSlice } from '@/shell/storeSelectors';
 
@@ -129,7 +129,7 @@ export function useDesktopShellData({
   const activeTimeline = state.timelinesByKey[activeTimelineKey] ?? EMPTY_POSTS;
   const activeScope = activeWorkspaceScope(state.workspaceState);
   const activeGameRooms =
-    gameRoomsByScopeKey[timelineScopeStorageKey(activeScope.topicId, privateTimelineScope(activeScope.channelId))] ??
+    gameRoomsByScopeKey[timelineScopeStorageKey(activeScope.topicId, channelTimelineScope(activeScope.channelId))] ??
     EMPTY_GAME_ROOMS;
   const activeJoinedChannels = joinedChannelsByTopic[activeTopic] ?? EMPTY_JOINED_CHANNELS;
   const selectedPrivateChannelId = selectedChannelIdByTopic[activeTopic] ?? null;
@@ -459,7 +459,7 @@ export function useDesktopShellData({
     (
       topic: string,
       scope = storeApi.getState().timelineScopeByTopic[topic] ??
-        privateTimelineScope(
+        channelTimelineScope(
           activeWorkspaceScope(storeApi.getState().workspaceState).topicId === topic
             ? activeWorkspaceScope(storeApi.getState().workspaceState).channelId
             : null
@@ -525,7 +525,7 @@ export function useDesktopShellData({
             ? activeWorkspaceScope(requestState.workspaceState).channelId
             : null
           : scopeChannelId;
-      const timelineScope = privateTimelineScope(selectedChannelId);
+      const timelineScope = channelTimelineScope(selectedChannelId);
       const timelineKey = timelineScopeStorageKey(topic, timelineScope);
       const timelineHeadCursor = !(requestState.timelinesByKey[timelineKey]?.length)
         ? requestState.timelineWindowHeadCursorByKey[timelineKey] ?? null : null;
@@ -751,7 +751,7 @@ export function useDesktopShellData({
             ? activeWorkspaceScope(currentState.workspaceState).channelId
             : null
           : scopeChannelId;
-      const timelineScope = privateTimelineScope(selectedChannelId);
+      const timelineScope = channelTimelineScope(selectedChannelId);
       const timelineKey = timelineScopeStorageKey(topic, timelineScope);
       const cursor = currentState.timelineNextCursorByKey[timelineKey] ?? null;
       if (!cursor || currentState.timelineLoadingMoreByKey[timelineKey]) {
@@ -963,7 +963,7 @@ export function useDesktopShellData({
 
   const refreshTimelineFeed = useCallback(
     async (topic: string, currentThread: string | null, scopeChannelId?: string | null) => {
-      const timelineScope = privateTimelineScope(
+      const timelineScope = channelTimelineScope(
         scopeChannelId === undefined
           ? activeWorkspaceScope(storeApi.getState().workspaceState).topicId === topic
             ? activeWorkspaceScope(storeApi.getState().workspaceState).channelId

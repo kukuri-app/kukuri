@@ -11,6 +11,8 @@ type TopicNavListProps = {
   showAllScopes?: boolean;
   onSelectTopic: (topic: string) => void;
   onSelectChannel: (topic: string, channelId: string) => void;
+  // 「公開」の次の「公開スレッド」の行から、その topic の公開スレッドの一覧の列を開く(#1840 判断 9)。
+  onOpenPublicThreads?: (topic: string) => void;
   onOpenChannelSettings?: (topic: string, channelId: string) => void;
   // 参加済みチャンネルが無い topic に、作成・参加への導線を出す(Issue #966)。
   onOpenChannelManager?: (topic: string) => void;
@@ -27,6 +29,7 @@ export function TopicNavList({
   showAllScopes = false,
   onSelectTopic,
   onSelectChannel,
+  onOpenPublicThreads,
   onOpenChannelSettings,
   onOpenChannelManager,
   onLeaveChannel,
@@ -153,6 +156,12 @@ export function TopicNavList({
                   <span className='shell-topic-link-label'>{t('common:audience.public')}</span>
                   <small>{t('shell:navigation.publicScope')}</small>
                 </button>
+                {onOpenPublicThreads ? (
+                  <button className='topic-subitem' type='button' onClick={() => onOpenPublicThreads(item.topic)}>
+                    <span className='shell-topic-link-label'>{t('shell:publicThreads.title')}</span>
+                    <small>{t('shell:publicThreads.navHint')}</small>
+                  </button>
+                ) : null}
 
                 {hasChannels ? (
                   <>

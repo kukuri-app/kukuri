@@ -10,6 +10,7 @@ import {
   type PostView,
   type PrivateChannelInvitePreview,
   type Profile,
+  type PublicChannelView,
   type ReactionKeyInput,
   type ReactionStateView,
   type RecentReactionView,
@@ -42,6 +43,8 @@ export type DesktopMockApiOptions = {
   authorProfileTimelines?: Record<string, SeedPostInput[]>;
   seedLiveSessions?: Record<string, LiveSessionView[]>;
   seedGameRooms?: Record<string, SeedGameRoomInput[]>;
+  /** topic ごとの公開スレッド（#1840）。 */
+  seedPublicChannels?: Record<string, PublicChannelView[]>;
   notifications?: NotificationView[];
   myProfile?: Partial<Profile>;
   authorSocialViews?: Record<string, Partial<AuthorSocialView>>;
@@ -350,7 +353,7 @@ export function filterChannelScopedItems<T extends { channel_id?: string | null 
   items: T[],
   scope: TimelineScope
 ) {
-  if (scope.kind === 'channel') {
+  if (scope.kind === 'channel' || scope.kind === 'public_channel') {
     return items.filter((item) => item.channel_id === scope.channel_id);
   }
   return items.filter((item) => !item.channel_id);

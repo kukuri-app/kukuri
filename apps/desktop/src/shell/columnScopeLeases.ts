@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import type { DesktopApi, ScopeDisplayTarget } from '@/lib/api';
 import { normalizeInvokeError } from '@/lib/api/invoke/error';
+import { channelTimelineScope } from '@/shell/presentation';
 import type { ColumnState } from '@/shell/slices/workspace';
 
 // #1221 R2-C: 購読する scope は account 全体で 64 件まで。超えた操作は backend がこの code で拒否する。
@@ -46,6 +47,7 @@ export function columnScopeTarget(column: ColumnState): ScopeDisplayTarget | nul
   switch (column.kind) {
     case 'timeline':
     case 'thread':
+    case 'publicThreads':
     case 'stream':
     case 'game':
     case 'metaverse':
@@ -53,9 +55,7 @@ export function columnScopeTarget(column: ColumnState): ScopeDisplayTarget | nul
         ? {
             kind: 'timeline',
             topic: column.scope.topicId,
-            scope: column.scope.channelId
-              ? { kind: 'channel', channel_id: column.scope.channelId }
-              : { kind: 'public' },
+            scope: channelTimelineScope(column.scope.channelId),
           }
         : null;
     case 'profile':

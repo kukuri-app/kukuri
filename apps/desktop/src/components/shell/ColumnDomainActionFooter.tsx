@@ -1,7 +1,9 @@
-import { Gamepad2, LogIn, LogOut, Radio, Square } from 'lucide-react';
+import { Gamepad2, LogIn, LogOut, Radio, Square, SquarePen } from 'lucide-react';
+import { useContext } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
+import { PublicThreadActionsContext } from '@/shell/page/publicThreadActions';
 import { timelineStorageKeyForChannel, useDesktopShellStore } from '@/shell/store';
 import type { ColumnState } from '@/shell/slices/workspace';
 
@@ -26,7 +28,8 @@ export function ColumnDomainActionFooter({
   onOpenGameCreate,
   onOpenLiveCreate,
 }: ColumnDomainActionFooterProps) {
-  const { t } = useTranslation(['common', 'live', 'game']);
+  const { t } = useTranslation(['common', 'live', 'game', 'shell']);
+  const publicThreads = useContext(PublicThreadActionsContext);
   const liveSessionsByScopeKey = useDesktopShellStore((state) => state.liveSessionsByScopeKey);
   const localAuthorPubkey = useDesktopShellStore(
     (state) => state.syncStatus.local_author_pubkey
@@ -84,6 +87,11 @@ export function ColumnDomainActionFooter({
 
   if (column.kind === 'game' && !column.entityId) {
     return button(t('game:actions.createRoom'), Gamepad2, onOpenGameCreate);
+  }
+  // 公開スレッドの一覧の列(#1840)。作った後は詳細の列を開く。
+  if (column.kind === 'publicThreads' && publicThreads) {
+    const topic = column.scope.topicId;
+    return button(t('shell:publicThreads.create.action'), SquarePen, () => publicThreads.create(topic));
   }
   return null;
 }

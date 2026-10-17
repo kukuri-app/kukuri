@@ -30,6 +30,7 @@ kukuriの通常画面は、コンテンツを継続して閲覧・作成・操�
 |---|---|---|
 | Timeline／Bookmarks | 選択scopeの投稿または保存済み投稿を読む | 閲覧、投稿、返信、保存、scope切替 |
 | Thread | 1つの会話文脈を追う | 返信、親投稿へ戻る、投稿者を開く |
+| 公開スレッド一覧／公開スレッド | topicの中のタイトル付きの公開の会話を見つけ、続けて読み書きする | 並び順の切替、作成、詳細を開く、投稿・返信、リンクのコピー |
 | Profile | 1人の公開情報と投稿を理解する | 関係操作、投稿閲覧、自分の編集へ進む |
 | Notifications | 自分に関係する変化を処理する | 対象文脈を開く、既読状態を理解する |
 | Messages／Conversation | 相手を選び、privateな会話を継続する | 会話選択、送信、再試行 |
@@ -206,6 +207,7 @@ Nodeの規約Dialogでは、文書を見出しだけの折りたたみ一覧と�
 | 双方向のフォロー | Mutual follow | 相互フォロー | 互相关注 | friendshipを保証しないためFriends／友だちとは呼ばない |
 | 投稿操作 | Post | 投稿 | 发布 | 投稿ボタンをPublishと呼ばず、表示・pending・成功・失敗で同じ操作名を使う |
 | 引用付き再投稿 | Add a comment | コメントを追加 | 添加评论 | 内部object kindや既存のリポスト機能名は変更しない |
+| topicの中のタイトル付きの公開の会話 | Public thread／Public threads | 公開スレッド／公開スレッド一覧 | 公开帖子／公开帖子列表 | 返信ツリーのThread／スレッド／线程とは別の語にする（ADR 0068 §7） |
 
 `P2P`、`DM`、`VRM`、URL、ID、公開鍵、プロトコル形式、製品固有名`Dome`は必要な画面で表示できる。完全な識別子、raw code、通信内部状態、英語の実装用語はDeveloper modeまたは診断面へ限定し、通常説明では利用者が行う操作と影響へ言い換える。例外はlocale key単位で有限に管理し、名前空間全体や一般英単語を許可しない。
 
@@ -237,7 +239,7 @@ WCAG 2.2 AAを基準とする。対象操作・platformと適用される条件�
 | Large Desktop（1100px以上） | 複数Columnとwide surfaceを表示 | 情報を無制限に横へ広げず、Column単位の読解幅を保つ |
 
 - desktop Column unitは`--column-unit`、gapは`--column-gap`を使い、複数spanの式は`width = span * columnUnit + (span - 1) * gap`とする。
-- Timeline、Notifications、Profile、Threadは1 span、Messages／Conversationは1〜2、Streamは2、Metaverseは3、focused Metaverseは最大4を基準とする。
+- Timeline、Notifications、Profile、Thread、公開スレッド一覧は1 span、Messages／Conversationは1〜2、Streamは2、Metaverseは3、focused Metaverseは最大4を基準とする。
 - internal layoutはColumn自身の実幅に応答し、viewportだけに依存しない。Column Canvasの意図的な横scrollは維持し、document-levelの横scrollを発生させない。
 - Metaverseのフォーム・管理groupは最大40rem、roomカードは最大24remとし、短い操作を3列全幅へ伸ばさない。実幅32rem以下では作成フォーム・接続slotを縦積みにする。HUDとchatは同じDOM・draft・開閉状態を保持し、実幅50rem以下ではbadge、toolbar、camera、回復案内、HUD、chatを縦に分ける。HUD内部は縦scrollを許容し、chatの送信・閉じるを本文scrollから分離する。
 - 表示中の選択Columnのspan変更では、header操作部へ到達できる最小のCanvas水平補正を行う。手動で選択Columnから離れた場合は引き戻さない。補正だけでfocus、本文縦scroll、入室・network session、Dome設定を変更しない。

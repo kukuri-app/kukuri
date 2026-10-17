@@ -31,7 +31,8 @@ export const PUBLIC_CHANNEL_REF: ChannelRef = { kind: 'public' };
 export const PUBLIC_TIMELINE_SCOPE: TimelineScope = { kind: 'public' };
 
 export function timelineScopeStorageKey(topic: string, scope: TimelineScope): string {
-  if (scope.kind === 'channel') {
+  // 公開スレッド（#1840）と private channel の ID は重ならないので、どちらも channel の ID で分ける。
+  if (scope.kind === 'channel' || scope.kind === 'public_channel') {
     return `${topic}::channel::${scope.channel_id}`;
   }
   return `${topic}::${scope.kind}`;

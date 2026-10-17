@@ -72,7 +72,9 @@ impl AppService {
             .visible_public_channels(topic_id, order, cursor, limit, &hidden)
             .await?;
         Ok(PublicChannelListView {
-            items: page.items.into_iter().map(Into::into).collect(),
+            items: self
+                .with_creator_names(topic_id, page.items.into_iter().map(Into::into).collect())
+                .await?,
             next_cursor: page.next_cursor,
             unavailable_count: u32::try_from(unavailable).unwrap_or(u32::MAX),
         })

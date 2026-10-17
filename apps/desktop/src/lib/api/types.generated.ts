@@ -128,7 +128,11 @@ first_post_id?: string,
 /**
  * この端末が知っている最後の投稿の時刻(ミリ秒)。投稿を知らなければ作成時刻。
  */
-last_post_at: number, };
+last_post_at: number, 
+/**
+ * 作成者の profile の名前(手元に profile が無ければ無い。一覧の行の表示。#1840 AC-3)。
+ */
+creator_name?: string, creator_display_name?: string, };
 
 export type PublicChannelListView = { items: Array<PublicChannelView>, next_cursor?: PublicChannelCursor | null, 
 /**

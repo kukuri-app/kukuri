@@ -20,7 +20,12 @@ import {
   useDesktopShellStoreApi,
 } from '@/shell/store';
 import { setRecordEntry } from '@/shell/stateUpdates';
-import { privateTimelineScope, publishedTopicIdForPost } from '@/shell/presentation';
+import {
+  channelComposeTarget,
+  channelIdOfRef,
+  channelTimelineScope,
+  publishedTopicIdForPost,
+} from '@/shell/presentation';
 import { selectShellActionsSlice } from '@/shell/storeSelectors';
 import {
   columnDraftKey,
@@ -748,9 +753,7 @@ export function useDesktopShellActions({
             topic: target.scope.topicId,
             content: trimmedContent,
             reply_to: replyObjectId,
-            channel_ref: target.scope.channelId
-              ? { kind: 'private_channel', channel_id: target.scope.channelId }
-              : PUBLIC_CHANNEL_REF,
+            channel_ref: channelComposeTarget(target.scope.channelId),
             attachments,
             content_labels: draft.adultLabeled ? ['adult'] : [],
           },
@@ -811,7 +814,7 @@ export function useDesktopShellActions({
     );
     setActiveTopic(topicId);
     setSelectedChannelIdByTopic(setRecordEntry(topicId, scope.channelId));
-    setTimelineScopeByTopic(setRecordEntry(topicId, privateTimelineScope(scope.channelId)));
+    setTimelineScopeByTopic(setRecordEntry(topicId, channelTimelineScope(scope.channelId)));
     // 返信元投稿の channel を route / selection にも載せ、Thread Column の scope を global 選択に依存させない。
     void openThread(threadId, { topic: topicId, channelId: scope.channelId });
   }
@@ -842,7 +845,7 @@ export function useDesktopShellActions({
       activeTopic: topicId,
       primarySection: 'timeline',
       selectedThread: null,
-      timelineScope: privateTimelineScope(null),
+      timelineScope: channelTimelineScope(null),
       timelineView: 'feed',
     });
   }
@@ -852,12 +855,7 @@ export function useDesktopShellActions({
     if (!localDraft) return;
     const mediaItems = cloneDraftMediaItems(post.local_draft_media_items ?? []) as DraftMediaItem[];
     mediaItems.forEach((item) => rememberDraftPreview(item));
-    const channelId =
-      localDraft.kind === 'repost'
-        ? null
-        : localDraft.channel_ref?.kind === 'private_channel'
-          ? localDraft.channel_ref.channel_id
-          : null;
+    const channelId = localDraft.kind === 'repost' ? null : channelIdOfRef(localDraft.channel_ref);
     const scope = { topicId: localDraft.topic, channelId };
     const threadId = localDraft.reply_to ? post.root_id ?? localDraft.reply_to : undefined;
     const kind = threadId ? 'thread' : 'timeline';
@@ -901,7 +899,7 @@ export function useDesktopShellActions({
         activeTopic: scope.topicId,
         primarySection: 'timeline',
         selectedThread: null,
-        timelineScope: privateTimelineScope(scope.channelId),
+        timelineScope: channelTimelineScope(scope.channelId),
         timelineView: 'feed',
       });
     }

@@ -22,11 +22,8 @@ import { PostAdvisoryDetailsDialog, PostGatedContent } from './PostAdvisoryNotic
 import { usePostAdvisoryDetails } from './usePostAdvisoryDetails';
 import { useReportManifests } from './useReportManifests';
 import { copyTextToClipboard } from '@/lib/utils';
-import {
-  buildPostLink,
-  buildTopicLink,
-  type InternalSmartReference,
-} from '@/lib/internalLinks';
+import { buildPostLink, buildTopicLink, type InternalSmartReference } from '@/lib/internalLinks';
+import { isPublicChannelId } from '@/lib/publicChannels';
 
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
@@ -45,6 +42,7 @@ import { MediaViewerDialog } from './MediaViewerDialog';
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { PostMedia } from './PostMedia';
 import { PostLiveOutlet } from './postLiveSlot';
+import { PublicThreadLinkOutlet } from './publicThreadSlot';
 import { MediaFetchFailure } from './MediaFetchFailure';
 import { usePostReload } from './usePostReload';
 import { PostReactionChip } from './PostReactionChip';
@@ -234,9 +232,9 @@ export function PostCard({
           : null;
   const primaryContent = showRepostAsPrimary && repostSource ? repostSource.content : post.content;
   const hasPrimaryContent = !isUnavailableText && primaryContent.trim().length > 0;
+  // 外部のリンクの preview は公開の投稿だけ(公開スレッドを含む。#1840)。公開スレッドのリンクの card は投稿の場所を問わない。
   const linkPreviewEligible =
     enableLinkPreview &&
-    post.channel_id == null &&
     !view.adultContentGated &&
     !isWithdrawn &&
     !isUnavailableText &&
@@ -541,9 +539,10 @@ export function PostCard({
         <LinkPreviewCard
           content={primaryContent}
           objectId={showRepostAsPrimary && repostSource ? repostSource.source_object_id : post.object_id}
-          enabled={linkPreviewEligible}
+          enabled={linkPreviewEligible && (post.channel_id == null || isPublicChannelId(post.channel_id))}
           fetcher={linkPreviewFetcher}
         />
+        {linkPreviewEligible ? <PublicThreadLinkOutlet content={primaryContent} /> : null}
       </div>
       {readOnly && publishedTopicId ? (
         <div className='topic-diagnostic topic-diagnostic-secondary'>

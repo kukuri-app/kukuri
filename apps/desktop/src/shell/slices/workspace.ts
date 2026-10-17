@@ -1,5 +1,6 @@
 import { STARTER_TOPICS } from '@/shell/slices/shared';
 import type { PrimarySection } from '@/components/shell/types';
+import type { PublicChannelOrder } from '@/lib/api';
 
 export type ColumnSpan = 1 | 2 | 3 | 4;
 
@@ -13,7 +14,9 @@ export type ColumnKind =
   | 'conversation'
   | 'stream'
   | 'game'
-  | 'metaverse';
+  | 'metaverse'
+  // topic の公開スレッドの一覧(#1840)。詳細は、この列を親にした timeline の列(scope は公開スレッド)。
+  | 'publicThreads';
 
 export type ColumnScope = {
   topicId: string;
@@ -40,6 +43,8 @@ export type ColumnState = {
   timelineFlow?: boolean;
   // kind === 'timeline' の Column のみ意味を持つ。未設定はフィルターなし(#1689)。
   timelineFilter?: ColumnTimelineFilter;
+  // kind === 'publicThreads' の Column のみ意味を持つ。未設定は最後の投稿の新しい順(#1840 判断 2)。
+  publicThreadOrder?: PublicChannelOrder;
 };
 
 export type ColumnStateInput = Omit<ColumnState, 'preferredDesktopSpan'> & {
@@ -78,6 +83,7 @@ const COLUMN_SPAN_POLICIES: Record<ColumnKind, ColumnSpanPolicy> = {
   stream: { default: 2, min: 1, max: 2 },
   game: FIXED_COLUMN_SPAN_POLICY,
   metaverse: { default: 3, min: 1, max: 4 },
+  publicThreads: FIXED_COLUMN_SPAN_POLICY,
 };
 
 export function columnSpanPolicy(kind: ColumnKind): ColumnSpanPolicy {
@@ -426,6 +432,21 @@ export function setColumnTimelineFilter(
     }
     changed = true;
     return { ...column, timelineFilter: filter };
+  });
+  return changed ? { ...state, columns } : state;
+}
+
+export function setColumnPublicThreadOrder(
+  state: WorkspaceState,
+  columnId: string,
+  order: PublicChannelOrder
+): WorkspaceState {
+  let changed = false;
+  const columns = state.columns.map((column) => {
+    if (column.id !== columnId || column.kind !== 'publicThreads') return column;
+    if ((column.publicThreadOrder ?? 'last_post') === order) return column;
+    changed = true;
+    return { ...column, publicThreadOrder: order };
   });
   return changed ? { ...state, columns } : state;
 }

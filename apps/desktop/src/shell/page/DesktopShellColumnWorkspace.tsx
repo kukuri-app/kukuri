@@ -32,6 +32,7 @@ import {
   eligibleCommunityIndexNodes,
   resolveCommunityIndexNodePreference,
 } from '@/lib/api/communityIndex';
+import { isPublicChannelId } from '@/lib/publicChannels';
 import { topicDisplayName } from '@/lib/topicId';
 import {
   authorDisplayLabel,
@@ -53,6 +54,11 @@ import {
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
 import { ColumnRuntimeProvider } from '@/shell/ColumnRuntimeContext';
 import { useThreadFocusScroll } from '@/shell/page/useThreadFocusScroll';
+import {
+  PublicThreadList,
+  PublicThreadOrderMenu,
+  PublicThreadScopeActions,
+} from '@/shell/page/PublicThreadList';
 import {
   projectColumnRuntime,
   releaseColumnAudioFocus,
@@ -160,6 +166,7 @@ export function DesktopShellColumnWorkspace({
   const profileSaving = useDesktopShellStore((state) => state.profileSaving);
   const notificationStatus = useDesktopShellStore((state) => state.notificationStatus);
   const knownAuthorsByPubkey = useDesktopShellStore((state) => state.knownAuthorsByPubkey);
+  const publicThreadsById = useDesktopShellStore((state) => state.publicThreadsById);
   const mediaObjectUrls = useDesktopShellStore((state) => state.mediaObjectUrls);
   const communityNodeConfig = useDesktopShellStore((state) => state.communityNodeConfig);
   const communityNodeStatuses = useDesktopShellStore((state) => state.communityNodeStatuses);
@@ -322,6 +329,9 @@ export function DesktopShellColumnWorkspace({
       );
     }
     const channelId = scope.channelId;
+    if (isPublicChannelId(channelId)) {
+      return <PublicThreadScopeActions topic={scope.topicId} channelId={channelId} />;
+    }
     const channelLabel =
       joinedChannelsByTopic[scope.topicId]?.find(
         (candidate) => candidate.channel_id === channelId
@@ -365,18 +375,30 @@ export function DesktopShellColumnWorkspace({
     if (column.kind === 'conversation') return renderConversationSurface(column);
     if (column.kind === 'messages') return renderMessagesSurface(column);
     if (column.kind === 'notifications') return renderNotificationsSurface(column);
+    // 並びを変えたら、読み込んだ行と続きの位置を捨てて作り直す。
+    if (column.kind === 'publicThreads') {
+      return <PublicThreadList key={column.publicThreadOrder ?? 'last_post'} column={column} />;
+    }
     return renderPrimarySurface(column);
   };
   const scopeDestinationLabel = (column: ColumnState) => {
     if (!column.scope) return scopeLabel;
     const topicLabel = column.scope.topicId.split(':').filter(Boolean).at(-1) ?? column.scope.topicId;
-    const channel = column.scope.channelId
-      ? joinedChannelsByTopic[column.scope.topicId]?.find(
-          (candidate) => candidate.channel_id === column.scope?.channelId
-        )?.label ?? column.scope.channelId
-      : localizeAudienceLabel('Public');
+    const channelId = column.scope.channelId;
+    const channel = isPublicChannelId(channelId)
+      ? publicThreadsById[channelId]?.title ?? t('publicThreads.title')
+      : channelId
+        ? joinedChannelsByTopic[column.scope.topicId]?.find(
+            (candidate) => candidate.channel_id === channelId
+          )?.label ?? channelId
+        : localizeAudienceLabel('Public');
     return `${channel} · ${topicLabel}`;
   };
+  // 公開スレッドの詳細は timeline の列で、見出しを「公開スレッド」にする(#1840)。
+  const columnTitle = (column: ColumnState) =>
+    column.kind === 'timeline' && isPublicChannelId(column.scope?.channelId)
+      ? t('publicThreads.title')
+      : titles[column.kind];
   function conversationLabel(peerPubkey: string) {
     const conversation = directMessages.find((item) => item.peer_pubkey === peerPubkey);
     const author = knownAuthorsByPubkey[peerPubkey];
@@ -395,6 +417,7 @@ export function DesktopShellColumnWorkspace({
       return authorDisplayLabel(column.entityId, author?.display_name, author?.name);
     }
     if (column.kind === 'thread') return `${titles.thread} · ${scopeDestinationLabel(column)}`;
+    if (column.kind === 'publicThreads' && column.scope) return topicDisplayName(column.scope.topicId);
     if (column.entityId) return titles[column.kind];
     return scopeDestinationLabel(column);
   };
@@ -442,7 +465,12 @@ export function DesktopShellColumnWorkspace({
         />
       );
     }
-    if (column.kind === 'stream' || column.kind === 'game' || column.kind === 'metaverse') {
+    if (
+      column.kind === 'stream' ||
+      column.kind === 'game' ||
+      column.kind === 'metaverse' ||
+      column.kind === 'publicThreads'
+    ) {
       return (
         <ColumnDomainActionFooter
           active={active}
@@ -466,6 +494,7 @@ export function DesktopShellColumnWorkspace({
         </div>
       );
     }
+    if (column.kind === 'publicThreads') return <PublicThreadOrderMenu column={column} />;
     if (column.kind === 'timeline') {
       return (
         <TimelineViewIconTabs
@@ -573,7 +602,7 @@ export function DesktopShellColumnWorkspace({
           >
             <ColumnSurface
               columnId={column.id}
-              title={titles[column.kind]}
+              title={columnTitle(column)}
               scopeLabel={columnScopeLabel(column)}
               position={index + 1}
               total={workspaceState.columns.length}

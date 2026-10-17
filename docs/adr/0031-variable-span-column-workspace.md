@@ -193,7 +193,9 @@ type ColumnScope = {
 type ColumnState = {
   id: string;
   kind: 'timeline' | 'notifications' | 'thread' | 'profile' | 'explore'
-    | 'messages' | 'conversation' | 'stream' | 'game' | 'metaverse';
+    | 'messages' | 'conversation' | 'stream' | 'game' | 'metaverse'
+    // topic の公開スレッドの一覧（ADR 0068 §7）。詳細は scope の channel が公開スレッドの timeline。
+    | 'publicThreads';
   scope?: ColumnScope;
   entityId?: string;
   parentColumnId?: string;

@@ -141,6 +141,8 @@ export type ContentAdvisoryView = {
 // private channel の名前が分からなければ channelLabel は null(#1345)。
 export type PostAudienceView =
   | { kind: 'public' }
+  // #1840: 公開スレッドの投稿。タイトルは表示のときに覚えたスレッドから引く。
+  | { kind: 'public_thread'; channelId: string }
   | { kind: 'private'; channelLabel: string | null };
 
 export type PostCardView = {

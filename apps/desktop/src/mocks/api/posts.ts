@@ -57,7 +57,15 @@ export function createPostsMock(runtime: MockRuntime): PostsMock {
       runtime.sequence += 1;
       const objectId = `${topic}-${runtime.sequence}`;
       const posts = postsByTopic[topic] ?? [];
-      const channelId = channelRef.kind === 'private_channel' ? channelRef.channel_id : null;
+      const channelId = channelRef.kind === 'public' ? null : channelRef.channel_id;
+      // 公開スレッド(#1840)の投稿は、そのスレッドの最後の投稿の時刻を進める。
+      if (channelRef.kind === 'public_channel') {
+        for (const channel of runtime.publicChannelsByTopic[topic] ?? []) {
+          if (channel.channel_id === channelRef.channel_id) {
+            channel.last_post_at = Math.max(channel.last_post_at, Date.now());
+          }
+        }
+      }
       const rootId = replyTo
         ? posts.find((post) => post.object_id === replyTo)?.root_id ?? replyTo
         : objectId;
@@ -87,7 +95,12 @@ export function createPostsMock(runtime: MockRuntime): PostsMock {
           root_id: rootId,
           origin_topic_id: topic,
           channel_id: channelId,
-          audience_label: channelId ? 'Private channel' : 'Public',
+          audience_label:
+            channelRef.kind === 'public_channel'
+              ? 'Public thread'
+              : channelId
+                ? 'Private channel'
+                : 'Public',
           live,
         }),
         ...posts,

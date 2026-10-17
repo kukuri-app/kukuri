@@ -35,6 +35,7 @@ import type {
 } from '@/lib/api';
 import type { SupportedLocale } from '@/i18n';
 import { type InternalSmartReference } from '@/lib/internalLinks';
+import { isPublicChannelId } from '@/lib/publicChannels';
 import { copyTextToClipboard } from '@/lib/utils';
 import { consentPendingCommunityNodes, eligibleCommunityIndexNodes } from '@/lib/api/communityIndex';
 import { communityIndexAvailability, type CommunityNodeAvailability } from '@/lib/api/communityNodeAvailability';
@@ -49,7 +50,7 @@ import {
 import {
   authorDisplayLabel,
   createGameEditorDraft,
-  privateTimelineScope,
+  channelTimelineScope,
   resolveProfilePictureSrc,
 } from '@/shell/presentation';
 import { useDesktopShellViewModels } from '@/shell/useDesktopShellViewModels';
@@ -367,7 +368,7 @@ export function DesktopShellPrimarySurface({
   const copyReportContact = (value: string) => void copyTextToClipboard(value);
   const surfaceTopic = column.scope?.topicId ?? '';
   const surfaceChannelId = column.scope?.channelId ?? null;
-  const surfaceTimelineScope = privateTimelineScope(surfaceChannelId);
+  const surfaceTimelineScope = channelTimelineScope(surfaceChannelId);
   // Thread は「この surface(Column)の scope」で開く。非 active Column の投稿本文クリックは
   // Column の activate(route 同期)を伴わないため、global の選択 channel に依存すると別 channel の
   // scope で Thread が開き返信先がずれる。topic が異なる場合は public として開く。
@@ -518,7 +519,13 @@ export function DesktopShellPrimarySurface({
               {activeTimelineView === 'feed' ? (
                 <TimelineFeed
                   posts={surfaceTimelinePostViews}
-                  emptyCopy={t(timelineFilter ? 'shell:workspace.noFilteredPosts' : 'shell:workspace.noPosts')}
+                  emptyCopy={t(
+                    timelineFilter
+                      ? 'shell:workspace.noFilteredPosts'
+                      : isPublicChannelId(surfaceChannelId)
+                        ? 'shell:publicThreads.detailEmpty'
+                        : 'shell:workspace.noPosts'
+                  )}
                   onOpenAuthor={(authorPubkey) => void openAuthorDetail(authorPubkey)}
                   onOpenThread={openThreadInSurfaceScope}
                   onOpenThreadInTopic={openThreadInTopicFromSurface}

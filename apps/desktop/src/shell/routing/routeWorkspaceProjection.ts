@@ -1,4 +1,5 @@
 import type { PrimarySection } from '@/components/shell/types';
+import { isPublicChannelId } from '@/lib/publicChannels';
 import {
   activateColumn,
   columnIdentityId,
@@ -22,7 +23,20 @@ type RouteWorkspaceProjection = {
   selectedGameRoomId: string | null;
   selectedLiveSessionId: string | null;
   selectedThread: string | null;
+  // topic の公開スレッドの一覧の列(#1840)。
+  publicThreadList?: boolean;
 };
+
+/// topic の公開スレッドの一覧の列を開く(既にあればそのまま)。
+function ensurePublicThreadList(
+  state: WorkspaceState,
+  topicId: string
+): { state: WorkspaceState; id: string } {
+  const scope = { topicId, channelId: null };
+  const id = columnIdentityId('publicThreads', scope);
+  if (state.columns.some((column) => column.id === id)) return { state, id };
+  return { state: openTransientColumn(state, { id, kind: 'publicThreads', scope, pinned: false }), id };
+}
 
 export function workspaceForRoute(
   incoming: WorkspaceState,
@@ -39,17 +53,27 @@ export function workspaceForRoute(
     selectedGameRoomId,
     selectedLiveSessionId,
     selectedThread,
+    publicThreadList,
   } = projection;
+  if (publicThreadList) {
+    const listed = ensurePublicThreadList(incoming, routeScope.topicId);
+    return activateColumn(listed.state, listed.id);
+  }
   const timelineId = timelineColumnIdForScope(incoming, routeScope);
   const ensureTimelineColumn = (current: WorkspaceState) => {
     const withView = setColumnTimelineView(current, timelineId, nextTimelineView);
     if (withView.columns.some((column) => column.id === timelineId)) return withView;
-    return openTransientColumn(withView, {
+    // 公開スレッドの詳細は、その topic の一覧の列を親にする(直接リンクで開いても一覧へ戻れる。#1840)。
+    const listed = isPublicChannelId(routeScope.channelId)
+      ? ensurePublicThreadList(withView, routeScope.topicId)
+      : null;
+    return openTransientColumn(listed?.state ?? withView, {
       id: timelineId,
       kind: 'timeline',
       scope: routeScope,
       pinned: false,
       timelineView: nextTimelineView,
+      ...(listed ? { parentColumnId: listed.id } : {}),
     });
   };
 
