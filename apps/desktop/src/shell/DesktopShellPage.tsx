@@ -75,8 +75,10 @@ import {
   columnIdentityId,
   openTransientColumn,
   setColumnTimelineView,
+  timelineColumnIdForScope,
   toggleColumnTimelineFlow,
   setTimelineColumnTopic,
+  type ColumnScope,
   type ColumnState,
   type ColumnTimelineView,
 } from '@/shell/slices/workspace';
@@ -352,6 +354,40 @@ export function DesktopShellPage({
     if (!trackedTopics.includes(topic)) setTrackedTopics([...trackedTopics, topic]);
     syncRoute('push', scopeRouteOverrides(topic, channelId, channelId === null));
   }, [setTrackedTopics, syncRoute, trackedTopics]);
+  // 「ライブ」の列を開く(sessionId があればその Live を示す)。親は今の列で、`parentScope` があればその scope の timeline の列
+  // (公開スレッドの「ライブ」の列は詳細の列を親にする。#1840 AC-4)。開始の投稿先は route の channel になる。
+  const openLiveColumn = useCallback((topic: string, channelId: string | null, sessionId: string | null, parentScope?: ColumnScope) => {
+    const scope = { topicId: topic, channelId };
+    setSelectedLiveSessionId(sessionId);
+    setSelectedGameRoomId(null);
+    setWorkspaceState((current) =>
+      openTransientColumn(current, {
+        id: columnIdentityId('stream', scope, sessionId ?? undefined),
+        kind: 'stream',
+        scope,
+        entityId: sessionId ?? undefined,
+        parentColumnId: parentScope ? timelineColumnIdForScope(current, parentScope) : current.activeColumnId,
+        pinned: false,
+      })
+    );
+    syncRoute('push', {
+      activeTopic: topic,
+      composeTarget: channelComposeTarget(channelId),
+      focusedObjectId: null,
+      primarySection: 'live',
+      selectedAuthorPubkey: null,
+      selectedDirectMessagePeerPubkey: null,
+      selectedGameRoomId: null,
+      selectedLiveSessionId: sessionId,
+      selectedThread: null,
+      timelineScope: channelTimelineScope(channelId),
+    });
+  }, [setSelectedGameRoomId, setSelectedLiveSessionId, setWorkspaceState, syncRoute]);
+  const openThreadLive = useCallback(
+    (topic: string, channelId: string, sessionId: string | null) =>
+      openLiveColumn(topic, channelId, sessionId, { topicId: topic, channelId }),
+    [openLiveColumn]
+  );
   const handleActivateReference = useCallback(
     async (reference: InternalSmartReference) => {
       if (reference.kind === 'reaction_set') return handleImportCustomReactionSet(reference.setHash);
@@ -398,31 +434,7 @@ export function DesktopShellPage({
       }
       if (reference.kind === 'live') {
         await syncTopicContext(reference.topic, reference.channelId);
-        setSelectedLiveSessionId(reference.sessionId);
-        setSelectedGameRoomId(null);
-        const scope = { topicId: reference.topic, channelId: reference.channelId };
-        setWorkspaceState((current) =>
-          openTransientColumn(current, {
-            id: columnIdentityId('stream', scope, reference.sessionId),
-            kind: 'stream',
-            scope,
-            entityId: reference.sessionId,
-            parentColumnId: current.activeColumnId,
-            pinned: false,
-          })
-        );
-        syncRoute('push', {
-          activeTopic: reference.topic,
-          composeTarget: channelComposeTarget(reference.channelId),
-          focusedObjectId: null,
-          primarySection: 'live',
-          selectedAuthorPubkey: null,
-          selectedDirectMessagePeerPubkey: null,
-          selectedGameRoomId: null,
-          selectedLiveSessionId: reference.sessionId,
-          selectedThread: null,
-          timelineScope: channelTimelineScope(reference.channelId),
-        });
+        openLiveColumn(reference.topic, reference.channelId, reference.sessionId);
         return;
       }
       await syncTopicContext(reference.topic, reference.channelId);
@@ -456,6 +468,7 @@ export function DesktopShellPage({
       developerModeEnabled,
       handleImportCustomReactionSet,
       handleOpenSharePreview,
+      openLiveColumn,
       openPublicThread,
       openThread,
       setSelectedGameRoomId,
@@ -864,7 +877,7 @@ export function DesktopShellPage({
         leave={shellActions.handleLeaveLiveSession} end={shellActions.handleEndLiveSession}
         publishLiveIntro={shellActions.publishLiveIntro} openThread={(id, options) => void openThread(id, options)}
         copyLink={handleCopyInternalLink} activateReference={(reference) => void handleActivateReference(reference)}>
-        <PublicThreadProviders api={api} open={openPublicThread} copyLink={handleCopyInternalLink}>
+        <PublicThreadProviders api={api} open={openPublicThread} openLive={openThreadLive} copyLink={handleCopyInternalLink}>
         <div className='shell-phase1' data-workspace-layout='column'>
           <a className='shell-skip-link' href={`#${SHELL_WORKSPACE_ID}`}>
             {t('shell:workspace.skipToWorkspace')}

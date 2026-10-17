@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（2026-10-17、#1840）。#1840 の AC-1 で識別・署名・置き場所・投稿の経路を、AC-2 で topic ごとの一覧（§6）を、AC-3 で画面（§7）を実装した。配信中の Live（AC-4）は、同じ Issue の後続の PR でこの ADR に追記する。
+Accepted（2026-10-17、#1840）。#1840 の AC-1 で識別・署名・置き場所・投稿の経路を、AC-2 で topic ごとの一覧（§6）を、AC-3 で画面（§7）を、AC-4 で配信中の Live（§8）を実装した。
 
 ## Context
 
@@ -63,7 +63,7 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 - 公開 channel への返信は親の channel に置く。リアクション・取り下げ・bookmark は対象の channel と同じ種類を求める。
 - 公開 channel の投稿は repost できない（既存の channel の投稿と同じ。同日のユーザー判断）。
 - ID からの取得（`get_public_channel`）は、一覧と同じく非表示の作者の channel を返さない（#1840 AC-3）。
-- Live・ゲーム・metaverse（Dome）は公開 channel を受け付けない。Live は #1840 AC-4 で扱う。
+- ゲーム・metaverse（Dome）は公開 channel を受け付けない。Live は §8。
 
 ### 6. 一覧（#1840 AC-2）
 
@@ -99,6 +99,20 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 - 読んだスレッドは、列の見出し・本文の chip・公開範囲の tooltip のために 256 件まで覚える（内容が変わったものを新しい側へ回し、超えたら古いものから外す）。端末には保存しない。
 - 呼び名は「公開スレッド」「公開スレッド一覧」、英語は "Public thread"・"Public threads"、簡体字中国語は「公开帖子」「公开帖子列表」（判断 1・12）。既存の返信ツリーの「スレッド」（列の種類 `thread`）は変えない。
 
+### 8. 配信中の Live（#1840 AC-4）
+
+- 公開 channel で Live を始められる（`create_live_session_in_channel` の `public_channel`）。manifest と開始 post の channel は公開 channel を指し、置き場所は topic の公開の Live と同じ topic の bucket。
+  - Live の変化（作成・終了）と視聴の presence は topic の hint に送り、参加の lease は topic だけを取る。一覧の列は topic の lease だけで配信中の印を変える。
+  - 視聴の資格は topic の公開の Live と同じ（資格の判定の Spatial Context は topic）。private channel の参加を求めない。
+  - 公開の Live なので、どこからでも紹介できる（`LiveRefV1::allowed_in`）。紹介の Dialog の出し先は、始めたスレッドを先頭（既定）にし、ほかは公開の Live と同じ（2026-10-18 のユーザー判断 17。#1839 の判断 1）。
+- 一覧の行は配信中の印（`live_now`）を持つ。行ごとに、配信中の行だけの部分索引（`idx_live_session_cache_live_now`）から 8 件まで読み、非表示の主催者の Live は数えない。終わった Live の数に比例しない。Web は Live を扱わない（[ADR 0060](0060-web-client-entry-capability-and-verification.md)）ので印は付けない。
+- 画面:
+  - 詳細の列の上部（本文と一緒に流れない）に、そのスレッドで始めた配信中の Live を、新しく始まった順に 3 件まで、タイトルと配信者の 1 行ずつで出す（判断 6・14）。押すと、詳細の列を親にしたスレッドの「ライブ」の列（列の種類 `stream`、scope は公開スレッド）を開いてその Live を示す。より多いときは「すべての配信」から列を開く。
+  - 上部の「ライブ」（「リンクをコピー」の隣）もこの列を開き、列の下部の「ライブを開始」でスレッドに Live を始める（判断 15）。topic の「ライブ」の列には、スレッドの Live を出さない（判断 16）。
+  - 上部は、表示中の詳細の列だけが `list_live_sessions`（公開スレッドの scope）を読む。読むのは列が active になったときと、同期の時刻が変わったとき（「ライブ」の列と同じ）。非表示の主催者（mute・block、CN の評価で非表示を勧めるもの）の Live は出さない。
+  - 上部の行・「ライブ」・一覧の印は、既存の Live の画面と同じく開発者モードでだけ出す（README の Experimental）。
+  - 上部と印を出すだけでは、映像・音声を受信も送信もしない。視聴は「ライブ」の列や投稿の中の Live の「参加」からで、列を閉じても配信は止めない（#1839）。
+
 ## 互換
 
 | 対象 | 変更 | 旧版・既存データへの影響 |
@@ -107,9 +121,10 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 | channel の metadata | 新しい種類の署名つき envelope | 旧版は読まない |
 | docs の key | topic の bucket に `channels/list/…`・`channels/activity/…`・`channels/<ID>/timeline/…` を足す | 旧版と CN は読まない |
 | hint | channel ごとの hint の topic を新設する。作成の知らせは既存の `SessionChanged` に種類を足す | 旧版は購読しない。未知の種類は読まない |
-| API・CLI | `ChannelRef`・`TimelineScope` に種類を足し、作成・取得・一覧の command を足す。行に作成者の名前を足す（無いときは欄を出さない） | 既存の値と出力の意味は変えない |
+| API・CLI | `ChannelRef`・`TimelineScope` に種類を足し、作成・取得・一覧の command を足す。行に作成者の名前（無いときは欄を出さない）と配信中の印（`live_now`）を足す。Live の作成で `public_channel` を受け付ける | 既存の値と出力の意味は変えない |
+| Live の manifest・参照 | 形は変えない。channel に公開 channel の ID を使う。公開 channel の Live への参照はどこでも許す | 旧版は公開 channel の Live を受け付けない。旧版は、別の場所の紹介 post の参照を限定 channel の Live と見て捨てる（Live の表示の無い投稿に見える。#1839 の判断 3 と同じ） |
 | workspace の保存・route | 列の種類 `publicThreads` と並び順の欄、route の `context=publicThreads` を足す。詳細の列は既存の timeline の列（scope の channel が公開スレッドの ID） | 旧版は一覧の列を読み飛ばし、`context=publicThreads` を topic のタイムラインへ正規化する。詳細の列とそのリンクは、旧版では参加していない channel として投稿が出ない（判断 8 の範囲） |
-| SQLite | 一覧の表 `public_channels` と migration を足し、remote cache に種類 `public_channel` を足す | 既存の表は変えない |
+| SQLite | 一覧の表 `public_channels` と migration を足し、remote cache に種類 `public_channel` を足す。Live の表に配信中の行の部分索引を足す（AC-4） | 既存の表と行は変えない |
 | IndexedDB | 版を 2 から 3 に上げ、一覧の store を足す | 更新の間は「データの移行中です」で待つ。更新した database を旧版で開くことは扱わない（2026-10-08 の決まり） |
 | backup・account 同期 | 変えない（公開 channel には参加の状態が無い。一覧の行は account の SQLite に入る） | — |
 
@@ -125,7 +140,7 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 - Blob 必要有無: 投稿の本文と添付（既存の投稿と同じ）
 - SQLite projection 必要有無: 投稿は既存の projection（channel の値は公開 channel の ID）。一覧の行は `public_channels`（§6）
 - 必須 contract: 公開 channel の ID の形と結び付き、metadata の署名、topic の bucket での受け入れと拒否（`crates/core/src/tests/public_channels.rs`、`hydration_integrity_contract.rs`）
-- 必須 scenario: 招待の無い端末が ID から読み、投稿・返信・リアクションし、作成者に同じ channel の文脈で届く（`crates/app-api/src/tests/public_channels.rs`）。別の端末のスレッドを 2 つの並び順で一覧から取得し、新しい投稿で上へ移り、読めない記録を数え、無関係なデータで読む量が増えない（`crates/app-api/src/tests/public_channel_list.rs`）
+- 必須 scenario: 招待の無い端末が ID から読み、投稿・返信・リアクションし、作成者に同じ channel の文脈で届く（`crates/app-api/src/tests/public_channels.rs`）。別の端末のスレッドを 2 つの並び順で一覧から取得し、新しい投稿で上へ移り、読めない記録を数え、無関係なデータで読む量が増えない（`crates/app-api/src/tests/public_channel_list.rs`）。2 人が同じスレッドで始めた Live がスレッドの Live の一覧と一覧の行の印に出て、片方を終えても残り、topic の資格で視聴できる（`crates/app-api/src/tests/public_channel_live.rs`）
 
 ## References
 

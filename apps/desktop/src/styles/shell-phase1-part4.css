@@ -497,3 +497,94 @@
   flex: none;
   white-space: nowrap;
 }
+
+/* 列の header の下段(公開スレッドの配信中の Live など)。その header だけを折り返し、下段を幅いっぱいに置く。 */
+.shell-phase1 .shell-column-header:has(> .shell-column-header-details) {
+  flex-wrap: wrap;
+}
+
+.shell-phase1 .shell-column-header-details {
+  flex: 1 0 100%;
+  min-width: 0;
+}
+
+/* #1840 AC-4: 公開スレッドの詳細の列の上部の配信中の Live(1 行ずつで、押すとスレッドの「ライブ」の列を開く)と、一覧の行の
+   配信中の印。 */
+.public-thread-lives {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2xs);
+}
+
+.public-thread-live,
+.public-thread-live-all {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 2.25rem;
+  padding: var(--space-2xs) var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-input);
+  background: var(--surface-panel-muted);
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-caption);
+  text-align: start;
+  cursor: pointer;
+}
+
+.public-thread-live-all {
+  justify-content: center;
+}
+
+.public-thread-live:hover,
+.public-thread-live:focus-visible,
+.public-thread-live-all:hover,
+.public-thread-live-all:focus-visible {
+  border-color: var(--border-accent);
+  background: var(--surface-active);
+}
+
+.public-thread-live:focus-visible,
+.public-thread-live-all:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.public-thread-live-status,
+.public-thread-row-live {
+  color: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.public-thread-live-title,
+.public-thread-live-host {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.public-thread-live-title {
+  color: var(--foreground-strong);
+}
+
+.public-thread-live-host {
+  margin-inline-start: auto;
+  color: var(--muted-foreground);
+}
+
+.public-thread-row-live {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+@media (max-width: 759px) {
+  .public-thread-live,
+  .public-thread-live-all {
+    min-height: 2.75rem;
+  }
+}

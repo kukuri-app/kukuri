@@ -18,6 +18,8 @@ type ColumnSurfaceProps = {
   scopeControl?: ReactNode;
   // scope 行の右側に置く導線(例: Timeline Column のプライベートチャンネル入口、Issue #966)。
   scopeActions?: ReactNode;
+  // header の下段に幅いっぱいで置く、本文と一緒に流れない内容(例: 公開スレッドの詳細の列の配信中の Live。#1840 AC-4)。
+  headerDetails?: ReactNode;
   onPinnedChange?: (pinned: boolean) => void;
   onClose?: () => void;
   onMoveLeft?: () => void;
@@ -42,6 +44,7 @@ export function ColumnSurface({
   headerActions,
   scopeControl,
   scopeActions,
+  headerDetails,
   onPinnedChange,
   onClose,
   onMoveLeft,
@@ -315,6 +318,7 @@ export function ColumnSurface({
             />
           </div>
         )}
+        {headerDetails ? <div className='shell-column-header-details'>{headerDetails}</div> : null}
       </header>
       <span className='sr-only' aria-live='polite'>{announcement}</span>
       <div className='shell-column-body'>

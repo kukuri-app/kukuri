@@ -20,7 +20,9 @@ import { Textarea } from '@/components/ui/textarea';
 import type { SupportedLocale } from '@/i18n';
 import type { DesktopApi, PostLiveView, PostView } from '@/lib/api';
 import type { InternalSmartReference } from '@/lib/internalLinks';
+import { isPublicChannelId } from '@/lib/publicChannels';
 import { topicDisplayName } from '@/lib/topicId';
+import { knownPublicThreadTitle } from '@/shell/slices/publicThreads';
 import { useDesktopShellStore } from '@/shell/store';
 
 import { LiveActionsContext, type LiveActions } from './liveActions';
@@ -106,7 +108,10 @@ export function LiveBroadcastSlot({ api }: { api: DesktopApi }) {
   return <LiveBroadcastBar controller={liveBroadcastFor(api)} />;
 }
 
-/** 紹介の出し先。限定 Live はその channel だけ、公開 Live は追跡中の topic の公開の場所と参加中の channel。 */
+/**
+ * 紹介の出し先。限定 Live はその channel だけ、公開 Live は追跡中の topic の公開の場所と参加中の channel。公開スレッドで始めた
+ * Live は公開の Live なので、始めたスレッドを先頭(既定)にして、公開 Live と同じ出し先も選べる(#1840 判断 17)。
+ */
 function LiveIntroDialog({
   target,
   onClose,
@@ -116,7 +121,7 @@ function LiveIntroDialog({
   onClose: () => void;
   onPublish: LiveProvidersProps['publishLiveIntro'];
 }) {
-  const { t } = useTranslation(['common', 'live']);
+  const { t } = useTranslation(['common', 'live', 'shell']);
   const { trackedTopics, joinedChannelsByTopic } = useDesktopShellStore(
     useShallow((state) => ({
       trackedTopics: state.trackedTopics,
@@ -124,21 +129,30 @@ function LiveIntroDialog({
     }))
   );
   const { live } = target;
+  const thread = isPublicChannelId(live.channel_id) ? live.channel_id : null;
+  const threadTitle = useDesktopShellStore((state) =>
+    thread ? knownPublicThreadTitle(state.publicThreadsById, state.knownAuthorsByPubkey, thread) : undefined
+  );
   const options = useMemo(() => {
-    const limited = live.channel_id ?? null;
+    const limited = thread ? null : (live.channel_id ?? null);
     if (limited) {
       const label = joinedChannelsByTopic[live.topic_id]?.find((channel) => channel.channel_id === limited)?.label;
       return [{ topic: live.topic_id, channelId: limited, label: `${topicDisplayName(live.topic_id)} / ${label ?? limited}` }];
     }
-    return trackedTopics.flatMap((topic) => [
-      { topic, channelId: null as string | null, label: topicDisplayName(topic) },
-      ...(joinedChannelsByTopic[topic] ?? []).map((channel) => ({
-        topic,
-        channelId: channel.channel_id as string | null,
-        label: `${topicDisplayName(topic)} / ${channel.label}`,
-      })),
-    ]);
-  }, [live, trackedTopics, joinedChannelsByTopic]);
+    const started = thread
+      ? [{ topic: live.topic_id, channelId: thread as string | null, label: `${topicDisplayName(live.topic_id)} / ${threadTitle ?? t('shell:publicThreads.title')}` }]
+      : [];
+    return started.concat(
+      trackedTopics.flatMap((topic) => [
+        { topic, channelId: null as string | null, label: topicDisplayName(topic) },
+        ...(joinedChannelsByTopic[topic] ?? []).map((channel) => ({
+          topic,
+          channelId: channel.channel_id as string | null,
+          label: `${topicDisplayName(topic)} / ${channel.label}`,
+        })),
+      ])
+    );
+  }, [live, thread, threadTitle, t, trackedTopics, joinedChannelsByTopic]);
   const [selected, setSelected] = useState(0);
   const [content, setContent] = useState('');
   const [pending, setPending] = useState(false);

@@ -14,6 +14,7 @@ function thread(index: number, lastPostAt = index): PublicChannelView {
     creator_pubkey: 'b'.repeat(64),
     created_at: index,
     last_post_at: lastPostAt,
+    live_now: false,
   };
 }
 

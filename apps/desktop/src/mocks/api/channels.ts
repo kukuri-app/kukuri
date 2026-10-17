@@ -40,15 +40,25 @@ type ChannelsMock = Pick<
 const PUBLIC_CHANNEL_PAGE = 20;
 
 export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
-  const { options, joinedChannelsByTopic, publicChannelsByTopic, syncStatus } = runtime;
+  const { options, joinedChannelsByTopic, publicChannelsByTopic, syncStatus, liveSessionsByTopic, mutedAuthorPubkeys } =
+    runtime;
+  // native と同じく、行に配信中の印(非表示の主催者の Live は数えない。#1840 AC-4)を付ける。
+  const liveNow = (channel: PublicChannelView) => {
+    const muted = mutedAuthorPubkeys();
+    return (liveSessionsByTopic[channel.topic_id] ?? []).some(
+      (session) =>
+        session.channel_id === channel.channel_id && session.status === 'Live' && !muted.has(session.host_pubkey)
+    );
+  };
   const withCreatorNames = (channel: PublicChannelView): PublicChannelView =>
     channel.creator_pubkey === syncStatus.local_author_pubkey
       ? {
           ...channel,
           ...(runtime.myProfile.name ? { creator_name: runtime.myProfile.name } : {}),
           ...(runtime.myProfile.display_name ? { creator_display_name: runtime.myProfile.display_name } : {}),
+          live_now: liveNow(channel),
         }
-      : { ...channel };
+      : { ...channel, live_now: liveNow(channel) };
 
   return {
     // 最初の投稿は投稿の mock（合成した 1 つの api の this）で作る。
@@ -70,6 +80,7 @@ export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
         created_at: createdAt,
         ...(firstPostId ? { first_post_id: firstPostId } : {}),
         last_post_at: createdAt,
+        live_now: false,
       };
       publicChannelsByTopic[topic] = [...(publicChannelsByTopic[topic] ?? []), channel];
       return withCreatorNames(channel);

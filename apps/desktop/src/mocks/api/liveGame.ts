@@ -195,7 +195,8 @@ export function createLiveGameMock(runtime: MockRuntime): LiveGameMock {
     async createLiveSession(topic, title, description, channelRef = { kind: 'public' }, startPost = '') {
       runtime.sequence += 1;
       const sessionId = `live-${runtime.sequence}`;
-      const channelId = channelRef.kind === 'private_channel' ? channelRef.channel_id : null;
+      // 公開スレッドの Live も、manifest の channel がスレッドを指す(#1840 AC-4)。
+      const channelId = channelRef.kind === 'public' ? null : channelRef.channel_id;
       // 実アプリと同じく、開始 post を先に置いてから Live に結び付ける(#1839)。投稿は合成した api の mock が作る。
       const startPostId = await (this as unknown as DesktopApi).createPost(topic, startPost, null, [], channelRef, [], {
         session_id: sessionId,
@@ -214,7 +215,8 @@ export function createLiveGameMock(runtime: MockRuntime): LiveGameMock {
           viewer_count: 0,
           joined_by_me: false,
           channel_id: channelId,
-          audience_label: channelId ? 'Private channel' : 'Public',
+          audience_label:
+            channelRef.kind === 'public_channel' ? 'Public thread' : channelId ? 'Private channel' : 'Public',
           start_post_id: startPostId,
         }),
         ...(liveSessionsByTopic[topic] ?? []),

@@ -17,7 +17,7 @@ const TOPIC = 'kukuri:topic:general';
 const CREATOR = 'c'.repeat(64);
 
 function thread(channelId: string, title: string): PublicChannelView {
-  return { channel_id: channelId, topic_id: TOPIC, title, creator_pubkey: CREATOR, created_at: 1, last_post_at: 1 };
+  return { channel_id: channelId, topic_id: TOPIC, title, creator_pubkey: CREATOR, created_at: 1, last_post_at: 1, live_now: false };
 }
 
 const LINKED = thread('pc-1700000000000-cccccccccccccccc', 'Linked thread');
@@ -34,7 +34,7 @@ function setup(children: ReactNode, readable = true) {
   const api = { getPublicChannel, listThread: vi.fn(async () => ({ items: [], next_cursor: null })) } as unknown as DesktopApi;
   const view = render(
     <DesktopShellStoreContext.Provider value={store}>
-      <PublicThreadProviders api={api} open={() => undefined} copyLink={() => undefined}>
+      <PublicThreadProviders api={api} open={() => undefined} openLive={() => undefined} copyLink={() => undefined}>
         {children}
       </PublicThreadProviders>
     </DesktopShellStoreContext.Provider>
@@ -98,7 +98,7 @@ test('more links on screen than threads remembered are each read once and keep t
   );
   render(
     <DesktopShellStoreContext.Provider value={store}>
-      <PublicThreadProviders api={api} open={() => undefined} copyLink={() => undefined}>
+      <PublicThreadProviders api={api} open={() => undefined} openLive={() => undefined} copyLink={() => undefined}>
         {posts.map((text) => (
           <article key={text.slice(0, 120)}>
             <SmartReferenceText text={text} />
@@ -127,6 +127,7 @@ test('an unreadable thread says the title could not be loaded and is read again 
       <PublicThreadProviders
         api={{ getPublicChannel } as unknown as DesktopApi}
         open={() => undefined}
+        openLive={() => undefined}
         copyLink={() => undefined}
       >
         <article>

@@ -18,7 +18,7 @@ const MUTED = 'b'.repeat(64);
 const OTHER = 'c'.repeat(64);
 
 function thread(channelId: string, title: string, creator: string): PublicChannelView {
-  return { channel_id: channelId, topic_id: TOPIC, title, creator_pubkey: creator, created_at: 1, last_post_at: 1 };
+  return { channel_id: channelId, topic_id: TOPIC, title, creator_pubkey: creator, created_at: 1, last_post_at: 1, live_now: false };
 }
 
 const HIDDEN = thread('pc-1700000000000-bbbbbbbbbbbbbbbb', 'Muted thread', MUTED);
@@ -47,7 +47,7 @@ test('a hidden creator’s thread is left out of the list rows, the chips and th
   };
   render(
     <DesktopShellStoreContext.Provider value={store}>
-      <PublicThreadProviders api={api} open={() => undefined} copyLink={() => undefined}>
+      <PublicThreadProviders api={api} open={() => undefined} openLive={() => undefined} copyLink={() => undefined}>
         <PublicThreadList column={column} />
         <article data-testid='post'>
           <SmartReferenceText
