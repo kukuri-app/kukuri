@@ -498,14 +498,19 @@
   white-space: nowrap;
 }
 
-/* 列の header の下段(公開スレッドの配信中の Live など)。その header だけを折り返し、下段を幅いっぱいに置く。 */
-.shell-phase1 .shell-column-header:has(> .shell-column-header-details) {
+/* 列の header の下段(公開スレッドの配信中の Live など)。中身のある下段を持つ header だけを折り返し、下段を幅いっぱいに
+   置く。中身の無い下段(配信の無いスレッド)は出さない。 */
+.shell-phase1 .shell-column-header:has(> .shell-column-header-details:not(:empty)) {
   flex-wrap: wrap;
 }
 
 .shell-phase1 .shell-column-header-details {
   flex: 1 0 100%;
   min-width: 0;
+}
+
+.shell-phase1 .shell-column-header-details:empty {
+  display: none;
 }
 
 /* #1840 AC-4: 公開スレッドの詳細の列の上部の配信中の Live(1 行ずつで、押すとスレッドの「ライブ」の列を開く)と、一覧の行の

@@ -453,7 +453,7 @@ impl AppService {
         self.services
             .hint_transport
             .publish_hint(
-                &channel_hint_topic_for(topic_id, channel_id),
+                &session_hint_topic_for(topic_id, channel_id),
                 GossipHint::LivePresence {
                     topic_id: TopicId::new(topic_id),
                     session_id: session_id.to_string(),

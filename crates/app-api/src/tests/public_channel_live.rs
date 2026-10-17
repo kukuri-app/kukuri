@@ -261,3 +261,63 @@ async fn a_thread_live_is_watched_with_the_topic_access_and_hidden_hosts_are_not
     a.shutdown().await;
     b.shutdown().await;
 }
+
+// 公開スレッドの Live に別の端末が参加すると、一覧の列だけを開いた配信者の端末でも視聴者に数える(presence は topic の
+// hint で届き、受け取る側が Live の行の channel に結び付ける)。退出すると数えない。
+#[tokio::test]
+async fn a_viewer_of_a_thread_live_is_counted_on_the_host_that_only_has_the_list_open() {
+    let a_docs = MemoryDocsSync::with_docs_author("01".repeat(32));
+    let b_docs = MemoryDocsSync::with_docs_author("02".repeat(32));
+    let blobs = Arc::new(MemoryBlobService::default());
+    let network = FakeNetwork::default();
+    let a = device("a", &network, a_docs.clone(), b_docs.clone(), blobs.clone());
+    let b = device("b", &network, b_docs, a_docs, blobs);
+    open_list(&a).await;
+    open_list(&b).await;
+    let thread = b
+        .create_public_channel(TOPIC, "配信の場所", "")
+        .await
+        .expect("create the public thread");
+    let id = thread.channel_id.as_str();
+    let session = b
+        .create_live_session_in_channel(TOPIC, channel_ref(id), live_input("Bの配信"), None)
+        .await
+        .expect("B starts a live in the thread");
+    until(
+        async || {
+            a.get_live_session(TOPIC, &session)
+                .await
+                .expect("the live on A")
+        },
+        Option::is_some,
+    )
+    .await;
+    a.join_live_session(TOPIC, &session)
+        .await
+        .expect("A joins the live");
+    let viewers = |lives: &[LiveSessionView]| {
+        lives
+            .iter()
+            .find(|live| live.session_id == session)
+            .map(|live| live.viewer_count)
+    };
+    for app in [&a, &b] {
+        let lives = until(
+            async || thread_lives(app, id).await,
+            |lives| viewers(lives) == Some(1),
+        )
+        .await;
+        assert_eq!(viewers(&lives), Some(1), "{lives:?}");
+    }
+    a.leave_live_session(TOPIC, &session)
+        .await
+        .expect("A leaves the live");
+    let lives = until(
+        async || thread_lives(&b, id).await,
+        |lives| viewers(lives) == Some(0),
+    )
+    .await;
+    assert_eq!(viewers(&lives), Some(0));
+    a.shutdown().await;
+    b.shutdown().await;
+}

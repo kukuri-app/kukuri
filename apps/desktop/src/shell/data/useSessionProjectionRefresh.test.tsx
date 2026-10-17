@@ -37,3 +37,26 @@ test('a projection change that arrives while the live column is not visible is l
   await projected(2);
   expect(loadLiveSection).toHaveBeenCalledTimes(2);
 });
+
+// #1840 AC-4: 表示中の公開スレッドの詳細の列は、上部の配信中の Live のためにそのスレッドの Live を読み直す(別の端末で
+// 始まった Live や終わった Live を反映する)。Live の画面を出さない開発者モードの無効の間は読まない。
+test('a visible public thread detail column reloads the lives of its thread only in developer mode', async () => {
+  const store = createDesktopShellStore();
+  const scope = { topicId: 'kukuri:topic:general', channelId: 'pc-1700000000000-0123456789abcdef' };
+  const detail = columnIdentityId('timeline', scope);
+  store.setState((state) => ({
+    developerModeEnabled: false,
+    workspaceState: openTransientColumn(state.workspaceState, { id: detail, kind: 'timeline', scope, pinned: false }),
+  }));
+  const loadLiveSection = vi.fn(async () => {});
+  renderHook(() => useSessionProjectionRefresh(store, loadLiveSection, vi.fn(async () => {}), { current: [detail] }));
+  const projected = (at: number) =>
+    act(async () => store.setState({ syncStatus: { ...store.getState().syncStatus, last_sync_ts: at } }));
+
+  await projected(1);
+  expect(loadLiveSection).not.toHaveBeenCalled();
+
+  await act(async () => store.setState({ developerModeEnabled: true }));
+  await projected(2);
+  expect(loadLiveSection).toHaveBeenLastCalledWith(scope.topicId, scope.channelId);
+});
