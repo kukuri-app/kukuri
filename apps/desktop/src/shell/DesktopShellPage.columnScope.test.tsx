@@ -55,7 +55,7 @@ async function setUpPublicAndPrivateColumns(user: ReturnType<typeof userEvent.se
   if (!(generalTopicRow instanceof HTMLElement)) {
     throw new Error('general topic row not found');
   }
-  await user.click(within(generalTopicRow).getByRole('button', { name: /^Public/ }));
+  await user.click(within(generalTopicRow).getByRole('button', { name: /^Public(?! thread)/ }));
   await waitFor(() => {
     expect(window.location.hash).toBe(DEMO_TOPIC_HASH);
   });

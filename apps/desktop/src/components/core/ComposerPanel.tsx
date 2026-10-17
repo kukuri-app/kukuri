@@ -180,9 +180,9 @@ export function ComposerPanel({
           <div className='topic-diagnostic topic-diagnostic-secondary'>
             <span>{t('composer.sourcePost')}</span>
             <span>
-              {sourcePreview.audience.kind === 'public'
-                ? t('audience.public')
-                : sourcePreview.audience.channelLabel ?? t('audience.privateChannel')}
+              {sourcePreview.audience.kind === 'private'
+                ? sourcePreview.audience.channelLabel ?? t('audience.privateChannel')
+                : t(sourcePreview.audience.kind === 'public' ? 'audience.public' : 'audience.publicThread')}
             </span>
           </div>
           <PostCard

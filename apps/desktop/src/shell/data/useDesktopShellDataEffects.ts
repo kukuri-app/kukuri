@@ -15,6 +15,7 @@ import type {
 } from '@/lib/api';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import type { ShellChromeProjection } from '@/components/shell/types';
+import { isPublicChannelId } from '@/lib/publicChannels';
 
 import {
   createObjectUrlFromPayload,
@@ -574,7 +575,8 @@ export function useDesktopShellDataEffects({
   }, [activeGameRooms, setGameDrafts]);
 
   useEffect(() => {
-    if (!selectedPrivateChannelId) {
+    // 公開スレッド（#1840）には参加が無いので、選んだままにする。
+    if (!selectedPrivateChannelId || isPublicChannelId(selectedPrivateChannelId)) {
       return;
     }
     const selectedStillJoined = activeJoinedChannels.some(

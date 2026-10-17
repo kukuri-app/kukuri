@@ -5,7 +5,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import { useDesktopShellSectionLoaders } from '@/shell/data/loaders/useDesktopShellSectionLoaders';
 import { useNotificationLoaders } from '@/shell/data/loaders/useNotificationLoaders';
-import { privateTimelineScope } from '@/shell/presentation';
+import { channelTimelineScope } from '@/shell/presentation';
 import {
   createDesktopShellStore,
   DesktopShellStoreContext,
@@ -469,7 +469,7 @@ describe('useDesktopShellSectionLoaders', () => {
 
     expect(listLiveSessions).toHaveBeenCalledWith(
       'topic',
-      privateTimelineScope('channel-a')
+      channelTimelineScope('channel-a')
     );
     expect(store.getState().livePanelStateByScopeKey['topic::channel::channel-a']).toEqual({
       status: 'ready',

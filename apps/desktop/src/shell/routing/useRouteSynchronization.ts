@@ -3,6 +3,7 @@ import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
 
 import type { PrimarySection } from '@/components/shell/types';
+import { isPublicChannelId } from '@/lib/publicChannels';
 import {
   PRIMARY_SECTION_PATHS,
   isProfileConnectionsView,
@@ -24,8 +25,8 @@ import type {
 import { timelineStorageKeyForChannel } from '@/shell/store';
 import {
   isHex64,
-  privateComposeTarget,
-  privateTimelineScope,
+  channelComposeTarget,
+  channelTimelineScope,
 } from '@/shell/presentation';
 import { selectShellRoutingSlice } from '@/shell/storeSelectors';
 import {
@@ -287,21 +288,24 @@ export function useRouteSynchronization({
     if (requestedTimelineScopeValue || requestedComposeTargetValue) {
       shouldNormalize = true;
     }
+    // 参加の確認は private channel だけ（公開スレッドは参加が無く、ID から読める。#1840）。
+    const unjoinedPrivateChannel = Boolean(
+      nextSelectedChannelId &&
+        !isPublicChannelId(nextSelectedChannelId) &&
+        !joinedChannelsForTopic.some((channel) => channel.channel_id === nextSelectedChannelId)
+    );
     if (
       nextTimelineView !== 'bookmarks' &&
-      nextSelectedChannelId &&
-      channelPanelState?.status === 'ready' &&
-      !joinedChannelsForTopic.some((channel) => channel.channel_id === nextSelectedChannelId)
+      unjoinedPrivateChannel &&
+      channelPanelState?.status === 'ready'
     ) {
       shouldNormalize = true;
       nextSelectedChannelId = null;
     }
-    const channelRoutePendingValidation = Boolean(
+    const channelRoutePendingValidation =
       nextTimelineView !== 'bookmarks' &&
-        nextSelectedChannelId &&
-        channelPanelState?.status !== 'ready' &&
-        !joinedChannelsForTopic.some((channel) => channel.channel_id === nextSelectedChannelId)
-    );
+      unjoinedPrivateChannel &&
+      channelPanelState?.status !== 'ready';
     const routeScopeKey = timelineStorageKeyForChannel(nextTopic, nextSelectedChannelId);
     const gameRoomsForTopic = gameRoomsByScopeKey[routeScopeKey] ?? [];
     const gamePanelState = gamePanelStateByScopeKey[routeScopeKey];
@@ -310,9 +314,12 @@ export function useRouteSynchronization({
       currentSelectedChannelIdForTopic !== nextSelectedChannelId &&
       !channelRoutePendingValidation
     ) {
-      setSelectedChannelIdByTopic(setRecordEntry(nextTopic, nextSelectedChannelId));
-      setTimelineScopeByTopic(setRecordEntry(nextTopic, privateTimelineScope(nextSelectedChannelId)));
-      setComposeChannelByTopic(setRecordEntry(nextTopic, privateComposeTarget(nextSelectedChannelId)));
+      // 公開スレッドの一覧と詳細の列は、下の route の反映が開く(詳細は一覧の列を親にする。#1840)。
+      if (requestedContext !== 'publicThreads' && !isPublicChannelId(nextSelectedChannelId)) {
+        setSelectedChannelIdByTopic(setRecordEntry(nextTopic, nextSelectedChannelId));
+      }
+      setTimelineScopeByTopic(setRecordEntry(nextTopic, channelTimelineScope(nextSelectedChannelId)));
+      setComposeChannelByTopic(setRecordEntry(nextTopic, channelComposeTarget(nextSelectedChannelId)));
       shouldReload = true;
     }
 
@@ -779,7 +786,12 @@ export function useRouteSynchronization({
           setSelectedGameRoomId(requestedRoomId);
         }
       }
-    } else if (routeSection === 'timeline' && nextTimelineView !== 'bookmarks' && requestedContext) {
+    } else if (
+      routeSection === 'timeline' &&
+      nextTimelineView !== 'bookmarks' &&
+      requestedContext &&
+      requestedContext !== 'publicThreads'
+    ) {
       shouldNormalize = true;
       normalizedSelectedThread = null;
       normalizedFocusedObjectId = null;
@@ -882,6 +894,7 @@ export function useRouteSynchronization({
           selectedGameRoomId: normalizedSelectedGameRoomId,
           selectedLiveSessionId: normalizedSelectedLiveSessionId,
           selectedThread: normalizedSelectedThread,
+          publicThreadList: routeSection === 'timeline' && requestedContext === 'publicThreads',
         })
       );
     }
@@ -901,7 +914,7 @@ export function useRouteSynchronization({
         if (liveLocation && `${liveLocation.pathname}${liveLocation.search}` !== currentUrl) return;
         syncRoute('replace', {
           activeTopic: nextTopic,
-          composeTarget: privateComposeTarget(nextSelectedChannelId),
+          composeTarget: channelComposeTarget(nextSelectedChannelId),
           focusedObjectId: normalizedFocusedObjectId,
           primarySection: routeSection,
           profileConnectionsView: nextProfileConnectionsView,
@@ -913,8 +926,9 @@ export function useRouteSynchronization({
           selectedThread: normalizedSelectedThread,
           settingsOpen: nextSettingsOpen,
           settingsSection: nextSettingsResolvedSection,
-          timelineScope: privateTimelineScope(nextSelectedChannelId),
+          timelineScope: channelTimelineScope(nextSelectedChannelId),
           timelineView: nextTimelineView,
+          publicThreadList: routeSection === 'timeline' && requestedContext === 'publicThreads',
         });
       });
     }

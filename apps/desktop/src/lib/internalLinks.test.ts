@@ -2,6 +2,8 @@ import { describe, expect, test } from 'vitest';
 
 import {
   buildChannelAccessPreviewDeepLink,
+  buildPublicThreadLink,
+  firstPublicThreadLink,
   parseChannelAccessPreviewDeepLink,
   parseSmartText,
 } from './internalLinks';
@@ -64,6 +66,32 @@ describe('internal link parsing', () => {
       'https://',
     ]) {
       expect(parseSmartText(value)).toEqual([[{ kind: 'text', text: value }]]);
+    }
+  });
+
+  // #1840: 公開スレッドのリンクは topic と公開スレッドの ID を持つ。private channel の ID と文脈付きの route は今までどおり。
+  test('parses public thread links and finds the first one in a body', () => {
+    const channelId = 'pc-1700000000000-0123456789abcdef';
+    const link = buildPublicThreadLink('kukuri:topic:general', channelId);
+    expect(link).toBe(`#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=${channelId}`);
+    const other = buildPublicThreadLink('kukuri:topic:general', 'pc-1700000000001-0123456789abcdef');
+    const [line] = parseSmartText(`see ${link} and ${other}`);
+    expect(line?.[1]).toEqual({
+      kind: 'reference',
+      reference: { kind: 'public_thread', topic: 'kukuri:topic:general', channelId, route: link },
+    });
+    expect(firstPublicThreadLink(`no link
+see ${link} and ${other}`)?.channelId).toBe(channelId);
+    expect(firstPublicThreadLink('kukuri:topic:general')).toBeNull();
+
+    for (const route of [
+      '#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=channel-1',
+      `#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=${channelId}&context=thread&threadId=post-1`,
+      '#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=pc-0-0123456789abcdef',
+    ]) {
+      const [segments] = parseSmartText(route);
+      const reference = segments?.[0]?.kind === 'reference' ? segments[0].reference : null;
+      expect(reference?.kind).not.toBe('public_thread');
     }
   });
 

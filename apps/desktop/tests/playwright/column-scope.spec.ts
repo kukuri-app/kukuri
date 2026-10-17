@@ -73,7 +73,7 @@ async function setUpPublicAndPrivateColumns(page: Page) {
   const generalTopicRow = reopened
     .getByRole('button', { name: 'general', exact: true })
     .locator('xpath=ancestor::li[1]');
-  await generalTopicRow.getByRole('button', { name: /^Public/ }).click();
+  await generalTopicRow.getByRole('button', { name: /^Public(?! thread)/ }).click();
   await expect(page).toHaveURL(/#\/timeline\?topic=kukuri%3Atopic%3Ageneral$/);
 
   const publicColumn = timelineColumnByScope(page, GENERAL_PUBLIC_SCOPE);

@@ -32,8 +32,8 @@ import {
   authorViewFromDirectMessageConversation,
   mergeKnownAuthors,
   messageFromError,
-  privateComposeTarget,
-  privateTimelineScope,
+  channelComposeTarget,
+  channelTimelineScope,
 } from '@/shell/presentation';
 import { selectShellRoutingSlice } from '@/shell/storeSelectors';
 import {
@@ -376,8 +376,8 @@ export function useDesktopShellRouting({
       const channelId = options?.channelId ?? null;
       const channelRouteOverrides = hasChannelOverride
         ? {
-            timelineScope: privateTimelineScope(channelId),
-            composeTarget: privateComposeTarget(channelId),
+            timelineScope: channelTimelineScope(channelId),
+            composeTarget: channelComposeTarget(channelId),
           }
         : {};
       try {
@@ -418,8 +418,8 @@ export function useDesktopShellRouting({
         }
         startTransition(() => {
           if (hasChannelOverride) {
-            setTimelineScopeByTopic(setRecordEntry(topic, privateTimelineScope(channelId)));
-            setComposeChannelByTopic(setRecordEntry(topic, privateComposeTarget(channelId)));
+            setTimelineScopeByTopic(setRecordEntry(topic, channelTimelineScope(channelId)));
+            setComposeChannelByTopic(setRecordEntry(topic, channelComposeTarget(channelId)));
           }
           setSelectedThread(threadId);
           setFocusedObjectId(nextFocusedObjectId);

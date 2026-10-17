@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（2026-10-17、#1840）。#1840 の AC-1 で識別・署名・置き場所・投稿の経路を、AC-2 で topic ごとの一覧（§6）を実装した。画面（AC-3）と配信中の Live（AC-4）は、同じ Issue の後続の PR でこの ADR に追記する。
+Accepted（2026-10-17、#1840）。#1840 の AC-1 で識別・署名・置き場所・投稿の経路を、AC-2 で topic ごとの一覧（§6）を、AC-3 で画面（§7）を実装した。配信中の Live（AC-4）は、同じ Issue の後続の PR でこの ADR に追記する。
 
 ## Context
 
@@ -62,6 +62,7 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 - `ChannelRef` と `TimelineScope` に公開 channel の種類（`public_channel`）を足す。既存の `public` と、private channel を指す `private_channel`・`channel` の意味は変えない。
 - 公開 channel への返信は親の channel に置く。リアクション・取り下げ・bookmark は対象の channel と同じ種類を求める。
 - 公開 channel の投稿は repost できない（既存の channel の投稿と同じ。同日のユーザー判断）。
+- ID からの取得（`get_public_channel`）は、一覧と同じく非表示の作者の channel を返さない（#1840 AC-3）。
 - Live・ゲーム・metaverse（Dome）は公開 channel を受け付けない。Live は #1840 AC-4 で扱う。
 
 ### 6. 一覧（#1840 AC-2）
@@ -79,7 +80,24 @@ kukuri の channel は、招待や相互フォローで参加する private chan
   - 読めない・確かめられない記録の数を `unavailable_count` で返す。投稿の多いスレッドが最後の投稿の索引の新しい側を占めると、ほかのスレッドの新しい投稿を拾いきれないことがある（同日の判断 2 で受け入れた）。
   - 続きは手元の行の続きから読み、その位置の日から照合する（タイムラインと同じ）。この端末が知らない、照合の範囲より前のスレッドは、手元の行が尽きると一覧に出ない。リンクと通知からは開ける（2026-10-17 のユーザー判断 13。照合した範囲の前から続ける位置を返す案は、前のページの行を次のページに繰り返すので採らない）。
 - 一覧は channel の投稿を読まず、channel ごとの hint も購読しない。一覧の列が取るのは topic の lease だけ。
-- 保持: 他人が作った行は remote cache の種類 `public_channel` として容量を数え、7 日使わなければ回収する。一覧で返した行と、照合や ID から引いた行は、使った時刻を更新する（1 時間ごと）。自分が作った行は数えず、回収しない。期限を過ぎてまだ回収されていない行は無いものとして扱い、次の照合が確かめて置き直す（投稿の行と同じ）。
+- 保持: 他人が作った行は remote cache の種類 `public_channel` として容量を数え、7 日使わなければ回収する。一覧のために手元から読んだ行（返さなかった非表示の作者の行を含む）と、照合や ID から引いた行は、使った時刻を更新する（1 時間ごと）。自分が作った行は数えず、回収しない。期限を過ぎてまだ回収されていない行は無いものとして扱い、次の照合が確かめて置き直す（投稿の行と同じ）。
+
+- 行の作成者の名前は、ページの作成者の手元の profile から付ける。手元に無い profile は、タイムラインの投稿の作成者と同じ背景の取得（重複を除き、上限と間隔つき）へ渡し、読めたら次の取得で付く（#1840 AC-3）。
+
+### 7. 画面（#1840 AC-3）
+
+- 一覧は列の種類 `publicThreads`（scope は topic で、channel は無し）。route は `#/timeline?topic=<topic>&context=publicThreads`。Control Center の topic の「公開」の次の「公開スレッド」の行と、列の追加から開く（2026-10-17 のユーザー判断 9）。
+  - 並び順は列ごとの `publicThreadOrder`（既定は `last_post`、ほかに `created`）で、列と一緒に保存する。列の上部の icon の menu で切り替え、切り替えると読み込んだ行を捨てて先頭から読む。
+  - 行はタイトル・作成者・並び順の時刻。表示中の列だけが 3 秒ごとに先頭のページ（20 件）を読み直し、読み込んだ続きの行の前に重ねる。続きは下端で読む。行は 200 件までで、超えたら先頭の行を外し、「最新に戻る」で先頭から読み直す（タイムラインと同じ）。
+  - 作成は列の下部の「スレッドを作る」の Dialog（タイトルと最初の投稿。判断 3）。作った後は詳細の列を開き、その topic の一覧の列を先頭から読み直す。
+- 詳細は timeline の列（scope の channel が公開スレッドの ID）で、見出しは「公開スレッド」、scope の表示は「<タイトル> · <topic>」。route は `#/timeline?topic=<topic>&channel=<ID>`。
+  - 新しく開くときは、route の反映が、その topic の一覧の列（無ければ作る）を親にする。直接リンクや本文のリンクから開いても、閉じると一覧の列へ戻る。
+  - 列の上部の「リンクをコピー」はこの route を写す（判断 5）。タイトルを知らなければ、列が表示中の間に ID から読み、読めなければ「タイトルを取得できません」と出す。Control Center の列の一覧でも「公開スレッド」と呼ぶ。
+- 本文の中のリンクはタイトルの chip にする（判断 10）。知らないスレッドの chip は、画面内にある間に ID から読み、読めた値を chip が持つ（覚えたスレッドから外れても表示を保ち、読むのは chip ごとに 1 回まで）。本文の下には最初の 1 件だけ、タイトルと作成時の最初の投稿の card を出す。card は画面内にある間だけ読み、最初の投稿は返信ツリーの取得で 1 件読む。ID からの読み込みは画面で共用し、同じスレッドを並行して読まず、読めたものは使い回す（読めなかったものは次に表示したときに読む）。
+- 非表示の作者（mute と、どちらの向きの block）のスレッドは、一覧の行・本文の chip と card・詳細の見出しに出さない。mute・block した直後は、読み込んだ行も次の読み直しを待たずに出さない。
+- 公開スレッドの投稿の公開範囲の icon は公開と同じ `book-open` で、tooltip は「公開スレッド: <タイトル>」（判断 11）。外部のリンクの preview は、topic の公開の投稿と同じく出す。
+- 読んだスレッドは、列の見出し・本文の chip・公開範囲の tooltip のために 256 件まで覚える（内容が変わったものを新しい側へ回し、超えたら古いものから外す）。端末には保存しない。
+- 呼び名は「公開スレッド」「公開スレッド一覧」、英語は "Public thread"・"Public threads"、簡体字中国語は「公开帖子」「公开帖子列表」（判断 1・12）。既存の返信ツリーの「スレッド」（列の種類 `thread`）は変えない。
 
 ## 互換
 
@@ -89,7 +107,8 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 | channel の metadata | 新しい種類の署名つき envelope | 旧版は読まない |
 | docs の key | topic の bucket に `channels/list/…`・`channels/activity/…`・`channels/<ID>/timeline/…` を足す | 旧版と CN は読まない |
 | hint | channel ごとの hint の topic を新設する。作成の知らせは既存の `SessionChanged` に種類を足す | 旧版は購読しない。未知の種類は読まない |
-| API・CLI | `ChannelRef`・`TimelineScope` に種類を足し、作成・取得・一覧の command を足す | 既存の値と出力の意味は変えない |
+| API・CLI | `ChannelRef`・`TimelineScope` に種類を足し、作成・取得・一覧の command を足す。行に作成者の名前を足す（無いときは欄を出さない） | 既存の値と出力の意味は変えない |
+| workspace の保存・route | 列の種類 `publicThreads` と並び順の欄、route の `context=publicThreads` を足す。詳細の列は既存の timeline の列（scope の channel が公開スレッドの ID） | 旧版は一覧の列を読み飛ばし、`context=publicThreads` を topic のタイムラインへ正規化する。詳細の列とそのリンクは、旧版では参加していない channel として投稿が出ない（判断 8 の範囲） |
 | SQLite | 一覧の表 `public_channels` と migration を足し、remote cache に種類 `public_channel` を足す | 既存の表は変えない |
 | IndexedDB | 版を 2 から 3 に上げ、一覧の store を足す | 更新の間は「データの移行中です」で待つ。更新した database を旧版で開くことは扱わない（2026-10-08 の決まり） |
 | backup・account 同期 | 変えない（公開 channel には参加の状態が無い。一覧の行は account の SQLite に入る） | — |

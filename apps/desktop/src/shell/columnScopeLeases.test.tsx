@@ -5,6 +5,7 @@ import type { DesktopApi, ScopeDisplayRequest } from '@/lib/api';
 import { InvokeError } from '@/lib/api/invoke/error';
 import {
   SCOPE_LIMIT_REACHED,
+  columnScopeTarget,
   explainScopeLimit,
   useColumnScopeLeases,
 } from '@/shell/columnScopeLeases';
@@ -32,6 +33,23 @@ const timeline = column('timeline-a', 'timeline', {
 });
 const profile = column('profile-b', 'profile', { entityId: 'b'.repeat(64) });
 const conversation = column('conversation-c', 'conversation', { entityId: 'c'.repeat(64) });
+
+// #1840: 公開スレッドの一覧の列は topic の scope だけを取り(一覧は channel の投稿を受け取らない)、詳細の列は公開スレッドの scope を取る。
+test('a public thread list takes the topic scope and its detail takes the thread scope', () => {
+  const scope = { topicId: 'kukuri:topic:a', channelId: null };
+  expect(columnScopeTarget(column('list', 'publicThreads', { scope }))).toEqual({
+    kind: 'timeline',
+    topic: 'kukuri:topic:a',
+    scope: { kind: 'public' },
+  });
+  expect(
+    columnScopeTarget(column('detail', 'timeline', { scope: { ...scope, channelId: 'pc-1-0123456789abcdef' } }))
+  ).toEqual({
+    kind: 'timeline',
+    topic: 'kukuri:topic:a',
+    scope: { kind: 'public_channel', channel_id: 'pc-1-0123456789abcdef' },
+  });
+});
 
 test('open columns register their scope once and a closed column releases only its own holder', async () => {
   const { api, requests } = scopeApi();

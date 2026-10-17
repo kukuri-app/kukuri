@@ -25,6 +25,7 @@ export type DesktopShellRouteOverrides = {
   selectedChannelId?: string | null;
   selectedLiveSessionId?: string | null;
   selectedGameRoomId?: string | null;
+  publicThreadList?: boolean;
 };
 
 export type OpenThreadOptions = {
@@ -308,6 +309,8 @@ export type RouteState = {
   selectedChannelId: string | null;
   selectedLiveSessionId: string | null;
   selectedGameRoomId: string | null;
+  // topic の公開スレッドの一覧の列(#1840)。`#/timeline?topic=…&context=publicThreads`。
+  publicThreadList?: boolean;
 };
 
 export function buildShellUrl(options: RouteState): string {
@@ -346,6 +349,8 @@ export function buildShellUrl(options: RouteState): string {
   } else if (options.primarySection !== 'notifications' && options.selectedAuthorPubkey) {
     search.set('context', 'author');
     search.set('authorPubkey', options.selectedAuthorPubkey);
+  } else if (options.primarySection === 'timeline' && options.publicThreadList) {
+    search.set('context', 'publicThreads');
   }
 
   if (options.primarySection === 'profile' && options.profileMode === 'edit') {

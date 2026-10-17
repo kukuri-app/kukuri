@@ -17,7 +17,7 @@
       "path": "crates/metaverse-host/src/lib.rs"
     },
     {
-      "lines": 1163,
+      "lines": 1183,
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
@@ -37,7 +37,7 @@
       "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
-      "lines": 1107,
+      "lines": 1111,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {
@@ -81,7 +81,7 @@
       "path": "crates/app-api/src/views.rs"
     },
     {
-      "lines": 1001,
+      "lines": 1000,
       "path": "apps/desktop/src/components/core/PostCard.tsx"
     },
     {

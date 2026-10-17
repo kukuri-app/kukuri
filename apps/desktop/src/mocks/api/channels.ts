@@ -6,6 +6,7 @@ import {
   type FriendOnlyGrantPreview,
   type FriendPlusSharePreview,
   type PrivateChannelInvitePreview,
+  type PublicChannelView,
 } from '@/lib/api';
 
 import { parseMockChannelAccessTokenPreview, withJoinedChannelDefaults } from '../desktopMockModel';
@@ -31,12 +32,75 @@ type ChannelsMock = Pick<
   | 'setPrivateChannelEntryDome'
   | 'leavePrivateChannel'
   | 'listJoinedPrivateChannels'
+  | 'createPublicChannel'
+  | 'getPublicChannel'
+  | 'listPublicChannels'
 >;
 
+const PUBLIC_CHANNEL_PAGE = 20;
+
 export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
-  const { options, joinedChannelsByTopic, syncStatus } = runtime;
+  const { options, joinedChannelsByTopic, publicChannelsByTopic, syncStatus } = runtime;
+  const withCreatorNames = (channel: PublicChannelView): PublicChannelView =>
+    channel.creator_pubkey === syncStatus.local_author_pubkey
+      ? {
+          ...channel,
+          ...(runtime.myProfile.name ? { creator_name: runtime.myProfile.name } : {}),
+          ...(runtime.myProfile.display_name ? { creator_display_name: runtime.myProfile.display_name } : {}),
+        }
+      : { ...channel };
 
   return {
+    // 最初の投稿は投稿の mock（合成した 1 つの api の this）で作る。
+    async createPublicChannel(this: DesktopApi, topic: string, title: string, firstPost: string) {
+      const createdAt = Date.now();
+      const channelId = `pc-${createdAt}-${syncStatus.local_author_pubkey.slice(0, 16)}`;
+      // 最初の投稿は channel の投稿として先に作る（native と同じ順）。
+      const firstPostId = firstPost.trim()
+        ? await this.createPost(topic, firstPost, null, [], {
+            kind: 'public_channel',
+            channel_id: channelId,
+          })
+        : null;
+      const channel: PublicChannelView = {
+        channel_id: channelId,
+        topic_id: topic,
+        title: title.trim(),
+        creator_pubkey: syncStatus.local_author_pubkey,
+        created_at: createdAt,
+        ...(firstPostId ? { first_post_id: firstPostId } : {}),
+        last_post_at: createdAt,
+      };
+      publicChannelsByTopic[topic] = [...(publicChannelsByTopic[topic] ?? []), channel];
+      return withCreatorNames(channel);
+    },
+    // 返す行は写し（native の IPC と同じく、後の投稿で変わる手元の行と同じ object を渡さない）。自分の行には
+    // 自分の profile の名前を付ける（native は手元の profile から付ける）。
+    async getPublicChannel(topic, channelId) {
+      const channel = (publicChannelsByTopic[topic] ?? []).find((candidate) => candidate.channel_id === channelId);
+      return channel ? withCreatorNames(channel) : null;
+    },
+    async listPublicChannels(topic, order, cursor = null, limit = PUBLIC_CHANNEL_PAGE) {
+      const at = (channel: PublicChannelView) =>
+        order === 'created' ? channel.created_at : channel.last_post_at;
+      const sorted = [...(publicChannelsByTopic[topic] ?? [])].sort(
+        (left, right) => at(right) - at(left) || right.channel_id.localeCompare(left.channel_id)
+      );
+      const after = cursor
+        ? sorted.filter(
+            (channel) =>
+              at(channel) < cursor.at || (at(channel) === cursor.at && channel.channel_id < cursor.channel_id)
+          )
+        : sorted;
+      const items = after.slice(0, limit).map(withCreatorNames);
+      const last = items.at(-1);
+      return {
+        items,
+        next_cursor:
+          items.length === limit && last ? { at: at(last), channel_id: last.channel_id } : null,
+        unavailable_count: 0,
+      };
+    },
     async createPrivateChannel(
       topic,
       label,
