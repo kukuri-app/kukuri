@@ -41,6 +41,8 @@ function PostLiveStory({ postId, session, channelId = null }: {
     leave: async () => undefined,
     end: async () => undefined,
     introduce: () => undefined,
+    broadcastingSessionId: null,
+    startBroadcast: () => undefined,
     openPost: () => undefined,
     copyLink: () => undefined,
     activateReference: () => undefined,

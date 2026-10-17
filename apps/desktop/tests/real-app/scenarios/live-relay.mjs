@@ -14,7 +14,7 @@ import {
   injectCapture,
   measureSync,
   observeDraws,
-  t,
+  startBroadcast,
   VOICE,
   watch,
 } from '../live-media.mjs';
@@ -49,7 +49,7 @@ export async function run({ launch, log, topic }) {
   await injectCapture(host);
   await Promise.all(viewers.map(observeDraws));
   await createSession(host, 'live-relay');
-  await click(host, t('media.startBroadcast'), { within: CARD });
+  await startBroadcast(host);
   const voice = audioMode ? speak('host', VOICE) : () => undefined;
   const direct = viewers.slice(0, 4);
   const fifth = viewers[4];

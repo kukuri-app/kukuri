@@ -58,6 +58,8 @@ function renderLive(target: PostView, found: LiveSessionView | null) {
     leave: vi.fn().mockResolvedValue(undefined),
     end: vi.fn().mockResolvedValue(undefined),
     introduce: vi.fn(),
+    broadcastingSessionId: null,
+    startBroadcast: vi.fn(),
     openPost: vi.fn(),
     copyLink: vi.fn(),
     activateReference: vi.fn(),

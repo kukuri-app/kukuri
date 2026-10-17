@@ -1,5 +1,5 @@
 import { useContext } from 'react';
-import { Link2, Repeat2, Reply } from 'lucide-react';
+import { Camera, Link2, MonitorUp, Repeat2, Reply } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { SmartReferenceText } from '@/components/core/SmartReferenceText';
@@ -20,12 +20,10 @@ type LiveCardProps = {
   // 投稿の中の表示では、その投稿の id。開始 post そのものなら「開始 post を開く」を出さない。
   postId?: string;
   targeted?: boolean;
-  // 配信の操作を出すのは Live の一覧だけ(投稿の中の表示が画面外へ出ても配信を止めない)。
-  broadcastControls: boolean;
 };
 
 /** Live の一覧と、投稿の中の Live の表示が共用するカード(#1839)。 */
-export function LiveCard({ topic, session, postId, targeted = false, broadcastControls }: LiveCardProps) {
+export function LiveCard({ topic, session, postId, targeted = false }: LiveCardProps) {
   const { t } = useTranslation(['common', 'live']);
   const actions = useContext(LiveActionsContext);
   if (!actions) return null;
@@ -69,8 +67,21 @@ export function LiveCard({ topic, session, postId, targeted = false, broadcastCo
           </span>
         </div>
       ) : null}
-      <LiveSessionMedia api={actions.api} topic={topic} session={session} isOwner={isOwner && broadcastControls} />
+      <LiveSessionMedia api={actions.api} topic={topic} session={session} isOwner={isOwner} />
       <div className='post-actions'>
+        {isOwner && !ended && actions.broadcastingSessionId === null
+          ? (['camera', 'screen'] as const).map((source) => (
+              <Button
+                key={source}
+                variant='secondary'
+                type='button'
+                onClick={() => actions.startBroadcast({ topic, sessionId: id, title: session.title }, source)}
+              >
+                {source === 'camera' ? <Camera className='size-4' aria-hidden='true' /> : <MonitorUp className='size-4' aria-hidden='true' />}
+                {t(`live:media.start.${source}`)}
+              </Button>
+            ))
+          : null}
         {session.joined_by_me ? (
           <Button variant='secondary' type='button' disabled={pending} onClick={() => void actions.leave(topic, id)}>
             {t('common:actions.leave')}

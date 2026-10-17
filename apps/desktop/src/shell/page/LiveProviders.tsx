@@ -1,8 +1,10 @@
-import { type FormEvent, type ReactNode, useCallback, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
 
 import { PostLiveSlot } from '@/components/core/postLiveSlot';
+import { LiveBroadcastBar } from '@/components/extended/LiveBroadcastBar';
+import { liveBroadcastFor } from '@/components/extended/liveBroadcast';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -59,6 +61,10 @@ export function LiveProviders({
     }))
   );
   const [intro, setIntro] = useState<IntroTarget | null>(null);
+  const broadcast = liveBroadcastFor(api);
+  const broadcastingSessionId = useSyncExternalStore(broadcast.subscribe, () => broadcast.getState()?.sessionId ?? null);
+  // shell を離れたら配信を止める(アカウントの切替は window の reload で止まる)。
+  useEffect(() => () => broadcast.stop(), [broadcast]);
   const actions = useMemo<LiveActions>(
     () => ({
       api,
@@ -69,11 +75,13 @@ export function LiveProviders({
       leave: (topic, sessionId) => leave(sessionId, topic),
       end: (topic, sessionId) => end(sessionId, topic),
       introduce: (live, title) => setIntro({ live, title }),
+      broadcastingSessionId,
+      startBroadcast: (target, source) => broadcast.start(target, source),
       openPost: (topic, postId) => openThread(postId, { topic }),
       copyLink,
       activateReference,
     }),
-    [api, locale, localPubkey, pendingBySessionId, join, leave, end, openThread, copyLink, activateReference]
+    [api, locale, localPubkey, pendingBySessionId, join, leave, end, broadcast, broadcastingSessionId, openThread, copyLink, activateReference]
   );
   const renderLive = useCallback((post: PostView) => <PostLive post={post} />, []);
   return (
@@ -91,6 +99,11 @@ export function LiveProviders({
       </PostLiveSlot.Provider>
     </LiveActionsContext.Provider>
   );
+}
+
+/** #1839 AC-3: shell の上部に置く配信中の操作。 */
+export function LiveBroadcastSlot({ api }: { api: DesktopApi }) {
+  return <LiveBroadcastBar controller={liveBroadcastFor(api)} />;
 }
 
 /** 紹介の出し先。限定 Live はその channel だけ、公開 Live は追跡中の topic の公開の場所と参加中の channel。 */

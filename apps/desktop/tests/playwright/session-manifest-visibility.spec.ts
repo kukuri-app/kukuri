@@ -51,8 +51,10 @@ test('a completed manifest acquisition updates the visible session list without 
     api.setSessionDisplay = async (request) => { if (request.visible) ready = true; };
   });
   await page.evaluate(() => { window.location.hash = '/live'; });
-  await expect(page.getByText('Delivered session', { exact: true })).toBeVisible({ timeout: 15000 });
-  await expect(page.getByText('Session information is not available yet.', { exact: true })).toHaveCount(0);
+  // 開始 post の中の Live も timeline の列に同じタイトルを出すので、Live の列の中で確かめる。
+  const live = page.getByRole('region', { name: /^Live Column/ });
+  await expect(live.getByText('Delivered session', { exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(live.getByText('Session information is not available yet.', { exact: true })).toHaveCount(0);
 });
 
 test('opening an uncached detail brings its candidate into view past existing cards', async ({ page }) => {

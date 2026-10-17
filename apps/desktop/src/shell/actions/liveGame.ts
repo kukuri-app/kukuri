@@ -12,6 +12,7 @@ import type {
   Setter,
 } from './shared';
 import { explainScopeLimit } from '@/shell/columnScopeLeases';
+import { liveBroadcastFor } from '@/components/extended/liveBroadcast';
 
 type LiveGameParams = ActionsBaseParams & {
   activeComposeChannel: ChannelRef;
@@ -162,6 +163,8 @@ export function createLiveGameActions({
     setLivePendingBySessionId(setRecordEntry(sessionId, true));
     try {
       await api.endLiveSession(topic, sessionId);
+      // 終えた Live の配信(取り込みと送信)を止める。列・投稿・footer のどの「終了」もここを通る(#1839 AC-3)。
+      liveBroadcastFor(api).stopIfSession(sessionId);
       setLiveError(null);
       await loadTopics(trackedTopics, topic, selectedThread);
     } catch (endError) {

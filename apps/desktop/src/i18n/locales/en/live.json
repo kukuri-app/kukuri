@@ -31,6 +31,7 @@
   "loading": "Loading live sessions…",
   "media": {
     "broadcasting": "Broadcasting video",
+    "controls": "Broadcast controls for {{title}}",
     "disableMicrophone": "Disable microphone",
     "enableMicrophone": "Enable microphone",
     "errors": {
@@ -47,7 +48,10 @@
       "camera": "Camera",
       "screen": "Screen"
     },
-    "startBroadcast": "Start video broadcast",
+    "start": {
+      "camera": "Broadcast camera",
+      "screen": "Broadcast screen"
+    },
     "states": {
       "connecting": "Connecting to the broadcast…",
       "ended": "The video stopped. Reconnecting…",

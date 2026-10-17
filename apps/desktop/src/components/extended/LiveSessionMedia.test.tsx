@@ -1,28 +1,17 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import type { LiveBroadcastStatus, LiveSessionView, SetLiveBroadcastRequest } from '@/lib/api';
+import type { LiveSessionView } from '@/lib/api';
 import { LiveSessionMedia } from './LiveSessionMedia';
-import { captureVideo, createLivePlayer, encodeVideo } from './liveMedia';
+import { createLivePlayer } from './liveMedia';
 
 vi.mock('./liveMedia', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./liveMedia')>()),
-  captureVideo: vi.fn(),
-  encodeVideo: vi.fn(),
   createLivePlayer: vi.fn(),
 }));
 
-const LIMITS = { width: 1280, height: 720, framerate: 30, bitrate: 1_500_000 };
-
 function api(nextState = 2) {
   return {
-    setLiveBroadcast: vi.fn<(request: SetLiveBroadcastRequest) => Promise<LiveBroadcastStatus>>(async () => ({
-      microphone: false,
-      limits: LIMITS,
-    })),
-    pushLiveVideo: vi.fn(async () => undefined),
-    stopLiveBroadcast: vi.fn(async () => undefined),
     watchLiveMedia: vi.fn(async () => undefined),
     nextLiveVideo: vi.fn(async () => {
       const batch = new ArrayBuffer(11);
@@ -57,96 +46,6 @@ describe('LiveSessionMedia', () => {
     vi.mocked(createLivePlayer).mockReturnValue({ push: vi.fn(), reset: vi.fn(), close: vi.fn() });
   });
 
-  // ADR 0067 の live_media_requires_explicit_start_and_permission(画面側): 取り込みが拒否されたら配信を止め、mic を開かない。
-  test('stops the broadcast without opening the microphone when capture is refused', async () => {
-    const media = api();
-    vi.mocked(captureVideo).mockRejectedValue(Object.assign(new Error('denied'), { name: 'NotAllowedError' }));
-    render(<LiveSessionMedia api={media} topic={request.topic} session={session()} isOwner />);
-    expect(media.setLiveBroadcast).not.toHaveBeenCalled();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Screen' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('Camera or screen capture was not allowed.');
-    expect(media.setLiveBroadcast).toHaveBeenCalledTimes(1);
-    expect(media.setLiveBroadcast).toHaveBeenCalledWith({ ...request, source: 'screen', microphone: false });
-    expect(media.stopLiveBroadcast).toHaveBeenCalledWith(request);
-    expect(encodeVideo).not.toHaveBeenCalled();
-  });
-
-  // この端末で作っていない session は、取り込まずに理由を示す(2026-10-13 のユーザー判断)。
-  test('explains that a session created elsewhere cannot be broadcast here', async () => {
-    const media = api();
-    media.setLiveBroadcast.mockRejectedValue(
-      Object.assign(new Error('elsewhere'), { name: 'InvokeError', code: 'LIVE_BROADCAST_ELSEWHERE' })
-    );
-    render(<LiveSessionMedia api={media} topic={request.topic} session={session()} isOwner />);
-    await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      "This live session can't be broadcast from this device."
-    );
-    expect(captureVideo).not.toHaveBeenCalled();
-  });
-
-  test('opens the microphone after capture starts and can turn it off and stop', async () => {
-    const media = api();
-    const stopEncoding = vi.fn();
-    vi.mocked(captureVideo).mockResolvedValue({} as MediaStream);
-    vi.mocked(encodeVideo).mockReturnValue({ stop: stopEncoding });
-    media.setLiveBroadcast.mockImplementation(async ({ microphone }) => ({ microphone, limits: LIMITS }));
-    render(<LiveSessionMedia api={media} topic={request.topic} session={session()} isOwner />);
-
-    await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
-    expect(await screen.findByText('Broadcasting video')).toBeInTheDocument();
-    expect(media.setLiveBroadcast.mock.calls.map(([call]) => call.microphone)).toEqual([false, true]);
-    expect(vi.mocked(encodeVideo).mock.calls[0][0].limits).toEqual(LIMITS);
-
-    // 配信中に画面へ切り替えても mic は閉じない。
-    await userEvent.click(screen.getByRole('button', { name: 'Screen' }));
-    await waitFor(() => expect(encodeVideo).toHaveBeenCalledTimes(2));
-    expect(stopEncoding).toHaveBeenCalledTimes(1);
-    expect(media.setLiveBroadcast).toHaveBeenLastCalledWith({ ...request, source: 'screen', microphone: true });
-
-    await userEvent.click(screen.getByRole('button', { name: 'Disable microphone' }));
-    await waitFor(() =>
-      expect(media.setLiveBroadcast).toHaveBeenLastCalledWith({ ...request, source: 'screen', microphone: false })
-    );
-    expect(screen.getByRole('button', { name: 'Enable microphone' })).toHaveAttribute('aria-pressed', 'false');
-
-    await userEvent.click(screen.getByRole('button', { name: 'Stop video broadcast' }));
-    expect(stopEncoding).toHaveBeenCalled();
-    expect(media.stopLiveBroadcast).toHaveBeenCalledWith(request);
-  });
-
-  test('shows a microphone that could not be opened', async () => {
-    const media = api();
-    vi.mocked(captureVideo).mockResolvedValue({} as MediaStream);
-    vi.mocked(encodeVideo).mockReturnValue({ stop: vi.fn() });
-    render(<LiveSessionMedia api={media} topic={request.topic} session={session()} isOwner />);
-
-    await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'The microphone is unavailable, so only video is being broadcast.'
-    );
-    expect(screen.getByRole('button', { name: 'Enable microphone' })).toHaveAttribute('aria-pressed', 'false');
-  });
-
-  // 取り込みの許可を待つ間に card が消えたら、後から得た取り込みを止め、配信も止める(T4: 残留 stream の回収)。
-  test('stops a capture that arrives after the card goes away', async () => {
-    const media = api();
-    let resolveCapture: (stream: MediaStream) => void = () => undefined;
-    vi.mocked(captureVideo).mockReturnValue(new Promise((resolve) => (resolveCapture = resolve)));
-    const { unmount } = render(<LiveSessionMedia api={media} topic={request.topic} session={session()} isOwner />);
-    await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
-    await waitFor(() => expect(captureVideo).toHaveBeenCalled());
-    unmount();
-    const track = { stop: vi.fn() };
-    resolveCapture({ getTracks: () => [track] } as unknown as MediaStream);
-    await waitFor(() => expect(track.stop).toHaveBeenCalled());
-    expect(encodeVideo).not.toHaveBeenCalled();
-    expect(media.stopLiveBroadcast).toHaveBeenCalledTimes(2);
-  });
-
   test('stops watching only after an in-flight start finishes', async () => {
     const media = api();
     let finishWatch: () => void = () => undefined;
@@ -174,10 +73,15 @@ describe('LiveSessionMedia', () => {
     await waitFor(() => expect(media.stopWatchingLiveMedia).toHaveBeenCalledWith(request));
   });
 
-  test('shows nothing to viewers who have not joined or after the session ends', () => {
+  // #1839 AC-3: 配信の操作は shell の上部の bar にあり、主催者の card には映像の欄を出さない。
+  test('shows nothing to viewers who have not joined, to the host, or after the session ends', () => {
     const media = api();
     const { container, rerender } = render(
       <LiveSessionMedia api={media} topic={request.topic} session={session()} isOwner={false} />
+    );
+    expect(container).toBeEmptyDOMElement();
+    rerender(
+      <LiveSessionMedia api={media} topic={request.topic} session={session({ joined_by_me: true })} isOwner />
     );
     expect(container).toBeEmptyDOMElement();
     rerender(
@@ -185,7 +89,7 @@ describe('LiveSessionMedia', () => {
         api={media}
         topic={request.topic}
         session={session({ status: 'Ended', joined_by_me: true })}
-        isOwner
+        isOwner={false}
       />
     );
     expect(container).toBeEmptyDOMElement();

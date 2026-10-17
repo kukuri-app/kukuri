@@ -46,7 +46,7 @@ export function PostLive({ post }: { post: PostView }) {
   return (
     <div ref={element} className='post-live'>
       {session ? (
-        <LiveCard topic={live.topic_id} session={session} postId={post.object_id} broadcastControls={false} />
+        <LiveCard topic={live.topic_id} session={session} postId={post.object_id} />
       ) : (
         <Notice>{t(session === null ? 'unavailable' : 'loading')}</Notice>
       )}

@@ -31,6 +31,7 @@
   "loading": "正在加载直播会话…",
   "media": {
     "broadcasting": "正在直播画面",
+    "controls": "{{title}} 的直播控制",
     "disableMicrophone": "关闭麦克风",
     "enableMicrophone": "开启麦克风",
     "errors": {
@@ -47,7 +48,10 @@
       "camera": "摄像头",
       "screen": "屏幕"
     },
-    "startBroadcast": "开始直播画面",
+    "start": {
+      "camera": "用摄像头直播",
+      "screen": "直播屏幕"
+    },
     "states": {
       "connecting": "正在连接直播…",
       "ended": "画面已停止。正在重新连接…",

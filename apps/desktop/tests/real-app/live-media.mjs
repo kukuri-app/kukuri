@@ -3,11 +3,14 @@
 // portal が無いので置き換える。映像は視聴者の画面の canvas に描かれたもので確かめる。
 import { eventually } from '../web-e2e/wait.mjs';
 import { bursts, record } from './audio.mjs';
+import { openTopic } from './session.mjs';
 import { click, fill, text } from './ui.mjs';
 
 export const t = (key) => text('live', key);
 /// live の列の session の card(視聴・配信の操作と状態はこの中)。投稿の中の Live(#1839)は除く。
 export const CARD = 'article[data-live-session-id]:not(.post-live article)';
+/// 配信者の配信の操作(shell の上部の bar。#1839 AC-3)。
+export const BAR = 'section.shell-live-broadcast';
 /// 配信者が話す音の帯域(Hz)。
 export const VOICE = [300, 950];
 const VIDEO = t('media.video');
@@ -86,11 +89,34 @@ export const observeDraws = (viewer) =>
 /// `viewer` の canvas に `since`(epoch の ms)より後に描かれた frame。
 export const drawsSince = (viewer, since) => viewer.evaluate(`(window.__draws ?? []).filter((each) => each.at > ${since})`);
 
-/// card の状態の表示(配信・視聴の状態と、失敗の理由)。
+/// card と配信の操作の bar の状態の表示(配信・視聴の状態と、失敗の理由)。
 export const statusOf = (instance) =>
   instance.evaluate(
-    `[...document.querySelectorAll('${CARD} [role="status"], ${CARD} [role="alert"]')].map((node) => node.textContent).join(' | ')`
+    `[...document.querySelectorAll('${CARD} [role="status"], ${CARD} [role="alert"], ${BAR} [role="status"], ${BAR} [role="alert"]')].map((node) => node.textContent).join(' | ')`
   );
+
+/// live の列を閉じる(card を含む列の閉じる button)。列が消えるのを待つ。
+export async function closeLiveColumn(instance) {
+  await eventually(`${instance.name} to close the live column`, () =>
+    instance.evaluate(`(() => {
+      const button = document.querySelector('${CARD}')?.closest('[data-column-id]')?.querySelector('.shell-column-close-button');
+      button?.click();
+      return !document.querySelector('${CARD}');
+    })()`), 30_000);
+}
+
+/// live の列を開き直し、card が出るのを待つ(同じ route へは移れないので、一度 timeline へ移る)。
+export async function reopenLiveColumn(instance, topic) {
+  await openTopic(instance, topic, 'timeline');
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  await openTopic(instance, topic, 'live');
+  await eventually(`${instance.name} to show the live column`, () => instance.evaluate(`Boolean(document.querySelector('${CARD}'))`), 30_000);
+}
+
+/// H が card から camera の配信を始める(配信中の操作は shell の上部の bar)。
+export async function startBroadcast(host) {
+  await click(host, t('media.start.camera'), { within: CARD });
+}
 
 /// H が live session を作る。
 export async function createSession(host, title) {
