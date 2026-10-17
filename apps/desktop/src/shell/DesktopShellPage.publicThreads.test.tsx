@@ -263,6 +263,13 @@ test('a direct link opens the thread under its list, copies its link and is rest
   const restored = await waitFor(() => getActiveColumn('Public thread'));
   await waitFor(() => expect(within(restored).getAllByText('Weekly sync · general').length).toBeGreaterThan(0));
   expect(window.location.hash).toBe(link);
+
+  // Control Center の列の一覧でも「公開スレッド」と呼ぶ。共有のボタンは private channel のものなので押せない。
+  const controlCenter = await openControlCenter(user);
+  expect(within(controlCenter).getByRole('button', { name: 'Focus Public thread' })).toBeInTheDocument();
+  expect(within(controlCenter).getByRole('button', { name: 'Share active channel' })).toBeDisabled();
+  await user.keyboard('{Escape}');
+
   await user.click(within(restored).getByRole('button', { name: 'Close Public thread' }));
   await waitFor(() => expect(getActiveColumn('Public threads')).toBeInTheDocument());
 }, 30_000);

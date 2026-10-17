@@ -48,21 +48,25 @@ export function PublicThreadProviders({ api, open, copyLink, children }: PublicT
       storeApi.getState().setField('publicThreadsById', (current) => rememberPublicThreads(current, threads)),
     [storeApi]
   );
-  // 読めたスレッドは覚える数と同じだけ使い回す(古いものから外す)。読めなかったものは外し、次に表示したときに読む。
+  // 読めたスレッドは覚える数と同じだけ使い回す(古いものから外す)。使い回すときも覚え直す(一覧が多くのスレッドを
+  // 覚えて、store から外れていても戻す)。読めなかったものは外し、次に表示したときに読む。
   const loads = useRef(new Map<string, Promise<PublicChannelView | null>>());
   const load = useCallback(
     (topic: string, channelId: string) => {
+      const remembered = (thread: PublicChannelView | null) => {
+        if (thread) remember([thread]);
+        return thread;
+      };
       const pending = loads.current.get(channelId);
-      if (pending) return pending;
+      if (pending) return pending.then(remembered);
+      // 外すのは自分の読み込みだけ(上限で先に外れた後の、同じスレッドの新しい読み込みは残す)。
       const forget = () => {
-        loads.current.delete(channelId);
+        if (loads.current.get(channelId) === request) loads.current.delete(channelId);
         return null;
       };
-      const request = api.getPublicChannel(topic, channelId).then((thread) => {
-        if (!thread) return forget();
-        remember([thread]);
-        return thread;
-      }, forget);
+      const request: Promise<PublicChannelView | null> = api
+        .getPublicChannel(topic, channelId)
+        .then((thread) => (thread ? remembered(thread) : forget()), forget);
       loads.current.set(channelId, request);
       for (const key of loads.current.keys()) {
         if (loads.current.size <= KNOWN_PUBLIC_THREAD_LIMIT) break;
