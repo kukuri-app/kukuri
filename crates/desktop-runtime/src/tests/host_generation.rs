@@ -109,6 +109,7 @@ async fn a_replaced_runtime_restores_only_the_desired_subscriptions_whatever_the
                 channel_ref: ChannelRef::Public,
                 attachments: Vec::new(),
                 content_labels: Vec::new(),
+                live: None,
             })
             .await
             .unwrap();

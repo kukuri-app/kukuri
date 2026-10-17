@@ -461,3 +461,114 @@ async fn resolving_a_live_does_not_grow_with_unrelated_records() {
     }
     owner.shutdown().await;
 }
+
+// #1839 AC-2: A の開始 post の Live を B が別の topic で紹介し、C は紹介 post から同じ Live を見つけて参加する。返信と
+// リアクションは開始 post に付き、紹介 post 自身のリアクションとは合算しない。同じ場所の 2 つ目の Live は独立している。
+#[tokio::test]
+async fn introduction_leads_to_the_same_live_and_its_start_post() {
+    let (owner, _, docs, blobs) = local_app_with_memory_services();
+    let origin = "kukuri:topic:live-flow-origin";
+    let elsewhere = "kukuri:topic:live-flow-elsewhere";
+    let session_id = owner
+        .create_live_session(origin, input("start"))
+        .await
+        .expect("create live");
+    let introducer = viewer_of(docs.clone(), blobs.clone());
+    resolve(&introducer, origin, &session_id)
+        .await
+        .expect("introducer resolves");
+    let intro_id = introducer
+        .create_post_with_attachments_in_channel(
+            elsewhere,
+            ChannelRef::Public,
+            "look",
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some(LiveRefV1 {
+                session_id: session_id.clone(),
+                topic_id: TopicId::new(origin),
+                channel_id: None,
+            }),
+        )
+        .await
+        .expect("introduce");
+
+    let viewer = viewer_of(docs, blobs);
+    display_topic(&viewer, elsewhere)
+        .await
+        .expect("open elsewhere");
+    let intro = post_with_live(&viewer, elsewhere, &session_id).await;
+    assert_eq!(intro.object_id, intro_id);
+    let live = intro.live.expect("intro refers to the live");
+    let found = resolve(&viewer, &live.topic_id, &live.session_id)
+        .await
+        .expect("viewer resolves from the intro");
+    let start_post_id = found.start_post_id.expect("start post");
+    viewer
+        .join_live_session(&live.topic_id, &live.session_id)
+        .await
+        .expect("join from the intro");
+
+    let reply_id = viewer
+        .create_post(origin, "hi", Some(start_post_id.as_str()))
+        .await
+        .expect("reply to the start post");
+    let thread = viewer
+        .list_thread(origin, &start_post_id, None, 20)
+        .await
+        .expect("thread");
+    assert!(thread.items.iter().any(|post| post.object_id == reply_id));
+    let emoji = |emoji: &str| ReactionKeyV1::Emoji {
+        emoji: emoji.into(),
+    };
+    let on_start = viewer
+        .toggle_reaction(
+            origin,
+            &start_post_id,
+            emoji("👍"),
+            Some(ChannelRef::Public),
+        )
+        .await
+        .expect("react to the start post");
+    let on_intro = viewer
+        .toggle_reaction(elsewhere, &intro_id, emoji("🎉"), Some(ChannelRef::Public))
+        .await
+        .expect("react to the intro");
+    assert_eq!(on_start.target_object_id, start_post_id);
+    let keys = |state: &ReactionStateView| {
+        state
+            .reaction_summary
+            .iter()
+            .map(|summary| (summary.emoji.clone(), summary.count))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(keys(&on_start), vec![(Some("👍".to_string()), 1)]);
+    assert_eq!(keys(&on_intro), vec![(Some("🎉".to_string()), 1)]);
+
+    let second = owner
+        .create_live_session(origin, input("second"))
+        .await
+        .expect("second live");
+    let sessions = owner.list_live_sessions(origin).await.expect("list");
+    let starts = sessions
+        .iter()
+        .filter(|session| {
+            [session_id.as_str(), second.as_str()].contains(&session.session_id.as_str())
+        })
+        .map(|session| {
+            session
+                .start_post_id
+                .clone()
+                .expect("each live has its start post")
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        starts.len(),
+        2,
+        "two lives in one place keep their own start posts"
+    );
+    for app in [owner, introducer, viewer] {
+        app.shutdown().await;
+    }
+}

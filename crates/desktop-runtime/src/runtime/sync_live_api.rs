@@ -164,10 +164,20 @@ impl DesktopRuntime {
                 CreateLiveSessionInput {
                     title: request.title,
                     description: request.description,
-                    start_post: String::new(),
+                    start_post: request.start_post,
                 },
                 media_endpoint_id,
             )
+            .await
+    }
+
+    /// #1839: 別の topic の Live も、作成した topic と id で 1 件引く。
+    pub async fn get_live_session(
+        &self,
+        request: LiveSessionCommandRequest,
+    ) -> Result<Option<LiveSessionView>> {
+        self.app_service
+            .get_live_session(request.topic.as_str(), request.session_id.as_str())
             .await
     }
 

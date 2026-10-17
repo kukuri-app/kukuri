@@ -158,6 +158,7 @@ pub(super) async fn seed_legacy_data(runtime: &DesktopRuntime) -> Fixture {
                 &attachment_bytes,
             )],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("own post");
@@ -244,6 +245,7 @@ pub(super) async fn seed_legacy_data(runtime: &DesktopRuntime) -> Fixture {
             channel_ref: ChannelRef::Public,
             title: "migration live".into(),
             description: String::new(),
+            start_post: String::new(),
         })
         .await
         .expect("live session");
@@ -760,6 +762,7 @@ async fn own_posts_written_after_the_switch_are_protected_and_restored() {
                 channel_ref,
                 attachments: Vec::new(),
                 content_labels: Vec::new(),
+                live: None,
             })
             .await
             .expect("own post after the switch");

@@ -1,4 +1,6 @@
-use kukuri_app_api::{CommunityIndexPostResolveInput, GameScoreView, SocialConnectionKind};
+use kukuri_app_api::{
+    CommunityIndexPostResolveInput, GameScoreView, PostLiveView, SocialConnectionKind,
+};
 
 use kukuri_core::{
     ChannelAudienceKind, ChannelRef, DomeCustomizationV1, DomeSessionInputKindV1,
@@ -22,6 +24,9 @@ pub struct CreatePostRequest {
     /// #858: 投稿者自己申告のラベル(既知値は `adult` のみ)。
     #[serde(default)]
     pub content_labels: Vec<String>,
+    /// #1839: 紹介する Live。
+    #[serde(default)]
+    pub live: Option<PostLiveView>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -420,6 +425,9 @@ pub struct CreateLiveSessionRequest {
     pub channel_ref: ChannelRef,
     pub title: String,
     pub description: String,
+    /// #1839: 開始 post の本文(空でもよい)。
+    #[serde(default)]
+    pub start_post: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

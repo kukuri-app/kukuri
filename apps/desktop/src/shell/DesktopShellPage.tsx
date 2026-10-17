@@ -62,6 +62,7 @@ import { CommunityNodeOnboarding } from '@/shell/page/CommunityNodeOnboarding';
 import { DesktopShellColumnWorkspace } from '@/shell/page/DesktopShellColumnWorkspace';
 import { DesktopShellControlCenter } from '@/shell/page/DesktopShellControlCenter';
 import { DesktopShellPrimarySurface } from '@/shell/page/DesktopShellPrimaryWorkspace';
+import { LiveProviders } from '@/shell/page/LiveProviders';
 import { DesktopShellSettingsDrawer } from '@/shell/page/DesktopShellSettingsDrawer';
 import { useFocusScroll } from '@/shell/page/useFocusScroll';
 import { useSharePreview } from '@/shell/page/useSharePreview';
@@ -664,9 +665,6 @@ export function DesktopShellPage({
       handleWithdrawPost={shellActions.handleWithdrawPost}
       handleActivateReference={handleActivateReference}
       handleCopyInternalLink={handleCopyInternalLink}
-      handleJoinLiveSession={shellActions.handleJoinLiveSession}
-      handleLeaveLiveSession={shellActions.handleLeaveLiveSession}
-      handleEndLiveSession={shellActions.handleEndLiveSession}
       handleCreateGameRoom={shellActions.handleCreateGameRoom}
       updateGameDraft={shellActions.updateGameDraft}
       handleUpdateGameRoom={shellActions.handleUpdateGameRoom}
@@ -878,114 +876,119 @@ export function DesktopShellPage({
 
   return (
     <PostRecoveryProviders mediaRetry={retryMediaFetch} mediaDemand={setMediaDemand} postReload={reloadPostElements}>
-      <div className='shell-phase1' data-workspace-layout='column'>
-        <a className='shell-skip-link' href={`#${SHELL_WORKSPACE_ID}`}>
-          {t('shell:workspace.skipToWorkspace')}
-        </a>
-        <main
-          id={SHELL_WORKSPACE_ID}
-          className='shell-column-workspace-main'
-          tabIndex={-1}
-          aria-label={t('shell:workspace.primaryLabel')}
-        >
-          {workspace}
-        </main>
-        <DesktopShellControlCenter
-          api={api}
-          onAcceptCommunityNodeConsents={shellActions.handleAcceptCommunityNodeConsents}
-          triggerRef={controlCenterTriggerRef}
-          topicItems={topicNavItems}
-          topicInput={topicInput}
-          titles={columnTitles}
-          updateAvailable={updateAvailable}
-          onTopicInputChange={setTopicInput}
-          onAddTopic={shellActions.handleAddTopic}
-          onOpenChannelManager={() => dialogs.setChannelDialogOpen(true)}
-          onOpenChannelManagerForTopic={channelEntries.openChannelManagerForTopic}
-          onActivateColumn={activateWorkspaceColumn}
-          onOpenSettings={handleOpenSettingsSection}
-          onOpenProfile={openOwnProfileColumn}
-          onOpenTesterFeedback={() => setTesterFeedbackOpen(true)}
-          onSelectTopic={(topic) => void shellActions.handleSelectTopic(topic)}
-          onSelectChannel={(topic, channelId) => {
-            shellActions.handleSelectPrivateChannel(topic, channelId);
-          }}
+      <LiveProviders api={api} locale={locale} join={shellActions.handleJoinLiveSession}
+        leave={shellActions.handleLeaveLiveSession} end={shellActions.handleEndLiveSession}
+        publishLiveIntro={shellActions.publishLiveIntro} openThread={(id, options) => void openThread(id, options)}
+        copyLink={handleCopyInternalLink} activateReference={(reference) => void handleActivateReference(reference)}>
+        <div className='shell-phase1' data-workspace-layout='column'>
+          <a className='shell-skip-link' href={`#${SHELL_WORKSPACE_ID}`}>
+            {t('shell:workspace.skipToWorkspace')}
+          </a>
+          <main
+            id={SHELL_WORKSPACE_ID}
+            className='shell-column-workspace-main'
+            tabIndex={-1}
+            aria-label={t('shell:workspace.primaryLabel')}
+          >
+            {workspace}
+          </main>
+          <DesktopShellControlCenter
+            api={api}
+            onAcceptCommunityNodeConsents={shellActions.handleAcceptCommunityNodeConsents}
+            triggerRef={controlCenterTriggerRef}
+            topicItems={topicNavItems}
+            topicInput={topicInput}
+            titles={columnTitles}
+            updateAvailable={updateAvailable}
+            onTopicInputChange={setTopicInput}
+            onAddTopic={shellActions.handleAddTopic}
+            onOpenChannelManager={() => dialogs.setChannelDialogOpen(true)}
+            onOpenChannelManagerForTopic={channelEntries.openChannelManagerForTopic}
+            onActivateColumn={activateWorkspaceColumn}
+            onOpenSettings={handleOpenSettingsSection}
+            onOpenProfile={openOwnProfileColumn}
+            onOpenTesterFeedback={() => setTesterFeedbackOpen(true)}
+            onSelectTopic={(topic) => void shellActions.handleSelectTopic(topic)}
+            onSelectChannel={(topic, channelId) => {
+              shellActions.handleSelectPrivateChannel(topic, channelId);
+            }}
+            onOpenChannelSettings={channelEntries.openChannelSettingsDialog}
+            onLeaveChannel={(topic, channelId) => dialogs.openLeaveChannelDialog(topic, channelId)}
+            onRemoveTopic={(topic) => void shellActions.handleRemoveTopic(topic)}
+            onCopyTopicLink={(topic) => handleCopyInternalLink(buildTopicLink(topic))}
+            onRequestTopicIndexing={(topic) =>
+              setIndexingTarget({ kind: 'public_topic', topicId: topic })
+            }
+            onToggleTopicGossip={(topic, enabled) =>
+              void shellActions.handleToggleTopicGossip(topic, enabled)
+            }
+            onToggleChannelGossip={(topic, channelId, enabled) =>
+              void shellActions.handleToggleChannelGossip(topic, channelId, enabled)
+            }
+          />
+        </div>
+        <DesktopShellOverlays
+          actions={shellActions}
+          dialogs={dialogs}
+          t={t}
+          viewModels={viewModels}
+          handleCopyInternalLink={handleCopyInternalLink}
+          sharePreview={sharePreview}
+          clipboardToastId={clipboardToastId}
+          onRequestPrivateIndexing={setIndexingTarget}
           onOpenChannelSettings={channelEntries.openChannelSettingsDialog}
-          onLeaveChannel={(topic, channelId) => dialogs.openLeaveChannelDialog(topic, channelId)}
-          onRemoveTopic={(topic) => void shellActions.handleRemoveTopic(topic)}
-          onCopyTopicLink={(topic) => handleCopyInternalLink(buildTopicLink(topic))}
-          onRequestTopicIndexing={(topic) =>
-            setIndexingTarget({ kind: 'public_topic', topicId: topic })
-          }
-          onToggleTopicGossip={(topic, enabled) =>
-            void shellActions.handleToggleTopicGossip(topic, enabled)
-          }
-          onToggleChannelGossip={(topic, channelId, enabled) =>
-            void shellActions.handleToggleChannelGossip(topic, channelId, enabled)
-          }
+          onLoadMoreJoinedChannels={(topic) => loadMoreJoinedChannels(api, storeApi, topic)}
         />
-      </div>
-      <DesktopShellOverlays
-        actions={shellActions}
-        dialogs={dialogs}
-        t={t}
-        viewModels={viewModels}
-        handleCopyInternalLink={handleCopyInternalLink}
-        sharePreview={sharePreview}
-        clipboardToastId={clipboardToastId}
-        onRequestPrivateIndexing={setIndexingTarget}
-        onOpenChannelSettings={channelEntries.openChannelSettingsDialog}
-        onLoadMoreJoinedChannels={(topic) => loadMoreJoinedChannels(api, storeApi, topic)}
-      />
-      <CommunityNodeOnboarding api={api} onAccept={shellActions.handleAcceptCommunityNodeConsents}
-        onOpenSettings={handleOpenCommunityNodeSettings} onRetry={retryCommunityNode} />
+        <CommunityNodeOnboarding api={api} onAccept={shellActions.handleAcceptCommunityNodeConsents}
+          onOpenSettings={handleOpenCommunityNodeSettings} onRetry={retryCommunityNode} />
 
-      <CommunityIndexingRequestDialog
-        api={api}
-        target={indexingTarget}
-        eligibleNodeBaseUrls={eligibleIndexingNodes}
-        onOpenChange={(open) => {
-          if (!open) setIndexingTarget(null);
-        }}
-        onOpenCommunityNodeSettings={handleOpenCommunityNodeSettings}
-      />
+        <CommunityIndexingRequestDialog
+          api={api}
+          target={indexingTarget}
+          eligibleNodeBaseUrls={eligibleIndexingNodes}
+          onOpenChange={(open) => {
+            if (!open) setIndexingTarget(null);
+          }}
+          onOpenCommunityNodeSettings={handleOpenCommunityNodeSettings}
+        />
 
-      <DesktopShellTesterFeedbackDialog
-        api={api}
-        open={testerFeedbackOpen}
-        onOpenChange={setTesterFeedbackOpen}
-        onOpenCommunityNodeSettings={handleOpenCommunityNodeSettings}
-      />
+        <DesktopShellTesterFeedbackDialog
+          api={api}
+          open={testerFeedbackOpen}
+          onOpenChange={setTesterFeedbackOpen}
+          onOpenCommunityNodeSettings={handleOpenCommunityNodeSettings}
+        />
 
-      <DesktopShellSettingsDrawer
-        onRefreshDiagnostics={() => { void refreshConnectivityStatus(); }}
-        api={api}
-        onThemeChange={onThemeChange}
-        onLocaleChange={(nextLocale) => {
-          setLocaleSaveFailed(!changeDesktopLocale(nextLocale));
-        }}
-        localeSaveFailed={localeSaveFailed}
-        syncRoute={syncRoute}
-        setSettingsOpen={setSettingsOpen}
-        focusPrimarySection={focusPrimarySection}
-        openProfileConnections={openProfileConnections}
-        viewModels={viewModels}
-        handleImportPeer={shellActions.handleImportPeer}
-        handleSaveDiscoverySeeds={shellActions.handleSaveDiscoverySeeds}
-        handleSetPublicBlobDiscovery={shellActions.handleSetPublicBlobDiscovery}
-        handleSaveCommunityNodes={shellActions.handleSaveCommunityNodes}
-        handleSetCommunityNodeTrustPriority={shellActions.handleSetCommunityNodeTrustPriority}
-        handleClearCommunityNodes={shellActions.handleClearCommunityNodes}
-        handleAuthenticateCommunityNode={shellActions.handleAuthenticateCommunityNode}
-        handleSetCommunityNodeInviteCode={shellActions.handleSetCommunityNodeInviteCode}
-        handleFetchCommunityNodeConsents={shellActions.handleFetchCommunityNodeConsents}
-        handleAcceptCommunityNodeConsents={shellActions.handleAcceptCommunityNodeConsents}
-        handleWithdrawCommunityNodeConsents={shellActions.handleWithdrawCommunityNodeConsents}
-        handleRefreshCommunityNode={shellActions.handleRefreshCommunityNode}
-        handleClearCommunityNodeToken={shellActions.handleClearCommunityNodeToken}
-        handleCreateCustomReactionAsset={shellActions.handleCreateCustomReactionAsset}
-        handleRemoveBookmarkedCustomReaction={shellActions.handleRemoveBookmarkedCustomReaction}
-      />
+        <DesktopShellSettingsDrawer
+          onRefreshDiagnostics={() => { void refreshConnectivityStatus(); }}
+          api={api}
+          onThemeChange={onThemeChange}
+          onLocaleChange={(nextLocale) => {
+            setLocaleSaveFailed(!changeDesktopLocale(nextLocale));
+          }}
+          localeSaveFailed={localeSaveFailed}
+          syncRoute={syncRoute}
+          setSettingsOpen={setSettingsOpen}
+          focusPrimarySection={focusPrimarySection}
+          openProfileConnections={openProfileConnections}
+          viewModels={viewModels}
+          handleImportPeer={shellActions.handleImportPeer}
+          handleSaveDiscoverySeeds={shellActions.handleSaveDiscoverySeeds}
+          handleSetPublicBlobDiscovery={shellActions.handleSetPublicBlobDiscovery}
+          handleSaveCommunityNodes={shellActions.handleSaveCommunityNodes}
+          handleSetCommunityNodeTrustPriority={shellActions.handleSetCommunityNodeTrustPriority}
+          handleClearCommunityNodes={shellActions.handleClearCommunityNodes}
+          handleAuthenticateCommunityNode={shellActions.handleAuthenticateCommunityNode}
+          handleSetCommunityNodeInviteCode={shellActions.handleSetCommunityNodeInviteCode}
+          handleFetchCommunityNodeConsents={shellActions.handleFetchCommunityNodeConsents}
+          handleAcceptCommunityNodeConsents={shellActions.handleAcceptCommunityNodeConsents}
+          handleWithdrawCommunityNodeConsents={shellActions.handleWithdrawCommunityNodeConsents}
+          handleRefreshCommunityNode={shellActions.handleRefreshCommunityNode}
+          handleClearCommunityNodeToken={shellActions.handleClearCommunityNodeToken}
+          handleCreateCustomReactionAsset={shellActions.handleCreateCustomReactionAsset}
+          handleRemoveBookmarkedCustomReaction={shellActions.handleRemoveBookmarkedCustomReaction}
+        />
+      </LiveProviders>
     </PostRecoveryProviders>
   );
 }

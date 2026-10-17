@@ -116,6 +116,7 @@
     {"tauri":"list_session_candidates","cli":"list_session_candidates","inventory":"INV-5"},
     {"tauri":"set_session_display","cli":"set_session_display","inventory":"INV-5"},
     {"tauri":"create_live_session","cli":"create_live_session","inventory":"INV-5"},
+    {"tauri":"get_live_session","cli":"get_live_session","inventory":"INV-5"},
     {"tauri":"end_live_session","cli":"end_live_session","inventory":"INV-5"},
     {"tauri":"join_live_session","cli":"join_live_session","inventory":"INV-5"},
     {"tauri":"leave_live_session","cli":"leave_live_session","inventory":"INV-5"},

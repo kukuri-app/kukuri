@@ -1,5 +1,7 @@
 {
   "actions": {
+    "introduce": "紹介する",
+    "openStartPost": "元の投稿を開く",
     "start": "ライブを開始"
   },
   "empty": "ライブセッションはありません",
@@ -14,9 +16,17 @@
     "description": "ライブ概要",
     "placeholders": {
       "description": "短いセッション概要",
+      "startPost": "ライブの案内（空でもかまいません）",
       "title": "金曜配信"
     },
+    "startPost": "投稿の本文",
     "title": "ライブタイトル"
+  },
+  "intro": {
+    "content": "本文",
+    "placeholder": "紹介の文（空でもかまいません）",
+    "target": "投稿先",
+    "title": "ライブを紹介"
   },
   "loading": "ライブセッションを読み込み中…",
   "media": {
@@ -54,5 +64,6 @@
     "Scheduled": "予定"
   },
   "summary": "{{count}} 件アクティブ",
-  "title": "ライブセッション"
+  "title": "ライブセッション",
+  "unavailable": "このライブを読み込めません"
 }

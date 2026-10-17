@@ -31,7 +31,11 @@ impl DesktopRuntime {
                 request.reply_to.as_deref(),
                 attachments,
                 request.content_labels,
-                None,
+                request.live.map(|live| kukuri_core::LiveRefV1 {
+                    session_id: live.session_id,
+                    topic_id: kukuri_core::TopicId::new(live.topic_id),
+                    channel_id: live.channel_id.map(kukuri_core::ChannelId::new),
+                }),
             )
             .await
     }

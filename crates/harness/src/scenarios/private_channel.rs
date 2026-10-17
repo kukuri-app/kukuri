@@ -245,6 +245,7 @@ pub(crate) async fn run_private_channel_invite_connectivity(
                 channel_ref: private_ref.clone(),
                 attachments: Vec::new(),
                 content_labels: Vec::new(),
+                live: None,
             })
             .await
             .context("failed to create private post")?;
@@ -354,6 +355,7 @@ pub(crate) async fn run_private_channel_invite_connectivity(
                 channel_ref: ChannelRef::Public,
                 attachments: Vec::new(),
                 content_labels: Vec::new(),
+                live: None,
             })
             .await
             .context("failed to create private reply")?;
@@ -448,6 +450,7 @@ pub(crate) async fn run_private_channel_invite_connectivity(
                 channel_ref: private_ref.clone(),
                 title: "private live".to_string(),
                 description: "core stream".to_string(),
+                start_post: String::new(),
             })
             .await
             .context("failed to create private live session")?;

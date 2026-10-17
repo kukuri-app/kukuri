@@ -503,6 +503,7 @@ async fn public_blob_holder(
                 role: Some("image_original".to_string()),
             }],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .map_err(failed)?;

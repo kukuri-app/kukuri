@@ -163,7 +163,7 @@ import { commitDomeLayoutRequest, resyncDomeSnapshotsRequest } from './domeHosti
 import { developerLogsApi, displayDemandApi, domeTransitionApi, liveMediaApi, postReloadApi, socialBlockApi } from './apiModules';
 
 export const runtimeApi: DesktopApi = {
-  createPost: command('createPost', async (topic, content, replyTo, attachments = [], channelRef = { kind: 'public' }, contentLabels = []) => {
+  createPost: command('createPost', async (topic, content, replyTo, attachments = [], channelRef = { kind: 'public' }, contentLabels = [], live = null) => {
     return invokeDesktop<string>('create_post', {
       request: {
         topic,
@@ -172,6 +172,7 @@ export const runtimeApi: DesktopApi = {
         channel_ref: channelRef,
         attachments,
         content_labels: contentLabels,
+        live,
       } satisfies CreatePostRequest,
     });
   }),
@@ -454,14 +455,20 @@ export const runtimeApi: DesktopApi = {
       } satisfies ListLiveSessionsRequest,
     });
   }),
-  createLiveSession: command('createLiveSession', async (topic, title, description, channelRef = { kind: 'public' }) => {
+  createLiveSession: command('createLiveSession', async (topic, title, description, channelRef = { kind: 'public' }, startPost = '') => {
     return invokeDesktop<string>('create_live_session', {
       request: {
         topic,
         channel_ref: channelRef,
         title,
         description,
+        start_post: startPost,
       } satisfies CreateLiveSessionRequest,
+    });
+  }),
+  getLiveSession: command('getLiveSession', async (topic, sessionId) => {
+    return invokeDesktop<LiveSessionView | null>('get_live_session', {
+      request: { topic, session_id: sessionId } satisfies LiveSessionCommandRequest,
     });
   }),
   endLiveSession: command('endLiveSession', async (topic, sessionId) => {

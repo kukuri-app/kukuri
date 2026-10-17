@@ -81,6 +81,7 @@ import type {
   NotificationView,
   NotificationPageView,
   NotificationCursor,
+  PostLiveView,
   PostView as WirePostView,
   PostWithdrawalReasonRequest,
   PrivateChannelControllerTake,
@@ -195,6 +196,8 @@ export type LocalPostDraft = {
   attachments?: CreateAttachmentInput[];
   // #858: 投稿者自己申告のラベル(既知値は 'adult' のみ)。
   content_labels?: string[];
+  // #1839: 紹介する Live。
+  live?: PostLiveView | null;
 };
 
 export type LocalDraftMediaItem = {
@@ -285,7 +288,9 @@ export interface DesktopApi {
     replyTo?: string | null,
     attachments?: CreateAttachmentInput[],
     channelRef?: ChannelRef,
-    contentLabels?: string[]
+    contentLabels?: string[],
+    // #1839: 紹介する Live。
+    live?: PostLiveView | null
   ): Promise<string>;
   createRepost(
     topic: string,
@@ -393,8 +398,12 @@ export interface DesktopApi {
     topic: string,
     title: string,
     description: string,
-    channelRef?: ChannelRef
+    channelRef?: ChannelRef,
+    // #1839: 開始 post の本文(空でもよい)。
+    startPost?: string
   ): Promise<string>;
+  // #1839: 作成した topic と id で Live を 1 件引く。手元に無ければ null(表示要求で読む)。
+  getLiveSession(topic: string, sessionId: string): Promise<LiveSessionView | null>;
   endLiveSession(topic: string, sessionId: string): Promise<void>;
   joinLiveSession(topic: string, sessionId: string): Promise<void>;
   leaveLiveSession(topic: string, sessionId: string): Promise<void>;

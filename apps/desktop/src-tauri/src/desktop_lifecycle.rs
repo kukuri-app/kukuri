@@ -790,6 +790,7 @@ mod tests {
                 channel_ref: ChannelRef::Public,
                 attachments: Vec::new(),
                 content_labels: Vec::new(),
+                live: None,
             })
             .await
             .expect("fixture post");

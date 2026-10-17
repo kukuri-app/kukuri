@@ -145,6 +145,7 @@ async fn own_writes_go_to_the_protected_owner_when_written() {
             channel_ref: ChannelRef::Public,
             attachments,
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("own post");
@@ -349,6 +350,7 @@ async fn a_legacy_store_moves_in_bounded_steps_and_is_retired() {
                 &png_source_bytes(),
             )],
             content_labels: vec![kukuri_core::ADULT_CONTENT_LABEL.into()],
+            live: None,
         })
         .await
         .expect("own adult post");

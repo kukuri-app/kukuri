@@ -781,6 +781,7 @@ mod tests {
                 channel_ref: kukuri_core::ChannelRef::Public,
                 attachments: Vec::new(),
                 content_labels: Vec::new(),
+                live: None,
             })
             .await
             .expect("post");

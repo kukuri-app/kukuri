@@ -126,6 +126,7 @@ async fn own_devices_merge_their_social_graph_and_posts_into_the_union() {
         channel_ref: ChannelRef::Public,
         attachments,
         content_labels: Vec::new(),
+        live: None,
     };
     let image = vec![3u8; 64 * 1024];
     let attached = image_attachment_request("a.png", "image/png", &image);

@@ -9,7 +9,7 @@
       "path": "docs/THIRD_PARTY_NOTICES.md"
     },
     {
-      "lines": 1218,
+      "lines": 1220,
       "path": "crates/harness/src/scenarios/community_node.rs"
     },
     {
@@ -17,7 +17,7 @@
       "path": "crates/metaverse-host/src/lib.rs"
     },
     {
-      "lines": 1156,
+      "lines": 1163,
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
@@ -37,7 +37,7 @@
       "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
-      "lines": 1066,
+      "lines": 1074,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {
@@ -45,7 +45,7 @@
       "path": "crates/metaverse-host/src/tests.rs"
     },
     {
-      "lines": 1051,
+      "lines": 1052,
       "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
     },
     {
@@ -79,6 +79,10 @@
     {
       "lines": 1019,
       "path": "crates/app-api/src/views.rs"
+    },
+    {
+      "lines": 1001,
+      "path": "apps/desktop/src/components/core/PostCard.tsx"
     },
     {
       "lines": 1000,

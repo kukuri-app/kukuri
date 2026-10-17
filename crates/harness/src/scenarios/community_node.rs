@@ -599,6 +599,7 @@ pub(crate) async fn run_community_node_connectivity(
                 channel_ref: ChannelRef::Public,
                 attachments: Vec::new(),
                 content_labels: Vec::new(),
+                live: None,
             })
             .await
             .context("failed to create scenario reply on desktop b")?;
@@ -685,6 +686,7 @@ pub(crate) async fn run_community_node_connectivity(
                         channel_ref: ChannelRef::Public,
                         title: "community live".to_string(),
                         description: "live session".to_string(),
+                        start_post: String::new(),
                     })
                     .await
                     .with_context(|| {

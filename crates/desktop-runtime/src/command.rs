@@ -576,6 +576,7 @@ dispatch_table! { session_commands, dispatch_sessions(runtime: &Arc<DesktopRunti
     delete_dome(request: crate::DeleteDomeRequest) => runtime.delete_dome(request).await.map_err(map_error);
     end_live_session(request: LiveSessionCommandRequest) => runtime.end_live_session(request).await.map_err(map_error);
     get_dome_hosting(request: GetDomeHostingRequest) => runtime.get_dome_hosting(request).await.map_err(map_error);
+    get_live_session(request: LiveSessionCommandRequest) => runtime.get_live_session(request).await.map_err(map_error);
     import_metaverse_room_asset(request: ImportMetaverseRoomAssetRequest) => runtime.import_metaverse_room_asset(request).await.map_err(map_error);
     join_live_session(request: LiveSessionCommandRequest) => runtime.join_live_session(request).await.map_err(map_error);
     leave_live_session(request: LiveSessionCommandRequest) => runtime.leave_live_session(request).await.map_err(map_error);

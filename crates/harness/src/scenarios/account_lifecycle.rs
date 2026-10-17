@@ -64,6 +64,7 @@ pub(crate) async fn run_account_lifecycle(
                 channel_ref: ChannelRef::Public,
                 attachments: vec![],
                 content_labels: vec![],
+                live: None,
             })
             .await?;
         push_named_step(&mut steps, "account_a_profile_and_post", started);

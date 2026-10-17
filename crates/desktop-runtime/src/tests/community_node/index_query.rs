@@ -466,6 +466,7 @@ async fn community_node_index_records_and_restores_existing_local_subjects() {
                 b"observed attachment",
             )],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("create post");

@@ -10,7 +10,9 @@ pub(super) fn input(name: &str) -> Value {
         "create_post" => object(
             json!({"topic": {"type": "string"}, "content": {"type": "string"},
             "reply_to": {"type": "string"}, "channel_ref": channel_ref(), "attachments": array(media::input_schema()),
-            "content_labels": array(json!({"type": "string"}))}),
+            "content_labels": array(json!({"type": "string"})),
+            "live": object(json!({"session_id": {"type": "string"}, "topic_id": {"type": "string"},
+                "channel_id": {"type": "string"}}), &["session_id", "topic_id"])}),
             &["topic", "content"],
         ),
         "withdraw_post" => object(

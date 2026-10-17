@@ -6,8 +6,8 @@ import { bursts, record } from './audio.mjs';
 import { click, fill, text } from './ui.mjs';
 
 export const t = (key) => text('live', key);
-/// live session の card(視聴・配信の操作と状態はこの中)。
-export const CARD = 'article[data-live-session-id]';
+/// live の列の session の card(視聴・配信の操作と状態はこの中)。投稿の中の Live(#1839)は除く。
+export const CARD = 'article[data-live-session-id]:not(.post-live article)';
 /// 配信者が話す音の帯域(Hz)。
 export const VOICE = [300, 950];
 const VIDEO = t('media.video');

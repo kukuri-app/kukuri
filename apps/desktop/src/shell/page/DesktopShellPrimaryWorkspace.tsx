@@ -1,5 +1,4 @@
 import { type FormEvent, type ReactNode, useMemo, useState } from 'react';
-import { Link2 } from 'lucide-react';
 
 import { BookmarksEmptyState, BookmarksListFrame } from '@/components/core/BookmarksEmptyState';
 import { PagedList } from '@/components/core/PagedList';
@@ -12,16 +11,13 @@ import type { CommunityNodePanelView } from '@/components/settings/types';
 import { AuthorTrustGateNotice } from '@/components/core/AuthorTrustGateNotice';
 import { useAuthorTrustGateReveal } from '@/components/core/useAuthorTrustGateReveal';
 import { SessionVisibility, PendingSessionCards } from '@/components/extended/SessionVisibility';
-import { LiveSessionMedia } from '@/components/extended/LiveSessionMedia';
 import { GameRoomPanel } from '@/components/extended/GameRoomPanel';
 import type { MetaverseRoomActions } from '@/components/extended/metaverse/MetaverseRoomActions';
 import { ProfileConnectionsPanel } from '@/components/extended/ProfileConnectionsPanel';
 import { ProfileEditorPanel } from '@/components/extended/ProfileEditorPanel';
 import { ProfileOverviewPanel } from '@/components/extended/ProfileOverviewPanel';
 import { Button } from '@/components/ui/button';
-import { IconButton } from '@/components/ui/icon-button';
 import { Notice } from '@/components/ui/notice';
-import { SmartReferenceText } from '@/components/core/SmartReferenceText';
 import type { ProfileConnectionsView } from '@/components/shell/types';
 import {
   primarySectionForColumn,
@@ -37,9 +33,8 @@ import type {
   PostView,
   ReactionKeyInput,
 } from '@/lib/api';
-import { formatLocalizedTime } from '@/i18n/format';
 import type { SupportedLocale } from '@/i18n';
-import { buildLiveLink, type InternalSmartReference } from '@/lib/internalLinks';
+import { type InternalSmartReference } from '@/lib/internalLinks';
 import { copyTextToClipboard } from '@/lib/utils';
 import { consentPendingCommunityNodes, eligibleCommunityIndexNodes } from '@/lib/api/communityIndex';
 import { communityIndexAvailability, type CommunityNodeAvailability } from '@/lib/api/communityNodeAvailability';
@@ -53,14 +48,12 @@ import {
 } from '@/shell/store';
 import {
   authorDisplayLabel,
-  formatCount,
   createGameEditorDraft,
-  localizeAudienceLabel,
   privateTimelineScope,
   resolveProfilePictureSrc,
-  translateLiveStatus,
 } from '@/shell/presentation';
 import { useDesktopShellViewModels } from '@/shell/useDesktopShellViewModels';
+import { LiveCard } from './LiveCard';
 import type { OpenAuthorDetail, OpenThread, Translate } from '@/shell/actions/shared';
 import { useShallow } from 'zustand/react/shallow';
 import { DEFAULT_ASYNC_PANEL_STATE } from '@/shell/slices/shared';
@@ -144,9 +137,6 @@ export type DesktopShellPrimarySurfaceProps = {
   handleWithdrawPost: (post: PostView) => Promise<void>;
   handleActivateReference: (reference: InternalSmartReference) => Promise<void>;
   handleCopyInternalLink: (link: string) => void;
-  handleJoinLiveSession: (sessionId: string) => Promise<void>;
-  handleLeaveLiveSession: (sessionId: string) => Promise<void>;
-  handleEndLiveSession: (sessionId: string) => Promise<void>;
   handleCreateGameRoom: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   updateGameDraft: (roomId: string, update: (draft: GameEditorDraft) => GameEditorDraft) => void;
   handleUpdateGameRoom: (roomId: string) => Promise<void>;
@@ -204,9 +194,6 @@ export function DesktopShellPrimarySurface({
   handleWithdrawPost,
   handleActivateReference,
   handleCopyInternalLink,
-  handleJoinLiveSession,
-  handleLeaveLiveSession,
-  handleEndLiveSession,
   handleCreateGameRoom,
   updateGameDraft,
   handleUpdateGameRoom,
@@ -724,7 +711,7 @@ export function DesktopShellPrimarySurface({
                 <p className='empty-state'>{t('live:empty')}</p>
               ) : null}
               <ul className='post-list'>
-                {surfaceLiveSessionListItems.map(({ session, isOwner, pending }) => {
+                {surfaceLiveSessionListItems.map(({ session }) => {
                   // #1061: 採用 CN の評価で主催者が非表示推奨なら、配信を折りたたむ。
                   const trustGate = liveTrustGate.gateFor(session.host_pubkey);
                   if (trustGate) {
@@ -740,89 +727,12 @@ export function DesktopShellPrimarySurface({
                   }
                   return (
                   <SessionVisibility key={session.session_id} sessionId={session.session_id} kind="live" context={{ api, topic: surfaceTopic, scope: surfaceTimelineScope }}>
-                    <article
-                      className={`post-card${
-                        selectedLiveSessionId === session.session_id ? ' post-card-targeted' : ''
-                      }`}
-                      aria-busy={pending}
-                      data-live-session-id={session.session_id}
-                      tabIndex={selectedLiveSessionId === session.session_id ? -1 : undefined}
-                    >
-                      <div className='post-meta'>
-                        <span>{session.title}</span>
-                        <span>{translateLiveStatus(session.status)}</span>
-                        <span className='reply-chip'>
-                          {localizeAudienceLabel(session.audience_label)}
-                        </span>
-                      </div>
-                      <div className='post-body'>
-                        <strong className='post-title post-copy-wrap'>
-                          <SmartReferenceText
-                            text={session.description || t('common:fallbacks.noDescription')}
-                            className='post-copy-wrap'
-                            onActivateReference={(reference) => void handleActivateReference(reference)}
-                          />
-                        </strong>
-                      </div>
-                      <div className='topic-diagnostic topic-diagnostic-secondary'>
-                        <span>{t('common:labels.viewers')}: {formatCount(session.viewer_count)}</span>
-                        <span>
-                          {t('common:labels.started')}: {formatLocalizedTime(session.started_at, locale)}
-                        </span>
-                      </div>
-                      {session.ended_at ? (
-                        <div className='topic-diagnostic topic-diagnostic-secondary'>
-                          <span>
-                            {t('common:labels.ended')}: {formatLocalizedTime(session.ended_at, locale)}
-                          </span>
-                        </div>
-                      ) : null}
-                      <LiveSessionMedia api={api} topic={surfaceTopic} session={session} isOwner={isOwner} />
-                      <div className='post-actions'>
-                        {session.joined_by_me ? (
-                          <Button
-                            variant='secondary'
-                            type='button'
-                            disabled={pending}
-                            onClick={() => void handleLeaveLiveSession(session.session_id)}
-                          >
-                            {t('common:actions.leave')}
-                          </Button>
-                        ) : (
-                          <Button
-                            variant='secondary'
-                            type='button'
-                            disabled={pending || session.status === 'Ended'}
-                            onClick={() => void handleJoinLiveSession(session.session_id)}
-                          >
-                            {t('common:actions.join')}
-                          </Button>
-                        )}
-                        {isOwner ? (
-                          <Button
-                            variant='secondary'
-                            type='button'
-                            disabled={pending || session.status === 'Ended'}
-                            onClick={() => void handleEndLiveSession(session.session_id)}
-                          >
-                            {t('common:actions.end')}
-                          </Button>
-                        ) : null}
-                        <IconButton
-                          variant='secondary'
-                          className='post-action-button'
-                          type='button'
-                          label={t('common:actions.copyLink')}
-                          onClick={() =>
-                            handleCopyInternalLink(
-                              buildLiveLink(surfaceTopic, session.session_id, session.channel_id ?? null)
-                            )
-                          }
-                        >
-                          <Link2 className='size-4' aria-hidden='true' />
-                        </IconButton>
-                      </div>
-                    </article>
+                    <LiveCard
+                      topic={surfaceTopic}
+                      session={session}
+                      targeted={selectedLiveSessionId === session.session_id}
+                      broadcastControls
+                    />
                   </SessionVisibility>
                   );
                 })}

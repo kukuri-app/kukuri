@@ -259,6 +259,7 @@ async fn a_history_transfer_reflects_the_selected_records_and_blobs() {
         channel_ref: ChannelRef::Public,
         attachments,
         content_labels: Vec::new(),
+        live: None,
     };
     let image = vec![9u8; 700 * 1024];
     let attached = image_attachment_request("p.png", "image/png", &image);

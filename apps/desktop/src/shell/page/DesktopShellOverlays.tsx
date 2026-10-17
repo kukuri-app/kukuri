@@ -522,6 +522,14 @@ export function DesktopShellOverlays({
                   disabled={liveCreatePending}
                 />
               </Label>
+              <Label>
+                <span>{t('live:fields.startPost')}</span>
+                <Textarea
+                  name='start_post'
+                  placeholder={t('live:fields.placeholders.startPost')}
+                  disabled={liveCreatePending}
+                />
+              </Label>
               {liveError ? <p className='error error-inline'>{liveError}</p> : null}
               <Button type='submit' disabled={liveCreatePending}>
                 {t('live:actions.start')}

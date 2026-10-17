@@ -4,6 +4,7 @@ import type {
   DesktopApi,
   LocalDraftMediaItem,
   LocalPostDraft,
+  PostLiveView,
   PostView,
 } from '@/lib/api';
 import {
@@ -172,6 +173,7 @@ export function createOptimisticPostActions({
       content: draft.content,
       content_status: 'Available',
       content_labels: draft.kind === 'post' ? draft.content_labels ?? [] : [],
+      live: draft.live ?? null,
       attachments: attachmentViewsFromDraftMediaItems(localId, draftMedia),
       created_at: createdAt,
       reply_to: replyPost?.object_id ?? null,
@@ -273,7 +275,8 @@ export function createOptimisticPostActions({
               draft.reply_to ?? null,
               draft.attachments ?? [],
               draft.channel_ref ?? PUBLIC_CHANNEL_REF,
-              draft.content_labels ?? []
+              draft.content_labels ?? [],
+              draft.live ?? null
             );
       for (const item of draftMedia) {
         releaseDraftPreview(item.id);
@@ -314,11 +317,31 @@ export function createOptimisticPostActions({
     }
   }
 
+  /** #1839: Live の紹介 post を出し先の timeline へ置いて送る。送れたら true。 */
+  async function publishLiveIntro(topic: string, channelId: string | null, content: string, live: PostLiveView) {
+    const createdAt = Math.floor(Date.now() / 1000);
+    const post = createOptimisticPost({
+      createdAt,
+      localId: `local-post:${Date.now()}:${Math.random().toString(16).slice(2)}`,
+      draft: {
+        kind: 'post',
+        topic,
+        content,
+        channel_ref: channelId ? { kind: 'private_channel', channel_id: channelId } : PUBLIC_CHANNEL_REF,
+        live,
+      },
+      draftMedia: [],
+    });
+    insertOptimisticPost(post);
+    return submitOptimisticPost(post);
+  }
+
   return {
     cloneDraftMediaItems,
     createOptimisticPost,
     findKnownPost,
     insertOptimisticPost,
+    publishLiveIntro,
     submitOptimisticPost,
   };
 }

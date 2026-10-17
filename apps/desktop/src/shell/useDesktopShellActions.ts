@@ -308,6 +308,7 @@ export function useDesktopShellActions({
     createOptimisticPost,
     findKnownPost,
     insertOptimisticPost,
+    publishLiveIntro,
     submitOptimisticPost,
   } = createOptimisticPostActions({
     api,
@@ -947,6 +948,7 @@ export function useDesktopShellActions({
     beginColumnReply,
     beginColumnQuoteRepost,
     handleSimpleRepost,
+    publishLiveIntro,
     handleRetryLocalPost,
     handleRestoreLocalPost: restoreLocalPostToColumn,
     handleRelationshipAction,

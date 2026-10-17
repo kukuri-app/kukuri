@@ -161,6 +161,7 @@ async fn friend_only_channel_restore_keeps_archived_epoch_history() {
             channel_ref: private_channel_ref,
             attachments: vec![],
             content_labels: Vec::new(),
+            live: None,
         })
         .await
         .expect("create friend-only post");

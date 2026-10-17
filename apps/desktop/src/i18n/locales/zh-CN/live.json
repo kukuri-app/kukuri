@@ -1,5 +1,7 @@
 {
   "actions": {
+    "introduce": "分享",
+    "openStartPost": "打开原帖",
     "start": "开始直播"
   },
   "empty": "暂无直播会话",
@@ -14,9 +16,17 @@
     "description": "直播简介",
     "placeholders": {
       "description": "简短的会话摘要",
+      "startPost": "介绍这场直播（可留空）",
       "title": "周五直播"
     },
+    "startPost": "帖子正文",
     "title": "直播标题"
+  },
+  "intro": {
+    "content": "正文",
+    "placeholder": "添加说明（可留空）",
+    "target": "发布到",
+    "title": "分享直播"
   },
   "loading": "正在加载直播会话…",
   "media": {
@@ -54,5 +64,6 @@
     "Scheduled": "已安排"
   },
   "summary": "{{count}} 个活跃",
-  "title": "直播会话"
+  "title": "直播会话",
+  "unavailable": "无法加载此直播"
 }
