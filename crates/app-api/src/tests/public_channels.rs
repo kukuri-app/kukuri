@@ -348,9 +348,7 @@ async fn real_iroh_device_without_an_invite_reads_a_public_channel_by_id() -> Re
         })),
     );
 
-    let channel = a
-        .create_public_channel(TOPIC, "雑談", "最初の投稿")
-        .await?;
+    let channel = a.create_public_channel(TOPIC, "雑談", "最初の投稿").await?;
     assert_eq!(
         b.get_public_channel(TOPIC, &channel.channel_id).await?,
         Some(channel.clone())
