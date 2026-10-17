@@ -264,7 +264,10 @@ impl AppService {
         if projection.topic_id != topic_id {
             anyhow::bail!("bookmark target topic does not match");
         }
-        if projection.channel_id != channel_storage_id(channel_ref.channel_id()) {
+        // 対象の channel の種類も比べる(private channel の ID を公開 channel の種類で渡して参加の確認を迂回させない)。
+        if ChannelRef::for_channel(channel_id_from_storage(&projection.channel_id).as_ref())
+            != channel_ref
+        {
             anyhow::bail!("bookmark target channel does not match");
         }
         if !matches!(

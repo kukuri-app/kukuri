@@ -17,7 +17,11 @@ impl AppService {
         if row.recipient_pubkey != self.current_author_pubkey().as_str() {
             return Ok(None);
         }
-        if let Some(channel) = row.channel_id.as_deref() {
+        if let Some(channel) = row
+            .channel_id
+            .as_deref()
+            .filter(|channel| !is_public_storage_channel(channel))
+        {
             let Some(topic) = row.topic_id.as_deref() else {
                 return Ok(None);
             };

@@ -38,6 +38,7 @@ impl ChannelId {
             .strip_prefix(PUBLIC_CHANNEL_ID_PREFIX)?
             .split_once('-')?;
         let canonical = !millis.starts_with('0')
+            && millis.bytes().all(|byte| byte.is_ascii_digit())
             && suffix.len() == PUBLIC_CHANNEL_OWNER_SUFFIX_LEN
             && suffix
                 .bytes()

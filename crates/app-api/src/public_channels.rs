@@ -115,7 +115,35 @@ impl AppService {
 
     /// 公開 channel を ID から 1 件読む。手元(保持した他人の record を含む)を先に読み、無ければ channel と topic の
     /// 読み先から読む。検証に通った record は保持し、他の参加者へ提供する(#1395)。見つからなければ `None`。
+    /// 作成時の最初の投稿も、作成日(と翌日)の bucket から 1 件読んで反映する(ID から返信ツリーを開けるように)。
     pub async fn get_public_channel(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+    ) -> Result<Option<PublicChannelView>> {
+        let Some(channel) = self.read_public_channel(topic_id, channel_id).await? else {
+            return Ok(None);
+        };
+        if let Some(first_post_id) = &channel.first_post_id
+            && let Err(error) = self
+                .ensure_object_projection_near(
+                    topic_id,
+                    &ChannelRef::PublicChannel {
+                        channel_id: ChannelId::new(channel_id),
+                    }
+                    .timeline_scope(),
+                    &EnvelopeId::from(first_post_id.as_str()),
+                    DocFetchPolicy::LocalThenRemote,
+                    Some(channel.created_at.div_euclid(1_000)),
+                )
+                .await
+        {
+            warn!(%error, "failed to read the first post of a public channel");
+        }
+        Ok(Some(channel))
+    }
+
+    async fn read_public_channel(
         &self,
         topic_id: &str,
         channel_id: &str,

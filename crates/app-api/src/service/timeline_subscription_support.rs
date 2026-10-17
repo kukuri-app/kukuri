@@ -476,6 +476,20 @@ impl AppService {
         object_id: &EnvelopeId,
         policy: DocFetchPolicy,
     ) -> Result<bool> {
+        self.ensure_object_projection_near(topic_id, scope, object_id, policy, None)
+            .await
+    }
+
+    /// `created_near` は対象の作成時刻(秒)の手がかり。あればその日と翌日の bucket を読み、無ければ現在と直前の
+    /// bucket を読む(公開 channel の作成時の最初の投稿を、作成から日を跨いでも ID から読む。#1840)。
+    pub(crate) async fn ensure_object_projection_near(
+        &self,
+        topic_id: &str,
+        scope: &TimelineScope,
+        object_id: &EnvelopeId,
+        policy: DocFetchPolicy,
+        created_near: Option<i64>,
+    ) -> Result<bool> {
         // private channel の scope は、projection に行が残っていても、参加状態の確認を先に通す。
         // 退出した channel の投稿を、手元に残った行から操作できないようにする(照会だけで docs は読まない)。
         if let TimelineScope::Channel { channel_id } = scope {
@@ -522,7 +536,7 @@ impl AppService {
         };
         let deadline = n0_future::time::Instant::now() + std::time::Duration::from_secs(30);
         for (replica, epoch) in self
-            .remote_page_replicas(topic_id, scope, None, false, false)
+            .remote_page_replicas(topic_id, scope, created_near, created_near.is_some(), false)
             .await?
         {
             let readers = self

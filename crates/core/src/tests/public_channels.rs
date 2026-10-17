@@ -35,6 +35,7 @@ fn public_channel_ids_are_bound_to_the_creator_and_their_creation_time() {
         "pc-12-0123456789abcde",
         "pc-12-0123456789abcdef0",
         "pc-x-0123456789abcdef",
+        "pc-+12-0123456789abcdef",
     ] {
         assert!(!ChannelId::new(other).is_public_channel(), "{other}");
     }

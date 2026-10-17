@@ -3,7 +3,11 @@
 //! 公開 channel には出ない。
 use super::sync::CountingDocsSync;
 use super::*;
-use kukuri_docs_sync::MemoryDocsSync;
+use kukuri_core::{
+    KukuriPostEnvelopeContentV1, KukuriPublicChannelContentV1, build_public_channel_envelope,
+    sign_envelope_json_at,
+};
+use kukuri_docs_sync::{BucketReplica, BucketScope, MemoryDocsSync, TimeBucket};
 
 const TOPIC: &str = "kukuri:topic:public-threads";
 
@@ -206,6 +210,35 @@ async fn a_device_without_an_invite_reads_a_public_channel_by_id_and_writes_into
             .any(|post| post.object_id == reply && in_channel(post, &channel.channel_id))
     );
 
+    // 公開 channel の投稿は種類を合わせて bookmark でき、作成者のプロフィールには出ない。private の形の ID は受け付けない。
+    b.bookmark_post_in_channel(TOPIC, &first_post_id, public_channel.clone())
+        .await
+        .expect("bookmark in the public channel");
+    assert!(
+        b.bookmark_post_in_channel(TOPIC, &b_post, ChannelRef::Public)
+            .await
+            .is_err()
+    );
+    assert!(
+        a.list_profile_timeline(&a.current_author_pubkey(), None, 50)
+            .await
+            .expect("profile")
+            .items
+            .is_empty()
+    );
+    assert!(
+        b.create_post_in_channel(
+            TOPIC,
+            ChannelRef::PublicChannel {
+                channel_id: ChannelId::new("channel-1-abcdef01"),
+            },
+            "private form",
+            None,
+        )
+        .await
+        .is_err()
+    );
+
     // topic の公開タイムラインと、別の公開 channel には出ない。
     let other = a
         .create_public_channel(TOPIC, "別のスレッド", "")
@@ -221,6 +254,129 @@ async fn a_device_without_an_invite_reads_a_public_channel_by_id_and_writes_into
         assert!(public.is_empty(), "{public:?}");
         assert!(channel_posts(app, &other.channel_id).await.is_empty());
     }
+
+    // 取り下げも対象の channel の種類を求める。
+    assert!(
+        b.withdraw_post(
+            TOPIC,
+            &b_post,
+            ChannelRef::Public,
+            None,
+            WithdrawalReasonVisibility::Public,
+            Some(PostWithdrawalReason::AuthorRequest),
+        )
+        .await
+        .is_err()
+    );
+    b.withdraw_post(
+        TOPIC,
+        &b_post,
+        public_channel,
+        None,
+        WithdrawalReasonVisibility::Public,
+        Some(PostWithdrawalReason::AuthorRequest),
+    )
+    .await
+    .expect("withdraw in the public channel");
+}
+
+// 作成から日を跨いだ公開 channel でも、ID から作成時の最初の投稿を辿れる(作成日の bucket から読む)。
+#[tokio::test]
+async fn the_first_post_of_an_older_public_channel_resolves_by_id() {
+    let a_docs = MemoryDocsSync::with_docs_author("03".repeat(32));
+    let b_docs = MemoryDocsSync::with_docs_author("04".repeat(32));
+    let b = device(
+        "b",
+        &FakeNetwork::default(),
+        b_docs,
+        a_docs.clone(),
+        Arc::new(MemoryBlobService::default()),
+    );
+    let creator = generate_keys();
+    let created_ms = Utc::now().timestamp_millis() - 3 * 86_400_000;
+    let channel_id = ChannelId::public_channel(created_ms, &creator.public_key_hex());
+    let topic = TopicId::new(TOPIC);
+    let first = sign_envelope_json_at(
+        &creator,
+        "post",
+        vec![
+            vec!["topic".into(), TOPIC.into()],
+            vec!["object".into(), "post".into()],
+            vec!["channel".into(), channel_id.as_str().into()],
+        ],
+        &KukuriPostEnvelopeContentV1 {
+            object_kind: "post".into(),
+            topic_id: topic.clone(),
+            channel_id: Some(channel_id.clone()),
+            payload_ref: PayloadRef::InlineText {
+                text: "3 日前の最初の投稿".into(),
+            },
+            attachments: Vec::new(),
+            media_manifest_refs: Vec::new(),
+            visibility: ObjectVisibility::Public,
+            reply_to: None,
+            root_id: None,
+            repost_of: None,
+            content_labels: Vec::new(),
+            live: None,
+        },
+        created_ms / 1_000,
+    )
+    .expect("first post");
+    let bucket = BucketReplica::new(
+        BucketScope::Topic {
+            topic_id: TOPIC.into(),
+        },
+        TimeBucket::from_unix_seconds(created_ms / 1_000).expect("bucket"),
+    )
+    .expect("replica")
+    .replica_id();
+    persist_post_object(
+        &a_docs,
+        &bucket,
+        first.to_post_object().expect("parse").expect("post"),
+        first.clone(),
+    )
+    .await
+    .expect("persist the first post");
+    let metadata = build_public_channel_envelope(
+        &creator,
+        &KukuriPublicChannelContentV1 {
+            channel_id: channel_id.clone(),
+            topic_id: topic,
+            title: "古いスレッド".into(),
+            first_post_id: Some(first.id.clone()),
+        },
+    )
+    .expect("metadata");
+    a_docs
+        .apply_doc_op(
+            &bucket,
+            DocOp::SetJson {
+                key: format!("channels/list/{}", channel_id.as_str()),
+                value: serde_json::to_value(&metadata).expect("json"),
+            },
+        )
+        .await
+        .expect("persist the metadata");
+
+    let channel = b
+        .get_public_channel(TOPIC, channel_id.as_str())
+        .await
+        .expect("get the public channel")
+        .expect("found");
+    assert_eq!(channel.first_post_id.as_deref(), Some(first.id.as_str()));
+    let thread = b
+        .list_thread(TOPIC, first.id.as_str(), None, 50)
+        .await
+        .expect("the thread")
+        .items;
+    assert!(
+        thread
+            .iter()
+            .any(|post| post.object_id == first.id.as_str() && post.content == "3 日前の最初の投稿"),
+        "{thread:?}"
+    );
 }
 
 // private channel は公開 channel の ID の形を使えない(ID の形で見分けるため)。公開 channel への投稿は、Live・ゲーム・Dome を
