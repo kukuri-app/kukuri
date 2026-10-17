@@ -94,12 +94,9 @@ test('browser mock shell can run profile, private channel, live, and game flows'
     .locator('article[data-live-session-id]')
     .filter({ has: page.getByText('Launch Party') });
   await expect(liveCard).toBeVisible();
-  // #1034・#1839 AC-3: 主催者の card から shell の上部の配信の操作を開く(取り込みは開始を押した後だけ)。
-  await liveCard.getByRole('button', { name: 'Open broadcast controls' }).click();
-  const broadcastBar = page.getByRole('region', { name: 'Broadcast controls for Launch Party' });
-  await expect(broadcastBar.getByRole('button', { name: 'Start video broadcast' })).toBeVisible();
-  await broadcastBar.getByRole('button', { name: 'Close' }).click();
-  await expect(broadcastBar).toHaveCount(0);
+  // #1034・#1839 AC-3: 主催者の card に配信の開始がある(取り込みは押した後だけで、配信中の操作は shell の上部)。
+  await expect(liveCard.getByRole('button', { name: 'Broadcast camera' })).toBeVisible();
+  await expect(liveCard.getByRole('button', { name: 'Broadcast screen' })).toBeVisible();
   await liveCard.getByRole('button', { name: 'Join', exact: true }).click();
   await expect(liveCard.getByText('viewers: 1')).toBeVisible();
   await liveCard.getByRole('button', { name: 'End', exact: true }).click();

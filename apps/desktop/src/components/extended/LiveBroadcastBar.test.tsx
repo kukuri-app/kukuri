@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, test, vi } from 'vitest';
 
-import type { LiveBroadcastStatus, SetLiveBroadcastRequest } from '@/lib/api';
+import type { LiveBroadcastStatus, LiveVideoSource, SetLiveBroadcastRequest } from '@/lib/api';
 import { LiveBroadcastBar } from './LiveBroadcastBar';
+import { LiveBroadcastController } from './liveBroadcast';
 import { captureVideo, encodeVideo } from './liveMedia';
 
 vi.mock('./liveMedia', async (importOriginal) => ({
@@ -13,6 +14,8 @@ vi.mock('./liveMedia', async (importOriginal) => ({
 }));
 
 const LIMITS = { width: 1280, height: 720, framerate: 30, bitrate: 1_500_000 };
+const request = { topic: 'kukuri:topic:test', session_id: 'live-1' };
+const target = { topic: request.topic, sessionId: 'live-1', title: 'Launch Party' };
 
 function api() {
   return {
@@ -25,25 +28,33 @@ function api() {
   };
 }
 
-const request = { topic: 'kukuri:topic:test', session_id: 'live-1' };
-const onClose = vi.fn();
+/// 配信を始め(card の操作)、shell の上部の bar を描く。
+function broadcast(media: ReturnType<typeof api>, source: LiveVideoSource = 'camera') {
+  const controller = new LiveBroadcastController(media);
+  render(<LiveBroadcastBar controller={controller} />);
+  act(() => controller.start(target, source));
+  return controller;
+}
 
 describe('LiveBroadcastBar', () => {
+  test('shows nothing until a broadcast starts', () => {
+    const { container } = render(<LiveBroadcastBar controller={new LiveBroadcastController(api())} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
   // ADR 0067 の live_media_requires_explicit_start_and_permission(画面側): 取り込みが拒否されたら配信を止め、mic を開かない。
   test('stops the broadcast without opening the microphone when capture is refused', async () => {
     const media = api();
     vi.mocked(captureVideo).mockRejectedValue(Object.assign(new Error('denied'), { name: 'NotAllowedError' }));
-    render(<LiveBroadcastBar api={media} topic={request.topic} sessionId='live-1' title='Launch Party' onClose={onClose} />);
-    expect(media.setLiveBroadcast).not.toHaveBeenCalled();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Screen' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
+    const controller = broadcast(media, 'screen');
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Camera or screen capture was not allowed.');
     expect(media.setLiveBroadcast).toHaveBeenCalledTimes(1);
     expect(media.setLiveBroadcast).toHaveBeenCalledWith({ ...request, source: 'screen', microphone: false });
     expect(media.stopLiveBroadcast).toHaveBeenCalledWith(request);
     expect(encodeVideo).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(controller.getState()).toBeNull();
   });
 
   // この端末で作っていない session は、取り込まずに理由を示す(2026-10-13 のユーザー判断)。
@@ -52,8 +63,7 @@ describe('LiveBroadcastBar', () => {
     media.setLiveBroadcast.mockRejectedValue(
       Object.assign(new Error('elsewhere'), { name: 'InvokeError', code: 'LIVE_BROADCAST_ELSEWHERE' })
     );
-    render(<LiveBroadcastBar api={media} topic={request.topic} sessionId='live-1' title='Launch Party' onClose={onClose} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
+    broadcast(media);
     expect(await screen.findByRole('alert')).toHaveTextContent(
       "This live session can't be broadcast from this device."
     );
@@ -66,9 +76,8 @@ describe('LiveBroadcastBar', () => {
     vi.mocked(captureVideo).mockResolvedValue({} as MediaStream);
     vi.mocked(encodeVideo).mockReturnValue({ stop: stopEncoding });
     media.setLiveBroadcast.mockImplementation(async ({ microphone }) => ({ microphone, limits: LIMITS }));
-    render(<LiveBroadcastBar api={media} topic={request.topic} sessionId='live-1' title='Launch Party' onClose={onClose} />);
+    const controller = broadcast(media);
 
-    await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
     expect(await screen.findByText('Broadcasting video')).toBeInTheDocument();
     expect(media.setLiveBroadcast.mock.calls.map(([call]) => call.microphone)).toEqual([false, true]);
     expect(vi.mocked(encodeVideo).mock.calls[0][0].limits).toEqual(LIMITS);
@@ -79,51 +88,52 @@ describe('LiveBroadcastBar', () => {
     expect(stopEncoding).toHaveBeenCalledTimes(1);
     expect(media.setLiveBroadcast).toHaveBeenLastCalledWith({ ...request, source: 'screen', microphone: true });
 
-    await userEvent.click(screen.getByRole('button', { name: 'Disable microphone' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Disable microphone' }));
     await waitFor(() =>
       expect(media.setLiveBroadcast).toHaveBeenLastCalledWith({ ...request, source: 'screen', microphone: false })
     );
     expect(screen.getByRole('button', { name: 'Enable microphone' })).toHaveAttribute('aria-pressed', 'false');
 
+    // 停止で取り込みと送信を止め、bar を閉じる。
     await userEvent.click(screen.getByRole('button', { name: 'Stop video broadcast' }));
-    expect(stopEncoding).toHaveBeenCalled();
+    expect(stopEncoding).toHaveBeenCalledTimes(2);
     expect(media.stopLiveBroadcast).toHaveBeenCalledWith(request);
+    expect(controller.getState()).toBeNull();
+    expect(screen.queryByRole('region')).toBeNull();
   });
 
   test('shows a microphone that could not be opened', async () => {
     const media = api();
     vi.mocked(captureVideo).mockResolvedValue({} as MediaStream);
     vi.mocked(encodeVideo).mockReturnValue({ stop: vi.fn() });
-    render(<LiveBroadcastBar api={media} topic={request.topic} sessionId='live-1' title='Launch Party' onClose={onClose} />);
-
-    await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
+    broadcast(media);
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'The microphone is unavailable, so only video is being broadcast.'
     );
     expect(screen.getByRole('button', { name: 'Enable microphone' })).toHaveAttribute('aria-pressed', 'false');
   });
 
-  // 取り込みの許可を待つ間に bar を閉じたら、後から得た取り込みを止め、配信も止める(T4: 残留 stream の回収)。
-  test('stops a capture that arrives after the bar is closed', async () => {
+  // 取り込みの許可を待つ間に配信を止めたら(停止・Live の終了)、後から得た取り込みを止める(T4: 残留 stream の回収)。
+  test('stops a capture that arrives after the broadcast is stopped', async () => {
     const media = api();
     let resolveCapture: (stream: MediaStream) => void = () => undefined;
     vi.mocked(captureVideo).mockReturnValue(new Promise((resolve) => (resolveCapture = resolve)));
-    const { unmount } = render(<LiveBroadcastBar api={media} topic={request.topic} sessionId='live-1' title='Launch Party' onClose={onClose} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Start video broadcast' }));
+    const controller = broadcast(media);
     await waitFor(() => expect(captureVideo).toHaveBeenCalled());
-    unmount();
+    act(() => controller.stopIfSession('live-1'));
     const track = { stop: vi.fn() };
     resolveCapture({ getTracks: () => [track] } as unknown as MediaStream);
     await waitFor(() => expect(track.stop).toHaveBeenCalled());
     expect(encodeVideo).not.toHaveBeenCalled();
-    expect(media.stopLiveBroadcast).toHaveBeenCalledTimes(2);
+    expect(media.stopLiveBroadcast).toHaveBeenCalledWith(request);
   });
 
-  // #1839 AC-3: 閉じる操作で bar を閉じる(閉じると取り込みと配信を止める。上の試験)。
-  test('closes from its own button', async () => {
-    render(<LiveBroadcastBar api={api()} topic={request.topic} sessionId='live-1' title='Launch Party' onClose={onClose} />);
-    expect(screen.getByRole('region', { name: 'Broadcast controls for Launch Party' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(onClose).toHaveBeenCalled();
+  // 同時に配信するのは 1 つの Live だけ。
+  test('does not start a second live session while one is broadcasting', () => {
+    const media = api();
+    vi.mocked(captureVideo).mockReturnValue(new Promise(() => undefined));
+    const controller = broadcast(media);
+    act(() => controller.start({ ...target, sessionId: 'live-2' }, 'camera'));
+    expect(controller.getState()?.sessionId).toBe('live-1');
   });
 });

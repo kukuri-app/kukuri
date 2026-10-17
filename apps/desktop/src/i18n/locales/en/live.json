@@ -42,14 +42,16 @@
       "unsupported": "Video broadcasting is not available here."
     },
     "microphoneUnavailable": "The microphone is unavailable, so only video is being broadcast.",
-    "openBroadcast": "Open broadcast controls",
     "preview": "Your video",
     "source": "Video to broadcast",
     "sources": {
       "camera": "Camera",
       "screen": "Screen"
     },
-    "startBroadcast": "Start video broadcast",
+    "start": {
+      "camera": "Broadcast camera",
+      "screen": "Broadcast screen"
+    },
     "states": {
       "connecting": "Connecting to the broadcast…",
       "ended": "The video stopped. Reconnecting…",

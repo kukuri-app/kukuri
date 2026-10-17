@@ -42,14 +42,16 @@
       "unsupported": "この環境では映像を配信できません"
     },
     "microphoneUnavailable": "マイクを使えないため、映像だけを配信しています",
-    "openBroadcast": "配信の操作を開く",
     "preview": "自分の映像",
     "source": "配信する映像",
     "sources": {
       "camera": "カメラ",
       "screen": "画面"
     },
-    "startBroadcast": "映像の配信を始める",
+    "start": {
+      "camera": "カメラで配信",
+      "screen": "画面で配信"
+    },
     "states": {
       "connecting": "配信に接続しています…",
       "ended": "映像が止まりました。接続し直しています…",

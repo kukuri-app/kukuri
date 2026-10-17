@@ -42,14 +42,16 @@
       "unsupported": "此环境无法直播画面。"
     },
     "microphoneUnavailable": "无法使用麦克风，仅直播画面。",
-    "openBroadcast": "打开直播控制",
     "preview": "我的画面",
     "source": "直播的画面",
     "sources": {
       "camera": "摄像头",
       "screen": "屏幕"
     },
-    "startBroadcast": "开始直播画面",
+    "start": {
+      "camera": "用摄像头直播",
+      "screen": "直播屏幕"
+    },
     "states": {
       "connecting": "正在连接直播…",
       "ended": "画面已停止。正在重新连接…",

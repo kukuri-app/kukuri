@@ -884,7 +884,7 @@ export function DesktopShellPage({
           <a className='shell-skip-link' href={`#${SHELL_WORKSPACE_ID}`}>
             {t('shell:workspace.skipToWorkspace')}
           </a>
-          <LiveBroadcastSlot />
+          <LiveBroadcastSlot api={api} />
           <main
             id={SHELL_WORKSPACE_ID}
             className='shell-column-workspace-main'

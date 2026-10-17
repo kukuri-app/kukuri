@@ -1,5 +1,5 @@
 import { useContext } from 'react';
-import { Link2, Radio, Repeat2, Reply } from 'lucide-react';
+import { Camera, Link2, MonitorUp, Repeat2, Reply } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { SmartReferenceText } from '@/components/core/SmartReferenceText';
@@ -69,17 +69,19 @@ export function LiveCard({ topic, session, postId, targeted = false }: LiveCardP
       ) : null}
       <LiveSessionMedia api={actions.api} topic={topic} session={session} isOwner={isOwner} />
       <div className='post-actions'>
-        {isOwner && !ended ? (
-          <Button
-            variant='secondary'
-            type='button'
-            disabled={actions.broadcast !== null && actions.broadcast.sessionId !== id}
-            onClick={() => actions.openBroadcast({ topic, sessionId: id, title: session.title })}
-          >
-            <Radio className='size-4' aria-hidden='true' />
-            {t('live:media.openBroadcast')}
-          </Button>
-        ) : null}
+        {isOwner && !ended && actions.broadcastingSessionId === null
+          ? (['camera', 'screen'] as const).map((source) => (
+              <Button
+                key={source}
+                variant='secondary'
+                type='button'
+                onClick={() => actions.startBroadcast({ topic, sessionId: id, title: session.title }, source)}
+              >
+                {source === 'camera' ? <Camera className='size-4' aria-hidden='true' /> : <MonitorUp className='size-4' aria-hidden='true' />}
+                {t(`live:media.start.${source}`)}
+              </Button>
+            ))
+          : null}
         {session.joined_by_me ? (
           <Button variant='secondary' type='button' disabled={pending} onClick={() => void actions.leave(topic, id)}>
             {t('common:actions.leave')}

@@ -40,33 +40,34 @@ test('a broadcast keeps running after leaving the live column and stops from the
     if (!(card instanceof HTMLElement)) throw new Error('live session card not found');
     return card;
   });
-  await user.click(within(listCard).getByRole('button', { name: 'Open broadcast controls' }));
-  const bar = screen.getByRole('region', { name: 'Broadcast controls for Launch Party' });
-  await user.click(within(bar).getByRole('button', { name: 'Start video broadcast' }));
-  expect(await within(bar).findByText('Broadcasting video')).toBeInTheDocument();
+  await user.click(within(listCard).getByRole('button', { name: 'Broadcast camera' }));
+  const bar = () => screen.queryByRole('region', { name: 'Broadcast controls for Launch Party' });
+  expect(await within(bar()!).findByText('Broadcasting video')).toBeInTheDocument();
   expect(encodeVideo).toHaveBeenCalledTimes(1);
+  // 配信中は、ほかの card から配信を始めない(同時に配信するのは 1 つ)。
+  expect(screen.queryByRole('button', { name: 'Broadcast camera' })).toBeNull();
 
   // Live の列を離れても、配信の取り込みと送信は続く。
   await selectWorkspace(user, 'Timeline');
-  expect(screen.getByRole('region', { name: 'Broadcast controls for Launch Party' })).toBeInTheDocument();
+  expect(bar()).toBeInTheDocument();
   expect(stopEncoding).not.toHaveBeenCalled();
   expect(stopLiveBroadcast).not.toHaveBeenCalled();
 
-  await user.click(within(bar).getByRole('button', { name: 'Stop video broadcast' }));
+  // bar の停止で取り込みと送信を止め、bar を閉じる。
+  await user.click(within(bar()!).getByRole('button', { name: 'Stop video broadcast' }));
   expect(stopEncoding).toHaveBeenCalledTimes(1);
   await waitFor(() => expect(stopLiveBroadcast).toHaveBeenCalledTimes(1));
+  expect(bar()).toBeNull();
 
-  // Live を終えると bar も閉じる。
-  await user.click(within(bar).getByRole('button', { name: 'Start video broadcast' }));
-  await within(bar).findByText('Broadcasting video');
+  // 開始 post の中の card からも始められ、Live を終えると配信が止まる。
   const embedded = await waitFor(() => {
     const card = document.querySelector('.post-live article');
     if (!(card instanceof HTMLElement)) throw new Error('live not shown in the start post');
     return card;
   });
+  await user.click(within(embedded).getByRole('button', { name: 'Broadcast camera' }));
+  await within(bar()!).findByText('Broadcasting video');
   await user.click(within(embedded).getByRole('button', { name: 'End' }));
-  await waitFor(() =>
-    expect(screen.queryByRole('region', { name: 'Broadcast controls for Launch Party' })).toBeNull()
-  );
+  await waitFor(() => expect(bar()).toBeNull());
   expect(stopEncoding).toHaveBeenCalledTimes(2);
 }, 20_000);

@@ -181,8 +181,8 @@ export async function run({ launch, restart, log, topic }) {
     await eventually('the first viewer to stop drawing', async () => !(await drawing(first)), 10_000);
     log(`LV-5: cancelling the screen selection stops the broadcast with the reason (the viewer stopped in ${Date.now() - deniedAt} ms)`);
     await host.evaluate('(window.__capture.deny = false, true)');
-    await click(host, t('media.sources.camera'), { within: BAR });
-    await click(host, t('media.startBroadcast'), { within: BAR });
+    await click(host, text('common', 'actions.close'), { within: BAR });
+    await startBroadcast(host);
     await eventually('the first viewer to draw after starting again', () => drawing(first), 30_000);
     await expectSound('the host after starting again');
 

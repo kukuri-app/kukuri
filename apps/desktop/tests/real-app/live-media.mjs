@@ -94,10 +94,9 @@ export const statusOf = (instance) =>
     `[...document.querySelectorAll('${CARD} [role="status"], ${CARD} [role="alert"], ${BAR} [role="status"], ${BAR} [role="alert"]')].map((node) => node.textContent).join(' | ')`
   );
 
-/// H が配信の操作を開き、配信を始める。
+/// H が card から camera の配信を始める(配信中の操作は shell の上部の bar)。
 export async function startBroadcast(host) {
-  await click(host, t('media.openBroadcast'), { within: CARD });
-  await click(host, t('media.startBroadcast'), { within: BAR });
+  await click(host, t('media.start.camera'), { within: CARD });
 }
 
 /// H が live session を作る。
