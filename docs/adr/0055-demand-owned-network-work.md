@@ -49,12 +49,12 @@ ownerは秘密鍵や投稿本文を持たず、capabilityの識別子と世代�
 
 clientの購読task・gossip hint購読は、leaseを持つkeyだけに置く。R5-H（2026-09-26）からtaskはdocsのreplicaを
 開かず購読もしない（下記「受信」）。
-keyは`Topic(topic)`・`Channel(topic, channel)`・`Author(pubkey)`で、accountあたり同時に最大64件（§2の意味上の同期対象64）。
+keyは`Topic(topic)`・`Channel(topic, channel)`・`PublicChannel(topic, channel)`・`Author(pubkey)`で、accountあたり同時に最大64件（§2の意味上の同期対象64）。`PublicChannel`は公開channel（#1840）のhintだけを購読する（[ADR 0068](0068-public-channel-threads.md) §4）。
 holderは次の4種類だけで、同じkeyを複数のholderが持っても枠は1つ。
 
 | holder | 取るkey | 外れる時 |
 | --- | --- | --- |
-| 開いている列（observerは列id） | timeline・thread・stream・game・metaverseは列のscope（channelの列は公開timelineも読むため`Topic`と`Channel`の2key）。profileは表示中のauthor、conversationはDMの相手 | 列を閉じた時。ウィンドウを隠しただけでは外れない |
+| 開いている列（observerは列id） | timeline・thread・stream・game・metaverseは列のscope（channelの列は公開timelineも読むため`Topic`と`Channel`の2key。公開channelの列は`Topic`と`PublicChannel`の2key）。profileは表示中のauthor、conversationはDMの相手 | 列を閉じた時。ウィンドウを隠しただけでは外れない |
 | 参加中のprivate channel | 現epochの`Channel`だけ（過去epochは購読しない） | 退出 |
 | 参加中のlive・自分の端末のDome hosting | `Topic`（channelなら`Channel`も） | live退出・終了、hostingの終了・移譲・Dome削除、accountのshutdown |
 | CLI daemonのdesired | 保存したscope（保存は64件まで。超えるfileは先頭64件だけを使う） | desiredの解除（`unsubscribe_topic`） |

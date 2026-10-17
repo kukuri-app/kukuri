@@ -300,6 +300,19 @@ fn channel_ref_and_timeline_scope_snapshot_internally_tagged() {
         },
         r#"{"kind":"channel","channel_id":"chan-1"}"#,
     );
+    // #1840: 公開 channel は別の種類。既存の `public` と `channel`(private)の意味は変えない。
+    assert_wire(
+        &ChannelRef::PublicChannel {
+            channel_id: ChannelId::new("pc-1760000000123-79be667ef9dcbbac"),
+        },
+        r#"{"kind":"public_channel","channel_id":"pc-1760000000123-79be667ef9dcbbac"}"#,
+    );
+    assert_wire(
+        &TimelineScope::PublicChannel {
+            channel_id: ChannelId::new("pc-1760000000123-79be667ef9dcbbac"),
+        },
+        r#"{"kind":"public_channel","channel_id":"pc-1760000000123-79be667ef9dcbbac"}"#,
+    );
 }
 
 #[test]

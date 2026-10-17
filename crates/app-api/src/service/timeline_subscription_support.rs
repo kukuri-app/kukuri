@@ -5,21 +5,17 @@ use super::*;
 use kukuri_docs_sync::{BucketReplica, BucketScope, TimeBucket};
 
 /// 購読と replica の読み書きの対象(#1280)。app-api の内部だけで使う。
-///
-/// `AllJoined` は、thread を開いたときの購読、root の channel が分からない thread の照合、private channel の一覧での
-/// 同期の再開など、参加中の全 channel を対象にする内部の処理のためのもの。API の `TimelineScope` からは指定できない
-/// (複数の channel をまたぐタイムラインのページは、許可されない channel の行を件数に比例して読み飛ばすので閉じた)。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ReplicaScope {
     Public,
-    AllJoined,
     Channel { channel_id: ChannelId },
 }
 
 impl From<&TimelineScope> for ReplicaScope {
     fn from(scope: &TimelineScope) -> Self {
         match scope {
-            TimelineScope::Public => Self::Public,
+            // 公開 channel(#1840)は topic の replica に置く。
+            TimelineScope::Public | TimelineScope::PublicChannel { .. } => Self::Public,
             TimelineScope::Channel { channel_id } => Self::Channel {
                 channel_id: channel_id.clone(),
             },
@@ -93,8 +89,9 @@ impl AppService {
             vec!["topic".into(), projection.topic_id.clone()],
             vec!["object".into(), object_kind.to_string()],
         ];
-        if projection.channel_id != PUBLIC_CHANNEL_ID {
-            tags.push(vec!["channel".into(), projection.channel_id.clone()]);
+        let channel_id = channel_id_from_storage(projection.channel_id.as_str());
+        if let Some(channel_id) = &channel_id {
+            tags.push(vec!["channel".into(), channel_id.as_str().to_string()]);
         }
 
         Ok(Some(KukuriEnvelope {
@@ -106,15 +103,11 @@ impl AppService {
             content: serde_json::to_string(&kukuri_core::KukuriPostEnvelopeContentV1 {
                 object_kind: object_kind.into(),
                 topic_id: TopicId::new(projection.topic_id.clone()),
-                channel_id: channel_id_from_storage(projection.channel_id.as_str()),
+                visibility: ChannelRef::for_channel(channel_id.as_ref()).visibility(),
+                channel_id,
                 payload_ref: projection.payload_ref.clone(),
                 attachments: Vec::new(),
                 media_manifest_refs: Vec::new(),
-                visibility: if projection.channel_id == PUBLIC_CHANNEL_ID {
-                    ObjectVisibility::Public
-                } else {
-                    ObjectVisibility::Private
-                },
                 reply_to: projection.reply_to_object_id.clone(),
                 root_id: projection.root_object_id.clone(),
                 repost_of: projection.repost_of.clone(),
@@ -151,7 +144,8 @@ impl AppService {
         };
         let replica = &projection.source_replica_id;
         let mut readers: Vec<(Arc<dyn DocsSync>, DocFetchPolicy)> = Vec::new();
-        if channel == PUBLIC_CHANNEL_ID {
+        let public = is_public_storage_channel(channel);
+        if public {
             readers.push((
                 Arc::new(LocalSourceReader {
                     docs: self.services.docs_sync.clone(),
@@ -162,13 +156,13 @@ impl AppService {
         } else if !replica.as_str().starts_with("bucket::") {
             readers.push((self.services.docs_sync.clone(), DocFetchPolicy::LocalOnly));
         }
-        let epoch = if channel == PUBLIC_CHANNEL_ID {
+        let epoch = if public {
             None
         } else {
             self.private_epoch_for_source(projection.topic_id.as_str(), channel, replica)
                 .await?
         };
-        if channel != PUBLIC_CHANNEL_ID && epoch.is_none() {
+        if !public && epoch.is_none() {
             return Ok(None);
         }
         for reader in self
@@ -262,6 +256,13 @@ impl AppService {
             TimelineScope::Channel { channel_id } => {
                 self.ensure_private_channel_access(topic_id, channel_id)
                     .await?;
+                Ok(channel_id.as_str().to_string())
+            }
+            TimelineScope::PublicChannel { channel_id } => {
+                anyhow::ensure!(
+                    channel_id.is_public_channel(),
+                    "public channel id is invalid"
+                );
                 Ok(channel_id.as_str().to_string())
             }
         }
@@ -509,10 +510,9 @@ impl AppService {
         if policy == DocFetchPolicy::LocalOnly {
             return Ok(false);
         }
-        let channel = match scope {
-            TimelineScope::Public => PUBLIC_CHANNEL_ID,
-            TimelineScope::Channel { channel_id } => channel_id.as_str(),
-        };
+        let channel = scope
+            .channel_id()
+            .map_or(PUBLIC_CHANNEL_ID, ChannelId::as_str);
         let Some(generation) = self
             .services
             .active_content_scope_generation(topic_id, channel)
@@ -655,15 +655,6 @@ impl AppService {
             ReplicaScope::Public => {
                 replicas.push(topic_replica_id(topic_id));
                 Vec::new()
-            }
-            ReplicaScope::AllJoined => {
-                replicas.push(topic_replica_id(topic_id));
-                self.joined_private_channel_states_for_topic(topic_id, "")
-                    .await?
-                    .0
-                    .into_iter()
-                    .map(|state| state.channel_id)
-                    .collect()
             }
             ReplicaScope::Channel { channel_id } => {
                 self.ensure_private_channel_access(topic_id, channel_id)

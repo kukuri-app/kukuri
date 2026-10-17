@@ -261,7 +261,7 @@ impl AppService {
         let Some(source) = access
             .source
             .as_ref()
-            .filter(|source| source.channel == PUBLIC_CHANNEL_ID)
+            .filter(|source| is_public_storage_channel(&source.channel))
         else {
             return;
         };

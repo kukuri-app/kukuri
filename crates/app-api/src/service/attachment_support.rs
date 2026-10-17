@@ -299,14 +299,23 @@ pub(crate) fn channel_storage_id(channel_id: Option<&ChannelId>) -> String {
         .unwrap_or_else(|| PUBLIC_CHANNEL_ID.to_string())
 }
 
+/// 投稿・リアクション・取り下げの hint の topic。公開 channel は channel ごとの topic、private channel は世代の秘密に
+/// 依存しない channel の topic、topic の公開タイムラインは topic そのもの。
 pub(crate) fn channel_hint_topic_for(topic_id: &str, channel_id: Option<&ChannelId>) -> TopicId {
-    channel_id
-        .map(|value| private_channel_hint_topic(value.as_str()))
-        .unwrap_or_else(|| TopicId::new(topic_id))
+    match channel_id {
+        None => TopicId::new(topic_id),
+        Some(channel) if channel.is_public_channel() => public_channel_hint_topic(channel.as_str()),
+        Some(channel) => private_channel_hint_topic(channel.as_str()),
+    }
 }
 
 pub(crate) fn channel_id_from_storage(channel_id: &str) -> Option<ChannelId> {
     (channel_id != PUBLIC_CHANNEL_ID).then(|| ChannelId::new(channel_id.to_string()))
+}
+
+/// 保存した channel の値が公開の内容(topic の公開タイムラインか、公開 channel。#1840)か。
+pub(crate) fn is_public_storage_channel(channel_id: &str) -> bool {
+    channel_id_from_storage(channel_id).is_none_or(|channel| channel.is_public_channel())
 }
 
 pub(crate) fn channel_id_for_view(channel_id: &str) -> Option<String> {

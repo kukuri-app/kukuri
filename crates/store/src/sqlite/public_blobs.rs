@@ -6,7 +6,7 @@
 
 use super::remote_cache::{REMOTE_CACHE_UNUSED_MS, now_ms};
 use super::*;
-use crate::models::PUBLIC_CHANNEL;
+use crate::models::is_public_channel_value;
 use kukuri_core::{
     AssetRef, CustomReactionAssetSnapshotV1, KukuriCustomReactionAssetEnvelopeContentV1,
     RepostSourceSnapshotV1,
@@ -318,7 +318,7 @@ async fn backfill_page(
         .map(|(rowid, object_id, channel, body, attachments, repost)| {
             // 空や読めない値は参照なしとして扱い、取込みを止めない。
             let mut hashes = Vec::new();
-            if channel == PUBLIC_CHANNEL {
+            if is_public_channel_value(&channel) {
                 let attachments =
                     serde_json::from_str::<Vec<AssetRef>>(&attachments).unwrap_or_default();
                 let repost = repost
@@ -357,7 +357,7 @@ async fn backfill_page(
         .into_iter()
         .map(|(rowid, reaction_id, status, snapshot, channel)| {
             let mut hashes = Vec::new();
-            if status == "active" && channel.as_deref() == Some(PUBLIC_CHANNEL)
+            if status == "active" && channel.as_deref().is_some_and(is_public_channel_value)
                 && let Some(snapshot) = snapshot.and_then(|snapshot| {
                     serde_json::from_str::<CustomReactionAssetSnapshotV1>(&snapshot).ok()
                 })

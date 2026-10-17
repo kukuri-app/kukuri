@@ -19,6 +19,7 @@ mod metaverse_views;
 mod network_community_node;
 mod network_schema;
 mod private_channels;
+mod public_channels;
 mod schema;
 
 use std::sync::Arc;
@@ -43,6 +44,7 @@ pub(crate) fn registrations(
     entries.extend(direct_messages::registrations());
     entries.extend(live_game::registrations());
     entries.extend(private_channels::registrations());
+    entries.extend(public_channels::registrations());
     entries.extend(live_metaverse::registrations());
     entries.extend(network_community_node::registrations());
     entries.extend(community_node::registrations());

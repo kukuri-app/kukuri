@@ -30,6 +30,18 @@ impl CountingDocsSync {
         }
     }
 
+    /// 手元を `inner` にし、`remote` を provider として返す docs(#1840。2 端末が互いの docs を読む)。
+    pub(super) fn reading_with(
+        inner: kukuri_docs_sync::MemoryDocsSync,
+        remote: Arc<dyn DocsSync>,
+    ) -> Self {
+        Self {
+            inner,
+            remote: Some(remote),
+            ..Self::default()
+        }
+    }
+
     /// 手元は空で、読み先の近隣ごとに `providers` の docs を返す docs(#1813)。
     pub(super) fn reading_from_peers(providers: HashMap<String, Arc<dyn DocsSync>>) -> Self {
         Self {

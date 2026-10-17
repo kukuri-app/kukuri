@@ -75,6 +75,7 @@ mod media;
 mod media_adult_gating;
 mod notifications;
 mod private_channels;
+mod public_channels;
 mod reaction_sets;
 mod reactions;
 mod session_rehome;

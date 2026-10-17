@@ -151,6 +151,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             "create_private_channel",
             size1(DesktopRuntime::create_private_channel),
         ),
+        (
+            "create_public_channel",
+            size1(DesktopRuntime::create_public_channel),
+        ),
         ("create_repost", size1(DesktopRuntime::create_repost)),
         (
             "decide_account_transfer",
@@ -266,6 +270,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         (
             "get_notification_status",
             size0(DesktopRuntime::get_notification_status),
+        ),
+        (
+            "get_public_channel",
+            size1(DesktopRuntime::get_public_channel),
         ),
         ("get_sync_status", size0(DesktopRuntime::get_sync_status)),
         (

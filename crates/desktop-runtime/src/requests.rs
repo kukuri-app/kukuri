@@ -594,6 +594,23 @@ pub struct ResyncDomeSnapshotsRequest {
     pub after_sequence: u64,
 }
 
+/// 公開 channel(公開スレッド。#1840)を作る。`first_post` は空でもよい(最初の投稿を書かない)。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct CreatePublicChannelRequest {
+    pub topic: String,
+    pub title: String,
+    #[serde(default)]
+    pub first_post: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct GetPublicChannelRequest {
+    pub topic: String,
+    pub channel_id: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]

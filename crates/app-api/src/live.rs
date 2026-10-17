@@ -75,7 +75,7 @@ impl AppService {
         else {
             return Ok(None);
         };
-        if row.channel_id != PUBLIC_CHANNEL_ID
+        if !is_public_storage_channel(&row.channel_id)
             && self
                 .ensure_private_channel_access(topic_id, &ChannelId::new(row.channel_id.as_str()))
                 .await
@@ -154,6 +154,9 @@ impl AppService {
                 self.private_channel_write_state(topic_id, channel_id)
                     .await?,
             ),
+            ChannelRef::PublicChannel { .. } => {
+                anyhow::bail!("live sessions are not available in public channels")
+            }
         };
         let channel_id = private_state.as_ref().map(|state| state.channel_id.clone());
         // 切替後は作成時の bucket に entity の最新 state を置く(id の時刻から読み手が bucket を決める)。

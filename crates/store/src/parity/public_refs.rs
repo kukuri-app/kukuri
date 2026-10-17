@@ -225,6 +225,22 @@ pub async fn check_public_blob_refs<S: Store + ProjectionStore + ContentCacheSto
         store.put_object_projection(row).await.expect("set post");
     }
     assert_eq!(public(store, &[13, 14]).await, [true, false]);
+
+    // #1840: 公開 channel の投稿の本文・添付と、その投稿へのカスタムリアクションの画像も公開参照。
+    store
+        .put_object_projection(post(
+            "p6",
+            "pc-1760000000123-0123456789abcdef",
+            &hash(31),
+            &[&hash(32)],
+        ))
+        .await
+        .expect("public channel post");
+    store
+        .upsert_reaction_cache(reaction("r3", "p6", &hash(33), ObjectStatus::Active))
+        .await
+        .expect("public channel reaction");
+    assert_eq!(public(store, &[31, 32, 33]).await, [true, true, true]);
 }
 
 pub fn bookmark(blob_hash: &str) -> BookmarkedCustomReactionRow {

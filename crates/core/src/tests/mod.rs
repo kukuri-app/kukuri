@@ -13,6 +13,7 @@ mod metaverse_resource_budget;
 mod posts;
 mod private_channels;
 mod profile;
+mod public_channels;
 mod reactions;
 mod receive_endpoint_binding;
 mod signing_canonical;

@@ -93,7 +93,8 @@ impl AppService {
             .context("link preview target was not found")?;
         let keys = self.services.keys.as_ref();
         anyhow::ensure!(
-            row.author_pubkey == keys.public_key_hex() && row.channel_id == PUBLIC_CHANNEL_ID,
+            row.author_pubkey == keys.public_key_hex()
+                && is_public_storage_channel(&row.channel_id),
             "link preview target must be an own public post"
         );
         anyhow::ensure!(
@@ -178,7 +179,7 @@ impl AppService {
         let Some(docs_author) = row.source_docs_author.clone() else {
             return Ok(None);
         };
-        if row.channel_id != PUBLIC_CHANNEL_ID {
+        if !is_public_storage_channel(&row.channel_id) {
             return Ok(None);
         }
         let reads = self.services.link_preview_reads.as_ref();

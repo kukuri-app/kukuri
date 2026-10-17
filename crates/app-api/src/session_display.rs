@@ -33,6 +33,8 @@ impl AppService {
                     .await?;
                 Some(channel_id.as_str())
             }
+            // 公開 channel では session を作れない(#1840)。
+            TimelineScope::PublicChannel { .. } => return Ok(Vec::new()),
         };
         Ok(self
             .services

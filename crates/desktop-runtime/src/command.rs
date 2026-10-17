@@ -369,6 +369,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     create_custom_reaction_set(request: CreateCustomReactionSetRequest) => runtime.create_custom_reaction_set(request).await.map_err(map_error);
     create_post(request: CreatePostRequest) => runtime.create_post(request).await.map_err(map_error);
     create_private_channel(request: CreatePrivateChannelRequest) => runtime.create_private_channel(request).await.map_err(map_error);
+    create_public_channel(request: CreatePublicChannelRequest) => runtime.create_public_channel(request).await.map_err(map_error);
     create_repost(request: CreateRepostRequest) => runtime.create_repost(request).await.map_err(map_error);
     decide_account_transfer(request: DecideAccountTransferRequest) => runtime.decide_account_transfer(request).await.map_err(map_error);
     delete_direct_message_message(request: DeleteDirectMessageMessageRequest) => runtime.delete_direct_message_message(request).await.map_err(map_error);
@@ -397,6 +398,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     get_my_profile() => runtime.get_my_profile().await.map_err(map_error);
     get_notification(request: NotificationIdRequest) => runtime.get_notification(request).await.map_err(map_error);
     get_notification_status() => runtime.get_notification_status().await.map_err(map_error);
+    get_public_channel(request: GetPublicChannelRequest) => runtime.get_public_channel(request).await.map_err(map_error);
     get_sync_status() => runtime.get_sync_status().await.map_err(map_error);
     import_channel_access_token(request: ImportChannelAccessTokenRequest) => runtime.import_channel_access_token(request).await.map_err(map_error);
     import_custom_reaction_set(request: ImportCustomReactionSetRequest) => runtime.import_custom_reaction_set(request).await.map_err(map_error);
