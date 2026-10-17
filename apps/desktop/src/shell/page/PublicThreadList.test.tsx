@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';
 
 import { SmartReferenceText } from '@/components/core/SmartReferenceText';
+import { usePublicThreadColumnTitles } from '@/shell/page/columnTitles';
 import type { AuthorSocialView, DesktopApi, PublicChannelView } from '@/lib/api';
 import { buildPublicThreadLink } from '@/lib/internalLinks';
 import type { ColumnState } from '@/shell/slices/workspace';
@@ -72,4 +73,41 @@ test('a hidden creator’s thread is left out of the list rows, the chips and th
   expect(screen.getByTestId('post').querySelector('.public-thread-card')).toHaveTextContent(
     "Couldn't load this public thread"
   );
+});
+
+function ColumnTitles() {
+  return <output>{JSON.stringify(usePublicThreadColumnTitles())}</output>;
+}
+
+// 列の見出しと Control Center の列の一覧は、列の scope の公開スレッドのタイトルを使う。作成者を非表示にしたら出さない。
+test('column titles leave out a hidden creator’s thread', () => {
+  const store = createDesktopShellStore();
+  store.getState().setField('publicThreadsById', { [HIDDEN.channel_id]: HIDDEN, [SHOWN.channel_id]: SHOWN });
+  store.getState().setField('knownAuthorsByPubkey', { [MUTED]: author(MUTED, false), [OTHER]: author(OTHER, false) });
+  store.getState().setField('workspaceState', (current) => ({
+    ...current,
+    columns: [
+      ...current.columns,
+      ...[HIDDEN, SHOWN].map((item) => ({
+        id: `detail-${item.channel_id}`,
+        kind: 'timeline' as const,
+        scope: { topicId: TOPIC, channelId: item.channel_id },
+        pinned: false,
+        preferredDesktopSpan: 1 as const,
+      })),
+    ],
+  }));
+  render(
+    <DesktopShellStoreContext.Provider value={store}>
+      <ColumnTitles />
+    </DesktopShellStoreContext.Provider>
+  );
+  expect(JSON.parse(screen.getByRole('status').textContent ?? '{}')).toEqual({
+    [HIDDEN.channel_id]: 'Muted thread',
+    [SHOWN.channel_id]: 'Shown thread',
+  });
+  act(() => {
+    store.getState().setField('knownAuthorsByPubkey', (current) => ({ ...current, [MUTED]: author(MUTED, true) }));
+  });
+  expect(JSON.parse(screen.getByRole('status').textContent ?? '{}')).toEqual({ [SHOWN.channel_id]: 'Shown thread' });
 });

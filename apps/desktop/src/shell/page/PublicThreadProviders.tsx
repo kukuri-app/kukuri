@@ -20,6 +20,7 @@ import { buildPublicThreadLink } from '@/lib/internalLinks';
 import { topicDisplayName } from '@/lib/topicId';
 import {
   KNOWN_PUBLIC_THREAD_LIMIT,
+  isHiddenAuthor,
   knownPublicThreadTitle,
   rememberPublicThreads,
 } from '@/shell/slices/publicThreads';
@@ -136,16 +137,26 @@ function PublicThreadTitle({
   return render(useKnownTitle(channelId));
 }
 
+// 読めた値は chip が持つ(card と同じ)。画面内のリンクが覚える上限より多く、覚えたスレッドから外れても、表示を保ち、
+// 読み直しを繰り返さない(読み込みは chip ごとに最大 1 回)。作成者を非表示にしたら出さない(一覧と同じ)。
 function PublicThreadChipTitle({ topic, channelId, fallback }: { topic: string; channelId: string; fallback: string }) {
   const load = useContext(PublicThreadActionsContext)?.load;
-  const title = useKnownTitle(channelId);
+  const remembered = useDesktopShellStore((state) => state.publicThreadsById[channelId]);
+  const [loaded, setLoaded] = useState<PublicChannelView | null>(null);
+  const thread = remembered ?? (loaded?.channel_id === channelId ? loaded : null);
+  const hidden = useDesktopShellStore((state) =>
+    thread ? isHiddenAuthor(state.knownAuthorsByPubkey[thread.creator_pubkey]) : false
+  );
   const ref = useRef<HTMLSpanElement>(null);
   const onScreen = useOnScreen(ref, channelId);
-  const known = title !== undefined;
+  const have = thread !== null;
   useEffect(() => {
-    if (load && onScreen && !known) void load(topic, channelId);
-  }, [load, onScreen, known, topic, channelId]);
-  return <span ref={ref}>{title ?? fallback}</span>;
+    if (!load || !onScreen || have) return;
+    void load(topic, channelId).then((value) => {
+      if (value) setLoaded(value);
+    });
+  }, [load, onScreen, have, topic, channelId]);
+  return <span ref={ref}>{thread && !hidden ? thread.title : fallback}</span>;
 }
 
 /** 一覧の列の「スレッドを作る」。タイトル(1〜200 文字)と最初の投稿(空でもよい)を書く(判断 3)。 */

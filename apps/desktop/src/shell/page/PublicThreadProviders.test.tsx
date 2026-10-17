@@ -81,6 +81,42 @@ test('the detail header gets the title back after it is pushed out of the store'
   expect(getPublicChannel).toHaveBeenCalledTimes(1);
 });
 
+// 画面内のリンクが覚える上限より多いと、読んだスレッドが互いに store から押し出し合う。chip は読めた値を持つので、
+// 押し出されても表示を保ち、読み直しを繰り返さない(読み込みは chip ごとに 1 回)。
+test('more links on screen than threads remembered are each read once and keep their titles', async () => {
+  const count = KNOWN_PUBLIC_THREAD_LIMIT + 44;
+  const ids = Array.from({ length: count }, (_, index) => `pc-${1700000002000 + index}-cccccccccccccccc`);
+  const store = createDesktopShellStore();
+  const getPublicChannel = vi.fn(async (_topic: string, channelId: string) => {
+    await new Promise((resolve) => setTimeout(resolve, 5 + (Number(channelId.slice(3, 16)) % 7) * 5));
+    return thread(channelId, `T${channelId.slice(3, 16)}`);
+  });
+  const api = { getPublicChannel } as unknown as DesktopApi;
+  // 投稿 1 件に 100 件まで(リンク 1 件は 83 文字なので、投稿の上限の 10,000 文字に収まる)。
+  const posts = Array.from({ length: Math.ceil(count / 100) }, (_, index) =>
+    ids.slice(index * 100, index * 100 + 100).map((id) => buildPublicThreadLink(TOPIC, id)).join(' ')
+  );
+  render(
+    <DesktopShellStoreContext.Provider value={store}>
+      <PublicThreadProviders api={api} open={() => undefined} copyLink={() => undefined}>
+        {posts.map((text) => (
+          <article key={text.slice(0, 120)}>
+            <SmartReferenceText text={text} />
+          </article>
+        ))}
+      </PublicThreadProviders>
+    </DesktopShellStoreContext.Provider>
+  );
+  await waitFor(() => expect(chips().every((text) => text?.startsWith('T'))).toBe(true), { timeout: 10_000 });
+  expect(getPublicChannel).toHaveBeenCalledTimes(count);
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  });
+  expect(getPublicChannel).toHaveBeenCalledTimes(count);
+  expect(Object.keys(store.getState().publicThreadsById)).toHaveLength(KNOWN_PUBLIC_THREAD_LIMIT);
+  expect(chips().every((text) => text?.startsWith('T'))).toBe(true);
+}, 20_000);
+
 test('an unreadable thread says the title could not be loaded and is read again the next time', async () => {
   const { getPublicChannel, view } = setup(<PublicThreadScopeActions topic={TOPIC} channelId={LINKED.channel_id} />, false);
   expect(await screen.findByText("Couldn't load the title")).toBeInTheDocument();
