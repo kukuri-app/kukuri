@@ -125,6 +125,11 @@ impl AppService {
     /// 参加登録 → 状態併合。失敗時は秘密を掃除)で、差分だけをこの仕様に載せる(WP-H5 PR3)。
     /// **エラー文言は統合前と 1 字も変えないこと**(テストと利用者向け表示が固定している)。
     async fn import_private_channel_by_spec(&self, spec: PrivateChannelImportSpec) -> Result<()> {
+        // 公開 channel(#1840)とは ID の形で見分けるので、その形の private channel には参加しない。
+        anyhow::ensure!(
+            !spec.channel_id.is_public_channel(),
+            "private channel id has the public channel form"
+        );
         if let Some(expires_at) = spec.expires_at
             && expires_at < Utc::now().timestamp_millis()
         {

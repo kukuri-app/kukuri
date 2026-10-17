@@ -1,5 +1,17 @@
 use super::*;
 
+/// scope の投稿の時刻順の索引の prefix。公開 channel(#1840)の投稿は topic の bucket に置くので、channel ごとの索引に
+/// 載せ、topic のタイムラインの索引(`indexes/timeline/`)には載せない。private channel は channel の replica の
+/// `indexes/timeline/`。
+pub(crate) fn timeline_index_prefix(scope: &TimelineScope) -> String {
+    match scope {
+        TimelineScope::PublicChannel { channel_id } => {
+            format!("channels/{}/timeline/", channel_id.as_str())
+        }
+        TimelineScope::Public | TimelineScope::Channel { .. } => "indexes/timeline/".to_string(),
+    }
+}
+
 /// 投稿の timeline と thread の索引の key と値。書き手と、検証後に索引を保持する中継者(#1395)が同じものを使う。
 pub(crate) fn post_index_records(object: &CanonicalPostHeader) -> [(String, serde_json::Value); 2] {
     let sort_key = timeline_sort_key(object.created_at, &object.object_id);
@@ -7,11 +19,18 @@ pub(crate) fn post_index_records(object: &CanonicalPostHeader) -> [(String, serd
         .root
         .clone()
         .unwrap_or_else(|| object.object_id.clone());
+    let scope = TimelineScope::for_channel(
+        object
+            .channel_id
+            .as_ref()
+            .filter(|_| object.visibility == ObjectVisibility::Public),
+    );
     [
         (
-            stable_key(
-                "indexes/timeline",
-                &format!("{sort_key}/{}", object.object_id.as_str()),
+            format!(
+                "{}{sort_key}/{}",
+                timeline_index_prefix(&scope),
+                object.object_id.as_str()
             ),
             serde_json::json!({
                 "object_id": object.object_id,

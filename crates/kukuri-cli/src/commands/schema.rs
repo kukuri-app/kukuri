@@ -11,23 +11,24 @@ pub(super) fn array(items: Value) -> Value {
 
 pub(super) fn channel_ref() -> Value {
     let mut schema = object(
-        json!({"kind": {"enum": ["public", "private_channel"]},
+        json!({"kind": {"enum": ["public", "private_channel", "public_channel"]},
         "channel_id": {"type": "string"}}),
         &["kind"],
     );
-    schema["description"] =
-        json!("private_channelはchannel_id必須。共有ChannelRef DTOで条件を検証する。");
+    schema["description"] = json!(
+        "private_channel・public_channelはchannel_id必須。共有ChannelRef DTOで条件を検証する。"
+    );
     schema
 }
 
 pub(super) fn timeline_scope() -> Value {
     let mut schema = object(
-        json!({"kind": {"enum": ["public", "channel"]},
+        json!({"kind": {"enum": ["public", "channel", "public_channel"]},
         "channel_id": {"type": "string"}}),
         &["kind"],
     );
     schema["description"] =
-        json!("channelはchannel_id必須。共有TimelineScope DTOで条件を検証する。");
+        json!("channel・public_channelはchannel_id必須。共有TimelineScope DTOで条件を検証する。");
     schema
 }
 

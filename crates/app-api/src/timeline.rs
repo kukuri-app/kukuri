@@ -230,8 +230,11 @@ impl AppService {
             .projection_store
             .get_object_projection(&EnvelopeId::from(source_object_id))
             .await?
-            .and_then(|projection| channel_id_from_storage(projection.channel_id.as_str()))
-            .map(|channel_id| ChannelRef::PrivateChannel { channel_id })
+            .map(|projection| {
+                ChannelRef::for_channel(
+                    channel_id_from_storage(projection.channel_id.as_str()).as_ref(),
+                )
+            })
             .unwrap_or(ChannelRef::Public);
         self.bookmark_post_in_channel(topic_id, source_object_id, channel_ref)
             .await
@@ -243,12 +246,7 @@ impl AppService {
         source_object_id: &str,
         channel_ref: ChannelRef,
     ) -> Result<BookmarkedPostView> {
-        let scope = match &channel_ref {
-            ChannelRef::Public => TimelineScope::Public,
-            ChannelRef::PrivateChannel { channel_id } => TimelineScope::Channel {
-                channel_id: channel_id.clone(),
-            },
-        };
+        let scope = channel_ref.timeline_scope();
         let source_object_id = EnvelopeId::from(source_object_id);
         self.ensure_object_projection(
             topic_id,
@@ -266,13 +264,10 @@ impl AppService {
         if projection.topic_id != topic_id {
             anyhow::bail!("bookmark target topic does not match");
         }
-        let channel_matches = match &channel_ref {
-            ChannelRef::Public => projection.channel_id == PUBLIC_CHANNEL_ID,
-            ChannelRef::PrivateChannel { channel_id } => {
-                projection.channel_id == channel_id.as_str()
-            }
-        };
-        if !channel_matches {
+        // 対象の channel の種類も比べる(private channel の ID を公開 channel の種類で渡して参加の確認を迂回させない)。
+        if ChannelRef::for_channel(channel_id_from_storage(&projection.channel_id).as_ref())
+            != channel_ref
+        {
             anyhow::bail!("bookmark target channel does not match");
         }
         if !matches!(
@@ -378,12 +373,7 @@ impl AppService {
         reason_visibility: WithdrawalReasonVisibility,
         reason: Option<PostWithdrawalReason>,
     ) -> Result<String> {
-        let scope = match &channel_ref {
-            ChannelRef::Public => TimelineScope::Public,
-            ChannelRef::PrivateChannel { channel_id } => TimelineScope::Channel {
-                channel_id: channel_id.clone(),
-            },
-        };
+        let scope = channel_ref.timeline_scope();
         let target_object_id = EnvelopeId::from(object_id);
         self.ensure_object_projection(
             topic_id,
@@ -403,25 +393,16 @@ impl AppService {
             anyhow::bail!("withdrawal target topic does not match");
         }
 
-        let private_state = match target_content.channel_id.as_ref() {
-            Some(channel_id) => {
-                match &channel_ref {
-                    ChannelRef::PrivateChannel {
-                        channel_id: requested,
-                    } if requested == channel_id => {}
-                    _ => anyhow::bail!("withdrawal target channel does not match"),
-                }
-                Some(
-                    self.private_channel_write_state(topic_id, channel_id)
-                        .await?,
-                )
-            }
-            None => {
-                if !matches!(channel_ref, ChannelRef::Public) {
-                    anyhow::bail!("withdrawal target channel does not match");
-                }
-                None
-            }
+        let target_ref = ChannelRef::for_channel(target_content.channel_id.as_ref());
+        if target_ref != channel_ref {
+            anyhow::bail!("withdrawal target channel does not match");
+        }
+        let private_state = match target_ref.private_channel_id() {
+            Some(channel_id) => Some(
+                self.private_channel_write_state(topic_id, channel_id)
+                    .await?,
+            ),
+            None => None,
         };
         let generation = self
             .services
@@ -487,7 +468,7 @@ impl AppService {
                         object_id: target_object_id.0.clone(),
                         object_kind: "post_withdrawal".to_string(),
                         // 取り下げを書いた docs author(ADR 0053 §2)。private channel の hint には載せない。
-                        docs_author: match target_content.channel_id {
+                        docs_author: match private_state {
                             Some(_) => None,
                             None => self.services.docs_sync.local_docs_author().await?,
                         },

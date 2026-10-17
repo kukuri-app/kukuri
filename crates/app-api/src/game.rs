@@ -157,6 +157,9 @@ impl AppService {
                 self.private_channel_write_state(topic_id, &channel_id)
                     .await?,
             ),
+            ChannelRef::PublicChannel { .. } => {
+                anyhow::bail!("game rooms are not available in public channels")
+            }
         };
         let channel_id = private_state.as_ref().map(|state| state.channel_id.clone());
         let participants = sanitize_game_participants(input.participants)?;
@@ -252,6 +255,9 @@ impl AppService {
                 self.private_channel_write_state(topic_id, &channel_id)
                     .await?,
             ),
+            ChannelRef::PublicChannel { .. } => {
+                anyhow::bail!("metaverse rooms are not available in public channels")
+            }
         };
         let channel_id = private_state.as_ref().map(|state| state.channel_id.clone());
         let spatial_context = match &channel_id {

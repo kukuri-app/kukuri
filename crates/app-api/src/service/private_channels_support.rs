@@ -300,6 +300,9 @@ impl AppService {
         if channel_id == PUBLIC_CHANNEL_ID {
             return "Public".to_string();
         }
+        if ChannelId::new(channel_id).is_public_channel() {
+            return "Public thread".to_string();
+        }
         self.joined_private_channel_state(topic_id, channel_id)
             .await
             .map(|channel| channel.label)

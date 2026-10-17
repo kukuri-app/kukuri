@@ -66,7 +66,7 @@ impl AppService {
         let mut missing_body_targets = Vec::new();
         let mut seen_targets = HashSet::new();
         for source in sources {
-            if source.channel_id != PUBLIC_CHANNEL_ID
+            if !is_public_storage_channel(&source.channel_id)
                 && self
                     .ensure_private_channel_access(
                         source.topic_id.as_str(),
@@ -147,7 +147,7 @@ impl AppService {
                 ),
                 Ok(ReplyTargetReflection::Reflected(_)) => attempt.succeed(),
                 Ok(ReplyTargetReflection::Unavailable) => {
-                    let epoch = if source.channel_id == PUBLIC_CHANNEL_ID {
+                    let epoch = if is_public_storage_channel(&source.channel_id) {
                         None
                     } else {
                         self.private_epoch_for_source(
@@ -273,7 +273,7 @@ impl AppService {
         else {
             return Ok(None);
         };
-        if container.channel_id != PUBLIC_CHANNEL_ID {
+        if !is_public_storage_channel(&container.channel_id) {
             self.ensure_private_channel_access(
                 container.topic_id.as_str(),
                 &ChannelId::new(container.channel_id.clone()),

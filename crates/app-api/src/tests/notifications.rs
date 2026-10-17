@@ -68,7 +68,7 @@ async fn notification_id_lookup_checks_recipient_private_access_and_preview() {
         .unwrap();
     row.notification_id = "private-channel".into();
     row.channel_id = Some(channel.channel_id.clone());
-    store.put_notification_if_absent(row).await.unwrap();
+    store.put_notification_if_absent(row.clone()).await.unwrap();
     assert!(
         app.get_notification("private-channel")
             .await
@@ -80,6 +80,27 @@ async fn notification_id_lookup_checks_recipient_private_access_and_preview() {
         .unwrap();
     assert!(
         app.get_notification("private-channel")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // #1840: 公開 channel の通知は参加の確認なしに ID で引ける。公開 channel の形でない `pc-` の値は private として扱う。
+    row.notification_id = "public-channel".into();
+    row.channel_id =
+        Some(ChannelId::public_channel(1_700_000_000_000, app.current_author_pubkey().as_str()).0);
+    store.put_notification_if_absent(row.clone()).await.unwrap();
+    assert!(
+        app.get_notification("public-channel")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    row.notification_id = "non-canonical".into();
+    row.channel_id = Some("pc-+12-0123456789abcdef".into());
+    store.put_notification_if_absent(row).await.unwrap();
+    assert!(
+        app.get_notification("non-canonical")
             .await
             .unwrap()
             .is_none()

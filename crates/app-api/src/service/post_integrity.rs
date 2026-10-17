@@ -52,10 +52,18 @@ impl ReplicaPostScope {
         }
     }
 
-    /// 申告された topic と channel が、この replica の受け入れる範囲と一致するか。
+    /// 申告された topic と channel が、この replica の受け入れる範囲と一致するか。公開 topic の replica は、topic の
+    /// 公開タイムラインと、その topic の公開 channel(#1840。ID の形で見分ける)を受け入れる。
     pub(crate) fn accepts(&self, topic_id: &TopicId, channel_id: Option<&ChannelId>) -> bool {
         topic_id.as_str() == self.topic_id
-            && channel_id.map(ChannelId::as_str) == self.channel_id.as_deref()
+            && match (self.channel_id.as_deref(), channel_id) {
+                (None, None) => true,
+                (None, Some(channel)) => channel.is_public_channel(),
+                (Some(own), Some(channel)) => {
+                    own == channel.as_str() && !channel.is_public_channel()
+                }
+                (Some(_), None) => false,
+            }
     }
 
     pub(crate) fn is_private_channel(&self) -> bool {

@@ -112,6 +112,16 @@ participant_count?: number | null, stale_participant_count: number, entry_dome_i
  */
 controller?: PrivateChannelControllerState | null, };
 
+export type PublicChannelView = { channel_id: string, topic_id: string, title: string, creator_pubkey: string, 
+/**
+ * 作成時刻(ミリ秒。channel の ID の時刻)。
+ */
+created_at: number, 
+/**
+ * 作成と同時に書いた最初の投稿。本文を空にして作った channel には無い。
+ */
+first_post_id?: string, };
+
 export type PrivateChannelControllerState = "this_device" | "other_device" | "moving" | "unknown";
 
 export type PrivateChannelControllerTake = "taken" | "not_connected" | "waiting";
@@ -308,9 +318,9 @@ export type TopicId = string;
 
 export type ChannelId = string;
 
-export type ChannelRef = { "kind": "public" } | { "kind": "private_channel", channel_id: ChannelId, };
+export type ChannelRef = { "kind": "public" } | { "kind": "private_channel", channel_id: ChannelId, } | { "kind": "public_channel", channel_id: ChannelId, };
 
-export type TimelineScope = { "kind": "public" } | { "kind": "channel", channel_id: ChannelId, };
+export type TimelineScope = { "kind": "public" } | { "kind": "channel", channel_id: ChannelId, } | { "kind": "public_channel", channel_id: ChannelId, };
 
 export type SeedPeer = { endpoint_id: string, addr_hint?: string | null, };
 
@@ -897,6 +907,10 @@ export type ListMetaverseRoomEventsRequest = { topic: string, room_id: string, a
 export type ImportMetaverseRoomAssetRequest = { topic: string, room_id: string, kind: MetaverseAssetKind, mime_type: string, name?: string | null, data_base64: string, };
 
 export type CreatePrivateChannelRequest = { topic: string, label: string, audience_kind: ChannelAudienceKind, };
+
+export type CreatePublicChannelRequest = { topic: string, title: string, first_post: string, };
+
+export type GetPublicChannelRequest = { topic: string, channel_id: string, };
 
 export type ExportPrivateChannelInviteRequest = { topic: string, channel_id: string, expires_at?: number | null, };
 

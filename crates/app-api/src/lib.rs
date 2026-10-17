@@ -44,6 +44,8 @@ mod private_channel_indexing;
 mod private_channel_rendezvous;
 mod private_channel_rotation;
 mod private_channels;
+mod public_channels;
+pub use public_channels::PublicChannelView;
 mod reaction_sets;
 pub use reaction_sets::{CustomReactionSetView, ImportedCustomReactionSetView};
 mod reactions;

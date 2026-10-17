@@ -67,7 +67,8 @@ pub(crate) use kukuri_core::{
 };
 pub(crate) use kukuri_docs_sync::{
     DocFetchPolicy, DocOp, DocQuery, DocRecord, DocsSync, MemoryDocsSync, author_replica_id,
-    private_channel_epoch_replica_id, private_channel_hint_topic, stable_key, topic_replica_id,
+    private_channel_epoch_replica_id, private_channel_hint_topic, public_channel_hint_topic,
+    stable_key, topic_replica_id,
 };
 pub(crate) use kukuri_metaverse_host::DomeSessionRuntime;
 pub(crate) use kukuri_store::{
@@ -183,6 +184,7 @@ mod reaction_integrity;
 mod received_dome_heartbeats;
 pub(crate) use received_dome_heartbeats::ReceivedDomeHeartbeats;
 mod remote_read_support;
+pub(crate) use remote_read_support::read_local_then_remote;
 mod replica_window;
 pub(crate) use replica_window::RangeReconcile;
 mod session_integrity;
@@ -202,7 +204,7 @@ pub(crate) use scope_leases::{
 mod shutdown_support;
 mod subscription_registry;
 mod timeline_subscription_support;
-pub(crate) use timeline_subscription_support::{ReplicaScope, session_replica_channel};
+pub(crate) use timeline_subscription_support::session_replica_channel;
 mod timeline_view_support;
 
 pub use errors::PrivateChannelControllerPending;
@@ -215,10 +217,10 @@ pub(crate) use attachment_support::{
     channel_hint_topic_for, channel_id_for_view, channel_id_from_storage, channel_storage_id,
     combine_delivery_states, delivery_state_for_topic, direct_message_attachment_views,
     direct_message_preview, effective_sync_status_detail, effective_topic_status_detail,
-    joined_private_channel_key, live_presence_task_key, materialize_direct_message_manifest,
-    merge_optional_timestamp, normalize_topic_diagnostics, normalize_topic_name, normalize_topics,
-    sanitize_game_participants, short_id_suffix, validate_game_room_scores,
-    validate_game_room_transition,
+    is_public_storage_channel, joined_private_channel_key, live_presence_task_key,
+    materialize_direct_message_manifest, merge_optional_timestamp, normalize_topic_diagnostics,
+    normalize_topic_name, normalize_topics, sanitize_game_participants, short_id_suffix,
+    validate_game_room_scores, validate_game_room_transition,
 };
 pub(crate) use author_state_support::{hydrate_author_state, known_docs_author};
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;
@@ -247,6 +249,7 @@ pub(crate) use object_persistence_support::{
     projection_row_from_post, reaction_cache_key, reaction_projection_row,
     reaction_state_view_from_rows, read_private_epoch_snapshot,
     recent_reaction_view_from_projection, search_key_or_asset_id, store_manifest_blob,
+    timeline_index_prefix,
 };
 pub(crate) use post_integrity::{
     MAX_ENVELOPE_RECORDS_PER_OBJECT, MAX_WITHDRAWAL_RECORDS_PER_OBJECT, PostLoad, ReplicaPostScope,
@@ -428,7 +431,8 @@ impl ServiceHandles {
         if *self.content_closed.borrow() {
             return None;
         }
-        if channel == PUBLIC_CHANNEL_ID {
+        // 公開の内容(topic の公開タイムラインと公開 channel)は参加を取り消せないので、世代は変わらない。
+        if is_public_storage_channel(channel) {
             return Some(0);
         }
         let generation = self

@@ -47,20 +47,61 @@ pub enum ChannelRef {
     PrivateChannel {
         channel_id: ChannelId,
     },
+    /// 公開 channel（公開スレッド。#1840）。投稿は公開 topic の bucket に置き、公開範囲は Public。
+    PublicChannel {
+        channel_id: ChannelId,
+    },
 }
 
 impl ChannelRef {
     pub fn channel_id(&self) -> Option<&ChannelId> {
         match self {
             Self::Public => None,
-            Self::PrivateChannel { channel_id } => Some(channel_id),
+            Self::PrivateChannel { channel_id } | Self::PublicChannel { channel_id } => {
+                Some(channel_id)
+            }
         }
     }
 
     pub fn visibility(&self) -> ObjectVisibility {
         match self {
-            Self::Public => ObjectVisibility::Public,
+            Self::Public | Self::PublicChannel { .. } => ObjectVisibility::Public,
             Self::PrivateChannel { .. } => ObjectVisibility::Private,
+        }
+    }
+
+    /// 保存した投稿・session の channel から作る（`None` は topic の公開タイムライン）。公開 channel は ID の形で
+    /// 見分ける（private channel の作成と参加は公開 channel の ID の形を拒否するので、重ならない）。
+    pub fn for_channel(channel_id: Option<&ChannelId>) -> Self {
+        match channel_id {
+            None => Self::Public,
+            Some(channel_id) if channel_id.is_public_channel() => Self::PublicChannel {
+                channel_id: channel_id.clone(),
+            },
+            Some(channel_id) => Self::PrivateChannel {
+                channel_id: channel_id.clone(),
+            },
+        }
+    }
+
+    /// 読み書きの scope。
+    pub fn timeline_scope(&self) -> TimelineScope {
+        match self {
+            Self::Public => TimelineScope::Public,
+            Self::PrivateChannel { channel_id } => TimelineScope::Channel {
+                channel_id: channel_id.clone(),
+            },
+            Self::PublicChannel { channel_id } => TimelineScope::PublicChannel {
+                channel_id: channel_id.clone(),
+            },
+        }
+    }
+
+    /// private channel の ID。公開 channel と topic の公開タイムラインは `None`。
+    pub fn private_channel_id(&self) -> Option<&ChannelId> {
+        match self {
+            Self::PrivateChannel { channel_id } => Some(channel_id),
+            Self::Public | Self::PublicChannel { .. } => None,
         }
     }
 }
@@ -73,9 +114,33 @@ impl ChannelRef {
 pub enum TimelineScope {
     #[default]
     Public,
-    Channel {
-        channel_id: ChannelId,
-    },
+    /// private channel。
+    Channel { channel_id: ChannelId },
+    /// 公開 channel（公開スレッド。#1840）。
+    PublicChannel { channel_id: ChannelId },
+}
+
+impl TimelineScope {
+    /// 保存した投稿・session の channel から作る。見分け方は `ChannelRef::for_channel` と同じ。
+    pub fn for_channel(channel_id: Option<&ChannelId>) -> Self {
+        ChannelRef::for_channel(channel_id).timeline_scope()
+    }
+
+    /// scope の channel（topic の公開タイムラインは `None`）。
+    pub fn channel_id(&self) -> Option<&ChannelId> {
+        match self {
+            Self::Public => None,
+            Self::Channel { channel_id } | Self::PublicChannel { channel_id } => Some(channel_id),
+        }
+    }
+
+    /// private channel の ID。公開 channel と topic の公開タイムラインは `None`。
+    pub fn private_channel_id(&self) -> Option<&ChannelId> {
+        match self {
+            Self::Channel { channel_id } => Some(channel_id),
+            Self::Public | Self::PublicChannel { .. } => None,
+        }
+    }
 }
 
 /// 投稿者自己申告の成人向けラベル(#858、ADR 0046)。署名対象 content に含まれるため

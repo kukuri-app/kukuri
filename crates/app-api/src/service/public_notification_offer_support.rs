@@ -400,7 +400,8 @@ impl AppService {
     }
 }
 
-/// 送信者が署名した投稿から通知の候補を作る。投稿の scope(公開、または `channel` の private)、本文 hash、
+/// 送信者が署名した投稿から通知の候補を作る。投稿の scope(公開の経路では topic の公開タイムラインか公開 channel、
+/// `channel` の経路ではその private channel)、本文 hash、
 /// 返信先(自分の投稿で、同じ topic・channel のもの)を確かめる。
 fn post_notification_candidate(
     local: &str,
@@ -418,9 +419,21 @@ fn post_notification_candidate(
     let post = VerifiedPost::verify_local(envelope, replica)
         .map_err(|reason| anyhow::anyhow!("invalid notification post: {reason:?}"))?;
     let header = post.header();
+    let route_matches = match channel {
+        None => {
+            header.visibility == ObjectVisibility::Public
+                && header
+                    .channel_id
+                    .as_ref()
+                    .is_none_or(ChannelId::is_public_channel)
+        }
+        Some(channel) => {
+            header.channel_id.as_ref().map(ChannelId::as_str) == Some(channel)
+                && header.visibility != ObjectVisibility::Public
+        }
+    };
     anyhow::ensure!(
-        header.channel_id.as_ref().map(ChannelId::as_str) == channel
-            && (header.visibility == ObjectVisibility::Public) == channel.is_none(),
+        route_matches,
         "notification post does not belong to the offer route"
     );
     let content_matches = match &header.payload_ref {

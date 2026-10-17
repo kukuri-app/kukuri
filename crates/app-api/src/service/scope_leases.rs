@@ -13,7 +13,10 @@ pub const MAX_ACTIVE_SCOPES: usize = 64;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum ScopeKey {
     Topic(String),
+    /// private channel(topic と channel)。
     Channel(String, String),
+    /// 公開 channel(#1840。topic と channel)。channel の投稿・リアクション・取り下げの hint だけを購読する。
+    PublicChannel(String, String),
     Author(String),
     /// 本人の端末間の account 同期の hint の topic（ADR 0061）。公開の topic ではない。
     AccountSync(String),
@@ -22,7 +25,9 @@ pub(crate) enum ScopeKey {
 impl ScopeKey {
     fn topic(&self) -> Option<&str> {
         match self {
-            Self::Topic(topic) | Self::Channel(topic, _) => Some(topic),
+            Self::Topic(topic) | Self::Channel(topic, _) | Self::PublicChannel(topic, _) => {
+                Some(topic)
+            }
             Self::Author(_) | Self::AccountSync(_) => None,
         }
     }
@@ -195,7 +200,7 @@ pub(crate) fn display_holder(observer: &str) -> String {
 pub(crate) fn desired_holder(topic: &str, scope: &TimelineScope) -> String {
     match scope {
         TimelineScope::Public => format!("desired:{topic}"),
-        TimelineScope::Channel { channel_id } => {
+        TimelineScope::Channel { channel_id } | TimelineScope::PublicChannel { channel_id } => {
             format!("desired:{topic}::{}", channel_id.as_str())
         }
     }
@@ -306,6 +311,16 @@ impl AppService {
                     .await?;
                 Some(channel_id)
             }
+            TimelineScope::PublicChannel { channel_id } => {
+                anyhow::ensure!(
+                    channel_id.is_public_channel(),
+                    "public channel id is invalid"
+                );
+                return Ok(vec![
+                    ScopeKey::Topic(topic.to_string()),
+                    ScopeKey::PublicChannel(topic.to_string(), channel_id.as_str().to_string()),
+                ]);
+            }
         };
         Ok(participation_keys(topic, channel))
     }
@@ -329,6 +344,18 @@ impl AppService {
                     topic,
                     Some(state.channel_id.clone()),
                     private_channel_hint_topic(channel),
+                )
+                .await
+            }
+            // 公開 channel の hint は、topic の gossip の停止に従う。
+            ScopeKey::PublicChannel(topic, channel) => {
+                if self.is_topic_gossip_disabled(topic).await {
+                    return None;
+                }
+                self.spawn_subscription_task(
+                    topic,
+                    Some(ChannelId::new(channel.clone())),
+                    public_channel_hint_topic(channel),
                 )
                 .await
             }

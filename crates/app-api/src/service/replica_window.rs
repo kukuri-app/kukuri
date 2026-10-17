@@ -524,8 +524,9 @@ impl AppService {
             return Ok(RangeReconcile::default());
         }
         let before = before.map(time_index_cursor);
+        let index_prefix = timeline_index_prefix(scope);
         let range = IndexRange {
-            index_prefix: "indexes/timeline/",
+            index_prefix: index_prefix.as_str(),
             order: DocKeyOrder::Descending,
             start: before.as_ref(),
             limit: limit.min(RANGE_CHECK_ENTRY_LIMIT),
@@ -807,18 +808,13 @@ impl AppService {
             .projection_store
             .get_object_projection(thread_root)
             .await?;
-        let scope = match root_projection.as_ref().map(|row| row.channel_id.as_str()) {
-            Some(PUBLIC_CHANNEL_ID) => ReplicaScope::Public,
-            Some(channel_id) => ReplicaScope::Channel {
-                channel_id: ChannelId::new(channel_id),
-            },
-            None => ReplicaScope::AllJoined,
-        };
-        let remote_scope = match scope {
-            ReplicaScope::Public => TimelineScope::Public,
-            ReplicaScope::Channel { channel_id } => TimelineScope::Channel { channel_id },
-            ReplicaScope::AllJoined => TimelineScope::Public,
-        };
+        let remote_scope = root_projection
+            .as_ref()
+            .map_or(TimelineScope::Public, |row| {
+                TimelineScope::for_channel(
+                    channel_id_from_storage(row.channel_id.as_str()).as_ref(),
+                )
+            });
         // Without a known root channel, an opaque object ID cannot authorize
         // probing every joined private channel.
         let anchor = after

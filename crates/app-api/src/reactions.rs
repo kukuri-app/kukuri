@@ -17,7 +17,8 @@ impl AppService {
                     channel_id: channel_id.clone(),
                 }
             }
-            Some(ChannelRef::Public) | None => TimelineScope::Public,
+            Some(channel_ref) => channel_ref.timeline_scope(),
+            None => TimelineScope::Public,
         };
         let target_object_id = EnvelopeId::from(target_object_id);
         self.ensure_object_projection(
@@ -42,8 +43,8 @@ impl AppService {
         let target_channel_id = channel_id_from_storage(target.channel_id.as_str());
         match (channel_ref.as_ref(), target_channel_id.as_ref()) {
             (Some(ChannelRef::Public), None) | (None, None) => {}
-            (Some(ChannelRef::PrivateChannel { channel_id }), Some(target_channel_id))
-                if channel_id == target_channel_id => {}
+            (Some(requested), Some(target_channel_id))
+                if *requested == ChannelRef::for_channel(Some(target_channel_id)) => {}
             (None, Some(_)) => {}
             _ => anyhow::bail!("reaction channel does not match the target object"),
         }
@@ -104,7 +105,10 @@ impl AppService {
         )?;
         // 切替後は作成時の bucket へ書く(元投稿の bucket へは追記しない、ADR 0054 §2)。
         let write_replica = if self.services.writes_buckets() {
-            let private = match target_channel_id.as_ref() {
+            let private = match target_channel_id
+                .as_ref()
+                .filter(|channel_id| !channel_id.is_public_channel())
+            {
                 Some(channel_id) => Some(
                     self.private_channel_write_state(target_topic_id.as_str(), channel_id)
                         .await?,

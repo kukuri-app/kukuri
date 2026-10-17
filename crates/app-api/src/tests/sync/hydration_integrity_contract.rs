@@ -587,3 +587,70 @@ fn verification_rejects_each_kind_of_mismatch() {
     );
     assert!(ReplicaPostScope::for_replica(&replica, "kukuri:topic:integrity-unit-other").is_none());
 }
+
+// #1840: 公開 channel の投稿は、公開 topic の replica に公開範囲 Public で置いたものだけを受け入れる。private の形の ID と、
+// 公開 channel の ID を申告する private の投稿・private の replica の投稿は、従来どおり拒否する。
+#[test]
+fn public_channel_posts_are_accepted_only_as_public_posts_in_topic_replicas() {
+    use crate::service::post_integrity::PostRejection;
+    let topic = TopicId::new("kukuri:topic:integrity-public-channel");
+    let keys = generate_keys();
+    let public_channel = ChannelId::public_channel(1_760_000_000_123, &keys.public_key_hex());
+    let private_channel = ChannelId::new("channel-1-abcdef01");
+    let verify = |replica: &ReplicaId, envelope: KukuriEnvelope| {
+        let scope = ReplicaPostScope::for_replica(replica, topic.as_str()).expect("post scope");
+        let object_id = envelope.id.clone();
+        VerifiedPost::verify(envelope, &object_id, replica, &scope)
+            .map(|post| post.header().clone())
+    };
+    let topic_replica = topic_replica_id(topic.as_str());
+
+    let header = verify(
+        &topic_replica,
+        signed_post(
+            &keys,
+            &topic,
+            "thread",
+            ObjectVisibility::Public,
+            Some(&public_channel),
+        ),
+    )
+    .expect("a public channel post in the topic replica");
+    assert_eq!(header.channel_id, Some(public_channel.clone()));
+    for rejected in [
+        signed_post(
+            &keys,
+            &topic,
+            "private form",
+            ObjectVisibility::Public,
+            Some(&private_channel),
+        ),
+        signed_post(
+            &keys,
+            &topic,
+            "private claim",
+            ObjectVisibility::Private,
+            Some(&public_channel),
+        ),
+    ] {
+        assert_eq!(
+            verify(&topic_replica, rejected).map(|_| ()),
+            Err(PostRejection::ScopeMismatch)
+        );
+    }
+    let private_replica = kukuri_docs_sync::private_channel_replica_id(public_channel.as_str());
+    assert_eq!(
+        verify(
+            &private_replica,
+            signed_post(
+                &keys,
+                &topic,
+                "in private",
+                ObjectVisibility::Private,
+                Some(&public_channel)
+            ),
+        )
+        .map(|_| ()),
+        Err(PostRejection::ScopeMismatch)
+    );
+}

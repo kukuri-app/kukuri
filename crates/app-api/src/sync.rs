@@ -238,7 +238,9 @@ impl AppService {
             .lock()
             .await
             .holders_with(&["desired:"], |key| match key {
-                ScopeKey::Topic(topic) | ScopeKey::Channel(topic, _) => topic == topic_id,
+                ScopeKey::Topic(topic)
+                | ScopeKey::Channel(topic, _)
+                | ScopeKey::PublicChannel(topic, _) => topic == topic_id,
                 ScopeKey::Author(_) | ScopeKey::AccountSync(_) => false,
             });
         for holder in holders {

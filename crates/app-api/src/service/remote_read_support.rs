@@ -155,8 +155,9 @@ impl AppService {
             let app = self.account_handle();
             let (topic_id, scope, hold) = (topic_id.to_owned(), scope.clone(), hold.clone());
             let task = n0_future::task::spawn(async move {
+                let index_prefix = timeline_index_prefix(&scope);
                 let range = IndexRange {
-                    index_prefix: "indexes/timeline/",
+                    index_prefix: index_prefix.as_str(),
                     order: DocKeyOrder::Descending,
                     start: None,
                     limit,
@@ -218,10 +219,9 @@ impl AppService {
         if max_entries == 0 {
             return Ok(RangeReconcile::default());
         }
-        let channel = match scope {
-            TimelineScope::Public => PUBLIC_CHANNEL_ID,
-            TimelineScope::Channel { channel_id } => channel_id.as_str(),
-        };
+        let channel = scope
+            .channel_id()
+            .map_or(PUBLIC_CHANNEL_ID, ChannelId::as_str);
         let Some(generation) = self
             .services
             .active_content_scope_generation(topic_id, channel)
@@ -566,9 +566,7 @@ impl AppService {
                 (TimelineScope::Public, Some(updated_at / 1_000))
             }
             Some((channel, _, updated_at)) => (
-                TimelineScope::Channel {
-                    channel_id: ChannelId::new(channel),
-                },
+                TimelineScope::for_channel(Some(&ChannelId::new(channel))),
                 Some(updated_at / 1_000),
             ),
             None => {
@@ -576,12 +574,7 @@ impl AppService {
                     .split('-')
                     .nth(1)
                     .and_then(|part| part.parse::<i64>().ok());
-                let scope = match channel {
-                    PUBLIC_CHANNEL_ID => TimelineScope::Public,
-                    channel => TimelineScope::Channel {
-                        channel_id: ChannelId::new(channel),
-                    },
-                };
+                let scope = TimelineScope::for_channel(channel_id_from_storage(channel).as_ref());
                 (scope, millis.map(|value| value / 1_000))
             }
         };
@@ -592,7 +585,7 @@ impl AppService {
             if let Some(index) = candidates.iter().position(|(item, _)| item == replica) {
                 let selected = candidates.remove(index);
                 candidates.insert(0, selected);
-            } else if matches!(scope, TimelineScope::Public) {
+            } else if scope.private_channel_id().is_none() {
                 candidates.insert(0, (replica.clone(), None));
             } else if let TimelineScope::Channel { channel_id } = &scope
                 && let Some(epoch) = self
@@ -628,10 +621,7 @@ impl AppService {
         peers: Option<&[SeedPeer]>,
     ) -> Result<Vec<RemotePostReplica>> {
         let key = stable_key(&format!("sessions/{kind}"), &format!("{id}/locator"));
-        let channel = match scope {
-            TimelineScope::Public => None,
-            TimelineScope::Channel { channel_id } => Some(channel_id.as_str()),
-        };
+        let channel = scope.private_channel_id().map(ChannelId::as_str);
         let mut located: Vec<RemotePostReplica> = Vec::new();
         for (bucket, epoch) in self
             .remote_page_replicas(topic_id, scope, None, false, false)
@@ -733,13 +723,13 @@ impl AppService {
         {
             // private は旧 replica も bucket も、capability を持つ手元の docs から読む(自分が書いた session を、channel の
             // 他の参加者がいなくても読める。#1221 R5-H)。
-            if replica == topic_replica_id(topic_id) || channel != PUBLIC_CHANNEL_ID {
+            if replica == topic_replica_id(topic_id) || !is_public_storage_channel(channel) {
                 readers.push((
                     replica.clone(),
                     self.services.docs_sync.clone(),
                     DocFetchPolicy::LocalOnly,
                 ));
-            } else if channel == PUBLIC_CHANNEL_ID {
+            } else {
                 readers.push((
                     replica.clone(),
                     Arc::new(LocalSourceReader {
@@ -797,7 +787,8 @@ impl AppService {
             .transpose()?;
         let mut candidates = Vec::with_capacity(4);
         match scope {
-            TimelineScope::Public => {
+            // 公開 channel(#1840)は topic の bucket に置く。
+            TimelineScope::Public | TimelineScope::PublicChannel { .. } => {
                 for time in [Some(bucket), adjacent, current].into_iter().flatten() {
                     let replica = BucketReplica::new(
                         BucketScope::Topic {
@@ -874,6 +865,25 @@ impl AppService {
         let hint_topic = match channel_id {
             // 同じ topic の参加者(gossip の neighbor)から読む。まだ居なければ全体の台帳から選ぶ(#1395)。
             None => TopicId::new(topic_id),
+            // 公開 channel(#1840)は、channel の hint の近隣を先に、足りない分を topic の近隣で埋める。
+            Some(channel) if ChannelId::new(channel).is_public_channel() => {
+                let transport = self.hint_transport();
+                let channel = public_channel_hint_topic(channel);
+                let mut peers = transport.topic_read_candidates(&channel).await?;
+                for peer in transport
+                    .topic_read_candidates(&TopicId::new(topic_id))
+                    .await?
+                {
+                    if !peers
+                        .iter()
+                        .any(|known| known.endpoint_id == peer.endpoint_id)
+                    {
+                        peers.push(peer);
+                    }
+                }
+                peers.truncate(4);
+                return Ok(peers);
+            }
             Some(channel) => {
                 self.ensure_private_channel_access(topic_id, &ChannelId::new(channel))
                     .await?;
@@ -897,8 +907,11 @@ impl AppService {
         let kind = post_replica_kind(replica)
             .ok_or_else(|| anyhow::anyhow!("source is not a post replica"))?;
         let secret = match (kind, channel_id, private_epoch) {
-            (PostReplicaKind::PublicTopic { topic_id: source }, None, None)
-                if source == topic_id =>
+            // 公開 channel(#1840)の投稿も topic の replica にある。
+            (PostReplicaKind::PublicTopic { topic_id: source }, channel, None)
+                if source == topic_id
+                    && channel
+                        .is_none_or(|channel| ChannelId::new(channel).is_public_channel()) =>
             {
                 None
             }

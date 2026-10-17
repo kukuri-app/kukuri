@@ -59,12 +59,7 @@ impl AppService {
         content_labels.dedup();
         let topic = TopicId::new(topic_id);
         let parent = if let Some(reply_to) = reply_to {
-            let scope = match &channel_ref {
-                ChannelRef::Public => TimelineScope::Public,
-                ChannelRef::PrivateChannel { channel_id } => TimelineScope::Channel {
-                    channel_id: channel_id.clone(),
-                },
-            };
+            let scope = channel_ref.timeline_scope();
             self.ensure_object_projection(
                 topic_id,
                 &scope,
@@ -80,7 +75,8 @@ impl AppService {
         } else {
             None
         };
-        let private_state = if let Some(parent) = parent.as_ref() {
+        // 返信は親の channel に置く(公開 channel の親なら同じ公開 channel、private channel の親なら同じ private channel)。
+        let target = if let Some(parent) = parent.as_ref() {
             let content = parent
                 .post_content()?
                 .ok_or_else(|| anyhow::anyhow!("reply target is not a post object"))?;
@@ -93,24 +89,25 @@ impl AppService {
             if content.topic_id.as_str() != topic_id {
                 anyhow::bail!("reply target topic does not match");
             }
-            if let Some(channel_id) = content.channel_id.clone() {
-                Some(
-                    self.private_channel_write_state(topic_id, &channel_id)
-                        .await?,
-                )
-            } else {
+            ChannelRef::for_channel(content.channel_id.as_ref())
+        } else {
+            channel_ref
+        };
+        let private_state = match &target {
+            ChannelRef::PrivateChannel { channel_id } => Some(
+                self.private_channel_write_state(topic_id, channel_id)
+                    .await?,
+            ),
+            ChannelRef::PublicChannel { channel_id } => {
+                anyhow::ensure!(
+                    channel_id.is_public_channel(),
+                    "public channel id is invalid"
+                );
                 None
             }
-        } else {
-            match channel_ref {
-                ChannelRef::Public => None,
-                ChannelRef::PrivateChannel { channel_id } => Some(
-                    self.private_channel_write_state(topic_id, &channel_id)
-                        .await?,
-                ),
-            }
+            ChannelRef::Public => None,
         };
-        let effective_channel_id = private_state.as_ref().map(|state| state.channel_id.clone());
+        let effective_channel_id = target.channel_id().cloned();
         if let Some(live) = &live
             && !live.allowed_in(&topic, effective_channel_id.as_ref())
         {
@@ -190,11 +187,7 @@ impl AppService {
                 .map(|(manifest, _)| manifest.manifest_id.clone())
                 .collect(),
             parent.as_ref(),
-            if effective_channel_id.is_some() {
-                ObjectVisibility::Private
-            } else {
-                ObjectVisibility::Public
-            },
+            target.visibility(),
             effective_channel_id.as_ref(),
             content_labels,
             docs_author.as_deref(),
@@ -257,9 +250,7 @@ impl AppService {
                 object_kind: envelope.kind.clone(),
                 // private channel の hint の topic は epoch の秘密に依存しないので、docs author を載せない
                 // (ADR 0053 §2)。channel の参加者は、docs の event と索引の entry から同じ手がかりを得る。
-                docs_author: docs_author
-                    .clone()
-                    .filter(|_| effective_channel_id.is_none()),
+                docs_author: docs_author.clone().filter(|_| private_state.is_none()),
                 sent_at: None,
             }],
         };

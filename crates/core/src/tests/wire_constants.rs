@@ -6,13 +6,14 @@
 use crate::TopicId;
 use crate::wire::{
     ACCOUNT_SYNC_REPLICA_PREFIX, ACCOUNT_SYNC_TOPIC_PREFIX, DM_TOPIC_PREFIX, HINT_TOPIC_PREFIX,
-    PRIVATE_CHANNEL_TOPIC_PREFIX, hint_topic_id,
+    PRIVATE_CHANNEL_TOPIC_PREFIX, PUBLIC_CHANNEL_TOPIC_PREFIX, hint_topic_id,
 };
 
 #[test]
 fn wire_prefixes_match_frozen_literals() {
     assert_eq!(HINT_TOPIC_PREFIX, "hint/");
     assert_eq!(PRIVATE_CHANNEL_TOPIC_PREFIX, "private/");
+    assert_eq!(PUBLIC_CHANNEL_TOPIC_PREFIX, "public-channel/");
     assert_eq!(DM_TOPIC_PREFIX, "kukuri:dm:");
     assert_eq!(ACCOUNT_SYNC_TOPIC_PREFIX, "kukuri:account:");
     assert_eq!(ACCOUNT_SYNC_REPLICA_PREFIX, "account::v1::");

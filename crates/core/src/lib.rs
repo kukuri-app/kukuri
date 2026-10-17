@@ -28,6 +28,7 @@ mod metaverse_resource_budget;
 mod posts;
 mod private_channels;
 mod profile;
+mod public_channels;
 mod reactions;
 mod receive_endpoint_binding;
 mod receive_offer;
@@ -226,6 +227,10 @@ pub use profile::{
     build_profile_envelope, build_profile_envelope_with_docs_author, build_profile_post_envelope,
     build_profile_repost_envelope, normalize_profile_nip05, parse_block_edge, parse_follow_edge,
     parse_profile, parse_profile_post, parse_profile_repost, profile_nip05_parts,
+};
+pub use public_channels::{
+    KukuriPublicChannelContentV1, PUBLIC_CHANNEL_KIND, PUBLIC_CHANNEL_MAX_TITLE_CHARS,
+    build_public_channel_envelope, verify_public_channel,
 };
 pub use reactions::{
     CUSTOM_REACTION_SET_MAX_BYTES, CUSTOM_REACTION_SET_MIME, CustomReactionAssetDocV1,

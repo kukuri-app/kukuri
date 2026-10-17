@@ -117,11 +117,13 @@ async fn reread_and_mark(
     }
 }
 
-/// scope の Spatial Context(公開は topic、private channel は channel)。
+/// scope の Spatial Context(公開は topic、private channel は channel)。公開 channel には Dome を置けないので topic。
 fn scope_context(topic_id: &str, scope: &TimelineScope) -> kukuri_core::SpatialContextV1 {
     let topic_id = TopicId::new(topic_id);
     match scope {
-        TimelineScope::Public => kukuri_core::SpatialContextV1::Topic { topic_id },
+        TimelineScope::Public | TimelineScope::PublicChannel { .. } => {
+            kukuri_core::SpatialContextV1::Topic { topic_id }
+        }
         TimelineScope::Channel { channel_id } => kukuri_core::SpatialContextV1::Channel {
             topic_id,
             channel_id: channel_id.clone(),
@@ -162,10 +164,7 @@ impl AppService {
         let public_topic_delivery = Arc::clone(&self.public_topic_delivery);
         let topic = topic_id.to_string();
         let storage_channel_id = channel_storage_id(channel_id.as_ref());
-        let scope = match channel_id {
-            None => TimelineScope::Public,
-            Some(channel_id) => TimelineScope::Channel { channel_id },
-        };
+        let scope = TimelineScope::for_channel(channel_id.as_ref());
         let context = scope_context(topic_id, &scope);
         let generation = if scope == TimelineScope::Public {
             let counter = &self.subscription_registry.generation;
@@ -441,6 +440,8 @@ impl AppService {
         let channel = match scope {
             TimelineScope::Public => None,
             TimelineScope::Channel { channel_id } => Some(channel_id.as_str()),
+            // 公開 channel の session は topic の bucket にあり、同じ列が持つ topic の lease が読み直す(#1840)。
+            TimelineScope::PublicChannel { .. } => return Ok(0),
         };
         let mut sessions = BTreeSet::new();
         for (replica, epoch) in self
@@ -508,10 +509,9 @@ impl AppService {
         object_kind: &str,
     ) -> Result<bool> {
         let projection_store = &self.services.projection_store;
-        let channel = match scope {
-            TimelineScope::Public => PUBLIC_CHANNEL_ID,
-            TimelineScope::Channel { channel_id } => channel_id.as_str(),
-        };
+        let channel = scope
+            .channel_id()
+            .map_or(PUBLIC_CHANNEL_ID, ChannelId::as_str);
         match object_kind {
             "live-session" => {
                 let _lock = self
@@ -632,9 +632,10 @@ impl AppService {
             return Ok(0);
         };
         let channel = target.channel_id.as_str();
-        let epoch = match channel {
-            PUBLIC_CHANNEL_ID => None,
-            _ => {
+        let epoch = match channel_id_from_storage(channel) {
+            None => None,
+            Some(channel_id) if channel_id.is_public_channel() => None,
+            Some(_) => {
                 let Some(epoch) = self
                     .private_epoch_for_source(topic_id, channel, &target.source_replica_id)
                     .await?
@@ -696,10 +697,7 @@ impl AppService {
             .remote_page_replicas(topic_id, scope, None, false, false)
             .await?
         {
-            let channel = match scope {
-                TimelineScope::Public => None,
-                TimelineScope::Channel { channel_id } => Some(channel_id.as_str()),
-            };
+            let channel = scope.channel_id().map(ChannelId::as_str);
             for reader in self
                 .remote_post_readers(
                     topic_id,

@@ -31,10 +31,12 @@ impl AppService {
             let topic = input.topic.trim().to_string();
             let object_id = input.object_id.trim();
             let author_pubkey = input.author_pubkey.trim();
+            // Community Node は公開 channel の投稿を索引しない(#1840。topic の bucket の channel つきの投稿を読まない)。
             if input.key.is_empty()
                 || topic.is_empty()
                 || object_id.is_empty()
                 || author_pubkey.is_empty()
+                || matches!(input.channel_ref, ChannelRef::PublicChannel { .. })
                 || input
                     .source_replica_id
                     .as_deref()
@@ -50,14 +52,10 @@ impl AppService {
                 );
                 continue;
             }
-            let (group_key, scope) = match &input.channel_ref {
-                ChannelRef::Public => (format!("{topic}\0public"), TimelineScope::Public),
-                ChannelRef::PrivateChannel { channel_id } => (
-                    format!("{topic}\0private\0{}", channel_id.as_str()),
-                    TimelineScope::Channel {
-                        channel_id: channel_id.clone(),
-                    },
-                ),
+            let scope = input.channel_ref.timeline_scope();
+            let group_key = match scope.channel_id() {
+                None => format!("{topic}\0public"),
+                Some(channel_id) => format!("{topic}\0channel\0{}", channel_id.as_str()),
             };
             groups
                 .entry((group_key, input.source_replica_id.clone()))
@@ -154,8 +152,8 @@ impl AppService {
         failed_entries.extend(unverified);
 
         for (source, topic, scope, entries) in ready_groups {
-            let write_allowed = match &scope {
-                TimelineScope::Channel { channel_id } => self
+            let write_allowed = match scope.private_channel_id() {
+                Some(channel_id) => self
                     .private_channel_state_for_owner_action(
                         topic.as_str(),
                         channel_id,
@@ -163,7 +161,7 @@ impl AppService {
                     )
                     .await
                     .is_ok(),
-                TimelineScope::Public => true,
+                None => true,
             };
             for input in entries {
                 let unresolved = || CommunityIndexResolvedPostView {
@@ -187,12 +185,8 @@ impl AppService {
                         continue;
                     }
                 };
-                let channel_matches = match &input.channel_ref {
-                    ChannelRef::Public => projection.channel_id == PUBLIC_CHANNEL_ID,
-                    ChannelRef::PrivateChannel { channel_id } => {
-                        projection.channel_id == channel_id.as_str()
-                    }
-                };
+                let channel_matches =
+                    projection.channel_id == channel_storage_id(input.channel_ref.channel_id());
                 if projection.topic_id != topic
                     || projection.author_pubkey != input.author_pubkey
                     || !channel_matches
@@ -284,15 +278,10 @@ impl AppService {
         remote: bool,
     ) -> Result<bool> {
         let object_id = EnvelopeId::from(object_id.to_string());
-        let (channel, channel_ref) = match scope {
-            TimelineScope::Public => (PUBLIC_CHANNEL_ID, ChannelRef::Public),
-            TimelineScope::Channel { channel_id } => (
-                channel_id.as_str(),
-                ChannelRef::PrivateChannel {
-                    channel_id: channel_id.clone(),
-                },
-            ),
-        };
+        let channel_ref = ChannelRef::for_channel(scope.channel_id());
+        let channel = scope
+            .channel_id()
+            .map_or(PUBLIC_CHANNEL_ID, ChannelId::as_str);
         let Some(scope_generation) = self
             .services
             .active_content_scope_generation(topic, channel)
@@ -358,9 +347,9 @@ impl AppService {
             }
             return Ok(false);
         }
-        let private_epoch = match scope {
-            TimelineScope::Public => None,
-            TimelineScope::Channel { channel_id } => Some(
+        let private_epoch = match scope.private_channel_id() {
+            None => None,
+            Some(channel_id) => Some(
                 self.private_channel_indexing_capability_known(topic, channel_id.as_str())
                     .await?,
             ),
@@ -494,5 +483,6 @@ fn valid_index_source(topic: &str, channel: &ChannelRef, source: &str) -> bool {
                     if source == channel_id.as_str()
             )
         }
+        ChannelRef::PublicChannel { .. } => false,
     }
 }

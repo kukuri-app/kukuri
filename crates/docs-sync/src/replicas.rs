@@ -118,6 +118,14 @@ pub fn private_channel_hint_topic(channel_id: &str) -> TopicId {
     ))
 }
 
+/// 公開 channel（#1840）の hint の topic。channel の投稿・リアクション・取り下げの知らせだけを運ぶ。
+pub fn public_channel_hint_topic(channel_id: &str) -> TopicId {
+    TopicId::new(format!(
+        "{}{channel_id}",
+        kukuri_core::wire::PUBLIC_CHANNEL_TOPIC_PREFIX
+    ))
+}
+
 pub fn author_replica_id(author_pubkey: &str) -> ReplicaId {
     ReplicaId::new(format!("author::{author_pubkey}"))
 }

@@ -96,6 +96,7 @@ pub(crate) use private_channel_controller::controller_claim_marker;
 mod private_channels_game_api;
 #[cfg(not(target_family = "wasm"))]
 mod protected_migration;
+mod public_channels_api;
 mod sync_live_api;
 mod sync_status_observer;
 

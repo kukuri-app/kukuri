@@ -88,7 +88,7 @@ impl AppService {
         let mut targets_by_replica = BTreeMap::<String, Vec<EnvelopeId>>::new();
         for row in &page.items {
             author_pubkeys.insert(row.author_pubkey.clone());
-            if row.channel_id == PUBLIC_CHANNEL_ID {
+            if is_public_storage_channel(&row.channel_id) {
                 author_topics
                     .entry(row.author_pubkey.clone())
                     .or_insert_with(|| row.topic_id.clone());
@@ -329,7 +329,7 @@ impl AppService {
             };
             let channel_matches = match kukuri_docs_sync::post_replica_kind(replica) {
                 Some(kukuri_docs_sync::PostReplicaKind::PublicTopic { .. }) => {
-                    row.channel_id == PUBLIC_CHANNEL_ID
+                    is_public_storage_channel(&row.channel_id)
                 }
                 Some(kukuri_docs_sync::PostReplicaKind::PrivateChannel { channel_id }) => {
                     row.channel_id == channel_id

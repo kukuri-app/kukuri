@@ -660,6 +660,17 @@ async fn left_private_channel_post_cannot_be_bookmarked_from_a_leftover_projecti
         outcome.is_err(),
         "a left private channel post must not be bookmarked from a leftover projection row"
     );
+    // #1840: 同じ private channel の ID を公開 channel の種類で渡しても、参加の確認を迂回して bookmark できない。
+    let as_public_channel = app
+        .bookmark_post_in_channel(
+            topic,
+            object_id.as_str(),
+            ChannelRef::PublicChannel {
+                channel_id: ChannelId::new(channel.channel_id.clone()),
+            },
+        )
+        .await;
+    assert!(as_public_channel.is_err(), "{as_public_channel:?}");
     assert!(
         app.list_bookmarked_posts_page(None, false)
             .await

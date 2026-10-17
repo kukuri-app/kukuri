@@ -455,10 +455,15 @@ impl From<&NotificationRow> for NotificationCursor {
 /// 公開 channel の id（app-api の `PUBLIC_CHANNEL_ID`）。
 pub(crate) const PUBLIC_CHANNEL: &str = "public";
 
+/// 行の channel の値が公開の内容（topic の公開タイムラインか、公開 channel。#1840）か。
+pub(crate) fn is_public_channel_value(channel: &str) -> bool {
+    channel == PUBLIC_CHANNEL || kukuri_core::ChannelId::new(channel).is_public_channel()
+}
+
 /// #1632: 公開投稿の行が参照する blob（本文、添付、repost の添付、本文に貼られたカスタムリアクションのセット
 /// （#1232 AC-4））。公開でない行は空。
 pub fn public_blob_hashes_for_row(row: &ObjectProjectionRow) -> Vec<String> {
-    if row.channel_id != PUBLIC_CHANNEL {
+    if !is_public_channel_value(&row.channel_id) {
         return Vec::new();
     }
     row.source_blob_hash
@@ -492,7 +497,7 @@ pub fn public_blob_hashes_for_reaction(
 ) -> Vec<String> {
     match (&row.status, &row.custom_asset_snapshot) {
         (kukuri_core::ObjectStatus::Active, Some(snapshot))
-            if target_channel == Some(PUBLIC_CHANNEL) =>
+            if target_channel.is_some_and(is_public_channel_value) =>
         {
             vec![snapshot.blob_hash.as_str().to_string()]
         }
