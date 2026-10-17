@@ -76,6 +76,7 @@ mod media_adult_gating;
 mod notifications;
 mod private_channels;
 mod public_channel_list;
+mod public_channel_live;
 mod public_channels;
 mod reaction_sets;
 mod reactions;

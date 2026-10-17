@@ -60,10 +60,12 @@ pub struct LiveRefV1 {
 
 impl LiveRefV1 {
     /// この場所(topic・channel)の post が参照してよい Live か。限定 channel の Live は、その channel の post からだけ参照できる
-    /// (非公開投稿を repost できないのと同じ。公開の場所に限定 channel の id と Live の id を載せない)。
+    /// (非公開投稿を repost できないのと同じ。公開の場所に限定 channel の id と Live の id を載せない)。公開 channel(#1840)
+    /// で始めた Live は公開の Live なので、どこからでも参照できる。
     pub fn allowed_in(&self, topic_id: &TopicId, channel_id: Option<&ChannelId>) -> bool {
         match &self.channel_id {
             None => true,
+            Some(channel) if channel.is_public_channel() => true,
             Some(channel) => self.topic_id == *topic_id && Some(channel) == channel_id,
         }
     }

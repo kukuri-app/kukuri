@@ -294,6 +294,13 @@ pub trait LiveGameProjectionStore: Send + Sync {
         channel_id: &str,
         limit: usize,
     ) -> Result<Vec<LiveSessionProjectionRow>>;
+    /// 配信中(status が live)の session だけを、新しく始まった順に読む(#1840 AC-4。公開スレッドの配信中の Live)。
+    async fn list_channel_live_now_sessions(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+        limit: usize,
+    ) -> Result<Vec<LiveSessionProjectionRow>>;
     async fn get_live_session(
         &self,
         topic_id: &str,

@@ -407,6 +407,13 @@ fn post_envelope_content_live_snapshot() {
     };
     assert!(public.allowed_in(&other_topic, None));
     assert!(public.allowed_in(&other_topic, Some(&channel)));
+    // #1840: 公開 channel で始めた Live は公開の Live なので、ほかの topic・channel からも参照できる。
+    let thread = LiveRefV1 {
+        channel_id: Some(ChannelId::new("pc-1700000000000-0123456789abcdef")),
+        ..public
+    };
+    assert!(thread.allowed_in(&other_topic, None));
+    assert!(thread.allowed_in(&demo_topic(), Some(&channel)));
 }
 
 // #1839: manifest の `start_post_id` は owner の署名対象。開始 post の無い旧版の manifest は無いまま読める。

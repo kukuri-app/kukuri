@@ -563,6 +563,12 @@ index idx_live_session_cache_derived table=live_session_cache unique=0 origin=c 
   key seqno=0 cid=12 name=Some("derived_at")
   key seqno=1 cid=0 name=Some("session_id")
   sql=Some("CREATE INDEX idx_live_session_cache_derived ON live_session_cache(derived_at, session_id)")
+index idx_live_session_cache_live_now table=live_session_cache unique=0 origin=c partial=1
+  key seqno=0 cid=1 name=Some("topic_id")
+  key seqno=1 cid=14 name=Some("channel_id")
+  key seqno=2 cid=6 name=Some("started_at")
+  key seqno=3 cid=0 name=Some("session_id")
+  sql=Some("CREATE INDEX idx_live_session_cache_live_now ON live_session_cache(topic_id, channel_id, started_at DESC, session_id DESC) WHERE status = 'live'")
 index idx_live_session_cache_topic_started table=live_session_cache unique=0 origin=c partial=0
   key seqno=0 cid=1 name=Some("topic_id")
   key seqno=1 cid=14 name=Some("channel_id")

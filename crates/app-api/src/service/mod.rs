@@ -223,8 +223,9 @@ pub(crate) use attachment_support::{
     direct_message_preview, effective_sync_status_detail, effective_topic_status_detail,
     is_public_storage_channel, joined_private_channel_key, live_presence_task_key,
     materialize_direct_message_manifest, merge_optional_timestamp, normalize_topic_diagnostics,
-    normalize_topic_name, normalize_topics, sanitize_game_participants, short_id_suffix,
-    validate_game_room_scores, validate_game_room_transition,
+    normalize_topic_name, normalize_topics, private_channel_of, sanitize_game_participants,
+    session_hint_topic_for, short_id_suffix, validate_game_room_scores,
+    validate_game_room_transition,
 };
 pub(crate) use author_state_support::{hydrate_author_state, known_docs_author};
 pub(crate) use gossip_subscription_support::gossip_disabled_channel_key;

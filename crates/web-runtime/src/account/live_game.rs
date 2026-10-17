@@ -81,6 +81,17 @@ impl LiveGameProjectionStore for IndexedDbCache {
         .await
     }
 
+    /// Web は Live を扱わない(ADR 0060。command は `unsupported_platform` を返し、画面に入口を出さない)ので、公開スレッドの
+    /// 配信中の印(#1840 AC-4)も出さない。
+    async fn list_channel_live_now_sessions(
+        &self,
+        _topic_id: &str,
+        _channel_id: &str,
+        _limit: usize,
+    ) -> Result<Vec<LiveSessionProjectionRow>> {
+        Ok(Vec::new())
+    }
+
     async fn get_live_session(
         &self,
         topic_id: &str,

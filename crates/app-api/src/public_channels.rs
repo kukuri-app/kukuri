@@ -35,6 +35,9 @@ pub struct PublicChannelView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub creator_display_name: Option<String>,
+    /// 配信中の Live がある(手元の Live の行から。非表示の主催者の Live は数えない。一覧の行の印。#1840 AC-4)。
+    #[serde(default)]
+    pub live_now: bool,
 }
 
 impl From<PublicChannelRow> for PublicChannelView {
@@ -49,9 +52,14 @@ impl From<PublicChannelRow> for PublicChannelView {
             last_post_at: row.last_post_at,
             creator_name: None,
             creator_display_name: None,
+            live_now: false,
         }
     }
 }
+
+/// 一覧の行の配信中の印のために、行ごとに読む配信中の Live の数の上限(#1840 AC-4)。非表示の主催者の Live だけがこの数を
+/// 占めると、印は出ない。
+const LIVE_MARK_READ_LIMIT: usize = 8;
 
 /// metadata を置く bucket(ID の作成時刻の、公開 topic の bucket)と key。
 pub(crate) fn public_channel_location(
@@ -170,17 +178,19 @@ impl AppService {
             warn!(%error, "failed to announce a public channel");
         }
         Ok(self
-            .with_creator_names(topic_id, vec![row.into()])
+            .with_row_details(topic_id, vec![row.into()], &BTreeSet::new())
             .await?
             .remove(0))
     }
 
-    /// 作成者の名前を手元の profile から付ける。手元に無い profile は、タイムラインの投稿と同じく背景で読む
-    /// (読めたら次の取得で付く)。読むのは渡した行の作成者だけ。
-    pub(crate) async fn with_creator_names(
+    /// 行に作成者の名前と配信中の印を付ける。名前は手元の profile から付け、手元に無い profile は、タイムラインの投稿と
+    /// 同じく背景で読む(読めたら次の取得で付く)。配信中の印は、行ごとに手元の配信中の Live の行を上限つきで読む(Live の
+    /// 変化は topic の lease で受け取る。#1840 AC-4)。読むのは渡した行の分だけ。
+    pub(crate) async fn with_row_details(
         &self,
         topic_id: &str,
         mut views: Vec<PublicChannelView>,
+        hidden: &BTreeSet<String>,
     ) -> Result<Vec<PublicChannelView>> {
         let mut creators = views
             .iter()
@@ -202,6 +212,17 @@ impl AppService {
                 view.creator_name = profile.name.clone();
                 view.creator_display_name = profile.display_name.clone();
             }
+            view.live_now = self
+                .services
+                .projection_store
+                .list_channel_live_now_sessions(
+                    topic_id,
+                    view.channel_id.as_str(),
+                    LIVE_MARK_READ_LIMIT,
+                )
+                .await?
+                .iter()
+                .any(|session| !hidden.contains(&session.host_pubkey));
         }
         Ok(views)
     }
@@ -218,11 +239,8 @@ impl AppService {
         let Some(channel) = self.read_public_channel(topic_id, channel_id).await? else {
             return Ok(None);
         };
-        if self
-            .current_hidden_author_pubkeys()
-            .await?
-            .contains(&channel.creator_pubkey)
-        {
+        let hidden = self.current_hidden_author_pubkeys().await?;
+        if hidden.contains(&channel.creator_pubkey) {
             return Ok(None);
         }
         if let Some(first_post_id) = &channel.first_post_id
@@ -242,7 +260,7 @@ impl AppService {
             warn!(%error, "failed to read the first post of a public channel");
         }
         Ok(self
-            .with_creator_names(topic_id, vec![channel])
+            .with_row_details(topic_id, vec![channel], &hidden)
             .await?
             .pop())
     }
