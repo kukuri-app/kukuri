@@ -52,12 +52,21 @@ impl PublicChannelStore for IndexedDbCache {
     }
 
     async fn get_public_channel_row(&self, channel_id: &str) -> Result<Option<PublicChannelRow>> {
-        let channel_id = channel_id.to_owned();
-        self.run(move |db| async move {
-            let tx = Txn::begin(&db.idb, &[PUBLIC_CHANNELS], Mode::Read)?;
-            rows::get(&tx, PUBLIC_CHANNELS, &text(&channel_id)).await
-        })
-        .await
+        let key = channel_id.to_owned();
+        let Some(row) = self
+            .run(move |db| async move {
+                let tx = Txn::begin(&db.idb, &[PUBLIC_CHANNELS], Mode::Read)?;
+                rows::get::<PublicChannelRow>(&tx, PUBLIC_CHANNELS, &text(&key)).await
+            })
+            .await?
+        else {
+            return Ok(None);
+        };
+        // 回収の期限を過ぎた他人の行は、回収の前でも無いものとして扱う(native と同じ)。
+        let expired = self
+            .expired_remote_keys("public_channel", vec![channel_id.to_owned()])
+            .await?;
+        Ok((!expired.contains(channel_id)).then_some(row))
     }
 
     async fn note_public_channel_post(&self, channel_id: &str, posted_at: i64) -> Result<()> {

@@ -353,3 +353,155 @@ async fn a_list_page_reads_the_same_amount_however_many_unrelated_threads_and_po
     );
     assert_eq!(reads[0], reads[1], "{reads:?}");
 }
+
+// 自分の投稿でも、自分の端末の最後の投稿の順でそのスレッドが上へ移る(手元の反映が一覧の行の時刻を進める)。
+#[tokio::test]
+async fn an_own_post_moves_the_thread_up_on_the_own_device() {
+    let a_docs = MemoryDocsSync::with_docs_author("0a".repeat(32));
+    let b_docs = MemoryDocsSync::with_docs_author("0b".repeat(32));
+    let (a, a_store) = device_with_store(
+        "a",
+        &FakeNetwork::default(),
+        a_docs,
+        b_docs,
+        Arc::new(MemoryBlobService::default()),
+    );
+    let older = a
+        .create_public_channel(TOPIC, "古いスレッド", "")
+        .await
+        .expect("the older channel");
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let newer = a
+        .create_public_channel(TOPIC, "新しいスレッド", "")
+        .await
+        .expect("the newer channel");
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    a.create_post_in_channel(TOPIC, channel_ref(&older.channel_id), "自分の投稿", None)
+        .await
+        .expect("an own post");
+    let ids = a_store
+        .list_public_channels(TOPIC, PublicChannelOrder::LastPost, None, 20)
+        .await
+        .expect("the own list")
+        .items
+        .into_iter()
+        .map(|row| row.channel_id)
+        .collect::<Vec<_>>();
+    assert_eq!(ids, [older.channel_id, newer.channel_id]);
+}
+
+// 回収の期限を過ぎて、まだ回収されていない他人の行は、次の照合が確かめて置き直す(一覧から消えたままにしない)。
+#[tokio::test]
+async fn an_expired_row_waiting_for_reclaim_is_placed_again_by_the_next_reconcile() {
+    let a_docs = MemoryDocsSync::with_docs_author("0c".repeat(32));
+    let b_docs = MemoryDocsSync::with_docs_author("0d".repeat(32));
+    let blobs = Arc::new(MemoryBlobService::default());
+    let network = FakeNetwork::default();
+    let a = device("a", &network, a_docs.clone(), b_docs.clone(), blobs.clone());
+    let b_store = Arc::new(
+        kukuri_store::SqliteStore::connect_memory()
+            .await
+            .expect("sqlite"),
+    );
+    let b_transport = Arc::new(FakeTransport::new("b", network.clone()));
+    let b = app_service_from_dependencies(
+        b_store.clone(),
+        b_store.clone(),
+        b_transport.clone(),
+        b_transport,
+        Arc::new(CountingDocsSync::reading_with(b_docs, Arc::new(a_docs))),
+        blobs,
+        generate_keys(),
+    );
+    b.switch_writer(1);
+    let channel = a
+        .create_public_channel(TOPIC, "期限を過ぎるスレッド", "")
+        .await
+        .expect("create");
+    let listed = async || {
+        b_store
+            .list_public_channels(TOPIC, PublicChannelOrder::Created, None, 20)
+            .await
+            .expect("page")
+            .items
+            .into_iter()
+            .map(|row| row.channel_id)
+            .collect::<Vec<_>>()
+    };
+    let reconcile = async || {
+        b.reconcile_public_channel_range(
+            TOPIC,
+            PublicChannelOrder::Created,
+            None,
+            20,
+            &Default::default(),
+        )
+        .await
+        .expect("reconcile")
+    };
+    reconcile().await;
+    assert_eq!(listed().await, std::slice::from_ref(&channel.channel_id));
+    // 7 日使わなかったことにする(回収の前)。
+    sqlx::query("UPDATE remote_content_cache SET last_used_at = 0 WHERE kind = 'public_channel'")
+        .execute(b_store.pool())
+        .await
+        .expect("age the row");
+    assert!(listed().await.is_empty());
+    reconcile().await;
+    assert_eq!(listed().await, [channel.channel_id]);
+}
+
+// 照合の範囲より古いスレッドしか無い topic でも、続きを読み込んで遡れる(手元の行が尽きたページも続きの位置を持つ)。
+#[tokio::test]
+async fn old_threads_of_a_quiet_topic_are_reached_by_reading_on() {
+    let a_docs = MemoryDocsSync::with_docs_author("0e".repeat(32));
+    let b_docs = MemoryDocsSync::with_docs_author("0f".repeat(32));
+    let creator = generate_keys();
+    let created_ms = Utc::now().timestamp_millis() - 6 * 86_400_000;
+    let channel_id = ChannelId::public_channel(created_ms, &creator.public_key_hex());
+    let metadata = kukuri_core::build_public_channel_envelope(
+        &creator,
+        &kukuri_core::KukuriPublicChannelContentV1 {
+            channel_id: channel_id.clone(),
+            topic_id: TopicId::new(TOPIC),
+            title: "6 日前のスレッド".into(),
+            first_post_id: None,
+        },
+    )
+    .expect("metadata");
+    let (bucket, key) =
+        crate::public_channels::public_channel_location(TOPIC, &channel_id).expect("location");
+    a_docs
+        .apply_doc_op(
+            &bucket,
+            DocOp::SetJson {
+                key,
+                value: serde_json::to_value(&metadata).expect("json"),
+            },
+        )
+        .await
+        .expect("persist the metadata");
+    let b = device(
+        "b",
+        &FakeNetwork::default(),
+        b_docs,
+        a_docs,
+        Arc::new(MemoryBlobService::default()),
+    );
+    let head = b
+        .list_public_channels(TOPIC, PublicChannelOrder::Created, None, 20)
+        .await
+        .expect("the head page");
+    assert!(head.items.is_empty(), "{head:?}");
+    let next = b
+        .list_public_channels(TOPIC, PublicChannelOrder::Created, head.next_cursor, 20)
+        .await
+        .expect("the next page");
+    assert_eq!(
+        next.items
+            .into_iter()
+            .map(|channel| channel.channel_id)
+            .collect::<Vec<_>>(),
+        [channel_id.0]
+    );
+}

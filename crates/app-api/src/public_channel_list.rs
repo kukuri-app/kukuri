@@ -23,6 +23,45 @@ const POSTS_PER_ROW: usize = 5;
 /// 収まる)。
 const MAX_INDEX_ENTRIES: usize = 256;
 
+/// 照合で読む日数(bucket の数)。
+fn range_days(order: PublicChannelOrder) -> usize {
+    match order {
+        PublicChannelOrder::Created => CREATED_BUCKETS,
+        PublicChannelOrder::LastPost => LAST_POST_BUCKETS,
+    }
+}
+
+/// 照合が読む範囲の上端(秒)。cursor の位置より古い側を読む(cursor が無ければ、現在に許容幅を足した時刻まで)。
+fn range_bound(cursor: Option<&PublicChannelCursor>, now: i64) -> i64 {
+    cursor.map_or(now + TIME_INDEX_FUTURE_ALLOWANCE_SECS, |cursor| {
+        (cursor.at - 1).div_euclid(1_000)
+    })
+}
+
+/// 照合が読む範囲の最初の日(bucket)。
+fn range_first_bucket(cursor: Option<&PublicChannelCursor>, now: i64) -> Result<TimeBucket> {
+    TimeBucket::from_unix_seconds(range_bound(cursor, now).min(now).max(0))
+}
+
+/// 手元の行が尽きたページの続きの位置: 照合が読む範囲より古い日の終わり。古いスレッドは、続きを読み込んで遡る
+/// (D2)。範囲が最初の日まで届いていれば `None`。
+fn read_past_cursor(
+    order: PublicChannelOrder,
+    cursor: Option<&PublicChannelCursor>,
+    now: i64,
+) -> Option<PublicChannelCursor> {
+    let first = range_first_bucket(cursor, now).ok()?;
+    let oldest = first
+        .index()
+        .checked_sub(range_days(order) as u64 - 1)
+        .filter(|oldest| *oldest > 0)?;
+    let start = i64::try_from(TimeBucket::from_index(oldest).ok()?.start_seconds()).ok()?;
+    Some(PublicChannelCursor {
+        at: start.saturating_mul(1_000),
+        channel_id: String::new(),
+    })
+}
+
 /// 一覧の 1 ページ。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -66,12 +105,14 @@ impl AppService {
         let unavailable = self
             .reconcile_public_channels(topic_id, order, cursor.as_ref(), limit, &hidden)
             .await?;
+        let read_past = read_past_cursor(order, cursor.as_ref(), Utc::now().timestamp());
         let page = self
             .visible_public_channels(topic_id, order, cursor, limit, &hidden)
             .await?;
         Ok(PublicChannelListView {
             items: page.items.into_iter().map(Into::into).collect(),
-            next_cursor: page.next_cursor,
+            // 手元の行が尽きたら、照合した範囲より古い日から続ける(行が 0 件でも続きを読める)。
+            next_cursor: page.next_cursor.or(read_past.filter(|_| limit > 0)),
             unavailable_count: u32::try_from(unavailable).unwrap_or(u32::MAX),
         })
     }
@@ -209,23 +250,19 @@ impl AppService {
     ) -> Result<RangeOutcome> {
         let deadline = n0_future::time::Instant::now() + REMOTE_READ_DEADLINE;
         let now = Utc::now().timestamp();
-        let bound = cursor.map_or(now + TIME_INDEX_FUTURE_ALLOWANCE_SECS, |cursor| {
-            cursor.at.div_euclid(1_000)
-        });
-        let (days, prefixes): (usize, &[(&str, usize)]) = match order {
-            PublicChannelOrder::Created => (CREATED_BUCKETS, &[(PUBLIC_CHANNEL_LIST_PREFIX, 1)]),
-            PublicChannelOrder::LastPost => (
-                LAST_POST_BUCKETS,
-                &[
-                    (PUBLIC_CHANNEL_ACTIVITY_PREFIX, POSTS_PER_ROW),
-                    (PUBLIC_CHANNEL_LIST_PREFIX, 1),
-                ],
-            ),
+        let bound = range_bound(cursor, now);
+        let prefixes: &[(&str, usize)] = match order {
+            PublicChannelOrder::Created => &[(PUBLIC_CHANNEL_LIST_PREFIX, 1)],
+            PublicChannelOrder::LastPost => &[
+                (PUBLIC_CHANNEL_ACTIVITY_PREFIX, POSTS_PER_ROW),
+                (PUBLIC_CHANNEL_LIST_PREFIX, 1),
+            ],
         };
         let mut readers: Vec<(ReplicaId, Arc<dyn DocsSync>)> = Vec::new();
         let mut candidates: HashMap<String, Candidate> = HashMap::new();
-        let mut day = Some(TimeBucket::from_unix_seconds(bound.min(now).max(0))?);
-        for index in 0..days {
+        // 範囲の日は最後まで読む(手元の行が尽きたページの続きは、範囲より古い日から始まる)。
+        let mut day = Some(range_first_bucket(cursor, now)?);
+        for index in 0..range_days(order) {
             let Some(bucket) = day else { break };
             day = bucket.previous();
             let replica = BucketReplica::new(
@@ -309,9 +346,6 @@ impl AppService {
                         );
                     }
                 }
-            }
-            if candidates.len() >= limit {
-                break;
             }
         }
         let mut ordered = candidates.into_iter().collect::<Vec<_>>();

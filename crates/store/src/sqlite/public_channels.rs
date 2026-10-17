@@ -108,7 +108,7 @@ impl PublicChannelStore for SqliteStore {
     }
 
     async fn get_public_channel_row(&self, channel_id: &str) -> Result<Option<PublicChannelRow>> {
-        sqlx::query(
+        let Some(row) = sqlx::query(
             "SELECT channel_id, topic_id, title, creator_pubkey, created_at, first_post_id, \
              last_post_at FROM public_channels WHERE channel_id = ?1",
         )
@@ -117,7 +117,15 @@ impl PublicChannelStore for SqliteStore {
         .await?
         .as_ref()
         .map(public_channel_row)
-        .transpose()
+        .transpose()?
+        else {
+            return Ok(None);
+        };
+        // 回収の期限を過ぎた他人の行は、回収の前でも無いものとして扱う(照合が確かめて置き直す。投稿の行と同じ)。
+        let expired = self
+            .expired_remote_keys("public_channel", &[channel_id])
+            .await?;
+        Ok((!expired.contains(channel_id)).then_some(row))
     }
 
     async fn note_public_channel_post(&self, channel_id: &str, posted_at: i64) -> Result<()> {
