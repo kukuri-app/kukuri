@@ -552,6 +552,16 @@ impl AppService {
                     .await;
                 Ok(true)
             }
+            // #1840: 公開 channel の作成の知らせ(topic の hint)。metadata を 1 件読んで一覧の行に置く。
+            kukuri_core::PUBLIC_CHANNEL_KIND
+                if *scope == TimelineScope::Public
+                    && ChannelId::new(session_id).is_public_channel() =>
+            {
+                Ok(self
+                    .read_public_channel(topic_id, session_id)
+                    .await?
+                    .is_some())
+            }
             _ => Ok(false),
         }
     }

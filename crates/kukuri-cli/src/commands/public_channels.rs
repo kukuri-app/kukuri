@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use kukuri_desktop_runtime::{CreatePublicChannelRequest, GetPublicChannelRequest};
+use kukuri_desktop_runtime::{
+    CreatePublicChannelRequest, GetPublicChannelRequest, ListPublicChannelsRequest,
+};
 use serde_json::{Value, json};
 
 use super::{command, command_error, decode, encode, host_guards, runtime, schema};
@@ -10,11 +12,12 @@ use crate::{
     registry::{CommandHandler, CommandOutput, CommandRegistration, HandlerContext},
 };
 
-// 公開 channel(公開スレッド。#1840)の作成と、ID からの取得。
+// 公開 channel(公開スレッド。#1840)の作成と、ID からの取得と、topic の一覧。
 #[derive(Clone, Copy)]
 enum Operation {
     Create,
     Get,
+    List,
 }
 
 struct Handler(Operation);
@@ -38,6 +41,12 @@ impl CommandHandler for Handler {
             Operation::Get => encode(
                 runtime
                     .get_public_channel(decode::<GetPublicChannelRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            Operation::List => encode(
+                runtime
+                    .list_public_channels(decode::<ListPublicChannelsRequest>(payload)?)
                     .await
                     .map_err(command_error)?,
             ),
@@ -68,6 +77,23 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
             ),
             schema::nullable(public_channel_schema()),
         ),
+        (
+            "list_public_channels",
+            CommandEffect::Read,
+            Operation::List,
+            schema::object(
+                json!({"topic": {"type": "string"},
+                "order": {"enum": ["last_post", "created"], "default": "last_post"},
+                "cursor": cursor_schema(), "limit": {"type": "integer", "minimum": 0}}),
+                &["topic"],
+            ),
+            schema::object(
+                json!({"items": schema::array(public_channel_schema()),
+                "next_cursor": schema::nullable(cursor_schema()),
+                "unavailable_count": {"type": "integer", "minimum": 0}}),
+                &["items", "next_cursor", "unavailable_count"],
+            ),
+        ),
     ]
     .into_iter()
     .map(|(name, effect, operation, input, output)| {
@@ -88,13 +114,22 @@ fn public_channel_schema() -> Value {
     schema::object(
         json!({"channel_id": {"type": "string"}, "topic_id": {"type": "string"},
         "title": {"type": "string"}, "creator_pubkey": {"type": "string"},
-        "created_at": {"type": "integer"}, "first_post_id": {"type": "string"}}),
+        "created_at": {"type": "integer"}, "first_post_id": {"type": "string"},
+        "last_post_at": {"type": "integer"}}),
         &[
             "channel_id",
             "topic_id",
             "title",
             "creator_pubkey",
             "created_at",
+            "last_post_at",
         ],
+    )
+}
+
+fn cursor_schema() -> Value {
+    schema::object(
+        json!({"at": {"type": "integer"}, "channel_id": {"type": "string"}}),
+        &["at", "channel_id"],
     )
 }

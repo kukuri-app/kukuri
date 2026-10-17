@@ -19,4 +19,18 @@ impl DesktopRuntime {
             .get_public_channel(&request.topic, &request.channel_id)
             .await
     }
+
+    pub async fn list_public_channels(
+        &self,
+        request: ListPublicChannelsRequest,
+    ) -> Result<kukuri_app_api::PublicChannelListView> {
+        self.app_service
+            .list_public_channels(
+                &request.topic,
+                request.order,
+                request.cursor,
+                request.limit.unwrap_or(20),
+            )
+            .await
+    }
 }

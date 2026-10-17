@@ -380,6 +380,9 @@ impl Tx {
     pub(crate) async fn drop_item(&self, kind: &str, key: &str) -> Result<()> {
         match kind {
             "projection" => crate::account::forget_remote_projection(self, key).await?,
+            "public_channel" => {
+                crate::rows::delete(self, super::PUBLIC_CHANNELS, &crate::rows::text(key))?
+            }
             "adult_marker" if self.row(kind, key).await?.is_some() => {
                 self.evicted_label(key.to_owned())
             }

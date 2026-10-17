@@ -611,6 +611,20 @@ pub struct GetPublicChannelRequest {
     pub channel_id: String,
 }
 
+/// topic の公開 channel の一覧の 1 ページ(#1840)。`order` の既定は最後の投稿の新しい順、`limit` の既定は 20。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct ListPublicChannelsRequest {
+    pub topic: String,
+    #[serde(default)]
+    pub order: kukuri_store::PublicChannelOrder,
+    #[serde(default)]
+    pub cursor: Option<kukuri_store::PublicChannelCursor>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]

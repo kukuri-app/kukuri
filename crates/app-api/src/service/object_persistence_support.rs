@@ -12,8 +12,20 @@ pub(crate) fn timeline_index_prefix(scope: &TimelineScope) -> String {
     }
 }
 
-/// 投稿の timeline と thread の索引の key と値。書き手と、検証後に索引を保持する中継者(#1395)が同じものを使う。
-pub(crate) fn post_index_records(object: &CanonicalPostHeader) -> [(String, serde_json::Value); 2] {
+/// 公開 channel(#1840)の metadata の時刻の索引の prefix。key は `<prefix><作成時刻の秒 20 桁>-<channel ID>/<channel ID>`。
+pub(crate) const PUBLIC_CHANNEL_LIST_PREFIX: &str = "channels/list/";
+/// 公開 channel の投稿ごとの、最後の投稿の索引の prefix。key は
+/// `<prefix><投稿の作成時刻 20 桁>-<channel ID>.<投稿 ID>/<channel ID>.<投稿 ID>`(key だけで channel と投稿が分かる)。
+pub(crate) const PUBLIC_CHANNEL_ACTIVITY_PREFIX: &str = "channels/activity/";
+
+/// 最後の投稿の索引の id を、channel ID と投稿 ID に分ける。
+pub(crate) fn split_public_channel_activity_id(id: &str) -> Option<(&str, &str)> {
+    id.split_once('.')
+}
+
+/// 投稿の timeline と thread の索引の key と値。公開 channel の投稿は、最後の投稿の索引も持つ。書き手と、検証後に
+/// 索引を保持する中継者(#1395)が同じものを使う。
+pub(crate) fn post_index_records(object: &CanonicalPostHeader) -> Vec<(String, serde_json::Value)> {
     let sort_key = timeline_sort_key(object.created_at, &object.object_id);
     let root_id = object
         .root
@@ -25,7 +37,7 @@ pub(crate) fn post_index_records(object: &CanonicalPostHeader) -> [(String, serd
             .as_ref()
             .filter(|_| object.visibility == ObjectVisibility::Public),
     );
-    [
+    let mut records = vec![
         (
             format!(
                 "{}{sort_key}/{}",
@@ -53,7 +65,18 @@ pub(crate) fn post_index_records(object: &CanonicalPostHeader) -> [(String, serd
                 "reply_to": object.reply_to,
             }),
         ),
-    ]
+    ];
+    if let TimelineScope::PublicChannel { channel_id } = &scope {
+        let id = format!("{}.{}", channel_id.as_str(), object.object_id.as_str());
+        records.push((
+            format!(
+                "{PUBLIC_CHANNEL_ACTIVITY_PREFIX}{:020}-{id}/{id}",
+                object.created_at
+            ),
+            serde_json::json!({ "channel_id": channel_id, "object_id": object.object_id }),
+        ));
+    }
+    records
 }
 
 pub(crate) async fn persist_post_object(

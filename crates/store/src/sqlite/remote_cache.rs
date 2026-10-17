@@ -10,7 +10,7 @@ pub use crate::cache::{
 };
 
 #[derive(Clone, Copy)]
-enum CachePayload<'a> {
+pub(super) enum CachePayload<'a> {
     Bytes(&'a [u8]),
     File { name: &'a str, bytes: u64 },
 }
@@ -80,6 +80,12 @@ pub(super) async fn delete_cache_item(
             .await?;
         super::public_blobs::forget_post_public_blob_refs(tx, key).await?;
     }
+    if kind == "public_channel" {
+        sqlx::query("DELETE FROM public_channels WHERE channel_id = ?1")
+            .bind(key)
+            .execute(&mut **tx)
+            .await?;
+    }
     if kind == "blob" {
         super::public_blobs::forget_public_blob_announcement(tx, key).await?;
     }
@@ -113,20 +119,36 @@ impl SqliteStore {
         &self,
         mut rows: Vec<ObjectProjectionRow>,
     ) -> Result<Vec<ObjectProjectionRow>> {
-        if rows.is_empty() {
-            return Ok(rows);
+        let keys = rows
+            .iter()
+            .map(|row| row.object_id.as_str())
+            .collect::<Vec<_>>();
+        let expired = self.expired_remote_keys("projection", &keys).await?;
+        rows.retain(|row| !expired.contains(row.object_id.as_str()));
+        Ok(rows)
+    }
+
+    /// `kind` の行のうち、回収の期限を過ぎた remote の行の key を返す。残る行の使った時刻が古ければ更新する。
+    pub(super) async fn expired_remote_keys(
+        &self,
+        kind: &str,
+        keys: &[&str],
+    ) -> Result<HashSet<String>> {
+        let mut expired = HashSet::new();
+        if keys.is_empty() {
+            return Ok(expired);
         }
         let now = now_ms()?;
         let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT cache_key, last_used_at, is_protected FROM remote_content_cache \
-             WHERE kind = 'projection' AND cache_key IN (",
+            "SELECT cache_key, last_used_at, is_protected FROM remote_content_cache WHERE kind = ",
         );
+        query.push_bind(kind);
+        query.push(" AND cache_key IN (");
         let mut ids = query.separated(", ");
-        for row in &rows {
-            ids.push_bind(row.object_id.as_str());
+        for key in keys {
+            ids.push_bind(*key);
         }
         ids.push_unseparated(")");
-        let mut expired = HashSet::new();
         let mut touch_due = false;
         for row in query.build().fetch_all(&self.pool).await? {
             let last_used_at: i64 = row.get("last_used_at");
@@ -138,23 +160,28 @@ impl SqliteStore {
                 touch_due = true;
             }
         }
-        rows.retain(|row| !expired.contains(row.object_id.as_str()));
-        if rows.is_empty() || !touch_due {
-            return Ok(rows);
+        let kept = keys
+            .iter()
+            .filter(|key| !expired.contains(**key))
+            .collect::<Vec<_>>();
+        if kept.is_empty() || !touch_due {
+            return Ok(expired);
         }
         let mut query =
             QueryBuilder::<Sqlite>::new("UPDATE remote_content_cache SET last_used_at = ");
         query.push_bind(now);
-        query.push(" WHERE kind = 'projection' AND last_used_at <= ");
+        query.push(" WHERE kind = ");
+        query.push_bind(kind);
+        query.push(" AND last_used_at <= ");
         query.push_bind(now - REMOTE_CACHE_TOUCH_INTERVAL_MS);
         query.push(" AND cache_key IN (");
         let mut ids = query.separated(", ");
-        for row in &rows {
-            ids.push_bind(row.object_id.as_str());
+        for key in kept {
+            ids.push_bind(*key);
         }
         ids.push_unseparated(")");
         query.build().execute(&self.pool).await?;
-        Ok(rows)
+        Ok(expired)
     }
 
     pub(super) async fn sync_remote_adult_hash_refs(
@@ -397,7 +424,7 @@ impl SqliteStore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn put_remote_content_in_tx(
+    pub(super) async fn put_remote_content_in_tx(
         &self,
         tx: &mut sqlx::Transaction<'_, Sqlite>,
         kind: &str,
@@ -413,7 +440,10 @@ impl SqliteStore {
         removed_files: &mut Vec<String>,
     ) -> Result<bool> {
         anyhow::ensure!(
-            matches!(kind, "blob" | "record" | "projection" | "adult_marker"),
+            matches!(
+                kind,
+                "blob" | "record" | "projection" | "adult_marker" | "public_channel"
+            ),
             "unknown remote cache kind"
         );
         let payload_len = match payload {

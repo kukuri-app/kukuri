@@ -353,6 +353,14 @@ table public_blob_refs
   column cid=0 name=source_kind type=TEXT notnull=1 default=None pk=1
   column cid=1 name=source_id type=TEXT notnull=1 default=None pk=2
   column cid=2 name=blob_hash type=TEXT notnull=1 default=None pk=3
+table public_channels
+  column cid=0 name=channel_id type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=topic_id type=TEXT notnull=1 default=None pk=0
+  column cid=2 name=title type=TEXT notnull=1 default=None pk=0
+  column cid=3 name=creator_pubkey type=TEXT notnull=1 default=None pk=0
+  column cid=4 name=created_at type=INTEGER notnull=1 default=None pk=0
+  column cid=5 name=first_post_id type=TEXT notnull=0 default=None pk=0
+  column cid=6 name=last_post_at type=INTEGER notnull=1 default=None pk=0
 table reaction_cache
   column cid=0 name=source_replica_id type=TEXT notnull=1 default=None pk=1
   column cid=1 name=target_object_id type=TEXT notnull=1 default=None pk=2
@@ -686,6 +694,16 @@ index idx_public_blob_announcements_next table=public_blob_announcements unique=
 index idx_public_blob_refs_hash table=public_blob_refs unique=0 origin=c partial=0
   key seqno=0 cid=2 name=Some("blob_hash")
   sql=Some("CREATE INDEX idx_public_blob_refs_hash ON public_blob_refs (blob_hash)")
+index idx_public_channels_created table=public_channels unique=0 origin=c partial=0
+  key seqno=0 cid=1 name=Some("topic_id")
+  key seqno=1 cid=4 name=Some("created_at")
+  key seqno=2 cid=0 name=Some("channel_id")
+  sql=Some("CREATE INDEX idx_public_channels_created ON public_channels (topic_id, created_at, channel_id)")
+index idx_public_channels_last_post table=public_channels unique=0 origin=c partial=0
+  key seqno=0 cid=1 name=Some("topic_id")
+  key seqno=1 cid=6 name=Some("last_post_at")
+  key seqno=2 cid=0 name=Some("channel_id")
+  sql=Some("CREATE INDEX idx_public_channels_last_post ON public_channels (topic_id, last_post_at, channel_id)")
 index idx_reaction_cache_author_updated_at table=reaction_cache unique=0 origin=c partial=0
   key seqno=0 cid=3 name=Some("author_pubkey")
   key seqno=1 cid=5 name=Some("updated_at")
@@ -890,6 +908,9 @@ index sqlite_autoindex_public_blob_refs_1 table=public_blob_refs unique=1 origin
   key seqno=0 cid=0 name=Some("source_kind")
   key seqno=1 cid=1 name=Some("source_id")
   key seqno=2 cid=2 name=Some("blob_hash")
+  sql=None
+index sqlite_autoindex_public_channels_1 table=public_channels unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("channel_id")
   sql=None
 index sqlite_autoindex_reaction_cache_1 table=reaction_cache unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("source_replica_id")

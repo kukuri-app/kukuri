@@ -45,13 +45,14 @@ pub(crate) use tx::prefix_upper_bound;
 use tx::{RecordMeta, delete_step, make_room, put_content, record_key};
 pub(crate) use tx::{Tx, place};
 
-/// 版 2（#1632 AC-6）で公開参照の索引を足した。既存の store は変えない。
-const VERSION: u32 = 2;
+/// 版 2（#1632 AC-6）で公開参照の索引を、版 3（#1840）で公開 channel の一覧の行を足した。既存の store は変えない。
+const VERSION: u32 = 3;
 /// 1 つの chunk の上限（`/kukuri/remote-blob/1` の 1 回の単位と同じ）。
 const CHUNK_BYTES: usize = 1024 * 1024;
 /// 内容の transaction が触る object store。remote の投稿の projection（`projection` の内容）を消すときは、その行と
-/// 成人向けの印・公開の参照も同じ transaction で消す（native の `delete_cache_item`）。
-const STORES: [&str; 8] = [
+/// 成人向けの印・公開の参照も同じ transaction で消す。他人の公開 channel の行（`public_channel` の内容）も同じ
+/// （native の `delete_cache_item`）。
+const STORES: [&str; 9] = [
     "contents",
     "chunks",
     "refs",
@@ -60,6 +61,7 @@ const STORES: [&str; 8] = [
     ADULT_HASHES,
     ADULT_REFS,
     PUBLIC_REFS,
+    PUBLIC_CHANNELS,
 ];
 const USAGE: &str = "usage";
 /// 表示設定 ON の間に置いた成人向けの blob の `scope`（native の `REMOTE_ADULT_BLOB_SCOPE`）。
@@ -228,9 +230,12 @@ async fn quota_capacity() -> Result<i64> {
 }
 
 pub(crate) fn create_stores(db: &IdbDatabase) -> std::result::Result<(), JsValue> {
-    // 版 1 の database には、版 2 で足した store だけを足す。
+    // 既存の database には、その版より後で足した store だけを足す。
     if db.object_store_names().contains("contents") {
-        return schema::create_public_refs(db);
+        if !db.object_store_names().contains(PUBLIC_REFS) {
+            schema::create_public_refs(db)?;
+        }
+        return schema::create_public_channels(db);
     }
     let in_line = |path: &[&str]| {
         let parameters = IdbObjectStoreParameters::new();

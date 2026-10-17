@@ -419,6 +419,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     list_my_custom_reaction_sets() => runtime.list_my_custom_reaction_sets().await.map_err(map_error);
     list_notifications_page(request: ListNotificationsPageRequest) => runtime.list_notifications_page(request).await.map_err(map_error);
     list_profile_timeline(request: ListProfileTimelineRequest) => runtime.list_profile_timeline(request).await.map_err(map_error);
+    list_public_channels(request: ListPublicChannelsRequest) => runtime.list_public_channels(request).await.map_err(map_error);
     list_recent_reactions(request: ListRecentReactionsRequest) => runtime.list_recent_reactions(request).await.map_err(map_error);
     list_social_connections(request: ListSocialConnectionsRequest) => runtime.list_social_connections(request).await.map_err(map_error);
     list_thread(request: ListThreadRequest) => runtime.list_thread(request).await.map_err(map_error);

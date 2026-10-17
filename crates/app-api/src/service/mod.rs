@@ -184,9 +184,13 @@ mod reaction_integrity;
 mod received_dome_heartbeats;
 pub(crate) use received_dome_heartbeats::ReceivedDomeHeartbeats;
 mod remote_read_support;
-pub(crate) use remote_read_support::read_local_then_remote;
+pub(crate) use remote_read_support::{
+    HEAD_PROVIDER_GRACE, REMOTE_READ_DEADLINE, read_local_then_remote,
+};
 mod replica_window;
-pub(crate) use replica_window::RangeReconcile;
+pub(crate) use replica_window::{
+    RangeCheckResult, RangeReconcile, TIME_INDEX_FUTURE_ALLOWANCE_SECS,
+};
 mod session_integrity;
 mod social_runtime_support;
 mod spatial_access_support;
@@ -237,7 +241,8 @@ pub(crate) use object_hydration::{
     BodyFetch, ObjectHydration, hydrate_object_in_topic, hydrate_object_in_topic_with,
 };
 pub(crate) use object_persistence_support::{
-    PrivateEpochSnapshot, best_effort_blob_cache_status, best_effort_blob_view_status,
+    PUBLIC_CHANNEL_ACTIVITY_PREFIX, PUBLIC_CHANNEL_LIST_PREFIX, PrivateEpochSnapshot,
+    best_effort_blob_cache_status, best_effort_blob_view_status,
     bookmarked_custom_reaction_view_from_row, custom_reaction_asset_view_from_doc,
     fetch_manifest_blob, fetch_private_channel_epoch_handoff_grant_from_replica,
     fetch_private_channel_participant_from_replica, fetch_private_channel_policy_from_replica,
@@ -248,8 +253,8 @@ pub(crate) use object_persistence_support::{
     post_index_records, post_withdrawal_row, projection_blob_fetch_timeout,
     projection_row_from_post, reaction_cache_key, reaction_projection_row,
     reaction_state_view_from_rows, read_private_epoch_snapshot,
-    recent_reaction_view_from_projection, search_key_or_asset_id, store_manifest_blob,
-    timeline_index_prefix,
+    recent_reaction_view_from_projection, search_key_or_asset_id, split_public_channel_activity_id,
+    store_manifest_blob, timeline_index_prefix,
 };
 pub(crate) use post_integrity::{
     MAX_ENVELOPE_RECORDS_PER_OBJECT, MAX_WITHDRAWAL_RECORDS_PER_OBJECT, PostLoad, ReplicaPostScope,
@@ -268,12 +273,12 @@ pub(crate) use profile_docs_support::{
 };
 pub(crate) use profile_timeline_support::{persist_profile_index_entry, profile_timeline_page};
 pub(crate) use projection_support::{
-    LIVE_GAME_LIST_LIMIT, bookmarked_post_row_is_hidden, current_private_channel_replica_id,
-    filtered_thread_page, filtered_timeline_page, initial_private_channel_epoch_id,
-    joined_private_channel_state_from_capability, load_projection_rows_with_one_refresh,
-    merged_private_channel_state_from_epoch_join, next_private_channel_epoch_id,
-    private_channel_is_epoch_aware, private_channel_replica_for_epoch,
-    profile_timeline_item_is_hidden,
+    HIDDEN_AUTHOR_SKIP_PAGES, LIVE_GAME_LIST_LIMIT, bookmarked_post_row_is_hidden,
+    current_private_channel_replica_id, filtered_thread_page, filtered_timeline_page,
+    initial_private_channel_epoch_id, joined_private_channel_state_from_capability,
+    load_projection_rows_with_one_refresh, merged_private_channel_state_from_epoch_join,
+    next_private_channel_epoch_id, private_channel_is_epoch_aware,
+    private_channel_replica_for_epoch, profile_timeline_item_is_hidden,
 };
 pub(crate) use public_notification_offer_support::PublicNotificationSource;
 pub(crate) use reaction_integrity::{ReactionKey, VerifiedReaction, load_verified_reaction};
@@ -414,13 +419,55 @@ impl ServiceHandles {
     }
 
     pub(crate) async fn put_post_projection(&self, row: ObjectProjectionRow) -> Result<()> {
-        if row.author_pubkey == self.keys.public_key_hex() {
-            self.projection_store.put_object_projection(row).await
+        let me = self.keys.public_key_hex();
+        // 公開 channel(#1840)の投稿は、その channel の一覧の行の最後の投稿の時刻を進める。非表示の作者(mute と、
+        // どちらの向きでも有効な block の相手)の投稿は数えない。
+        let public_channel_post = ChannelId::new(row.channel_id.as_str())
+            .is_public_channel()
+            .then(|| {
+                (
+                    row.channel_id.clone(),
+                    row.created_at,
+                    row.author_pubkey.clone(),
+                )
+            });
+        if row.author_pubkey == me {
+            self.projection_store.put_object_projection(row).await?;
         } else {
             self.projection_store
                 .put_remote_object_projection(row)
-                .await
+                .await?;
         }
+        let Some((channel_id, created_at, author)) = public_channel_post else {
+            return Ok(());
+        };
+        let hidden = author != me
+            && (self
+                .projection_store
+                .get_muted_author(&author)
+                .await?
+                .is_some()
+                || self.blocks_either_direction(&me, &author).await?);
+        if !hidden {
+            self.projection_store
+                .note_public_channel_post(&channel_id, created_at.saturating_mul(1_000))
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn blocks_either_direction(&self, left: &str, right: &str) -> Result<bool> {
+        for (owner, visitor) in [(left, right), (right, left)] {
+            if self
+                .store
+                .get_block_edge(owner, visitor)
+                .await?
+                .is_some_and(|edge| edge.status == BlockEdgeStatus::Active)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub(crate) async fn active_content_scope_generation(

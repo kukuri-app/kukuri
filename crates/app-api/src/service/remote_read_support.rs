@@ -16,7 +16,7 @@ pub(super) type SessionTargetReader = (ReplicaId, Arc<dyn DocsSync>, DocFetchPol
 /// 1 操作の remote 読取りの期限(R5-B と同じ)。
 pub(crate) const REMOTE_READ_DEADLINE: Duration = Duration::from_secs(30);
 /// 表示の経路で、先頭のページの provider の照合を待つ時間の上限。件数に依存しない。過ぎた照合は背景で続く(#1624)。
-const HEAD_PROVIDER_GRACE: Duration = Duration::from_millis(300);
+pub(crate) const HEAD_PROVIDER_GRACE: Duration = Duration::from_millis(300);
 const WRITER_PROVIDERS: usize = 4;
 const WRITER_DESTINATION_TIMEOUT: Duration = Duration::from_secs(5);
 
