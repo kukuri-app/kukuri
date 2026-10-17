@@ -451,57 +451,54 @@ async fn an_expired_row_waiting_for_reclaim_is_placed_again_by_the_next_reconcil
     assert_eq!(listed().await, [channel.channel_id]);
 }
 
-// 照合の範囲より古いスレッドしか無い topic でも、続きを読み込んで遡れる(手元の行が尽きたページも続きの位置を持つ)。
+// 続きは手元の行の続きから読み、前のページの行を繰り返さない(タイムラインと同じ。2026-10-17 のユーザー判断 13)。
+// 照合の範囲(作成は 4 日)より古い行が手元にあっても、同じ行は 1 度だけ出る。
 #[tokio::test]
-async fn old_threads_of_a_quiet_topic_are_reached_by_reading_on() {
-    let a_docs = MemoryDocsSync::with_docs_author("0e".repeat(32));
-    let b_docs = MemoryDocsSync::with_docs_author("0f".repeat(32));
-    let creator = generate_keys();
-    let created_ms = Utc::now().timestamp_millis() - 6 * 86_400_000;
-    let channel_id = ChannelId::public_channel(created_ms, &creator.public_key_hex());
-    let metadata = kukuri_core::build_public_channel_envelope(
-        &creator,
-        &kukuri_core::KukuriPublicChannelContentV1 {
-            channel_id: channel_id.clone(),
-            topic_id: TopicId::new(TOPIC),
-            title: "6 日前のスレッド".into(),
-            first_post_id: None,
-        },
-    )
-    .expect("metadata");
-    let (bucket, key) =
-        crate::public_channels::public_channel_location(TOPIC, &channel_id).expect("location");
-    a_docs
-        .apply_doc_op(
-            &bucket,
-            DocOp::SetJson {
-                key,
-                value: serde_json::to_value(&metadata).expect("json"),
-            },
-        )
-        .await
-        .expect("persist the metadata");
-    let b = device(
-        "b",
+async fn pages_continue_from_the_known_rows_without_repeating_them() {
+    let (a, a_store) = device_with_store(
+        "a",
         &FakeNetwork::default(),
-        b_docs,
-        a_docs,
+        MemoryDocsSync::with_docs_author("0e".repeat(32)),
+        MemoryDocsSync::with_docs_author("0f".repeat(32)),
         Arc::new(MemoryBlobService::default()),
     );
-    let head = b
-        .list_public_channels(TOPIC, PublicChannelOrder::Created, None, 20)
-        .await
-        .expect("the head page");
-    assert!(head.items.is_empty(), "{head:?}");
-    let next = b
-        .list_public_channels(TOPIC, PublicChannelOrder::Created, head.next_cursor, 20)
-        .await
-        .expect("the next page");
-    assert_eq!(
-        next.items
-            .into_iter()
-            .map(|channel| channel.channel_id)
-            .collect::<Vec<_>>(),
-        [channel_id.0]
-    );
+    let now = Utc::now().timestamp_millis();
+    let mut known = Vec::new();
+    for days in [0, 1, 8] {
+        let created_at = now - days * 86_400_000;
+        let channel_id =
+            ChannelId::public_channel(created_at, a.current_author_pubkey().as_str()).0;
+        a_store
+            .put_public_channel(
+                kukuri_store::PublicChannelRow {
+                    channel_id: channel_id.clone(),
+                    topic_id: TOPIC.into(),
+                    title: format!("{days} 日前のスレッド"),
+                    creator_pubkey: a.current_author_pubkey().as_str().into(),
+                    created_at,
+                    first_post_id: None,
+                    last_post_at: created_at,
+                },
+                false,
+            )
+            .await
+            .expect("a known row");
+        known.push(channel_id);
+    }
+    for order in [PublicChannelOrder::Created, PublicChannelOrder::LastPost] {
+        let mut listed = Vec::new();
+        let mut cursor = None;
+        for _ in 0..4 {
+            let page = a
+                .list_public_channels(TOPIC, order, cursor, 2)
+                .await
+                .expect("a page");
+            listed.extend(page.items.into_iter().map(|channel| channel.channel_id));
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(listed, known, "{order:?}");
+    }
 }
