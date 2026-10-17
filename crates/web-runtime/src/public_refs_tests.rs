@@ -17,7 +17,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::IndexedDbCache;
 use crate::account_tests::account_id;
-use crate::content_cache::{META, OBJECTS, PUBLIC_REFS, create_stores};
+use crate::content_cache::{META, OBJECTS, PUBLIC_CHANNELS, PUBLIC_REFS, create_stores};
 use crate::idb::{self, Mode, js_error};
 use crate::rows::{self, Txn, text};
 
@@ -114,7 +114,8 @@ async fn a_version_1_database_gains_the_index_and_keeps_its_rows() {
     let account = account_id();
     let db = idb::open(&format!("kukuri-cache-v1-{account}"), 1, |db| {
         create_stores(db)?;
-        db.delete_object_store(PUBLIC_REFS)
+        db.delete_object_store(PUBLIC_REFS)?;
+        db.delete_object_store(PUBLIC_CHANNELS)
     })
     .await
     .expect("version 1");

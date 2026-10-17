@@ -230,12 +230,15 @@ async fn quota_capacity() -> Result<i64> {
 }
 
 pub(crate) fn create_stores(db: &IdbDatabase) -> std::result::Result<(), JsValue> {
-    // 既存の database には、その版より後で足した store だけを足す。
+    // 既存の database には、まだ無い store だけを足す(版 2 の公開参照、版 3 の公開 channel の一覧)。
     if db.object_store_names().contains("contents") {
         if !db.object_store_names().contains(PUBLIC_REFS) {
             schema::create_public_refs(db)?;
         }
-        return schema::create_public_channels(db);
+        if !db.object_store_names().contains(PUBLIC_CHANNELS) {
+            schema::create_public_channels(db)?;
+        }
+        return Ok(());
     }
     let in_line = |path: &[&str]| {
         let parameters = IdbObjectStoreParameters::new();

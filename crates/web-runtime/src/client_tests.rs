@@ -16,7 +16,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::client::{invoke, listen, shutdown, start};
-use crate::content_cache::{PUBLIC_REFS, create_stores};
+use crate::content_cache::{PUBLIC_CHANNELS, PUBLIC_REFS, create_stores};
 use crate::{idb, tab_lock};
 use kukuri_webrtc_transport::signaling_fixture::post as post_to_peer;
 
@@ -383,7 +383,8 @@ async fn the_client_runs_commands_and_events_and_drops_stale_results_across_rest
     let legacy = imported["id"].as_str().unwrap().to_string();
     let old = idb::open(&format!("kukuri-cache-v1-{legacy}"), 1, |db| {
         create_stores(db)?;
-        db.delete_object_store(PUBLIC_REFS)
+        db.delete_object_store(PUBLIC_REFS)?;
+        db.delete_object_store(PUBLIC_CHANNELS)
     })
     .await
     .unwrap();

@@ -43,7 +43,7 @@ async fn listed(cache: &IndexedDbCache) -> Vec<String> {
 /// 他人が作った行は remote の内容として数え、新しい内容に場所を空けるときに回収する。自分が作った行は残る。
 #[wasm_bindgen_test]
 async fn a_remote_public_channel_row_is_reclaimed_and_an_own_row_stays() {
-    // 他人の行 1 件と blob 1 件が収まらない容量。
+    // 他人の行 1 件（約 0.9 KiB）と blob 1 件（約 3.8 KiB）が収まらず、blob だけなら収まる容量。
     let cache = IndexedDbCache::start(&account_id(), Some(4 * 1024))
         .await
         .expect("cache");
@@ -58,7 +58,7 @@ async fn a_remote_public_channel_row_is_reclaimed_and_an_own_row_stays() {
     assert_eq!(listed(&cache).await, ["pc-remote", "pc-own"]);
     assert!(
         cache
-            .put_remote_content("blob", "big", "blob", &[0; 3 * 1024])
+            .put_remote_content("blob", "big", "blob", &[0; 3840])
             .await
             .unwrap()
     );
