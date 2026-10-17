@@ -59,7 +59,8 @@
       "no_media": "主播尚未开始发送画面。"
     },
     "stopBroadcast": "停止直播画面",
-    "video": "直播画面"
+    "video": "直播画面",
+    "volume": "音量"
   },
   "statuses": {
     "Ended": "已结束",

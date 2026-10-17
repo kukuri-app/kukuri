@@ -59,7 +59,8 @@
       "no_media": "The host has not started sending video yet."
     },
     "stopBroadcast": "Stop video broadcast",
-    "video": "Broadcast video"
+    "video": "Broadcast video",
+    "volume": "Volume"
   },
   "statuses": {
     "Ended": "Ended",

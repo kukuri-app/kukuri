@@ -175,6 +175,7 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
                 | "commands::live_media::watch_live_media"
                 | "commands::live_media::next_live_video"
                 | "commands::live_media::stop_watching_live_media"
+                | "commands::live_media::set_live_volume"
         ),
         _ => false,
     }
@@ -220,7 +221,7 @@ fn baseline_inventory_is_classified_once() {
         manifest.scope_revision,
         "2026-10-11-1197-ac4a-notification-id"
     );
-    assert_eq!(manifest.entries.len(), 196);
+    assert_eq!(manifest.entries.len(), 197);
     check_inventory(&gui_commands(), &manifest.entries).expect("全入口の分類");
 }
 

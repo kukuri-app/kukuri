@@ -65,6 +65,7 @@ type LiveGameMock = Pick<
   | 'watchLiveMedia'
   | 'nextLiveVideo'
   | 'stopWatchingLiveMedia'
+  | 'setLiveVolume'
   | 'importMetaverseRoomAsset'
 >;
 
@@ -743,6 +744,7 @@ export function createLiveGameMock(runtime: MockRuntime): LiveGameMock {
       return batch;
     },
     async stopWatchingLiveMedia() {},
+    async setLiveVolume() {},
     async publishMetaverseRoomEvent(topic, roomId, peerId, seq, event) {
       const now = Date.now();
       const envelopeId = `mock-metaverse-event-${now}-${seq}`;

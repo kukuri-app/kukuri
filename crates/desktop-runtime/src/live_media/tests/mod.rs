@@ -740,3 +740,25 @@ fn live_media_bounds_frames_waiting_for_the_screen() {
         );
     }
 }
+
+// #1839 AC-4: 音量は視聴中の session ごとに持ち(0〜1 に収める)、視聴していない session には残さない。
+#[tokio::test]
+async fn live_volume_is_kept_per_watched_session() {
+    let pair = swarm().await;
+    pair.viewer.live.set_volume(&pair.session_id, 0.5).await;
+    assert!(pair.viewer.live.viewers.lock().await.is_empty());
+    pair.watch(&pair.viewer).await;
+    let gain = || async {
+        f32::from_bits(
+            pair.viewer.live.viewers.lock().await[&pair.session_id]
+                .gain
+                .load(Ordering::Relaxed),
+        )
+    };
+    assert_eq!(gain().await, 1.0, "full volume until changed");
+    pair.viewer.live.set_volume(&pair.session_id, 0.0).await;
+    assert_eq!(gain().await, 0.0, "silent at zero");
+    pair.viewer.live.set_volume(&pair.session_id, 2.0).await;
+    assert_eq!(gain().await, 1.0, "clamped to one");
+    pair.shutdown().await;
+}

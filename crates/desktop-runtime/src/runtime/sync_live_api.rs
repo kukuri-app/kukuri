@@ -255,6 +255,15 @@ impl DesktopRuntime {
         Ok(self.live_media.next_video(&request.session_id).await)
     }
 
+    /// #1839 AC-4: 視聴中の live の音量(この端末だけ)。
+    #[cfg(not(target_family = "wasm"))]
+    pub async fn set_live_volume(&self, request: crate::LiveVolumeRequest) -> Result<()> {
+        self.live_media
+            .set_volume(&request.session_id, request.volume)
+            .await;
+        Ok(())
+    }
+
     #[cfg(not(target_family = "wasm"))]
     pub async fn stop_watching_live_media(&self, request: crate::LiveMediaRequest) -> Result<()> {
         self.live_media.stop_watching(&request.session_id).await;

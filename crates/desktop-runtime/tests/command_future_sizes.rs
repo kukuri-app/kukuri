@@ -504,6 +504,7 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         ),
         ("watch_live_media", size1(DesktopRuntime::watch_live_media)),
         ("next_live_video", size1(DesktopRuntime::next_live_video)),
+        ("set_live_volume", size1(DesktopRuntime::set_live_volume)),
         (
             "stop_watching_live_media",
             size1(DesktopRuntime::stop_watching_live_media),

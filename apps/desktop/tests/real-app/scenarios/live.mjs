@@ -138,6 +138,35 @@ export async function run({ launch, restart, log, topic }) {
       log(`LV-4: the microphone off silences the viewer in ${silentAfter} ms while the video goes on, and on brings the sound back`);
     }
 
+    // LV-12(#1839 AC-4): V1 が同じ Live を live の列と開始 post の中の 2 か所で見ても、視聴は 1 つで(音は 2 重にならず)
+    // 両方に描かれる。live の列を閉じても開始 post の中で続き、音量 0 で無音になり、戻すと音が戻る。
+    await first.evaluate(`(document.querySelector('.post-live')?.scrollIntoView({ block: 'center' }), true)`);
+    await eventually('the first viewer to draw in both places', async () => {
+      const draws = await drawsSince(first, Date.now() - 2_000);
+      return draws.some((each) => each.embedded) && draws.some((each) => !each.embedded);
+    }, 30_000);
+    const bothLevel = await expectSound('the host while shown twice');
+    if (unit !== null) assert.ok(bothLevel < 1.5 * unit, `one sound for two views (${bothLevel} vs ${unit})`);
+    await closeLiveColumn(first);
+    await expectDrawing(first, 'the camera in the start post after closing the live column');
+    const setVolume = (value) =>
+      first.evaluate(`(() => {
+        const input = document.querySelector('.post-live input[type="range"]');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(String(value))});
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      })()`);
+    let mutedIn = null;
+    if (heard) {
+      await setVolume(0);
+      mutedIn = await expectSilence('the host at volume 0', 5_000);
+      await expectDrawing(first, 'the camera at volume 0');
+      await setVolume(100);
+      await expectSound('the host at full volume again');
+    }
+    await reopenLiveColumn(first, topic);
+    log(`LV-12: two views share one watch${bothLevel === null ? '' : ` (sound ${bothLevel.toFixed(4)} vs ${unit.toFixed(4)})`}, the start post keeps drawing after the live column closes${mutedIn === null ? '' : `, volume 0 silences in ${mutedIn} ms`}`);
+
     // LV-6: 途中で参加した視聴者に、2 秒以内に最初の frame が描かれる。
     const joinedAt = Date.now();
     await click(second, JOIN, { within: CARD, timeout: 60_000 });

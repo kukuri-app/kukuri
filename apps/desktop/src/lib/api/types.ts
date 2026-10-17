@@ -63,6 +63,7 @@ import type {
   JoinedPrivateChannelView,
   LiveBroadcastStatus,
   LiveMediaRequest,
+  LiveVolumeRequest,
   LiveSessionView,
   MetaverseAssetKind,
   MetaverseAssetRef,
@@ -574,6 +575,8 @@ export interface DesktopApi {
   watchLiveMedia(request: LiveMediaRequest): Promise<void>;
   nextLiveVideo(request: LiveMediaRequest): Promise<ArrayBuffer>;
   stopWatchingLiveMedia(request: LiveMediaRequest): Promise<void>;
+  /** #1839 AC-4: 視聴中の live の音量(0〜1)。この端末だけの設定。 */
+  setLiveVolume(request: LiveVolumeRequest): Promise<void>;
   importMetaverseRoomAsset(
     topic: string,
     roomId: string,
