@@ -116,7 +116,9 @@ describe('LiveSessionMedia', () => {
     await waitFor(() => expect(players[1].push).toHaveBeenCalled());
     expect(media.watchLiveMedia).toHaveBeenCalledTimes(1);
     first.unmount();
-    await Promise.resolve();
+    // 残った表示には映像が届き続け、視聴は止まらない。
+    const pushed = players[1].push.mock.calls.length;
+    await waitFor(() => expect(players[1].push.mock.calls.length).toBeGreaterThan(pushed));
     expect(media.stopWatchingLiveMedia).not.toHaveBeenCalled();
     second.unmount();
     await waitFor(() => expect(media.stopWatchingLiveMedia).toHaveBeenCalledTimes(1));
