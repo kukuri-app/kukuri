@@ -72,6 +72,71 @@ fn live_session_min() -> LiveSessionProjectionRow {
     }
 }
 
+// #1840 AC-4: 配信中の行だけを、新しく始まった順に返す(終えた行は外れ、別の channel の行は返さない)。本番の SQLite と
+// 試験の MemoryStore で同じ。
+#[tokio::test]
+async fn live_now_sessions_are_the_live_rows_of_the_channel_newest_first() {
+    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+    assert_live_now_sessions(&sqlite).await;
+    assert_live_now_sessions(&MemoryStore::default()).await;
+}
+
+async fn assert_live_now_sessions(store: &dyn LiveGameProjectionStore) {
+    const THREAD: &str = "pc-1700000000000-0123456789abcdef";
+    let row = |id: &str, revision: i64, started_at: i64, status: LiveSessionStatus| {
+        LiveSessionProjectionRow {
+            session_id: id.into(),
+            revision,
+            channel_id: THREAD.into(),
+            status,
+            started_at,
+            ..live_session_min()
+        }
+    };
+    for live in [
+        row("old", 1, 1_000, LiveSessionStatus::Live),
+        row("ended", 1, 2_000, LiveSessionStatus::Ended),
+        row("new", 1, 3_000, LiveSessionStatus::Live),
+        LiveSessionProjectionRow {
+            session_id: "elsewhere".into(),
+            started_at: 4_000,
+            status: LiveSessionStatus::Live,
+            ..live_session_min()
+        },
+    ] {
+        store
+            .upsert_live_session_cache(live)
+            .await
+            .expect("upsert live session");
+    }
+    let ids = |rows: Vec<LiveSessionProjectionRow>| {
+        rows.into_iter()
+            .map(|row| row.session_id)
+            .collect::<Vec<_>>()
+    };
+    let live_now = |limit| store.list_channel_live_now_sessions(LIVE_TOPIC, THREAD, limit);
+    assert_eq!(ids(live_now(8).await.expect("live now")), ["new", "old"]);
+    assert_eq!(ids(live_now(1).await.expect("live now")), ["new"]);
+    // presence の結び付けは、session の channel だけを読む(別の topic の session は無い扱い)。
+    let channel = |topic, session| store.live_session_channel(topic, session);
+    assert_eq!(
+        channel(LIVE_TOPIC, "old")
+            .await
+            .expect("channel")
+            .as_deref(),
+        Some(THREAD)
+    );
+    assert_eq!(
+        channel("kukuri:topic:other", "old").await.expect("channel"),
+        None
+    );
+    store
+        .upsert_live_session_cache(row("new", 2, 3_000, LiveSessionStatus::Ended))
+        .await
+        .expect("end the live session");
+    assert_eq!(ids(live_now(8).await.expect("live now")), ["old"]);
+}
+
 /// ended fixture: status=Ended は presence が居ても viewer_count=0。
 fn live_session_ended() -> LiveSessionProjectionRow {
     LiveSessionProjectionRow {

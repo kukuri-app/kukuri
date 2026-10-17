@@ -105,7 +105,8 @@ impl AppService {
         if !self.services.writes_buckets() {
             return Ok(source.clone());
         }
-        let private = match channel_id {
+        // 公開 channel(#1840)の session は topic の bucket に置く。
+        let private = match private_channel_of(channel_id) {
             Some(channel_id) => Some(
                 self.joined_private_channel_state(topic_id, channel_id.as_str())
                     .await

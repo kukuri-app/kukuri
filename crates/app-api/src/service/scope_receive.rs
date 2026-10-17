@@ -245,10 +245,24 @@ impl AppService {
                             }
                             GossipHint::LivePresence { session_id, author, ttl_ms, .. } => {
                                 let projection_store = &reader.services.projection_store;
+                                // 公開 channel(#1840)の Live の presence は topic の hint で届くので、Live の行の
+                                // channel に結び付ける(private channel の Live は channel の task が受けたものだけ)。
+                                // 読むのは topic の task で、session の channel だけ(視聴者は数えない)。
+                                let thread = if storage_channel_id == PUBLIC_CHANNEL_ID {
+                                    projection_store
+                                        .live_session_channel(topic.as_str(), session_id.as_str())
+                                        .await
+                                        .ok()
+                                        .flatten()
+                                        .filter(|channel| ChannelId::new(channel.as_str()).is_public_channel())
+                                } else {
+                                    None
+                                };
+                                let channel = thread.unwrap_or_else(|| storage_channel_id.clone());
                                 let _ = projection_store
                                     .upsert_live_presence(
                                         topic.as_str(),
-                                        storage_channel_id.as_str(),
+                                        channel.as_str(),
                                         session_id.as_str(),
                                         author.as_str(),
                                         now + i64::from(*ttl_ms),

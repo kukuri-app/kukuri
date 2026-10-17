@@ -23,7 +23,7 @@ beforeEach(() => {
 });
 
 function thread(channelId: string, title: string, createdAt: number, lastPostAt: number): PublicChannelView {
-  return { channel_id: channelId, topic_id: TOPIC, title, creator_pubkey: OTHER, created_at: createdAt, last_post_at: lastPostAt };
+  return { channel_id: channelId, topic_id: TOPIC, title, creator_pubkey: OTHER, created_at: createdAt, last_post_at: lastPostAt, live_now: false };
 }
 
 function post(objectId: string, content: string, channelId: string | null, createdAt: number): PostView {

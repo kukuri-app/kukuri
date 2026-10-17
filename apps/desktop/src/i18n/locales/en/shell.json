@@ -650,6 +650,10 @@
     "card": {
       "loading": "Loading the public thread…",
       "unavailable": "Couldn't load this public thread"
+    },
+    "live": {
+      "label": "Live now",
+      "all": "All live sessions"
     }
   }
 }

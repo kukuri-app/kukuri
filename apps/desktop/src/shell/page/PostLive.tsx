@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next';
 
 import { useSessionDisplay } from '@/components/extended/useSessionDisplay';
 import { Notice } from '@/components/ui/notice';
-import type { LiveSessionView, PostView, TimelineScope } from '@/lib/api';
+import type { LiveSessionView, PostView } from '@/lib/api';
+import { channelTimelineScope } from '@/shell/presentation';
 import { useDesktopShellStore } from '@/shell/store';
 
 import { LiveCard } from './LiveCard';
@@ -18,7 +19,8 @@ export function PostLive({ post }: { post: PostView }) {
   const actions = useContext(LiveActionsContext);
   const live = post.live!;
   const channelId = live.channel_id ?? null;
-  const scope: TimelineScope = channelId ? { kind: 'channel', channel_id: channelId } : { kind: 'public' };
+  // 公開スレッドで始めた Live は、公開スレッドの scope で表示要求を出す(#1840 AC-4)。
+  const scope = channelTimelineScope(channelId);
   const lastSync = useDesktopShellStore((state) => state.syncStatus.last_sync_ts);
   // undefined は読込み中(表示要求が終わるまで、手元に無いことを「読めない」としない)。
   const [session, setSession] = useState<LiveSessionView | null | undefined>(undefined);

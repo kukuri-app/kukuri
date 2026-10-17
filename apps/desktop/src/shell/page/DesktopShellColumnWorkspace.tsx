@@ -58,6 +58,8 @@ import {
   PublicThreadOrderMenu,
   PublicThreadScopeActions,
 } from '@/shell/page/PublicThreadList';
+import { PublicThreadLiveRows } from '@/shell/page/PublicThreadLive';
+import { showsThreadLives } from '@/shell/slices/publicThreads';
 import { columnTitle, usePublicThreadColumnTitles, type ColumnTitles } from '@/shell/page/columnTitles';
 import {
   projectColumnRuntime,
@@ -151,6 +153,7 @@ export function DesktopShellColumnWorkspace({
   useThreadFocusScroll();
   const { t } = useTranslation('shell');
   const workspaceState = useDesktopShellStore((state) => state.workspaceState);
+  const developerModeEnabled = useDesktopShellStore((state) => state.developerModeEnabled);
   const trackedTopics = useDesktopShellStore((state) => state.trackedTopics);
   const joinedChannelsByTopic = useDesktopShellStore((state) => state.joinedChannelsByTopic);
   const directMessages = useDesktopShellStore((state) => state.directMessages);
@@ -616,6 +619,11 @@ export function DesktopShellColumnWorkspace({
               footer={renderFooter(column, runtime.active)}
               scopeControl={renderScopeControl(column)}
               scopeActions={renderScopeActions(column)}
+              headerDetails={
+                showsThreadLives(column, developerModeEnabled) && column.scope?.channelId ? (
+                  <PublicThreadLiveRows topic={column.scope.topicId} channelId={column.scope.channelId} />
+                ) : undefined
+              }
               headerActions={renderHeaderActions(column)}
               onPinnedChange={(pinned) =>
                 setWorkspaceState((current) => setColumnPinned(current, column.id, pinned))

@@ -148,17 +148,16 @@ impl AppService {
         if title.is_empty() {
             anyhow::bail!("live session title is required");
         }
+        // 公開 channel(#1840)の Live は、topic の公開の Live と同じく topic の bucket に置き、manifest の channel が公開 channel
+        // を指す。
         let private_state = match &channel_ref {
-            ChannelRef::Public => None,
+            ChannelRef::Public | ChannelRef::PublicChannel { .. } => None,
             ChannelRef::PrivateChannel { channel_id } => Some(
                 self.private_channel_write_state(topic_id, channel_id)
                     .await?,
             ),
-            ChannelRef::PublicChannel { .. } => {
-                anyhow::bail!("live sessions are not available in public channels")
-            }
         };
-        let channel_id = private_state.as_ref().map(|state| state.channel_id.clone());
+        let channel_id = channel_ref.channel_id().cloned();
         // 切替後は作成時の bucket に entity の最新 state を置く(id の時刻から読み手が bucket を決める)。
         let source_replica_id =
             self.services
@@ -214,7 +213,7 @@ impl AppService {
         self.services
             .hint_transport
             .publish_hint(
-                &channel_hint_topic_for(topic_id, channel_id.as_ref()),
+                &session_hint_topic_for(topic_id, channel_id.as_ref()),
                 GossipHint::SessionChanged {
                     topic_id: topic.clone(),
                     session_id: session_id.clone(),
@@ -242,7 +241,7 @@ impl AppService {
             anyhow::bail!("only the live session owner can end the session");
         }
         let channel_key = channel_storage_id(state.channel_id.as_ref());
-        let hint_topic = channel_hint_topic_for(topic_id, state.channel_id.as_ref());
+        let hint_topic = session_hint_topic_for(topic_id, state.channel_id.as_ref());
         if manifest.status == LiveSessionStatus::Ended {
             self.stop_live_presence_task(topic_id, channel_key.as_str(), session_id)
                 .await;
@@ -310,7 +309,7 @@ impl AppService {
         let holder = live_holder(&task_key);
         self.set_scope_holder(
             &holder,
-            participation_keys(topic_id, state.channel_id.as_ref()),
+            participation_keys(topic_id, private_channel_of(state.channel_id.as_ref())),
         )
         .await?;
         if let Err(error) = self
@@ -325,7 +324,7 @@ impl AppService {
         let hint_transport = Arc::clone(&self.services.hint_transport);
         let projection_store = Arc::clone(&self.services.projection_store);
         let live_presence_tasks = Arc::clone(&self.subscription_registry.live_presence_tasks);
-        let hint_topic = channel_hint_topic_for(topic_id, state.channel_id.as_ref());
+        let hint_topic = session_hint_topic_for(topic_id, state.channel_id.as_ref());
         let topic_key = topic_id.to_string();
         let channel_key_for_task = channel_key.clone();
         let session_key = session_id.to_string();
@@ -456,15 +455,16 @@ impl AppService {
     }
 }
 
-/// live session の scope を、Dome と同じ資格の判定(公開 topic・private channel の current epoch)に渡す形にする。
+/// live session の scope を、Dome と同じ資格の判定(公開 topic・private channel の current epoch)に渡す形にする。公開
+/// channel(#1840)で始めた Live は公開の Live なので、topic の資格で視聴できる。
 fn live_spatial_context(manifest: &LiveSessionManifestBlobV1) -> SpatialContextV1 {
-    match manifest.channel_id.clone() {
+    match private_channel_of(manifest.channel_id.as_ref()) {
         None => SpatialContextV1::Topic {
             topic_id: manifest.topic_id.clone(),
         },
         Some(channel_id) => SpatialContextV1::Channel {
             topic_id: manifest.topic_id.clone(),
-            channel_id,
+            channel_id: channel_id.clone(),
         },
     }
 }

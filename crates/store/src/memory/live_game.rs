@@ -1,5 +1,51 @@
 use super::*;
 
+impl MemoryStore {
+    /// sqlite の `live_session_list_query` と同じ並び。`live_now` は配信中の行だけ。
+    async fn list_live_sessions(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+        live_now: bool,
+        limit: usize,
+    ) -> Result<Vec<LiveSessionProjectionRow>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let presence = self.live_presence.read().await;
+        let index = self.live_session_index.read().await;
+        let rows = self.live_session_rows.read().await;
+        let scope = (topic_id.to_string(), channel_id.to_string());
+        let mut items = index
+            .get(&scope)
+            .into_iter()
+            .flat_map(|entries| entries.iter())
+            .filter_map(|(_, Reverse(session_id))| rows.get(session_id).cloned())
+            .filter(|row| !live_now || row.status == LiveSessionStatus::Live)
+            .take(limit)
+            .collect::<Vec<_>>();
+        for row in &mut items {
+            row.viewer_count = if row.status == LiveSessionStatus::Ended {
+                0
+            } else {
+                // sqlite の viewer_count 相関サブクエリ(topic_id, channel_id, session_id
+                // が行と一致する live_presence_cache の COUNT)と同義
+                presence
+                    .iter()
+                    .filter(
+                        |((presence_topic, presence_channel, presence_session, _), _)| {
+                            presence_topic == &row.topic_id
+                                && presence_channel == &row.channel_id
+                                && presence_session == &row.session_id
+                        },
+                    )
+                    .count()
+            };
+        }
+        Ok(items)
+    }
+}
+
 #[async_trait]
 impl LiveGameProjectionStore for MemoryStore {
     async fn upsert_live_session_cache(&self, row: LiveSessionProjectionRow) -> Result<()> {
@@ -34,38 +80,32 @@ impl LiveGameProjectionStore for MemoryStore {
         channel_id: &str,
         limit: usize,
     ) -> Result<Vec<LiveSessionProjectionRow>> {
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
-        let presence = self.live_presence.read().await;
-        let index = self.live_session_index.read().await;
-        let rows = self.live_session_rows.read().await;
-        let scope = (topic_id.to_string(), channel_id.to_string());
-        let mut items = index
-            .get(&scope)
-            .into_iter()
-            .flat_map(|entries| entries.iter().take(limit))
-            .filter_map(|(_, Reverse(session_id))| rows.get(session_id).cloned())
-            .collect::<Vec<_>>();
-        for row in &mut items {
-            row.viewer_count = if row.status == LiveSessionStatus::Ended {
-                0
-            } else {
-                // sqlite の viewer_count 相関サブクエリ(topic_id, channel_id, session_id
-                // が行と一致する live_presence_cache の COUNT)と同義
-                presence
-                    .iter()
-                    .filter(
-                        |((presence_topic, presence_channel, presence_session, _), _)| {
-                            presence_topic == &row.topic_id
-                                && presence_channel == &row.channel_id
-                                && presence_session == &row.session_id
-                        },
-                    )
-                    .count()
-            };
-        }
-        Ok(items)
+        self.list_live_sessions(topic_id, channel_id, false, limit)
+            .await
+    }
+
+    async fn list_channel_live_now_sessions(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+        limit: usize,
+    ) -> Result<Vec<LiveSessionProjectionRow>> {
+        self.list_live_sessions(topic_id, channel_id, true, limit)
+            .await
+    }
+
+    async fn live_session_channel(
+        &self,
+        topic_id: &str,
+        session_id: &str,
+    ) -> Result<Option<String>> {
+        Ok(self
+            .live_session_rows
+            .read()
+            .await
+            .get(session_id)
+            .filter(|row| row.topic_id == topic_id)
+            .map(|row| row.channel_id.clone()))
     }
 
     async fn get_live_session(

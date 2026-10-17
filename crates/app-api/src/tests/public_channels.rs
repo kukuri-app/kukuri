@@ -446,10 +446,10 @@ async fn the_first_post_of_an_older_public_channel_resolves_by_id() {
     );
 }
 
-// private channel は公開 channel の ID の形を使えない(ID の形で見分けるため)。公開 channel への投稿は、Live・ゲーム・Dome を
-// 受け付けない(Issue の対象外)。
+// private channel は公開 channel の ID の形を使えない(ID の形で見分けるため)。公開 channel は、ゲーム・Dome を受け付けない
+// (Issue の対象外。Live は AC-4 で受け付ける。`public_channel_live.rs`)。
 #[tokio::test]
-async fn private_channels_cannot_take_the_public_channel_form_and_sessions_stay_out() {
+async fn private_channels_cannot_take_the_public_channel_form_and_games_stay_out() {
     let (app, _, _, _) = local_app_with_memory_services();
     app.switch_writer(1);
     let owner = generate_keys();
@@ -478,20 +478,6 @@ async fn private_channels_cannot_take_the_public_channel_form_and_sessions_stay_
     let public_channel = ChannelRef::PublicChannel {
         channel_id: channel,
     };
-    assert!(
-        app.create_live_session_in_channel(
-            TOPIC,
-            public_channel.clone(),
-            CreateLiveSessionInput {
-                title: "live".into(),
-                description: String::new(),
-                start_post: String::new(),
-            },
-            None,
-        )
-        .await
-        .is_err()
-    );
     assert!(
         app.create_game_room_in_channel(
             TOPIC,

@@ -1,4 +1,5 @@
 import { useEffect, type MutableRefObject } from 'react';
+import { showsThreadLives } from '@/shell/slices/publicThreads';
 import { primarySectionForColumn } from '@/shell/slices/workspace';
 import type { useDesktopShellStoreApi } from '@/shell/store';
 
@@ -29,7 +30,10 @@ export function useSessionProjectionRefresh(
         const tasks: Promise<void>[] = [];
         for (const column of state.workspaceState.columns) {
           if (!visible.has(column.id) || !column.scope) continue;
-          const section = primarySectionForColumn(column);
+          // 公開スレッドの詳細の列は、上部の配信中の Live のためにそのスレッドの Live を読む(#1840 AC-4)。
+          const section = showsThreadLives(column, state.developerModeEnabled)
+            ? 'live'
+            : primarySectionForColumn(column);
           if (section !== 'live' && section !== 'game') continue;
           const key = JSON.stringify([section, column.scope]);
           if (scopes.has(key)) continue;

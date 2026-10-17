@@ -309,6 +309,17 @@ pub(crate) fn channel_hint_topic_for(topic_id: &str, channel_id: Option<&Channel
     }
 }
 
+/// private channel の ID だけを返す(公開 channel と topic の公開タイムラインは `None`)。
+pub(crate) fn private_channel_of(channel_id: Option<&ChannelId>) -> Option<&ChannelId> {
+    channel_id.filter(|channel| !channel.is_public_channel())
+}
+
+/// live session の hint の topic。公開 channel(#1840)で始めた Live は、topic の公開の Live と同じく topic そのものに送る
+/// (一覧の列は topic の lease だけで配信中の印を変える)。
+pub(crate) fn session_hint_topic_for(topic_id: &str, channel_id: Option<&ChannelId>) -> TopicId {
+    channel_hint_topic_for(topic_id, private_channel_of(channel_id))
+}
+
 pub(crate) fn channel_id_from_storage(channel_id: &str) -> Option<ChannelId> {
     (channel_id != PUBLIC_CHANNEL_ID).then(|| ChannelId::new(channel_id.to_string()))
 }

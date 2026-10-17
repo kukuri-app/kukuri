@@ -23,6 +23,7 @@ import {
   useDesktopShellFieldSetter,
   type DesktopShellStoreApi,
 } from '@/shell/store';
+import { showsThreadLives } from '@/shell/slices/publicThreads';
 import {
   activeWorkspaceColumn,
   activeWorkspaceScope,
@@ -671,7 +672,8 @@ export function useDesktopShellSectionLoaders({
       const tasks: Promise<void>[] = [];
       tasks.push(loadCommunityIndexCapability());
 
-      if (activePrimarySection === 'live') {
+      // 公開スレッドの詳細の列は、上部の配信中の Live のためにそのスレッドの Live を読む(#1840 AC-4)。
+      if (activePrimarySection === 'live' || showsThreadLives(activeColumn, state.developerModeEnabled)) {
         tasks.push(loadLiveSection(topic, selectedChannelId));
       }
       if (activePrimarySection === 'game') {

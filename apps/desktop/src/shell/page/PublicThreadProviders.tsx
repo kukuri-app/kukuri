@@ -35,12 +35,13 @@ const TITLE_MAX_CHARS = 200;
 type PublicThreadProvidersProps = {
   api: DesktopApi;
   open: (topic: string, channelId: string | null) => void;
+  openLive: PublicThreadActions['openLive'];
   copyLink: (link: string) => void;
   children: ReactNode;
 };
 
 /** #1840: 公開スレッドの操作と本文のリンクの表示、作成の Dialog を shell に 1 か所で置く。 */
-export function PublicThreadProviders({ api, open, copyLink, children }: PublicThreadProvidersProps) {
+export function PublicThreadProviders({ api, open, openLive, copyLink, children }: PublicThreadProvidersProps) {
   const storeApi = useDesktopShellStoreApi();
   const [creating, setCreating] = useState<string | null>(null);
   const [lastCreated, setLastCreated] = useState<PublicChannelView | null>(null);
@@ -83,11 +84,12 @@ export function PublicThreadProviders({ api, open, copyLink, children }: PublicT
       open,
       create: setCreating,
       copyLink: (topic, channelId) => copyLink(buildPublicThreadLink(topic, channelId)),
+      openLive,
       remember,
       load,
       lastCreated,
     }),
-    [api, open, copyLink, remember, load, lastCreated]
+    [api, open, openLive, copyLink, remember, load, lastCreated]
   );
   return (
     <PublicThreadActionsContext.Provider value={actions}>

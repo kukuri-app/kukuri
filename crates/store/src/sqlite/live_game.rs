@@ -25,12 +25,14 @@ const GAME_ROOM_SELECT: &str = r#"
     FROM game_room_cache
 "#;
 
-/// #1292: live 一覧を既存の (topic, channel, started_at, session_id) 索引の範囲から読む。
-/// test の query plan も本番と同じ SQL builder を使う。
+/// #1292: live 一覧を既存の (topic, channel, started_at, session_id) 索引の範囲から読む。`live_now` は配信中の行だけを、
+/// 配信中の行の部分索引から読む(#1840 AC-4。終わった Live の数に比例しない)。test の query plan も本番と同じ SQL builder
+/// を使う。
 pub(crate) fn live_session_list_query<'a>(
     prefix: &str,
     topic_id: &'a str,
     channel_id: &'a str,
+    live_now: bool,
     limit: usize,
 ) -> QueryBuilder<Sqlite> {
     let mut builder = QueryBuilder::<Sqlite>::new(prefix);
@@ -39,6 +41,10 @@ pub(crate) fn live_session_list_query<'a>(
     builder.push_bind(topic_id);
     builder.push(" AND lsc.channel_id = ");
     builder.push_bind(channel_id);
+    if live_now {
+        // 部分索引は、索引と同じ条件を値の bind でなく文字列で書いたときだけ使われる。
+        builder.push(" AND lsc.status = 'live'");
+    }
     builder.push(" ORDER BY lsc.started_at DESC, lsc.session_id DESC LIMIT ");
     builder.push_bind(i64::try_from(limit).unwrap_or(i64::MAX));
     builder
@@ -60,6 +66,28 @@ pub(crate) fn game_room_list_query<'a>(
     builder.push(" ORDER BY updated_at DESC, room_id DESC LIMIT ");
     builder.push_bind(i64::try_from(limit).unwrap_or(i64::MAX));
     builder
+}
+
+impl SqliteStore {
+    async fn list_live_sessions(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+        live_now: bool,
+        limit: usize,
+    ) -> Result<Vec<LiveSessionProjectionRow>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let rows = live_session_list_query("", topic_id, channel_id, live_now, limit)
+            .build()
+            .fetch_all(&self.pool)
+            .await?;
+
+        rows.into_iter()
+            .map(row_to_live_session_projection)
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -121,17 +149,18 @@ impl LiveGameProjectionStore for SqliteStore {
         channel_id: &str,
         limit: usize,
     ) -> Result<Vec<LiveSessionProjectionRow>> {
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
-        let rows = live_session_list_query("", topic_id, channel_id, limit)
-            .build()
-            .fetch_all(&self.pool)
-            .await?;
+        self.list_live_sessions(topic_id, channel_id, false, limit)
+            .await
+    }
 
-        rows.into_iter()
-            .map(row_to_live_session_projection)
-            .collect()
+    async fn list_channel_live_now_sessions(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+        limit: usize,
+    ) -> Result<Vec<LiveSessionProjectionRow>> {
+        self.list_live_sessions(topic_id, channel_id, true, limit)
+            .await
     }
 
     async fn get_live_session(
@@ -147,6 +176,20 @@ impl LiveGameProjectionStore for SqliteStore {
         .fetch_optional(&self.pool)
         .await?;
         row.map(row_to_live_session_projection).transpose()
+    }
+
+    async fn live_session_channel(
+        &self,
+        topic_id: &str,
+        session_id: &str,
+    ) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT channel_id FROM live_session_cache WHERE topic_id = ?1 AND session_id = ?2",
+        )
+        .bind(topic_id)
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?)
     }
 
     async fn upsert_game_room_cache(&self, row: GameRoomProjectionRow) -> Result<()> {

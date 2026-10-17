@@ -1,13 +1,21 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useContext, useEffect, useState } from 'react';
 
-import type { DesktopApi, PostView, PublicChannelListView, PublicChannelView } from '@/lib/api';
+import type {
+  AuthorSocialView,
+  DesktopApi,
+  LiveSessionView,
+  PostView,
+  PublicChannelListView,
+  PublicChannelView,
+} from '@/lib/api';
 import type { ColumnState } from '@/shell/slices/workspace';
-import { createDesktopShellStore, DesktopShellStoreContext } from '@/shell/store';
+import { createDesktopShellStore, DesktopShellStoreContext, timelineStorageKeyForChannel } from '@/shell/store';
 
 import { PublicThreadActionsContext } from './publicThreadActions';
 import { PublicThreadLinkCard } from './PublicThreadLinkCard';
 import { PublicThreadList, PublicThreadOrderMenu } from './PublicThreadList';
+import { PublicThreadLiveRows } from './PublicThreadLive';
 import { PublicThreadProviders } from './PublicThreadProviders';
 
 const TOPIC = 'kukuri:topic:general';
@@ -22,6 +30,7 @@ function thread(index: number, title: string, firstPostId?: string): PublicChann
     creator_pubkey: CREATOR,
     created_at: STORY_TIMESTAMP - index * 3_600_000,
     last_post_at: STORY_TIMESTAMP - index * 600_000,
+    live_now: false,
     ...(firstPostId ? { first_post_id: firstPostId } : {}),
   };
 }
@@ -42,8 +51,34 @@ const FIRST_POST = {
     '配布候補を入れた端末で、起動・投稿・Live の視聴を確かめた結果をここに書いてください。気になった点は、端末と OS の版も一緒に。',
 } as PostView;
 
+// #1840 AC-4: スレッドで配信中の Live(新しく始まった順)。
+const LIVES: LiveSessionView[] = [
+  ['Windows 11 で通しの確認', 'b'],
+  ['Android 15 の通知の再現', 'c'],
+  ['Starting the Linux AppImage', 'd'],
+  ['Q&A', 'e'],
+].map(([title, host], index) => ({
+  session_id: `live-${index}`,
+  host_pubkey: host!.repeat(64),
+  title: title!,
+  description: '',
+  status: 'Live',
+  started_at: STORY_TIMESTAMP - index * 600_000,
+  viewer_count: 3,
+  joined_by_me: false,
+  channel_id: THREADS[0]!.channel_id,
+  audience_label: 'Public thread',
+}));
+const HOSTS: Record<string, AuthorSocialView> = Object.fromEntries(
+  ['みな', 'Ken', 'あおい', 'Sora'].map((name, index) => {
+    const pubkey = 'bcde'[index]!.repeat(64);
+    return [pubkey, { author_pubkey: pubkey, display_name: name } as AuthorSocialView];
+  })
+);
+
 type StoryProps = {
-  surface: 'list' | 'card' | 'create';
+  surface: 'list' | 'card' | 'create' | 'lives';
+  lives?: LiveSessionView[];
   page?: PublicChannelListView;
   order?: ColumnState['publicThreadOrder'];
   pending?: boolean;
@@ -70,7 +105,16 @@ function OpenCreateDialog() {
 }
 
 function PublicThreadsStory(props: StoryProps) {
-  const [store] = useState(createDesktopShellStore);
+  const [store] = useState(() => {
+    const created = createDesktopShellStore();
+    // 配信中の Live の表示は開発者モードでだけ出す。
+    created.getState().setField('developerModeEnabled', true);
+    created.getState().setField('knownAuthorsByPubkey', HOSTS);
+    created.getState().setField('liveSessionsByScopeKey', {
+      [timelineStorageKeyForChannel(TOPIC, THREADS[0]!.channel_id)]: props.lives ?? [],
+    });
+    return created;
+  });
   // 描画のたびに api を作り直すと、読み込みの effect がやり直しを繰り返す。
   const [api] = useState(() => storyApi(props));
   const column: ColumnState = {
@@ -83,7 +127,7 @@ function PublicThreadsStory(props: StoryProps) {
   };
   return (
     <DesktopShellStoreContext.Provider value={store}>
-      <PublicThreadProviders api={api} open={() => undefined} copyLink={() => undefined}>
+      <PublicThreadProviders api={api} open={() => undefined} openLive={() => undefined} copyLink={() => undefined}>
         <div className='shell-phase1' style={{ maxWidth: 560 }}>
           {props.surface === 'list' ? (
             <>
@@ -94,6 +138,8 @@ function PublicThreadsStory(props: StoryProps) {
             <article className='post-card'>
               <PublicThreadLinkCard topic={TOPIC} channelId={THREADS[0]!.channel_id} />
             </article>
+          ) : props.surface === 'lives' ? (
+            <PublicThreadLiveRows topic={TOPIC} channelId={THREADS[0]!.channel_id} />
           ) : (
             <OpenCreateDialog />
           )}
@@ -120,6 +166,14 @@ export const List: Story = {
   },
 };
 
+/** 配信中の Live がある行は、時刻の横に「配信中」の印を出す(#1840 AC-4)。 */
+export const ListLiveMark: Story = {
+  args: {
+    surface: 'list',
+    page: { items: [{ ...THREADS[0]!, live_now: true }, ...THREADS.slice(1)], next_cursor: null, unavailable_count: 0 },
+  },
+};
+
 export const ListCreatedOrder: Story = {
   args: { surface: 'list', order: 'created', page: { items: THREADS, next_cursor: null, unavailable_count: 0 } },
 };
@@ -143,3 +197,9 @@ export const CardUnavailable: Story = { args: { surface: 'card', shown: null } }
 
 /** 作成の Dialog。この story の作成は失敗する(失敗の表示の確認)。 */
 export const CreateDialog: Story = { args: { surface: 'create' } };
+
+/** 詳細の列の上部の配信中の Live(#1840 AC-4)。タイトルと配信者を 1 行ずつ出し、押すとスレッドの「ライブ」の列を開く。 */
+export const ThreadLives: Story = { args: { surface: 'lives', lives: LIVES.slice(0, 2) } };
+
+/** 4 件以上は、新しく始まった 3 件と「すべての配信」。 */
+export const ThreadLivesMore: Story = { args: { surface: 'lives', lives: LIVES } };

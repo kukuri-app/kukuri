@@ -1,4 +1,4 @@
-import { CalendarPlus, Check, Link2, MessageSquareText } from 'lucide-react';
+import { CalendarPlus, Check, Link2, MessageSquareText, Radio } from 'lucide-react';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -13,12 +13,12 @@ import { formatLocalizedDateTime } from '@/i18n/format';
 import type { PublicChannelOrder, PublicChannelView } from '@/lib/api';
 import { useColumnRuntime } from '@/shell/ColumnRuntimeContext';
 import { VISIBLE_TIMELINE_LIMIT } from '@/shell/pagination';
-import { authorDisplayLabel } from '@/shell/presentation';
+import { authorDisplayLabel, translateLiveStatus } from '@/shell/presentation';
 import { isHiddenAuthor, knownPublicThreadTitle } from '@/shell/slices/publicThreads';
 import { setColumnPublicThreadOrder, type ColumnState } from '@/shell/slices/workspace';
 import { REFRESH_INTERVAL_MS, useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
 
-import { PublicThreadActionsContext } from './publicThreadActions';
+import { PublicThreadActionsContext, useLiveSurfacesEnabled } from './publicThreadActions';
 import { INITIAL_PUBLIC_THREAD_LIST, withHeadPage, withNextPage } from './publicThreadListState';
 
 const ORDERS = [
@@ -113,6 +113,7 @@ export function PublicThreadList({ column }: { column: ColumnState }) {
     loadingMore,
     onLoadMore: loadMore,
   });
+  const liveSurfaces = useLiveSurfacesEnabled();
 
   if (!actions) return null;
   // 名前は行の作成者の profile(手元に無ければ背景で読まれ、次の読み直しで付く)、無ければ投稿などで知った名前。
@@ -163,6 +164,16 @@ export function PublicThreadList({ column }: { column: ColumnState }) {
                     time: formatLocalizedDateTime(order === 'created' ? row.created_at : row.last_post_at),
                   })}
                 </span>
+                {/* 配信中の印(判断 2。#1840 AC-4)。 */}
+                {liveSurfaces && row.live_now ? (
+                  <>
+                    {' '}
+                    <span className='public-thread-row-live'>
+                      <Radio className='size-3.5 shrink-0' aria-hidden='true' />
+                      {translateLiveStatus('Live')}
+                    </span>
+                  </>
+                ) : null}
               </span>
             </button>
           </li>
@@ -243,10 +254,14 @@ export function PublicThreadOrderMenu({ column }: { column: ColumnState }) {
   );
 }
 
-/** 公開スレッドの詳細の列の上部。リンクをコピーし(判断 5)、タイトルを知らなければ表示中に ID から読む。読めなければその旨を出す。 */
+/**
+ * 公開スレッドの詳細の列の上部。リンクをコピーし(判断 5)、タイトルを知らなければ表示中に ID から読む。読めなければその旨を
+ * 出す。「ライブ」はスレッドの「ライブ」の列を開く(判断 15。#1840 AC-4)。
+ */
 export function PublicThreadScopeActions({ topic, channelId }: { topic: string; channelId: string }) {
   const { t } = useTranslation(['common', 'shell']);
   const actions = useContext(PublicThreadActionsContext);
+  const liveSurfaces = useLiveSurfacesEnabled();
   const load = actions?.load;
   const { visible } = useColumnRuntime();
   const known = useDesktopShellStore(
@@ -268,6 +283,18 @@ export function PublicThreadScopeActions({ topic, channelId }: { topic: string; 
     <div className='shell-column-scope-actions'>
       {unavailable && !known ? (
         <span className='shell-column-header-summary'>{t('shell:publicThreads.titleUnavailable')}</span>
+      ) : null}
+      {liveSurfaces ? (
+        <Button
+          variant='ghost'
+          size='sm'
+          type='button'
+          className='shell-column-scope-action'
+          onClick={() => actions.openLive(topic, channelId, null)}
+        >
+          <Radio className='size-4' aria-hidden='true' />
+          {t('shell:primarySections.live')}
+        </Button>
       ) : null}
       <Button
         variant='ghost'

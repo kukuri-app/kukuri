@@ -132,7 +132,11 @@ last_post_at: number,
 /**
  * 作成者の profile の名前(手元に profile が無ければ無い。一覧の行の表示。#1840 AC-3)。
  */
-creator_name?: string, creator_display_name?: string, };
+creator_name?: string, creator_display_name?: string, 
+/**
+ * 配信中の Live がある(手元の Live の行から。非表示の主催者の Live は数えない。一覧の行の印。#1840 AC-4)。
+ */
+live_now: boolean, };
 
 export type PublicChannelListView = { items: Array<PublicChannelView>, next_cursor?: PublicChannelCursor | null, 
 /**

@@ -73,7 +73,11 @@ impl AppService {
             .await?;
         Ok(PublicChannelListView {
             items: self
-                .with_creator_names(topic_id, page.items.into_iter().map(Into::into).collect())
+                .with_row_details(
+                    topic_id,
+                    page.items.into_iter().map(Into::into).collect(),
+                    &hidden,
+                )
                 .await?,
             next_cursor: page.next_cursor,
             unavailable_count: u32::try_from(unavailable).unwrap_or(u32::MAX),

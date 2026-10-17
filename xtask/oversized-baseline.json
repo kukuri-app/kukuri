@@ -33,11 +33,11 @@
       "path": "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts"
     },
     {
-      "lines": 1116,
+      "lines": 1126,
       "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
-      "lines": 1111,
+      "lines": 1115,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {

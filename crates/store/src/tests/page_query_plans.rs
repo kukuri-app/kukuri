@@ -250,8 +250,14 @@ async fn live_and_game_lists_are_channel_bounded_index_reads() {
     for (name, mut builder, expected_index) in [
         (
             "live sessions",
-            live_session_list_query(EXPLAIN, "topic", "channel", 100),
+            live_session_list_query(EXPLAIN, "topic", "channel", false, 100),
             "idx_live_session_cache_topic_started (topic_id=? AND channel_id=?)",
+        ),
+        // #1840 AC-4: 配信中の行だけは、終わった行を読み飛ばさず部分索引から読む。
+        (
+            "live sessions on air",
+            live_session_list_query(EXPLAIN, "topic", "channel", true, 100),
+            "idx_live_session_cache_live_now (topic_id=? AND channel_id=?)",
         ),
         (
             "game rooms",

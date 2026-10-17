@@ -1,4 +1,7 @@
 import type { AuthorSocialView, PublicChannelView } from '@/lib/api';
+import { isPublicChannelId } from '@/lib/publicChannels';
+import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
+import type { ColumnState } from '@/shell/slices/workspace';
 
 /// 覚えておく公開スレッドの数。超えたら、古く覚えたものから外す。
 export const KNOWN_PUBLIC_THREAD_LIMIT = 256;
@@ -47,4 +50,20 @@ export function knownPublicThreadTitle(
 ): string | undefined {
   const thread = threads[channelId];
   return thread && !isHiddenAuthor(authors[thread.creator_pubkey]) ? thread.title : undefined;
+}
+
+/// 公開スレッドの詳細の列の上部に出す配信中の Live の数(#1840 判断 14)。より多いときは「すべての配信」から列を開く。
+export const SHOWN_THREAD_LIVE_SESSIONS = 3;
+
+/// Live の画面を出すか。Live・Stream の画面は開発者モードでだけ出し(README の Experimental)、Web は Live を扱わない
+/// (ADR 0060)。
+export function liveSurfacesEnabled(developerModeEnabled: boolean): boolean {
+  return developerModeEnabled && !IS_WEB_RUNTIME;
+}
+
+/// 公開スレッドの詳細の列で、上部にそのスレッドで配信中の Live を出すか(#1840 AC-4)。出す列は、そのスレッドの Live を読む。
+export function showsThreadLives(column: Pick<ColumnState, 'kind' | 'scope'>, developerModeEnabled: boolean): boolean {
+  return (
+    liveSurfacesEnabled(developerModeEnabled) && column.kind === 'timeline' && isPublicChannelId(column.scope?.channelId)
+  );
 }

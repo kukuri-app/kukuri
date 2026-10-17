@@ -22,6 +22,7 @@ import { useAdultGatedMediaHashes } from '@/shell/data/useAdultGatedMediaHashes'
 import { useCommunityNodeRecovery } from '@/shell/actions/useCommunityNodeRecovery';
 import { useDesktopShellDataEffects } from '@/shell/data/useDesktopShellDataEffects';
 import { useMediaVisibilityDemand } from '@/shell/data/useMediaVisibilityDemand';
+import { SHOWN_THREAD_LIVE_SESSIONS, showsThreadLives } from '@/shell/slices/publicThreads';
 import {
   activeWorkspaceScope,
   columnIdentityId,
@@ -293,13 +294,15 @@ export function useDesktopShellData({
     notifications,
     adoptingNodes,
   });
-  // #1061: live / game 一覧の主催者も折りたたみ判断の対象にする。
+  // #1061: live / game 一覧の主催者も折りたたみ判断の対象にする。公開スレッドの詳細の列の上部の Live も同じ(#1840 AC-4)。
+  const developerModeEnabled = useDesktopShellStore((s) => s.developerModeEnabled);
   const trustGateHostPubkeys = useMemo(() => {
     const hosts = new Set<string>();
     const scopeKeys = new Set(
       visibleColumns
         .filter((column) =>
-          (column.kind === 'stream' || column.kind === 'game' || column.kind === 'metaverse') && column.scope)
+          (column.kind === 'stream' || column.kind === 'game' || column.kind === 'metaverse' ||
+            showsThreadLives(column, developerModeEnabled)) && column.scope)
         .map((column) => timelineStorageKeyForChannel(column.scope!.topicId, column.scope!.channelId))
     );
     for (const key of scopeKeys) {
@@ -313,7 +316,7 @@ export function useDesktopShellData({
       }
     }
     return [...hosts];
-  }, [gameRoomsByScopeKey, state.liveSessionsByScopeKey, visibleColumns]);
+  }, [developerModeEnabled, gameRoomsByScopeKey, state.liveSessionsByScopeKey, visibleColumns]);
   const referencedAuthorKeys = useMemo(() => {
     const keys = new Set<string>(trustGateHostPubkeys);
     for (const post of [...advisoryLookupPosts, ...communityIndexResolvedPosts]) {
@@ -349,9 +352,16 @@ export function useDesktopShellData({
     return () => { hostDemandRef.current = new Set(); };
   }, [trustGateHostPubkeys]);
   useEffect(() => () => { pendingHostPubkeysRef.current.clear(); }, []);
+  // 名前を出す主催者: game の一覧と、公開スレッドの詳細の列の上部の配信中の Live(列ごとに出す数まで。#1840 AC-4)。
+  const namedHostPubkeys = useMemo(() => [...new Set([
+    ...(shellChromeState.activePrimarySection === 'game' ? activeGameRooms.map((room) => room.host_pubkey) : []),
+    ...visibleColumns.filter((column) => showsThreadLives(column, developerModeEnabled)).flatMap((column) =>
+      (state.liveSessionsByScopeKey[timelineStorageKeyForChannel(column.scope!.topicId, column.scope!.channelId)] ?? [])
+        .filter((session) => session.status === 'Live').slice(0, SHOWN_THREAD_LIVE_SESSIONS).map((live) => live.host_pubkey)),
+  ])], [activeGameRooms, developerModeEnabled, shellChromeState.activePrimarySection, state.liveSessionsByScopeKey,
+    visibleColumns]);
   useEffect(() => {
-    if (shellChromeState.activePrimarySection !== 'game') return;
-    const missing = [...new Set(activeGameRooms.map((room) => room.host_pubkey))].filter((pubkey) =>
+    const missing = namedHostPubkeys.filter((pubkey) =>
       pubkey && pubkey !== localProfile?.pubkey &&
       pubkey !== state.syncStatus.local_author_pubkey &&
       !knownAuthorsByPubkey[pubkey] && !pendingHostPubkeysRef.current.has(pubkey));
@@ -377,8 +387,8 @@ export function useDesktopShellData({
           }
         }
       });
-  }, [activeGameRooms, api, knownAuthorsByPubkey, localProfile?.pubkey,
-    setKnownAuthorsByPubkey, shellChromeState.activePrimarySection, state.syncStatus.local_author_pubkey]);
+  }, [api, knownAuthorsByPubkey, localProfile?.pubkey, namedHostPubkeys, setKnownAuthorsByPubkey,
+    state.syncStatus.local_author_pubkey]);
   // #1061: 表示中の著者を採用 CN へ一括照会し、折りたたみ判断を state へ置く。
   useAuthorTrustGateLookup({
     api,
