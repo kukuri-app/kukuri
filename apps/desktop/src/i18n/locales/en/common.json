@@ -83,7 +83,9 @@
     "privateChannel": "Private channel",
     "privateNamed": "Private: {{channel}}",
     "public": "Public",
-    "viewing": "Viewing {{audience}}"
+    "viewing": "Viewing {{audience}}",
+    "publicThread": "Public thread",
+    "publicThreadNamed": "Public thread: {{title}}"
   },
   "errors": {
     "failedToAcceptConsents": "Failed to accept required policies.",

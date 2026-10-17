@@ -7,7 +7,7 @@ import {
   communityNodesToDraftNodes,
   mergeKnownAuthors,
   messageFromError,
-  privateTimelineScope,
+  channelTimelineScope,
   profileInputFromProfile,
   seedPeersToEditorValue,
 } from '@/shell/presentation';
@@ -118,7 +118,7 @@ export function useDesktopShellSectionLoaders({
       try {
         const sessions = await api.listLiveSessions(
           topic,
-          privateTimelineScope(selectedChannelId)
+          channelTimelineScope(selectedChannelId)
         );
         startTransition(() => {
           setLiveSessionsByScopeKey(setRecordEntry(scopeKey, sessions));
@@ -149,7 +149,7 @@ export function useDesktopShellSectionLoaders({
     async (topic: string, selectedChannelId: string | null) => {
       const scopeKey = timelineStorageKeyForChannel(topic, selectedChannelId);
       try {
-        const rooms = await api.listGameRooms(topic, privateTimelineScope(selectedChannelId));
+        const rooms = await api.listGameRooms(topic, channelTimelineScope(selectedChannelId));
         startTransition(() => {
           setGameRoomsByScopeKey(setRecordEntry(scopeKey, rooms));
           setGamePanelStateByScopeKey(

@@ -1,4 +1,4 @@
-import { Fragment, type MouseEvent, type KeyboardEvent } from 'react';
+import { Fragment, useContext, type MouseEvent, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DoorOpen, SmilePlus } from 'lucide-react';
 
@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/tooltip';
 
 import { MentionHoverCard } from './MentionHoverCard';
+import { PublicThreadSlot } from './publicThreadSlot';
 import { type MentionAuthorView } from './types';
 
 type SmartReferenceTextProps = {
@@ -74,6 +75,9 @@ function referenceLabel(
   if (reference.kind === 'game') {
     return `${t('shell:primarySections.game')} ${shortenReferenceId(reference.roomId)}`;
   }
+  if (reference.kind === 'public_thread') {
+    return `${t('shell:publicThreads.title')} ${shortenReferenceId(reference.channelId)}`;
+  }
   if (reference.kind === 'reaction_set') {
     return t('common:reactions.importSet');
   }
@@ -105,6 +109,7 @@ export function SmartReferenceText({
 }: SmartReferenceTextProps) {
   const { t } = useTranslation(['channels', 'common', 'shell']);
   const externalLink = useExternalLinkOpener();
+  const publicThreads = useContext(PublicThreadSlot);
   const lines = parseSmartText(text);
 
   return (
@@ -180,7 +185,11 @@ export function SmartReferenceText({
                 </a>
               );
             }
-            const label = referenceLabel(segment.reference, t);
+            const fallbackLabel = referenceLabel(segment.reference, t);
+            // 公開スレッドは、知っていればタイトルを出す(#1840 判断 10)。
+            const label = segment.reference.kind === 'public_thread' && publicThreads
+              ? publicThreads.renderChipTitle(segment.reference.topic, segment.reference.channelId, fallbackLabel)
+              : fallbackLabel;
             const button = (
               <button
                 key={`${lineIndex}-${segmentIndex}`}

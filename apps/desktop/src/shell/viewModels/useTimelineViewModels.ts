@@ -11,6 +11,7 @@ import type { PostView, ProfileAssetView } from '@/lib/api';
 import { contentProvenanceFromView } from '@/lib/api/provenance';
 import type { SupportedLocale } from '@/i18n';
 import { extractMentions } from '@/lib/internalLinks';
+import { isPublicChannelId } from '@/lib/publicChannels';
 import {
   isAdultLabeledPost,
   logMediaDebug,
@@ -270,7 +271,9 @@ export function useTimelineViewModels({
         ),
         authorPicture,
         relationshipLabel: strongestRelationshipLabel(post),
-        audience: post.channel_id
+        audience: isPublicChannelId(post.channel_id)
+          ? { kind: 'public_thread', channelId: post.channel_id }
+          : post.channel_id
           ? {
               kind: 'private',
               channelLabel:

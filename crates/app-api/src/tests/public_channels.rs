@@ -3,11 +3,13 @@
 //! 公開 channel には出ない。
 use super::sync::CountingDocsSync;
 use super::*;
+use crate::PublicChannelView;
 use kukuri_core::{
     KukuriPostEnvelopeContentV1, KukuriPublicChannelContentV1, build_public_channel_envelope,
     sign_envelope_json_at,
 };
 use kukuri_docs_sync::{BucketReplica, BucketScope, MemoryDocsSync, TimeBucket};
+use kukuri_store::PublicChannelOrder;
 
 pub(super) const TOPIC: &str = "kukuri:topic:public-threads";
 
@@ -289,6 +291,58 @@ async fn a_device_without_an_invite_reads_a_public_channel_by_id_and_writes_into
     )
     .await
     .expect("withdraw in the public channel");
+}
+
+// #1840 AC-3: 行に作成者の profile の名前が付く。手元に無い profile は取得が背景で読み、読めたら次の取得で付く。
+#[tokio::test]
+async fn public_channel_rows_carry_the_creator_profile_names() {
+    let a_docs = MemoryDocsSync::with_docs_author("05".repeat(32));
+    let b_docs = MemoryDocsSync::with_docs_author("06".repeat(32));
+    let blobs = Arc::new(MemoryBlobService::default());
+    let network = FakeNetwork::default();
+    let a = device("a", &network, a_docs.clone(), b_docs.clone(), blobs.clone());
+    let b = device("b", &network, b_docs, a_docs, blobs);
+    a.set_my_profile(ProfileInput {
+        name: Some("alice".into()),
+        display_name: Some("Alice".into()),
+        ..Default::default()
+    })
+    .await
+    .expect("set the creator profile");
+    let names =
+        |view: &PublicChannelView| (view.creator_name.clone(), view.creator_display_name.clone());
+    let expected = (Some("alice".to_string()), Some("Alice".to_string()));
+
+    let channel = a
+        .create_public_channel(TOPIC, "名前つき", "")
+        .await
+        .expect("create");
+    assert_eq!(names(&channel), expected);
+    let listed = a
+        .list_public_channels(TOPIC, PublicChannelOrder::Created, None, 20)
+        .await
+        .expect("list on A");
+    assert_eq!(
+        listed.items.iter().map(names).collect::<Vec<_>>(),
+        vec![expected.clone()]
+    );
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let read = b
+            .get_public_channel(TOPIC, &channel.channel_id)
+            .await
+            .expect("get on B")
+            .expect("the channel by id");
+        if names(&read) == expected {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the creator profile never arrived: {read:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 }
 
 // 作成から日を跨いだ公開 channel でも、ID から作成時の最初の投稿を辿れる(作成日の bucket から読む)。

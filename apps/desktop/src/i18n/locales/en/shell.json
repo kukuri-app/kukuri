@@ -614,5 +614,42 @@
     "column": "You cannot add a new column because the column limit has been reached. Close a column you are not using, then open it again.",
     "participation": "You cannot join because your joined channels and open columns have reached the limit. Close a column you are not using or leave something you joined, then try again.",
     "confirm": "OK"
+  },
+  "publicThreads": {
+    "title": "Public thread",
+    "listTitle": "Public threads",
+    "navHint": "Open the list",
+    "order": {
+      "label": "Sort order",
+      "active": "Sort order: {{order}}",
+      "last_post": "Latest post first",
+      "created": "Newest first"
+    },
+    "create": {
+      "action": "Create public thread",
+      "title": "Create a public thread",
+      "description": "Creates a thread in {{topic}} that anyone can read and post to. The title can't be changed, and the thread can't be deleted.",
+      "titleLabel": "Title",
+      "firstPostLabel": "First post (optional)",
+      "submit": "Create",
+      "failed": "Couldn't create the public thread. Try again."
+    },
+    "list": {
+      "loading": "Loading public threads…",
+      "failed": "Couldn't load public threads.",
+      "empty": "No public threads in this topic yet.",
+      "emptyHint": "Give it a title to start a conversation anyone can read and join.",
+      "createdAt": "Created {{time}}",
+      "lastPostAt": "Last post {{time}}",
+      "unavailable_one": "{{count}} thread in this range hasn't arrived yet. Once it arrives, it appears when you reload.",
+      "unavailable_other": "{{count}} threads in this range haven't arrived yet. Once they arrive, they appear when you reload.",
+      "loadMoreFailed": "Couldn't load more public threads."
+    },
+    "detailEmpty": "No posts in this thread yet.",
+    "titleUnavailable": "Couldn't load the title",
+    "card": {
+      "loading": "Loading the public thread…",
+      "unavailable": "Couldn't load this public thread"
+    }
   }
 }

@@ -1,5 +1,6 @@
 import type { ChannelAccessTokenKind } from '@/lib/api';
 import { findNextExternalUrl } from '@/lib/externalUrls';
+import { isPublicChannelId } from '@/lib/publicChannels';
 import { parseHashRouteLocation } from '@/shell/routes';
 
 export type TopicLinkReference = {
@@ -13,6 +14,14 @@ export type PostLinkReference = {
   topic: string;
   threadId: string;
   focusObjectId: string | null;
+  route: string;
+};
+
+/** #1840: 公開スレッド（`#/timeline?topic=…&channel=pc-…`）。押すと詳細の列を開く。 */
+export type PublicThreadLinkReference = {
+  kind: 'public_thread';
+  topic: string;
+  channelId: string;
   route: string;
 };
 
@@ -59,6 +68,7 @@ export type ReactionSetReference = {
 export type InternalSmartReference =
   | TopicLinkReference
   | PostLinkReference
+  | PublicThreadLinkReference
   | LiveLinkReference
   | GameLinkReference
   | ShareTokenReference
@@ -136,6 +146,13 @@ export function buildPostLink(
   if (focusObjectId) {
     params.set('focusObjectId', focusObjectId);
   }
+  return buildRoute('/timeline', params);
+}
+
+export function buildPublicThreadLink(topic: string, channelId: string): string {
+  const params = new URLSearchParams();
+  params.set('topic', topic);
+  params.set('channel', channelId);
   return buildRoute('/timeline', params);
 }
 
@@ -323,6 +340,10 @@ export function parseInternalRouteLink(rawValue: string): InternalSmartReference
         route: rawValue,
       };
     }
+    const channelId = params.get('channel')?.trim() ?? '';
+    if (!context && isPublicChannelId(channelId)) {
+      return { kind: 'public_thread', topic, channelId, route: rawValue };
+    }
     return {
       kind: 'topic',
       topic,
@@ -472,6 +493,18 @@ export function splitReactionSetLinks(text: string): Array<{ text: string; setHa
   }
   parts.push({ text: text.slice(offset), setHash: null });
   return parts;
+}
+
+/// 本文の中の最初の公開スレッドのリンク（判断 10: 本文の下に card を出すのは最初の 1 件だけ）。
+export function firstPublicThreadLink(value: string): PublicThreadLinkReference | null {
+  for (const line of parseSmartText(value)) {
+    for (const segment of line) {
+      if (segment.kind === 'reference' && segment.reference.kind === 'public_thread') {
+        return segment.reference;
+      }
+    }
+  }
+  return null;
 }
 
 export function parseSmartText(value: string): SmartTextSegment[][] {

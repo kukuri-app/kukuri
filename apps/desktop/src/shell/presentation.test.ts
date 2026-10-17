@@ -35,8 +35,8 @@ import {
   mergeCommunityNodeStatus,
   mergeKnownAuthors,
   patchReactionStateIntoPosts,
-  privateComposeTarget,
-  privateTimelineScope,
+  channelComposeTarget,
+  channelTimelineScope,
   shortPubkey,
   syncCommunityNodeConfigWithStatus,
   upsertCommunityNodeStatus,
@@ -881,22 +881,22 @@ describe('communityNodeConsentView', () => {
   });
 });
 
-describe('privateTimelineScope', () => {
+describe('channelTimelineScope', () => {
   it('builds a channel scope from a channel id, else the public scope', () => {
-    expect(privateTimelineScope('channel-1')).toEqual({ kind: 'channel', channel_id: 'channel-1' });
-    expect(privateTimelineScope(null)).toEqual({ kind: 'public' });
+    expect(channelTimelineScope('channel-1')).toEqual({ kind: 'channel', channel_id: 'channel-1' });
+    expect(channelTimelineScope(null)).toEqual({ kind: 'public' });
     // 空文字も falsy 扱いで public に落ちる(現挙動)
-    expect(privateTimelineScope('')).toEqual({ kind: 'public' });
+    expect(channelTimelineScope('')).toEqual({ kind: 'public' });
   });
 });
 
-describe('privateComposeTarget', () => {
+describe('channelComposeTarget', () => {
   it('builds a private_channel ref from a channel id, else the public ref', () => {
-    expect(privateComposeTarget('channel-1')).toEqual({
+    expect(channelComposeTarget('channel-1')).toEqual({
       kind: 'private_channel',
       channel_id: 'channel-1',
     });
-    expect(privateComposeTarget(null)).toEqual({ kind: 'public' });
+    expect(channelComposeTarget(null)).toEqual({ kind: 'public' });
   });
 });
 
@@ -911,6 +911,10 @@ describe('audienceLabelForChannelRef', () => {
     expect(
       audienceLabelForChannelRef({ kind: 'private_channel', channel_id: 'channel-x' }, [])
     ).toBe('Private channel');
+    // #1840: 公開スレッドは参加中の channel を探さない。
+    expect(
+      audienceLabelForChannelRef({ kind: 'public_channel', channel_id: 'pc-1-0123456789abcdef' }, joined)
+    ).toBe('Public thread');
   });
 });
 
@@ -925,6 +929,9 @@ describe('audienceLabelForTimelineScope', () => {
       'Private channel'
     );
     expect(audienceLabelForTimelineScope({ kind: 'public' }, [])).toBe('Public');
+    expect(
+      audienceLabelForTimelineScope({ kind: 'public_channel', channel_id: 'pc-1-0123456789abcdef' }, joined)
+    ).toBe('Public thread');
   });
 });
 

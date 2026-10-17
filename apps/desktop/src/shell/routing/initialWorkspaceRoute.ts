@@ -74,6 +74,9 @@ export function routeStateForColumn(column: ColumnState): RouteState | null {
       route.primarySection = 'game';
       route.selectedGameRoomId = column.entityId ?? null;
       return route;
+    case 'publicThreads':
+      route.publicThreadList = true;
+      return route;
     default:
       return null;
   }

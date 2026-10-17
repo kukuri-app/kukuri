@@ -31,6 +31,8 @@ import {
   formatLocalizedNumber,
   formatLocalizedTime,
 } from '@/i18n/format';
+import { isPublicChannelId } from '@/lib/publicChannels';
+import type { DesktopShellRouteOverrides } from '@/shell/routes';
 
 import {
   type CommunityNodeDraftNode,
@@ -219,22 +221,57 @@ export function authorViewFromDirectMessageConversation(
   };
 }
 
-export function privateTimelineScope(channelId: string | null): TimelineScope {
-  return channelId
-    ? {
-        kind: 'channel',
-        channel_id: channelId,
-      }
-    : PUBLIC_TIMELINE_SCOPE;
+/// channel の scope。公開スレッド（#1840）と private channel は ID の形で見分ける。
+export function channelTimelineScope(channelId: string | null): TimelineScope {
+  if (!channelId) {
+    return PUBLIC_TIMELINE_SCOPE;
+  }
+  return isPublicChannelId(channelId)
+    ? { kind: 'public_channel', channel_id: channelId }
+    : { kind: 'channel', channel_id: channelId };
 }
 
-export function privateComposeTarget(channelId: string | null): ChannelRef {
-  return channelId
-    ? {
-        kind: 'private_channel',
-        channel_id: channelId,
-      }
-    : PUBLIC_CHANNEL_REF;
+/// scope の channel の ID（topic の公開タイムラインは `null`）。
+export function channelIdOfScope(scope: TimelineScope | null | undefined): string | null {
+  return scope && scope.kind !== 'public' ? scope.channel_id : null;
+}
+
+/// 投稿先の channel の ID（topic の公開タイムラインは `null`）。
+export function channelIdOfRef(channelRef: ChannelRef | null | undefined): string | null {
+  return channelRef && channelRef.kind !== 'public' ? channelRef.channel_id : null;
+}
+
+/// channel の投稿先。見分け方は `channelTimelineScope` と同じ。
+export function channelComposeTarget(channelId: string | null): ChannelRef {
+  if (!channelId) {
+    return PUBLIC_CHANNEL_REF;
+  }
+  return isPublicChannelId(channelId)
+    ? { kind: 'public_channel', channel_id: channelId }
+    : { kind: 'private_channel', channel_id: channelId };
+}
+
+/// topic の時系列の列を開く route。`channelId` は channel(公開スレッドを含む)、`publicThreadList` は topic の公開スレッドの
+/// 一覧の列(#1840)。
+export function scopeRouteOverrides(
+  topic: string,
+  channelId: string | null,
+  publicThreadList = false
+): DesktopShellRouteOverrides {
+  return {
+    activeTopic: topic,
+    composeTarget: channelComposeTarget(channelId),
+    focusedObjectId: null,
+    primarySection: 'timeline',
+    publicThreadList,
+    selectedAuthorPubkey: null,
+    selectedDirectMessagePeerPubkey: null,
+    selectedGameRoomId: null,
+    selectedLiveSessionId: null,
+    selectedThread: null,
+    timelineScope: channelTimelineScope(channelId),
+    timelineView: 'feed',
+  };
 }
 
 export function audienceLabelForChannelRef(
@@ -243,6 +280,9 @@ export function audienceLabelForChannelRef(
 ): string {
   if (channelRef.kind === 'public') {
     return translate('common:audience.public');
+  }
+  if (channelRef.kind === 'public_channel') {
+    return translate('common:audience.publicThread');
   }
   return (
     joinedChannels.find((channel) => channel.channel_id === channelRef.channel_id)?.label ??
@@ -260,7 +300,7 @@ export function audienceLabelForTimelineScope(
       translate('common:audience.privateChannel')
     );
   }
-  return translate('common:audience.public');
+  return translate(scope.kind === 'public_channel' ? 'common:audience.publicThread' : 'common:audience.public');
 }
 
 export function formatSeedPeer(peer: DiscoveryConfig['seed_peers'][number]): string {
@@ -554,6 +594,9 @@ export function localizeAudienceLabel(label: string): string {
   }
   if (label === 'Private channel') {
     return translate('common:audience.privateChannel');
+  }
+  if (label === 'Public thread') {
+    return translate('common:audience.publicThread');
   }
   return label;
 }

@@ -12,8 +12,8 @@ import {
   mergeKnownAuthors,
   messageFromError,
   patchReactionStateIntoPosts,
-  privateComposeTarget,
-  privateTimelineScope,
+  channelComposeTarget,
+  channelTimelineScope,
   publishedTopicIdForPost,
 } from '@/shell/presentation';
 
@@ -159,8 +159,8 @@ export function createMessageReactionSocialActions({
     setTrackedTopics(nextTopics);
     setActiveTopic(targetTopic);
     setSelectedChannelIdByTopic(setRecordEntry(targetTopic, nextChannelId));
-    setTimelineScopeByTopic(setRecordEntry(targetTopic, privateTimelineScope(nextChannelId)));
-    setComposeChannelByTopic(setRecordEntry(targetTopic, privateComposeTarget(nextChannelId)));
+    setTimelineScopeByTopic(setRecordEntry(targetTopic, channelTimelineScope(nextChannelId)));
+    setComposeChannelByTopic(setRecordEntry(targetTopic, channelComposeTarget(nextChannelId)));
     clearAuxiliaryPanels();
     setShellChromeState((current) => ({
       ...current,
@@ -184,12 +184,12 @@ export function createMessageReactionSocialActions({
 
     syncRoute('replace', {
       activeTopic: targetTopic,
-      composeTarget: privateComposeTarget(nextChannelId),
+      composeTarget: channelComposeTarget(nextChannelId),
       primarySection: 'timeline',
       selectedAuthorPubkey: null,
       selectedDirectMessagePeerPubkey: null,
       selectedThread: null,
-      timelineScope: privateTimelineScope(nextChannelId),
+      timelineScope: channelTimelineScope(nextChannelId),
       timelineView: 'feed',
     });
   }
@@ -225,7 +225,7 @@ export function createMessageReactionSocialActions({
         topicId,
         post.object_id,
         reactionKey,
-        post.channel_id ? { kind: 'private_channel', channel_id: post.channel_id } : { kind: 'public' }
+        channelComposeTarget(post.channel_id ?? null)
       );
       patchReactionState(nextState);
       try {
@@ -342,9 +342,7 @@ export function createMessageReactionSocialActions({
         const bookmarked = await api.bookmarkPost(
           topicId,
           post.object_id,
-          post.channel_id
-            ? { kind: 'private_channel', channel_id: post.channel_id }
-            : { kind: 'public' }
+          channelComposeTarget(post.channel_id ?? null)
         );
         setBookmarkMembershipById((current) => ({ ...current, [bookmarked.post.object_id]: true }));
       }
@@ -365,9 +363,7 @@ export function createMessageReactionSocialActions({
       await api.withdrawPost(
         topicId,
         post.object_id,
-        post.channel_id
-          ? { kind: 'private_channel', channel_id: post.channel_id }
-          : { kind: 'public' }
+        channelComposeTarget(post.channel_id ?? null)
       );
       await Promise.all([loadTopics(trackedTopics, activeTopic, selectedThread), refreshProfile()]);
       setError(null);

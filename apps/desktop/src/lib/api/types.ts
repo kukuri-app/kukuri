@@ -88,6 +88,10 @@ import type {
   PrivateChannelControllerTake,
   PrivateChannelInvitePreview,
   Profile,
+  PublicChannelCursor,
+  PublicChannelListView,
+  PublicChannelOrder,
+  PublicChannelView,
   ReactionStateView,
   RecentReactionView,
   SocialConnectionKind,
@@ -464,6 +468,15 @@ export interface DesktopApi {
   ): Promise<JoinedPrivateChannelView>;
   leavePrivateChannel(topic: string, channelId: string): Promise<void>;
   listJoinedPrivateChannels(topic: string, cursor?: string | null): Promise<JoinedPrivateChannelPage>;
+  // 公開スレッド(公開 channel。#1840)。`firstPost` は空でもよい(最初の投稿を書かない)。
+  createPublicChannel(topic: string, title: string, firstPost: string): Promise<PublicChannelView>;
+  getPublicChannel(topic: string, channelId: string): Promise<PublicChannelView | null>;
+  listPublicChannels(
+    topic: string,
+    order: PublicChannelOrder,
+    cursor?: PublicChannelCursor | null,
+    limit?: number
+  ): Promise<PublicChannelListView>;
   updateGameRoom(
     topic: string,
     roomId: string,

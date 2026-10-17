@@ -614,5 +614,42 @@
     "column": "栏目数量已达到上限，无法添加新栏目。请关闭不使用的栏目后再打开。",
     "participation": "已加入的频道和打开的栏目合计已达到上限，无法加入。请关闭不使用的栏目或退出已加入的内容后重试。",
     "confirm": "确定"
+  },
+  "publicThreads": {
+    "title": "公开帖子",
+    "listTitle": "公开帖子列表",
+    "navHint": "打开列表",
+    "order": {
+      "label": "排序",
+      "active": "排序：{{order}}",
+      "last_post": "最新发帖在前",
+      "created": "最新创建在前"
+    },
+    "create": {
+      "action": "创建公开帖子",
+      "title": "创建公开帖子",
+      "description": "在 {{topic}} 中创建任何人都可以阅读和发帖的公开帖子。标题无法更改，公开帖子也无法删除。",
+      "titleLabel": "标题",
+      "firstPostLabel": "首帖（可留空）",
+      "submit": "创建",
+      "failed": "无法创建公开帖子，请重试。"
+    },
+    "list": {
+      "loading": "正在加载公开帖子…",
+      "failed": "无法加载公开帖子。",
+      "empty": "此主题还没有公开帖子。",
+      "emptyHint": "添加标题，即可开始任何人都可以阅读和参与的对话。",
+      "createdAt": "创建于 {{time}}",
+      "lastPostAt": "最后发帖 {{time}}",
+      "unavailable_one": "此范围内有 {{count}} 个公开帖子尚未获取。获取后，重新加载即可显示。",
+      "unavailable_other": "此范围内有 {{count}} 个公开帖子尚未获取。获取后，重新加载即可显示。",
+      "loadMoreFailed": "无法加载更多公开帖子。"
+    },
+    "detailEmpty": "这个公开帖子里还没有内容。",
+    "titleUnavailable": "无法获取标题",
+    "card": {
+      "loading": "正在加载公开帖子…",
+      "unavailable": "无法获取此公开帖子"
+    }
   }
 }

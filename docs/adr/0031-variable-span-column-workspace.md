@@ -116,7 +116,7 @@ kind ごとの desktop 既定値は次とする。具体的な unit、gap、brea
 
 | Column kind | Desktop default | Mobile |
 |---|---:|---:|
-| Timeline / Notifications / Profile / Thread | 1 span | 1 viewport |
+| Timeline / Notifications / Profile / Thread / Public threads | 1 span | 1 viewport |
 | Messages / Conversation | 1〜2 span | 1 viewport |
 | Stream | 2 span | 1 viewport |
 | Metaverse | 3 span | 1 viewport |
@@ -193,7 +193,9 @@ type ColumnScope = {
 type ColumnState = {
   id: string;
   kind: 'timeline' | 'notifications' | 'thread' | 'profile' | 'explore'
-    | 'messages' | 'conversation' | 'stream' | 'game' | 'metaverse';
+    | 'messages' | 'conversation' | 'stream' | 'game' | 'metaverse'
+    // topic の公開スレッドの一覧（ADR 0068 §7）。詳細は scope の channel が公開スレッドの timeline。
+    | 'publicThreads';
   scope?: ColumnScope;
   entityId?: string;
   parentColumnId?: string;

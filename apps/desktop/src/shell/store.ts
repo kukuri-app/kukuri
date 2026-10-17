@@ -29,6 +29,10 @@ import {
   createInitialPrivateChannelSlice,
 } from '@/shell/slices/privateChannel';
 import {
+  type PublicThreadsSliceState,
+  createInitialPublicThreadsSlice,
+} from '@/shell/slices/publicThreads';
+import {
   type ProfileSocialSliceState,
   createInitialProfileSocialSlice,
 } from '@/shell/slices/profileSocial';
@@ -75,6 +79,7 @@ export type DesktopShellState = TimelineSliceState &
   LiveGameSliceState &
   ChromeSliceState &
   ColumnDraftsSliceState &
+  PublicThreadsSliceState &
   WorkspaceSliceState;
 
 export type DesktopShellStateValue<K extends keyof DesktopShellState> =
@@ -118,6 +123,7 @@ export function createInitialShellState(): DesktopShellState {
     ...createInitialLiveGameSlice(),
     ...createInitialChromeSlice(),
     ...createInitialColumnDraftsSlice(),
+    ...createInitialPublicThreadsSlice(),
     ...createInitialWorkspaceSlice({
       topicId: timeline.trackedTopics[0],
       channelId: null,

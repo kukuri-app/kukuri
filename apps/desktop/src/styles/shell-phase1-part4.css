@@ -427,3 +427,73 @@
   align-items: center;
   gap: var(--space-2xs);
 }
+
+/* #1840: 公開スレッドの一覧の列。行はタイトルと作成者・時刻で、押すと詳細の列を開く。 */
+.public-thread-list {
+  display: grid;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.public-thread-row {
+  width: 100%;
+  display: grid;
+  gap: var(--space-2xs);
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-panel-muted);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.public-thread-row:hover,
+.public-thread-row:focus-visible {
+  border-color: var(--border-accent);
+  background: var(--surface-active);
+}
+
+.public-thread-row:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.public-thread-row-title {
+  color: var(--foreground-strong);
+  overflow-wrap: anywhere;
+}
+
+.public-thread-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-sm);
+  color: var(--muted-foreground);
+  font-size: var(--text-caption);
+  overflow-wrap: anywhere;
+}
+
+/* 本文の中の公開スレッドのリンクの card は、外部のリンクの preview の見た目を button で使う。 */
+.public-thread-card {
+  width: 100%;
+  padding: 0;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+/* 並び順の名前(日本語の「最後の投稿の新しい順」)を 1 行に収める。 */
+.ui-popover-content.public-thread-order-menu {
+  width: min(18rem, calc(100vw - 1.5rem));
+}
+
+/* #1840: 列の見出しと状態の印が 1 行に収まらないときは、印を次の行へ送る(見出しを省略せず、印も割らない)。 */
+.shell-phase1 .shell-column-title-row {
+  flex-wrap: wrap;
+}
+
+.shell-phase1 .shell-column-state-label {
+  flex: none;
+  white-space: nowrap;
+}

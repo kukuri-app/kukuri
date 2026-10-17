@@ -14,6 +14,7 @@ import {
   type DiscoveryConfig,
   type GameRoomView,
   type JoinedPrivateChannelView,
+  type PublicChannelView,
   type LiveSessionView,
   type MetaverseRoomEventView,
   type NotificationView,
@@ -54,6 +55,7 @@ export interface MockRuntime {
   metaverseRoomEventsByRoom: Record<string, MetaverseRoomEventView[]>;
   metaverseAssetPayloads: Record<string, BlobMediaPayload>;
   joinedChannelsByTopic: Record<string, JoinedPrivateChannelView[]>;
+  publicChannelsByTopic: Record<string, PublicChannelView[]>;
   syncStatus: SyncStatus;
   // 詳細のページで返す peer の一覧(#1221 R2-D)。
   connectivityPeers: Record<ConnectivityPeerKind, string[]>;
@@ -140,6 +142,9 @@ export function createMockRuntime(options?: DesktopMockApiOptions): MockRuntime 
   const metaverseRoomEventsByRoom: Record<string, MetaverseRoomEventView[]> = {};
   const metaverseAssetPayloads: Record<string, BlobMediaPayload> = {};
   const joinedChannelsByTopic: Record<string, JoinedPrivateChannelView[]> = {};
+  const publicChannelsByTopic: Record<string, PublicChannelView[]> = Object.fromEntries(
+    Object.entries(options?.seedPublicChannels ?? {}).map(([topic, channels]) => [topic, [...channels]])
+  );
   const mockConsentItems = (accepted: boolean): ConsentItems => [
     {
       policy_slug: 'terms_of_service',
@@ -320,6 +325,7 @@ export function createMockRuntime(options?: DesktopMockApiOptions): MockRuntime 
     metaverseRoomEventsByRoom,
     metaverseAssetPayloads,
     joinedChannelsByTopic,
+    publicChannelsByTopic,
     syncStatus,
     authorSocialViews,
     directMessageMessagesByPeer,

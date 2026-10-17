@@ -1,7 +1,9 @@
 import type { LucideIcon } from 'lucide-react';
 import { BookLock, BookOpen, UserRoundArrowLeft, UserRoundGroup, UsersRound } from 'lucide-react';
+import { useContext } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { PublicThreadSlot } from './publicThreadSlot';
 import { ReactionTooltipButton } from './ReactionTooltipButton';
 import type { PostAudienceView } from './types';
 
@@ -25,6 +27,7 @@ export function PostMetaIcons({
   audience: PostAudienceView;
 }) {
   const { t } = useTranslation('common');
+  const publicThreads = useContext(PublicThreadSlot);
   const relationship =
     relationshipLabel === 'mutual'
       ? { icon: UsersRound, label: t('relationships.mutual') }
@@ -35,11 +38,24 @@ export function PostMetaIcons({
           : relationshipLabel === 'friend of friend'
             ? { icon: UserRoundGroup, label: t('relationships.viaFollow') }
             : null;
+  // #1840 判断 11: 公開スレッドは公開と同じ icon で、tooltip にスレッドのタイトルを出す。
+  const publicThreadIcon = (title: string | undefined) => (
+    <PostMetaIcon
+      icon={BookOpen}
+      label={title ? t('audience.publicThreadNamed', { title }) : t('audience.publicThread')}
+    />
+  );
 
   return (
     <>
       {relationship ? <PostMetaIcon {...relationship} /> : null}
-      {audience.kind === 'public' ? (
+      {audience.kind === 'public_thread' ? (
+        publicThreads ? (
+          publicThreads.withTitle(audience.channelId, publicThreadIcon)
+        ) : (
+          publicThreadIcon(undefined)
+        )
+      ) : audience.kind === 'public' ? (
         <PostMetaIcon icon={BookOpen} label={t('audience.public')} />
       ) : (
         <PostMetaIcon
