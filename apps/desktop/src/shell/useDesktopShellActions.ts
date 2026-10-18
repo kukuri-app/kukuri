@@ -781,13 +781,15 @@ export function useDesktopShellActions({
     }
   }
 
-  // `parentColumnId` を渡すと、返信の列をその列の子として開く(ライブの列の左側からの返信は、ライブの列を残す。#1841)。
+  // 返信の列は、`parentColumnId` の列(ライブの列の左側からの返信は、ライブの列を残す。#1841)か、投稿の場所の timeline の列の
+  // 子として開く。timeline の列は無いときだけ開き、既にあれば開き直さない(列の並びと親を変えない。#1871)。
   function beginColumnReply(post: PostView, parentColumnId?: string) {
     const topicId = publishedTopicIdForPost(post) ?? activeTopic;
     const scope = { topicId, channelId: post.channel_id ?? null };
     const threadId = post.root_id ?? post.object_id;
     const timelineColumnId = columnIdentityId('timeline', scope);
     const threadColumnId = columnIdentityId('thread', scope, threadId);
+    const parent = parentColumnId ?? timelineColumnId;
     const target: ColumnDraftTarget = {
       columnId: threadColumnId,
       action: 'reply',
@@ -803,24 +805,22 @@ export function useDesktopShellActions({
         error: null,
       }))
     );
-    setWorkspaceState((current) =>
-      openTransientColumn(current, {
+    setWorkspaceState((current) => {
+      const withParent = current.columns.some((column) => column.id === parent)
+        ? current
+        : openTransientColumn(current, { id: timelineColumnId, kind: 'timeline', scope, pinned: false });
+      return openTransientColumn(withParent, {
         id: threadColumnId,
         kind: 'thread',
         scope,
         entityId: threadId,
-        parentColumnId: parentColumnId ?? timelineColumnId,
+        parentColumnId: parent,
         pinned: false,
-      })
-    );
-    // 親の列を指定した返信は、scope の timeline の列を開き直さない(列の並びを変えない)。
-    if (!parentColumnId) {
-      setActiveTopic(topicId);
-      setSelectedChannelIdByTopic(setRecordEntry(topicId, scope.channelId));
-    }
+      });
+    });
     setTimelineScopeByTopic(setRecordEntry(topicId, channelTimelineScope(scope.channelId)));
     // 返信元投稿の channel を route / selection にも載せ、Thread Column の scope を global 選択に依存させない。
-    void openThread(threadId, { topic: topicId, channelId: scope.channelId, ...(parentColumnId ? { parentColumnId } : {}) });
+    void openThread(threadId, { topic: topicId, channelId: scope.channelId, parentColumnId: parent });
   }
 
   function beginColumnQuoteRepost(post: PostView) {
