@@ -5,32 +5,40 @@ use super::*;
 /// 検証済みの reaction を 1 件、projection へ反映する。
 ///
 /// 反映済みの行より古い envelope では行を戻さない。public topic の replica は誰でも書けるので、古い署名つき envelope を
-/// 置き直すだけで、取り消した reaction を復活させられないようにする。
+/// 置き直すだけで、取り消した reaction を復活させられないようにする。反映済みの行より新しい版だけを `changes` へ
+/// 知らせる(#1841。同じ版の置き直しは知らせない)。
 pub(crate) async fn hydrate_reaction_cache_from_reaction(
     projection_store: &dyn ProjectionStore,
+    changes: &ReactionChanges,
     reaction: &VerifiedReaction,
 ) -> Result<bool> {
     let doc = reaction.doc();
-    if let Some(existing) = projection_store
+    let existing = projection_store
         .get_reaction_cache(reaction.replica(), &doc.target_object_id, &doc.reaction_id)
-        .await?
-        && existing.updated_at > doc.updated_at
+        .await?;
+    if existing
+        .as_ref()
+        .is_some_and(|existing| existing.updated_at > doc.updated_at)
     {
         return Ok(false);
     }
-    projection_store
-        .upsert_reaction_cache(reaction_projection_row(reaction))
-        .await?;
+    let row = reaction_projection_row(reaction);
+    projection_store.upsert_reaction_cache(row.clone()).await?;
+    if existing.is_none_or(|existing| existing.updated_at < doc.updated_at) {
+        let _ = changes.send(row);
+    }
     Ok(true)
 }
 
 /// reaction の key(`state` と `envelope` のどちらでもよい)を 1 つ指定して反映する。replica は走査しない。
 ///
 /// `topic_id` は、その replica を読む文脈の topic。読む docs の record は、その reaction の envelope の key だけ。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn hydrate_reaction_cache_from_key(
     docs_sync: &dyn DocsSync,
     projection_store: &dyn ProjectionStore,
     blob_service: &dyn BlobService,
+    changes: &ReactionChanges,
     topic_id: &str,
     replica: &ReplicaId,
     key: &str,
@@ -56,7 +64,7 @@ pub(crate) async fn hydrate_reaction_cache_from_key(
     else {
         return Ok(false);
     };
-    if !hydrate_reaction_cache_from_reaction(projection_store, &reaction).await? {
+    if !hydrate_reaction_cache_from_reaction(projection_store, changes, &reaction).await? {
         return Ok(false);
     }
     // remote から読んで受け入れた版(反映済みより古くない版)だけを保持し、他の参加者へ提供する(#1395)。
@@ -93,6 +101,7 @@ pub(crate) async fn hydrate_reaction_cache_for_target_bounded(
     docs_sync: &dyn DocsSync,
     projection_store: &dyn ProjectionStore,
     blob_service: &dyn BlobService,
+    changes: &ReactionChanges,
     topic_id: &str,
     replica: &ReplicaId,
     target_object_id: &EnvelopeId,
@@ -158,6 +167,7 @@ pub(crate) async fn hydrate_reaction_cache_for_target_bounded(
             docs_sync,
             projection_store,
             blob_service,
+            changes,
             topic_id,
             replica,
             key.envelope_key().as_str(),

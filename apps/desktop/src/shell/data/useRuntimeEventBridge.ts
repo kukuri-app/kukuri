@@ -1,12 +1,24 @@
 import { useEffect, useRef } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-import type { RuntimeEvent } from '@/lib/api';
+import type { ReactionReceivedView, RuntimeEvent } from '@/lib/api';
 import { isTauriRuntime } from '@/lib/releaseReadiness';
 import { IS_WEB_RUNTIME, listenWebRuntimeEvents } from '@/lib/webRuntime';
 
 // 通信状態の差分(#1221 R2-D)。変わった部分だけを持つ。
 export type SyncStatusDelta = Extract<RuntimeEvent, { type: 'sync_status_changed' }>;
+
+// #1841: 手元へ反映したリアクションの新しい版。Live の重ねる表示だけが購読し、保存しない。
+const reactionListeners = new Set<(reaction: ReactionReceivedView) => void>();
+
+export function subscribeReactionReceived(listener: (reaction: ReactionReceivedView) => void) {
+  reactionListeners.add(listener);
+  return () => void reactionListeners.delete(listener);
+}
+
+export function announceReactionReceived(reaction: ReactionReceivedView) {
+  reactionListeners.forEach((listener) => listener(reaction));
+}
 
 export function useRuntimeEventBridge(
   onNotificationStatusChanged: () => void,
@@ -50,6 +62,9 @@ export function useRuntimeEventBridge(
           break;
         case 'author_relationship_changed':
           relationshipCallbackRef.current(payload.pubkey ?? null);
+          break;
+        case 'reaction_received':
+          announceReactionReceived(payload.reaction);
           break;
       }
     };

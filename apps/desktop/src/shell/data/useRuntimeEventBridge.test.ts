@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: (...args: unknown[]) => listenMock(...args),
 }));
 
-import { useRuntimeEventBridge } from './useRuntimeEventBridge';
+import { subscribeReactionReceived, useRuntimeEventBridge } from './useRuntimeEventBridge';
 
 type EventCallback = (event: { payload: RuntimeEvent }) => void;
 
@@ -84,6 +84,33 @@ describe('useRuntimeEventBridge', () => {
     capturedCallback?.({ payload: { type: 'author_relationship_changed', pubkey: null } });
     expect(onAuthorRelationshipChanged).toHaveBeenNthCalledWith(1, 'a'.repeat(64));
     expect(onAuthorRelationshipChanged).toHaveBeenNthCalledWith(2, null);
+  });
+
+  // #1841: リアクションの新着は、購読している Live の重ねる表示へだけ渡し、ほかの callback を呼ばない。
+  test('hands reaction events to their subscribers only', async () => {
+    let capturedCallback: EventCallback | undefined;
+    listenMock.mockImplementation(async (_event: string, callback: EventCallback) => {
+      capturedCallback = callback;
+      return () => undefined;
+    });
+    const callbacks = [vi.fn(), vi.fn(), vi.fn(), vi.fn()] as const;
+    const listener = vi.fn();
+    const unsubscribe = subscribeReactionReceived(listener);
+    renderHook(() => useRuntimeEventBridge(...callbacks));
+    await vi.waitFor(() => expect(capturedCallback).toBeDefined());
+
+    const reaction = {
+      target_object_id: 'start',
+      reaction_id: 'reaction-1',
+      reaction: { reaction_key_kind: 'emoji', normalized_reaction_key: 'emoji:🎉', emoji: '🎉', custom_asset: null },
+      updated_at: 1,
+    };
+    capturedCallback?.({ payload: { type: 'reaction_received', reaction } });
+    unsubscribe();
+    capturedCallback?.({ payload: { type: 'reaction_received', reaction } });
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(reaction);
+    callbacks.forEach((callback) => expect(callback).not.toHaveBeenCalled());
   });
 
   test('ignores unknown runtime event types', async () => {

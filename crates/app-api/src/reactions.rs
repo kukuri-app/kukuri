@@ -1,5 +1,8 @@
 use crate::service::*;
 
+/// 新しく届いたものとして画面へ知らせるのは、付いてからこの時間(ミリ秒)の内のリアクションだけ(#1841)。
+pub(crate) const REACTION_EVENT_RECENT_MS: i64 = 30_000;
+
 impl AppService {
     pub async fn toggle_reaction(
         &self,
@@ -69,6 +72,7 @@ impl AppService {
                 self.services.docs_sync.as_ref(),
                 self.services.projection_store.as_ref(),
                 self.services.blob_service.as_ref(),
+                &self.services.reaction_changes,
                 target_topic_id.as_str(),
                 &target.source_replica_id,
                 stable_key(
@@ -137,10 +141,13 @@ impl AppService {
         )
         .await?;
         self.services.store.put_envelope(envelope.clone()).await?;
+        let row = reaction_projection_row(&verified);
         self.services
             .projection_store
-            .upsert_reaction_cache(reaction_projection_row(&verified))
+            .upsert_reaction_cache(row.clone())
             .await?;
+        // 自分の付け外しも、届いたリアクションと同じく知らせる(#1841)。
+        let _ = self.services.reaction_changes.send(row);
         if let Err(error) = self
             .services
             .hint_transport
@@ -224,6 +231,36 @@ impl AppService {
             .map(|asset| custom_reaction_asset_view_from_doc(&asset))
             .filter(|asset| seen.insert(asset.asset_id.clone()))
             .collect())
+    }
+
+    /// 手元へ反映したリアクションの新しい版の行(#1841)。画面へ知らせるかは `reaction_received_view` で決める。
+    pub fn subscribe_reaction_changes(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<ReactionProjectionRow> {
+        self.services.reaction_changes.subscribe()
+    }
+
+    /// 画面へ知らせるリアクション(#1841)。外した版、付いてから `REACTION_EVENT_RECENT_MS` を過ぎた版(再接続や照合で届いた
+    /// 古い版)、非表示の作者(mute と、どちらの向きの block)のものは知らせない。
+    pub async fn reaction_received_view(
+        &self,
+        row: &ReactionProjectionRow,
+    ) -> Result<Option<ReactionReceivedView>> {
+        if row.status != ObjectStatus::Active
+            || row.updated_at < Utc::now().timestamp_millis() - REACTION_EVENT_RECENT_MS
+            || self
+                .current_hidden_author_pubkeys()
+                .await?
+                .contains(row.author_pubkey.as_str())
+        {
+            return Ok(None);
+        }
+        Ok(Some(ReactionReceivedView {
+            target_object_id: row.target_object_id.as_str().to_string(),
+            reaction_id: row.reaction_id.as_str().to_string(),
+            reaction: reaction_key_view_from_projection(row),
+            updated_at: row.updated_at,
+        }))
     }
 
     pub async fn list_recent_reactions(&self, limit: usize) -> Result<Vec<RecentReactionView>> {

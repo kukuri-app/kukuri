@@ -116,10 +116,10 @@ pub(crate) use crate::views::{
     PostWithdrawalView, PrivateChannelCapability, PrivateChannelController,
     PrivateChannelControllerState, PrivateChannelControllerTake, PrivateChannelEpochCapability,
     ProfileAssetView, ProfileInput, PublishMetaverseRoomEventInput, ReactionKeyView,
-    ReactionStateView, ReactionSummaryView, RecentReactionView, ReplyPreviewAuthorView,
-    ReplyPreviewView, RepostSourceView, RevokeDomeConnectionInput, SocialConnectionKind,
-    SyncStatus, TimelineView, TopicSyncStatus, UpdateGameRoomInput, UpdateMetaverseRoomInput,
-    WithdrawDomeConnectionProposalInput,
+    ReactionReceivedView, ReactionStateView, ReactionSummaryView, RecentReactionView,
+    ReplyPreviewAuthorView, ReplyPreviewView, RepostSourceView, RevokeDomeConnectionInput,
+    SocialConnectionKind, SyncStatus, TimelineView, TopicSyncStatus, UpdateGameRoomInput,
+    UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
 };
 
 mod account_sync_support;
@@ -252,8 +252,8 @@ pub(crate) use object_persistence_support::{
     persist_private_channel_epoch_handoff_grant, persist_private_channel_metadata,
     persist_private_channel_participant, persist_private_channel_policy, persist_session_envelope,
     post_index_records, post_withdrawal_row, projection_blob_fetch_timeout,
-    projection_row_from_post, reaction_cache_key, reaction_projection_row,
-    reaction_state_view_from_rows, read_private_epoch_snapshot,
+    projection_row_from_post, reaction_cache_key, reaction_key_view_from_projection,
+    reaction_projection_row, reaction_state_view_from_rows, read_private_epoch_snapshot,
     recent_reaction_view_from_projection, search_key_or_asset_id, split_public_channel_activity_id,
     store_manifest_blob, timeline_index_prefix,
 };
@@ -407,7 +407,11 @@ pub struct ServiceHandles {
     /// 自分を指す相手の follow の edge を新しく保存したときに、相手の pubkey を知らせる(#1521 AC-1b)。本人の別の端末で
     /// 変えた自分の profile を採ったときは、自分の pubkey を知らせる(#1220 AC-3b)。
     pub(crate) author_relationship_changes: tokio::sync::broadcast::Sender<String>,
+    /// 検証済みのリアクションを手元へ反映したときの、新しい版の行(#1841)。同じ版の置き直しと古い版は送らない。
+    pub(crate) reaction_changes: ReactionChanges,
 }
+
+pub(crate) type ReactionChanges = tokio::sync::broadcast::Sender<ReactionProjectionRow>;
 
 impl ServiceHandles {
     /// 自分を指す follow の edge を新しく保存したら、相手を知らせる。画面はその相手の開いている列を読み直す(#1521 AC-1b)。
@@ -584,6 +588,7 @@ impl ServiceHandles {
             account_sync: Arc::default(),
             link_preview_reads: Arc::default(),
             author_relationship_changes: tokio::sync::broadcast::channel(64).0,
+            reaction_changes: tokio::sync::broadcast::channel(64).0,
         }
     }
 }

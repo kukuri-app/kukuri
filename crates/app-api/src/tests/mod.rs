@@ -78,6 +78,7 @@ mod private_channels;
 mod public_channel_list;
 mod public_channel_live;
 mod public_channels;
+mod reaction_events;
 mod reaction_sets;
 mod reactions;
 mod session_rehome;

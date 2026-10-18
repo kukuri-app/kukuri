@@ -34,6 +34,76 @@ fn adult_label_eviction_event_identifies_the_hash() {
     );
 }
 
+// #1841 AC-1: 付けたリアクションは、対象・reaction id・key・時刻だけを画面へ知らせる(作者を含めない)。外した版は知らせない。
+#[tokio::test]
+async fn added_reactions_reach_runtime_event_subscribers_without_the_author() {
+    let dir = tempdir().unwrap();
+    let runtime = DesktopRuntime::new_with_config_and_identity(
+        dir.path().join("reaction-event.db"),
+        TransportNetworkConfig::loopback(),
+        IdentityStorageMode::FileOnly,
+    )
+    .await
+    .unwrap();
+    let topic = "kukuri:topic:reaction-event";
+    let post_id = runtime
+        .create_post(CreatePostRequest {
+            topic: topic.into(),
+            content: "react".into(),
+            reply_to: None,
+            channel_ref: ChannelRef::Public,
+            attachments: Vec::new(),
+            content_labels: Vec::new(),
+            live: None,
+        })
+        .await
+        .unwrap();
+    let mut events = runtime.subscribe_events();
+    let toggle = || ToggleReactionRequest {
+        target_topic_id: topic.into(),
+        target_object_id: post_id.clone(),
+        reaction_key: ReactionKeyRequest::Emoji {
+            emoji: "🎉".into()
+        },
+        channel_ref: Some(ChannelRef::Public),
+    };
+    runtime.toggle_reaction(toggle()).await.unwrap();
+    runtime.toggle_reaction(toggle()).await.unwrap();
+    let mut reactions = Vec::new();
+    while let Ok(event) = timeout(Duration::from_secs(2), events.recv()).await {
+        if let Ok(RuntimeEvent::ReactionReceived { reaction }) = event {
+            reactions.push(serde_json::to_value(reaction).unwrap());
+        }
+    }
+    assert_eq!(reactions.len(), 1, "only the added version is announced");
+    let reaction = &reactions[0];
+    assert_eq!(reaction["target_object_id"], post_id.as_str());
+    assert_eq!(reaction["reaction"]["emoji"], "🎉");
+    assert!(reaction["reaction_id"].is_string() && reaction["updated_at"].is_number());
+    let mut fields = reaction.as_object().unwrap().keys().collect::<Vec<_>>();
+    fields.sort();
+    assert_eq!(
+        fields,
+        ["reaction", "reaction_id", "target_object_id", "updated_at"],
+        "the author is not sent to the screen"
+    );
+    runtime.shutdown_checked().await.unwrap();
+}
+
+// #1841: 画面へ送るリアクションの新着は 1 秒に決まった数まで(全種類で共有する event の channel を溢れさせない)。
+#[test]
+fn reaction_events_are_limited_per_second() {
+    use crate::runtime::{REACTION_EVENTS_PER_SECOND, ReactionEventBudget};
+    let mut budget = ReactionEventBudget::default();
+    let start = 10_000;
+    let sent = (0..REACTION_EVENTS_PER_SECOND + 5)
+        .filter(|_| budget.take(start))
+        .count();
+    assert_eq!(sent, REACTION_EVENTS_PER_SECOND as usize);
+    assert!(!budget.take(start + 999));
+    assert!(budget.take(start + 1_000));
+}
+
 #[tokio::test]
 async fn reclaimed_adult_label_reaches_runtime_event_subscribers() {
     let _resource = lock_test_resource(TestResource::CommunityNodeServer).await;

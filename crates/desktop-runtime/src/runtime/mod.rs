@@ -20,8 +20,8 @@ use kukuri_app_api::{
     JoinedPrivateChannelView, LiveSessionView, MetaverseAssetRefView, MetaverseRoomEventView,
     MoveDomeInput, NotificationPageView, NotificationStatusView, NotificationView, PostView,
     PrepareCommunityNodeDomeHostingInput, PrepareDomeTransitionInput, PrivateChannelCapability,
-    ProfileInput, PublishMetaverseRoomEventInput, ReactionStateView, RecentReactionView,
-    ResyncDomeSnapshotsInput, RevokeDomeConnectionInput, ServiceHandles,
+    ProfileInput, PublishMetaverseRoomEventInput, ReactionReceivedView, ReactionStateView,
+    RecentReactionView, ResyncDomeSnapshotsInput, RevokeDomeConnectionInput, ServiceHandles,
     StartOwnerDomeHostingInput, SubmitDomeSessionInput, SyncStatus, TimelineView,
     UpdateGameRoomInput, UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
 };
@@ -130,6 +130,36 @@ pub enum RuntimeEvent {
     AuthorRelationshipChanged {
         pubkey: Option<String>,
     },
+    /// 手元へ反映したリアクションの新しい版(#1841)。Live の表示が新しく届いたものを浮かべる。外した版と非表示の作者のものは
+    /// 送らない。溢れた分は送り直さない。
+    ReactionReceived {
+        reaction: ReactionReceivedView,
+    },
+}
+
+/// #1841: 画面へ送るリアクションの新着の上限(1 秒あたり)。画面が浮かべる同時の数と待ちの数の和で、表示できる分は減らさない。
+/// event の channel は全種類で共有し、溢れると画面へ読み直し(画像の解放・関係の読み直し)を促すので、照合で多くのリアクションを
+/// まとめて反映しても溢れさせない。
+pub(crate) const REACTION_EVENTS_PER_SECOND: u32 = 36;
+
+#[derive(Default)]
+pub(crate) struct ReactionEventBudget {
+    window_started_at_ms: i64,
+    sent: u32,
+}
+
+impl ReactionEventBudget {
+    pub(crate) fn take(&mut self, now_ms: i64) -> bool {
+        if now_ms - self.window_started_at_ms >= 1_000 {
+            self.window_started_at_ms = now_ms;
+            self.sent = 0;
+        }
+        if self.sent >= REACTION_EVENTS_PER_SECOND {
+            return false;
+        }
+        self.sent += 1;
+        true
+    }
 }
 
 pub struct DesktopRuntime {
@@ -669,6 +699,9 @@ impl DesktopRuntime {
             let notify = app_service.notification_inserted_notify();
             let mut label_evictions = store.subscribe_adult_label_evictions();
             let mut relationship_changes = app_service.subscribe_author_relationship_changes();
+            let mut reaction_changes = app_service.subscribe_reaction_changes();
+            let reactions_app = Arc::downgrade(&app_service);
+            let mut reaction_budget = ReactionEventBudget::default();
             let sender = event_sender.clone();
             n0_future::task::spawn(async move {
                 loop {
@@ -694,6 +727,19 @@ impl DesktopRuntime {
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                                 let _ = sender.send(RuntimeEvent::AuthorRelationshipChanged { pubkey: None });
                             }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        },
+                        // #1841: 溢れた分は送り直さない(浮かべる演出だけが使い、数は投稿の読み直しで揃う)。
+                        change = reaction_changes.recv() => match change {
+                            Ok(row) => {
+                                let Some(app) = reactions_app.upgrade() else { break };
+                                if let Ok(Some(reaction)) = app.reaction_received_view(&row).await
+                                    && reaction_budget.take(chrono::Utc::now().timestamp_millis())
+                                {
+                                    let _ = sender.send(RuntimeEvent::ReactionReceived { reaction });
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         },
                     }

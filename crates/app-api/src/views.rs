@@ -209,6 +209,17 @@ pub struct RecentReactionView {
     pub updated_at: i64,
 }
 
+/// 手元へ反映したリアクションの新しい版(#1841)。Live の表示が、新しく届いたものを浮かべるのに使う。作者は含めない。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct ReactionReceivedView {
+    pub target_object_id: String,
+    pub reaction_id: String,
+    pub reaction: ReactionKeyView,
+    pub updated_at: i64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]

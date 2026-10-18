@@ -37,7 +37,7 @@
       "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
-      "lines": 1115,
+      "lines": 1117,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {
@@ -65,8 +65,12 @@
       "path": "crates/harness/src/scenarios/desktop_smoke.rs"
     },
     {
-      "lines": 1029,
+      "lines": 1030,
       "path": "crates/app-api/src/service/replica_window.rs"
+    },
+    {
+      "lines": 1030,
+      "path": "crates/app-api/src/views.rs"
     },
     {
       "lines": 1027,
@@ -75,10 +79,6 @@
     {
       "lines": 1026,
       "path": "crates/store/src/parity/lists.rs"
-    },
-    {
-      "lines": 1019,
-      "path": "crates/app-api/src/views.rs"
     },
     {
       "lines": 1000,

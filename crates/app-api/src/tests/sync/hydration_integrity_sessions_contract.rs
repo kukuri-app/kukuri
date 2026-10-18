@@ -35,6 +35,7 @@ async fn reaction_hint(app: &AppService, topic: &TopicId, target: &str) {
         app.services.docs_sync.as_ref(),
         app.services.projection_store.as_ref(),
         app.services.blob_service.as_ref(),
+        &app.services.reaction_changes,
         topic.as_str(),
         &topic_replica_id(topic.as_str()),
         &EnvelopeId::from(target),
