@@ -77,6 +77,8 @@ function computeReactionPopoverLayout(viewportWidth: number): ReactionPopoverLay
 
 type ReactionPickerPopoverProps = {
   post: PostCardView['post'];
+  // 開く操作の名前(既定は「リアクション」)。
+  label?: string;
   recentReactions?: RecentReactionView[];
   assets?: CustomReactionAssetView[];
   mediaObjectUrls?: Record<string, string | null>;
@@ -104,6 +106,7 @@ function emojiSearchLabel(emoji: string): string {
 
 export function ReactionPickerPopover({
   post,
+  label,
   recentReactions = [],
   assets = [],
   mediaObjectUrls = {},
@@ -211,7 +214,7 @@ export function ReactionPickerPopover({
           variant='secondary'
           className='post-action-button'
           type='button'
-          label={t('actions.react')}
+          label={label ?? t('actions.react')}
           disabled={!onToggleReaction}
         >
           <SmilePlus className='size-4' aria-hidden='true' />

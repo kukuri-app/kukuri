@@ -82,10 +82,6 @@
     },
     {
       "lines": 1000,
-      "path": "apps/desktop/src/components/core/PostCard.tsx"
-    },
-    {
-      "lines": 1000,
       "path": "apps/desktop/tests/playwright/shell.smoke.spec.ts"
     }
   ]

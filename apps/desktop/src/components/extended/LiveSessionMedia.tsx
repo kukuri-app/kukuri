@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Volume2 } from 'lucide-react';
 
@@ -24,9 +24,10 @@ export function LiveSessionMedia({ api, topic, session, isOwner }: LiveSessionMe
   return <LiveViewer api={api} request={{ topic, session_id: session.session_id }} />;
 }
 
-type MediaProps = { api: LiveMediaApi; request: LiveMediaRequest };
+type MediaProps = { api: LiveMediaApi; request: LiveMediaRequest; overlay?: ReactNode };
 
-function LiveViewer({ api, request }: MediaProps) {
+/// 映像と音量。`overlay` は映像の上に重ねる DOM で、映像の bytes・署名・時刻には触れない(#1841)。
+export function LiveViewer({ api, request, overlay }: MediaProps) {
   const { t } = useTranslation('live');
   const [state, setState] = useState<LiveWatchState | 'connecting'>('connecting');
   const [volume, setVolume] = useState(1);
@@ -55,13 +56,16 @@ function LiveViewer({ api, request }: MediaProps) {
 
   return (
     <div className='flex flex-col gap-2'>
-      <canvas
-        ref={canvasRef}
-        aria-label={t('media.video')}
-        hidden={state !== 'watching'}
-        className='aspect-video w-full rounded-[var(--radius-input)] bg-[var(--surface-panel-muted)] object-contain'
-      />
-      {state === 'watching' ? null : <p role='status'>{t(`media.states.${state}`)}</p>}
+      <div className='live-viewer-screen'>
+        <canvas
+          ref={canvasRef}
+          aria-label={t('media.video')}
+          hidden={state !== 'watching'}
+          className='aspect-video w-full rounded-[var(--radius-input)] bg-[var(--surface-panel-muted)] object-contain'
+        />
+        {overlay}
+        {state === 'watching' ? null : <p role='status'>{t(`media.states.${state}`)}</p>}
+      </div>
       <div className='flex items-center gap-2'>
         <Volume2 className='size-4 shrink-0' aria-hidden='true' />
         <input
