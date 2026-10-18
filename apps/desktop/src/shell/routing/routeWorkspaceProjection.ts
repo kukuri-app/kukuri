@@ -22,6 +22,8 @@ type RouteWorkspaceProjection = {
   selectedDirectMessagePeerPubkey: string | null;
   selectedGameRoomId: string | null;
   selectedLiveSessionId: string | null;
+  // 左側に出す Live の場所(列の scope と違うときだけ。#1841)。
+  selectedLivePlace?: ColumnScope | null;
   selectedThread: string | null;
   // topic の公開スレッドの一覧の列(#1840)。
   publicThreadList?: boolean;
@@ -52,6 +54,7 @@ export function workspaceForRoute(
     selectedDirectMessagePeerPubkey,
     selectedGameRoomId,
     selectedLiveSessionId,
+    selectedLivePlace,
     selectedThread,
     publicThreadList,
   } = projection;
@@ -199,6 +202,7 @@ export function workspaceForRoute(
     kind: routeColumnKind,
     scope: routeScope,
     entityId: routeEntityId,
+    ...(routeColumnKind === 'stream' && routeEntityId && selectedLivePlace ? { live: selectedLivePlace } : {}),
     pinned: false,
   });
 }

@@ -69,6 +69,21 @@ test('keeps an open private column within the eight-list budget while it is offs
   expect(store.getState().timelinesByKey[privateKey]).toHaveLength(1);
 });
 
+// #1841: ライブの列の左側に重ねる会話の場所の投稿は、列を切り替えても保持の対象に入る(列を閉じると外れる)。
+test('keeps the conversation rows of a column that shows a live large until it closes', () => {
+  const store = createDesktopShellStore();
+  const workspace = store.getState().workspaceState;
+  const thread = { topicId: 'kukuri:topic:other', channelId: 'pc-1700000000000-cccccccccccccccc' };
+  const key = timelineStorageKeyForChannel(thread.topicId, thread.channelId);
+  const stage: ColumnState = { id: columnIdentityId('stream', thread, 'live-1'), kind: 'stream', scope: thread,
+    entityId: 'live-1', pinned: false, preferredDesktopSpan: 2 };
+  store.getState().patchState({ timelinesByKey: { [key]: [{ object_id: 'post' } as PostView] } });
+  store.getState().patchState({ workspaceState: { ...workspace, columns: [...workspace.columns, stage], activeColumnId: stage.id } });
+  expect(store.getState().timelinesByKey[key]).toHaveLength(1);
+  store.getState().patchState({ workspaceState: closeColumn(store.getState().workspaceState, stage.id) });
+  expect(store.getState().timelinesByKey[key]).toBeUndefined();
+});
+
 test('closing a timeline column frees its rows while keeping the continuation cursor', () => {
   const store = createDesktopShellStore();
   const key = 'kukuri:topic:general::public';

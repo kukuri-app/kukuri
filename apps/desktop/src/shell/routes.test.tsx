@@ -330,7 +330,8 @@ test('live session route restores and retains unavailable targets for displayed 
   await waitFor(() => {
     expect(window.location.hash).toBe('#/live?topic=kukuri%3Atopic%3Ageneral&sessionId=session-demo');
   });
-  expect(within(getActiveColumn('Live')).getByText('Live Demo').closest('article')).toHaveClass('post-card-targeted');
+  // 列の Live は左側にも大きく出る(#1841)ので、一覧のカードで確かめる。
+  expect(getActiveColumn('Live').querySelector('article[data-live-session-id="session-demo"]')).toHaveClass('post-card-targeted');
 
   firstRender.unmount();
 

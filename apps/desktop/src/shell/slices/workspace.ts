@@ -45,6 +45,9 @@ export type ColumnState = {
   timelineFilter?: ColumnTimelineFilter;
   // kind === 'publicThreads' の Column のみ意味を持つ。未設定は最後の投稿の新しい順(#1840 判断 2)。
   publicThreadOrder?: PublicChannelOrder;
+  // kind === 'stream' の Column のみ意味を持つ。左側に出す Live の場所(Live を作った topic・channel)。列の scope と違うとき
+  // (別の場所の紹介 post から開いたとき)だけ持つ(#1841)。
+  live?: ColumnScope;
 };
 
 export type ColumnStateInput = Omit<ColumnState, 'preferredDesktopSpan'> & {

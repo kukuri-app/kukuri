@@ -90,6 +90,8 @@ function parseColumn(value: unknown): ColumnState | null {
   if (kind === 'publicThreads' && (value.publicThreadOrder === 'last_post' || value.publicThreadOrder === 'created')) {
     column.publicThreadOrder = value.publicThreadOrder;
   }
+  const live = kind === 'stream' ? parseScope(value.live) : undefined;
+  if (live) column.live = live;
   return column;
 }
 
@@ -108,6 +110,7 @@ export function captureWorkspaceLayoutSnapshot(
       ...(column.timelineFlow ? { timelineFlow: true } : {}),
       ...(column.timelineFilter ? { timelineFilter: column.timelineFilter } : {}),
       ...(column.publicThreadOrder ? { publicThreadOrder: column.publicThreadOrder } : {}),
+      ...(column.live ? { live: column.live } : {}),
       pinned: column.pinned,
       preferredDesktopSpan: normalizeColumnSpan(column.kind, column.preferredDesktopSpan),
     })),

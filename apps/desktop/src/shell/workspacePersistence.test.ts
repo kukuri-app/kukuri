@@ -186,6 +186,28 @@ describe('workspace layout persistence', () => {
     expect(restored.columns[1].timelineFilter).toBeUndefined();
   });
 
+  // #1841: 別の場所の Live を左側に出すライブの列は、Live の場所を往復する。ライブの列でない列と壊れた値は読まない。
+  it('round-trips the live place of a stream column only', () => {
+    const fallback = createInitialWorkspaceState();
+    const live = { topicId: 'kukuri:topic:other', channelId: null };
+    const storage = memoryStorage(
+      JSON.stringify({
+        version: 1,
+        activeColumnId: 'stream',
+        columns: [
+          { id: 'stream', kind: 'stream', scope: { topicId: 'kukuri:topic:general', channelId: null }, entityId: 'live-1', live, pinned: false, preferredDesktopSpan: 2 },
+          { id: 'timeline', kind: 'timeline', live, pinned: true, preferredDesktopSpan: 1 },
+          { id: 'broken', kind: 'stream', live: { topicId: 42 }, pinned: false, preferredDesktopSpan: 2 },
+        ],
+      })
+    );
+
+    const restored = readWorkspaceLayout(storage, fallback);
+    expect(restored.columns.map((column) => column.live)).toEqual([live, undefined, undefined]);
+    expect(writeWorkspaceLayout(storage, restored)).toBe(true);
+    expect(readWorkspaceLayout(storage, fallback).columns[0].live).toEqual(live);
+  });
+
   it('drops invalid persisted timelineView values', () => {
     const fallback = createInitialWorkspaceState();
     const storage = memoryStorage(

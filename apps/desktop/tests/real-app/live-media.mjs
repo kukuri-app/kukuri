@@ -78,7 +78,7 @@ export const observeDraws = (viewer) =>
       if (source instanceof VideoFrame && this.canvas.getAttribute('aria-label') === ${JSON.stringify(VIDEO)}) {
         const [red, , blue] = this.getImageData(2, 2, 1, 1).data;
         draws.push({ at: performance.timeOrigin + performance.now(), red, blue, size: source.displayWidth + 'x' + source.displayHeight,
-          embedded: Boolean(this.canvas.closest('.post-live')) });
+          embedded: Boolean(this.canvas.closest('.post-live')), stage: Boolean(this.canvas.closest('.live-stage')) });
         if (draws.length > 3000) draws.shift();
       }
       return result;

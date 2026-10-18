@@ -25,16 +25,16 @@
       "path": "crates/cn-operator/src/docs.rs"
     },
     {
+      "lines": 1138,
+      "path": "apps/desktop/src/shell/useDesktopShellData.ts"
+    },
+    {
       "lines": 1132,
       "path": "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
     },
     {
       "lines": 1126,
       "path": "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts"
-    },
-    {
-      "lines": 1126,
-      "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
       "lines": 1117,
@@ -79,6 +79,10 @@
     {
       "lines": 1026,
       "path": "crates/store/src/parity/lists.rs"
+    },
+    {
+      "lines": 1005,
+      "path": "apps/desktop/src/shell/DesktopShellPage.tsx"
     },
     {
       "lines": 1000,

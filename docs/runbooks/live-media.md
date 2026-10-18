@@ -4,7 +4,7 @@
 
 ## 自動の試験
 
-`apps/desktop/tests/real-app/scenarios/live.mjs`（LV-1〜LV-9・LV-11・LV-12。配信者 H・視聴者 V1・V2）と `live-relay.mjs`（LV-10。H・V1〜V5）。部品は `live-media.mjs`。動かし方は [dev.md](dev.md) の「実際のアプリを複数動かす自動の試験」。CI では Linux package と windows-fast で、関係する PR ごとと毎晩に動く。
+`apps/desktop/tests/real-app/scenarios/live.mjs`（LV-1〜LV-9・LV-11〜LV-13。配信者 H・視聴者 V1・V2）と `live-relay.mjs`（LV-10。H・V1〜V5）。部品は `live-media.mjs`。動かし方は [dev.md](dev.md) の「実際のアプリを複数動かす自動の試験」。CI では Linux package と windows-fast で、関係する PR ごとと毎晩に動く。
 
 - 取り込み: camera は、webview の取り込みの API が返す映像を試験の映像（canvas）に置き換える（API は本物を呼び、許可の経路を通す）。画面は Windows では本物（画面全体の自動の選択）で、Linux の CI には画面の取り込みの portal が無いので置き換える。選択の取り消しは API の拒否で模擬する。Linux の webview の疑似 camera（inspector で有効にする）の frame は encode できないので、映像には使わない。
 - 映像: 視聴者の canvas に描かれた frame（描いた時刻・画素の色・大きさ）を記録して確かめる。
@@ -23,6 +23,7 @@
 | LV-9 | log の経路は `direct_p2p`。視聴者の識別子は media の log に出ない | 各 instance の log |
 | LV-11 | 配信中に H が live の列を離れても（列が閉じる）、V1 に描かれ続け、音が出る（#1839 AC-3） | canvas・出力 |
 | LV-12 | V1 が同じ live を live の列と開始 post の 2 か所で見ても、両方に描かれ、音は 2 重にならない。列を閉じても開始 post で続き、音量 0 で無音、戻すと音が戻る（#1839 AC-4） | canvas・出力 |
+| LV-13 | V1 が一覧のカードの「大きく表示」で live を列の左側に出しても、左側と開始 post の両方に描かれ、音は 2 重にならない。左側に出した列を閉じても開始 post で続く（#1841 AC-3） | canvas・出力 |
 | LV-10 | 直接の視聴者 4 人の後の 5 人目に、転送で描画と音が届く。転送している視聴者を止めると、5 人目の描画は 10 秒ほどで戻る。転送された映像と音のずれは LV-3 と同じ方法で測って log に残すだけ（6 つの app が CI の 4 vCPU を取り合い、測る値が揺れるため。2026-10-14 のユーザー判断） | canvas・出力 |
 
 ## 既知の制約

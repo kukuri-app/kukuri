@@ -167,6 +167,21 @@ export async function run({ launch, restart, log, topic }) {
     await reopenLiveColumn(first, topic);
     log(`LV-12: two views share one watch${bothLevel === null ? '' : ` (sound ${bothLevel.toFixed(4)} vs ${unit.toFixed(4)})`}, the start post keeps drawing after the live column closes${mutedIn === null ? '' : `, volume 0 silences in ${mutedIn} ms`}`);
 
+    // LV-13(#1841 AC-3): V1 が一覧のカードの「大きく表示」で Live を列の左側に出しても、視聴は 1 つで(音は 2 重にならず)
+    // 左側と開始 post の中の両方に描かれる。左側に出した列を閉じても、開始 post の中で続く。
+    await click(first, t('actions.stage'), { within: CARD });
+    await first.evaluate(`(document.querySelector('.post-live')?.scrollIntoView({ block: 'center' }), true)`);
+    await eventually('the first viewer to draw on the stage and in the start post', async () => {
+      const draws = await drawsSince(first, Date.now() - 2_000);
+      return draws.some((each) => each.stage) && draws.some((each) => each.embedded);
+    }, 30_000);
+    const stagedLevel = await expectSound('the host while shown on the stage and in the start post');
+    if (unit !== null) assert.ok(stagedLevel < 1.5 * unit, `one sound for the stage and the start post (${stagedLevel} vs ${unit})`);
+    await closeLiveColumn(first);
+    await expectDrawing(first, 'the camera in the start post after closing the staged live column');
+    await reopenLiveColumn(first, topic);
+    log(`LV-13: the stage and the start post share one watch${stagedLevel === null ? '' : ` (sound ${stagedLevel.toFixed(4)} vs ${unit.toFixed(4)})`}, the start post keeps drawing after the staged column closes`);
+
     // LV-6: 途中で参加した視聴者に、2 秒以内に最初の frame が描かれる。
     const joinedAt = Date.now();
     await click(second, JOIN, { within: CARD, timeout: 60_000 });

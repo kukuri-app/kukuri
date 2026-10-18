@@ -2,6 +2,7 @@
   "actions": {
     "introduce": "紹介する",
     "openStartPost": "元の投稿を開く",
+    "stage": "大きく表示",
     "start": "ライブを開始"
   },
   "empty": "ライブセッションはありません",

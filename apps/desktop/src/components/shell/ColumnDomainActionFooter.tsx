@@ -35,10 +35,6 @@ export function ColumnDomainActionFooter({
     (state) => state.syncStatus.local_author_pubkey
   );
   if (!column.scope) return null;
-  const scopeKey = timelineStorageKeyForChannel(
-    column.scope.topicId,
-    column.scope.channelId
-  );
   const button = (
     label: string,
     Icon: typeof Radio,
@@ -66,22 +62,24 @@ export function ColumnDomainActionFooter({
     if (!column.entityId) {
       return button(t('live:actions.start'), Radio, onOpenLiveCreate);
     }
-    const session = liveSessionsByScopeKey[scopeKey]?.find(
+    // 別の場所の紹介 post から開いた Live は、Live の場所の一覧で探す(#1841)。
+    const place = column.live ?? column.scope;
+    const session = liveSessionsByScopeKey[timelineStorageKeyForChannel(place.topicId, place.channelId)]?.find(
       (candidate) => candidate.session_id === column.entityId
     );
     if (!session || session.status === 'Ended') return null;
     if (session.host_pubkey === localAuthorPubkey) {
       return button(t('common:actions.end'), Square, () => {
-        void onEndLiveSession(session.session_id, column.scope!.topicId);
+        void onEndLiveSession(session.session_id, place.topicId);
       });
     }
     if (session.joined_by_me) {
       return button(t('common:actions.leave'), LogOut, () => {
-        void onLeaveLiveSession(session.session_id, column.scope!.topicId);
+        void onLeaveLiveSession(session.session_id, place.topicId);
       });
     }
     return button(t('common:actions.join'), LogIn, () => {
-      void onJoinLiveSession(session.session_id, column.scope!.topicId);
+      void onJoinLiveSession(session.session_id, place.topicId);
     });
   }
 

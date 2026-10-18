@@ -61,6 +61,9 @@ export function useSyncRoute({
       const nextSelectedLiveSessionId = hasOverride('selectedLiveSessionId')
         ? overrides?.selectedLiveSessionId ?? null
         : columnRoute?.selectedLiveSessionId ?? currentState.selectedLiveSessionId;
+      const nextSelectedLivePlace = hasOverride('selectedLivePlace')
+        ? overrides?.selectedLivePlace ?? null
+        : columnRoute?.selectedLivePlace ?? null;
       const nextSelectedGameRoomId = hasOverride('selectedGameRoomId')
         ? overrides?.selectedGameRoomId ?? null
         : columnRoute?.selectedGameRoomId ?? currentState.selectedGameRoomId;
@@ -88,6 +91,7 @@ export function useSyncRoute({
         selectedDirectMessagePeerPubkey: nextSelectedDirectMessagePeerPubkey,
         selectedGameRoomId: nextSelectedGameRoomId,
         selectedLiveSessionId: nextSelectedLiveSessionId,
+        selectedLivePlace: nextSelectedLivePlace,
         selectedThread: nextSelectedThread,
         settingsOpen: nextSettingsOpen,
         settingsSection: nextSettingsSection,

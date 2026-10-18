@@ -24,9 +24,13 @@ export type DesktopShellRouteOverrides = {
   timelineView?: TimelineWorkspaceView;
   selectedChannelId?: string | null;
   selectedLiveSessionId?: string | null;
+  selectedLivePlace?: LivePlace | null;
   selectedGameRoomId?: string | null;
   publicThreadList?: boolean;
 };
+
+/// ライブの列の左側に出す Live の場所(Live を作った topic・channel)。列の scope と違うときだけ URL に載せる(#1841)。
+export type LivePlace = { topicId: string; channelId: string | null };
 
 export type OpenThreadOptions = {
   /** 明示的な通知操作の世代を取得・navigation完了まで引き継ぐ。永続化しない。 */
@@ -215,6 +219,7 @@ export type ParsedRouteState = {
   requestedAuthorPubkey: string | null;
   requestedPeerPubkey: string | null;
   requestedSessionId: string | null;
+  requestedLivePlace: LivePlace | null;
   requestedRoomId: string | null;
 };
 
@@ -259,6 +264,9 @@ export function parseShellRouteState(location: HashRouteLocation): ParsedRouteSt
     requestedAuthorPubkey: params.get('authorPubkey'),
     requestedPeerPubkey: params.get('peerPubkey'),
     requestedSessionId: params.get('sessionId')?.trim() || null,
+    requestedLivePlace: params.get('liveTopic')?.trim()
+      ? { topicId: params.get('liveTopic')!.trim(), channelId: params.get('liveChannel')?.trim() || null }
+      : null,
     requestedRoomId: params.get('roomId')?.trim() || null,
   };
 }
@@ -308,6 +316,7 @@ export type RouteState = {
   settingsSection: SettingsSection;
   selectedChannelId: string | null;
   selectedLiveSessionId: string | null;
+  selectedLivePlace?: LivePlace | null;
   selectedGameRoomId: string | null;
   // topic の公開スレッドの一覧の列(#1840)。`#/timeline?topic=…&context=publicThreads`。
   publicThreadList?: boolean;
@@ -365,6 +374,10 @@ export function buildShellUrl(options: RouteState): string {
   }
   if (options.primarySection === 'live' && options.selectedLiveSessionId) {
     search.set('sessionId', options.selectedLiveSessionId);
+    if (options.selectedLivePlace) {
+      search.set('liveTopic', options.selectedLivePlace.topicId);
+      if (options.selectedLivePlace.channelId) search.set('liveChannel', options.selectedLivePlace.channelId);
+    }
   }
   if (options.primarySection === 'game' && options.selectedGameRoomId) {
     search.set('roomId', options.selectedGameRoomId);

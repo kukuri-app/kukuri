@@ -155,6 +155,15 @@ describe('parseShellRouteState', () => {
     });
   });
 
+  test('parses the live place of a live route (#1841)', () => {
+    expect(
+      parseShellRouteState({ pathname: '/live', search: '?topic=topic-a&sessionId=s-1&liveTopic=topic-b&liveChannel=pc-1' })
+    ).toMatchObject({ requestedSessionId: 's-1', requestedLivePlace: { topicId: 'topic-b', channelId: 'pc-1' } });
+    expect(parseShellRouteState({ pathname: '/live', search: '?topic=topic-a&sessionId=s-1&liveTopic=topic-b' }).requestedLivePlace)
+      .toEqual({ topicId: 'topic-b', channelId: null });
+    expect(parseShellRouteState({ pathname: '/live', search: '?topic=topic-a&sessionId=s-1' }).requestedLivePlace).toBeNull();
+  });
+
   test('round-trips canonical messages state through the URL', () => {
     const url = buildShellUrl({
       activeTopic: 'topic-a',
@@ -372,6 +381,21 @@ describe('buildShellUrl', () => {
       name: 'emits sessionId only on the live section',
       overrides: { primarySection: 'live', selectedLiveSessionId: 'session-1' },
       expected: '/live?topic=kukuri%3Atopic%3Ageneral&sessionId=session-1',
+    },
+    {
+      name: 'emits the live place with sessionId on the live section',
+      overrides: {
+        primarySection: 'live',
+        selectedLiveSessionId: 'session-1',
+        selectedLivePlace: { topicId: 'kukuri:topic:other', channelId: 'pc-1700000000000-cccccccccccccccc' },
+      },
+      expected:
+        '/live?topic=kukuri%3Atopic%3Ageneral&sessionId=session-1&liveTopic=kukuri%3Atopic%3Aother&liveChannel=pc-1700000000000-cccccccccccccccc',
+    },
+    {
+      name: 'omits the live place without sessionId',
+      overrides: { primarySection: 'live', selectedLivePlace: { topicId: 'kukuri:topic:other', channelId: null } },
+      expected: '/live?topic=kukuri%3Atopic%3Ageneral',
     },
     {
       name: 'omits roomId on the live section',

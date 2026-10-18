@@ -22,7 +22,7 @@ import { useAdultGatedMediaHashes } from '@/shell/data/useAdultGatedMediaHashes'
 import { useCommunityNodeRecovery } from '@/shell/actions/useCommunityNodeRecovery';
 import { useDesktopShellDataEffects } from '@/shell/data/useDesktopShellDataEffects';
 import { useMediaVisibilityDemand } from '@/shell/data/useMediaVisibilityDemand';
-import { SHOWN_THREAD_LIVE_SESSIONS, showsThreadLives } from '@/shell/slices/publicThreads';
+import { liveSurfacesEnabled, SHOWN_THREAD_LIVE_SESSIONS, showsThreadLives } from '@/shell/slices/publicThreads';
 import {
   activeWorkspaceScope,
   columnIdentityId,
@@ -208,7 +208,10 @@ export function useDesktopShellData({
     return workspaceColumns.filter((column) => ids.has(column.id));
   }, [state.visibleListColumnIds, state.workspaceState.activeColumnId, workspaceColumns]);
   const timelinesByKey = state.timelinesByKey;
+  const pendingTimelineSnapshotsByKey = state.pendingTimelineSnapshotsByKey;
   const authorTimelinesByPubkey = state.authorTimelinesByPubkey;
+  const liveStageStartPosts = state.liveStageStartPosts;
+  const stagesShown = useDesktopShellStore((s) => liveSurfacesEnabled(s.developerModeEnabled));
   const advisoryLookupPosts = useMemo(() => {
     const columnPosts = visibleColumns.flatMap((column) => {
       if (column.kind === 'timeline' && column.scope) {
@@ -217,6 +220,11 @@ export function useDesktopShellData({
             timelineStorageKeyForChannel(column.scope.topicId, column.scope.channelId)
           ] ?? EMPTY_POSTS
         );
+      }
+      // #1841: ライブの列の左側に重ねる会話の投稿(保留中の新着を含む)。
+      if (column.kind === 'stream' && column.entityId && column.scope && stagesShown) {
+        const key = timelineStorageKeyForChannel(column.scope.topicId, column.scope.channelId);
+        return pendingTimelineSnapshotsByKey[key] ?? timelinesByKey[key] ?? EMPTY_POSTS;
       }
       if (column.kind === 'thread' && column.entityId) {
         return threadsById[column.entityId] ?? EMPTY_POSTS;
@@ -234,14 +242,18 @@ export function useDesktopShellData({
       ...thread,
       ...bookmarkedPosts.map((item) => item.post),
       ...columnPosts,
+      ...Object.values(liveStageStartPosts),
     ];
   }, [
     activePublicTimeline,
     activeTimeline,
     authorTimelinesByPubkey,
     bookmarkedPosts,
+    liveStageStartPosts,
+    pendingTimelineSnapshotsByKey,
     profileTimeline,
     selectedAuthorPosts,
+    stagesShown,
     thread,
     threadsById,
     timelinesByKey,

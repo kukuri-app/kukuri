@@ -90,6 +90,14 @@ post・リアクションの正本、Live の寿命・権限・視聴の共有�
   溢れた分は送り直さない。表示を閉じる・Live を切り替えると、待ち・timer・購読を捨てる。
 - Feature Data Classification: Transient / Local Only。runtime event と演出の待ちは保存しない。表示の設定は端末に 1 組だけ保存する（他の利用者へ送らない）。
   docs・wire・SQLite・IndexedDB・backup の形式は変えない。runtime event は CLI の `events.watch` にも流れる（種類が 1 つ増えるだけで、既存の種類の形は変えない）。
+- ライブの列への組み込み（AC-3）: 重ねる表示はライブの列（幅 2）の左側に出し、列の entity の Live を対象にする。会話は列の scope。Live の場所が列の scope と
+  違うとき（別の場所の紹介 post から開いたとき）だけ、列に Live の場所を持たせ、workspace の保存と URL（`liveTopic`・`liveChannel`）に載せる。旧版はこの項目を
+  読み飛ばす（Local Only）。入口は、公開スレッドの詳細の上部の行、ライブの列の一覧のカードの「大きく表示」（列を置き換えて Live を切り替える）、投稿の中の Live の
+  「大きく表示」（投稿の場所を会話にした列を開く）。
+- 需要: 会話の場所は列の購読の需要（既存）で受け、Live の場所が違えば、その場所の需要を列に結び付けて取る（observer は列の id に `#live` を付けたもの。上限で
+  取れなくても列は閉じず、その場所のリアクションの新着が届かないだけ）。左側の会話の場所は、表示中の間だけ既存の 3 秒の読み直しに足す（参加していない private
+  channel は足さない）。重ねる投稿と開始 post は、成人向けの判定・信頼値の評価・画像の取得の対象に通常の投稿と同じく入れる。列を閉じる・Live を切り替えると、
+  これらと演出の待ち・timer を外す。列の下部の参加は、Live の場所の一覧で Live を探す。
 
 ## Consequences
 - 映像・音声の搬送は [ADR 0067](0067-media-transport-moq.md) に従う。manifest の descriptor は上の追補による（分類は ADR 0067 の Feature Data Classification）。

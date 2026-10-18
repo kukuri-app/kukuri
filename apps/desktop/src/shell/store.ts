@@ -185,6 +185,10 @@ function boundVisibleLists(
       if (column.timelineView === 'bookmarks') include('bookmarks', column.id);
     }
     if (column.kind === 'thread' && column.entityId) include(`thread:${column.entityId}`, column.id);
+    // #1841: ライブの列の左側に重ねる会話の場所の投稿。
+    if (column.kind === 'stream' && column.entityId && column.scope) {
+      include(`timeline:${timelineStorageKeyForChannel(column.scope.topicId, column.scope.channelId)}`, column.id);
+    }
     if (column.kind === 'profile') {
       include(column.entityId ? `author:${column.entityId}` : 'profile', column.id);
     }
