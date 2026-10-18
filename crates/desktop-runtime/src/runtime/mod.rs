@@ -40,8 +40,9 @@ use kukuri_core::{
     verify_signed_dome_physics_snapshot,
 };
 use kukuri_docs_sync::{DocQuery, DocsSync};
+use kukuri_store::ReactionProjectionRow;
 #[cfg(not(target_family = "wasm"))]
-use kukuri_store::{ReactionProjectionRow, SqliteStore};
+use kukuri_store::SqliteStore;
 use kukuri_transport::{DhtDiscoveryOptions, TransportNetworkConfig, TransportRelayConfig};
 use tokio::sync::Mutex;
 
