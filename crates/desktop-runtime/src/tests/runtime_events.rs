@@ -95,13 +95,76 @@ async fn added_reactions_reach_runtime_event_subscribers_without_the_author() {
 fn reaction_events_are_limited_per_second() {
     use crate::runtime::{REACTION_EVENTS_PER_SECOND, ReactionEventBudget};
     let mut budget = ReactionEventBudget::default();
-    let start = 10_000;
+    let start = n0_future::time::Instant::now();
     let sent = (0..REACTION_EVENTS_PER_SECOND + 5)
         .filter(|_| budget.take(start))
         .count();
     assert_eq!(sent, REACTION_EVENTS_PER_SECOND as usize);
-    assert!(!budget.take(start + 999));
-    assert!(budget.take(start + 1_000));
+    assert!(!budget.take(start + Duration::from_millis(999)));
+    assert!(budget.take(start + Duration::from_millis(1_000)));
+}
+
+// #1841 B-1: リアクションの判定(非表示の作者を store から読む)を待つ間に来た通知も、画面へ送る。通知の Notify の
+// `notify_waiters` は、待っている相手がいないと知らせが残らない。
+#[tokio::test]
+async fn a_notification_while_a_reaction_is_looked_up_is_not_lost() {
+    use crate::runtime::forward_runtime_events;
+    use kukuri_core::{EnvelopeId, ObjectStatus, ReactionKeyKind, ReplicaId};
+    use tokio::sync::{Notify, broadcast, oneshot};
+    let notify = Arc::new(Notify::new());
+    let (_labels, label_changes) = broadcast::channel(4);
+    let (_relationships, relationship_changes) = broadcast::channel(4);
+    let (reactions, reaction_changes) = broadcast::channel(4);
+    let (sender, mut events) = broadcast::channel(16);
+    let (started, lookup_started) = oneshot::channel::<()>();
+    let (release, released) = oneshot::channel::<()>();
+    let lookup = std::sync::Mutex::new(Some((started, released)));
+    let task = tokio::spawn(forward_runtime_events(
+        notify.clone(),
+        label_changes,
+        relationship_changes,
+        reaction_changes,
+        move |_| {
+            let next = lookup.lock().unwrap().take();
+            async move {
+                if let Some((started, released)) = next {
+                    let _ = started.send(());
+                    let _ = released.await;
+                }
+                None
+            }
+        },
+        sender,
+    ));
+    reactions
+        .send(kukuri_store::ReactionProjectionRow {
+            source_replica_id: ReplicaId::new("replica"),
+            target_object_id: EnvelopeId::from("post"),
+            reaction_id: EnvelopeId::from("reaction"),
+            author_pubkey: "a".repeat(64),
+            created_at: 0,
+            updated_at: 0,
+            reaction_key_kind: ReactionKeyKind::Emoji,
+            normalized_reaction_key: "🎉".into(),
+            emoji: Some("🎉".into()),
+            custom_asset_id: None,
+            custom_asset_snapshot: None,
+            status: ObjectStatus::Active,
+            source_key: String::new(),
+            source_envelope_id: EnvelopeId::from("reaction"),
+            derived_at: 0,
+            projection_version: 0,
+        })
+        .unwrap();
+    lookup_started.await.unwrap();
+    notify.notify_waiters();
+    release.send(()).unwrap();
+    let event = timeout(Duration::from_secs(2), events.recv())
+        .await
+        .expect("the notification is not lost")
+        .unwrap();
+    assert_eq!(event, RuntimeEvent::NotificationStatusChanged);
+    task.abort();
 }
 
 #[tokio::test]

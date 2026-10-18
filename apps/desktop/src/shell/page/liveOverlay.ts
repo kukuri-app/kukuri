@@ -24,9 +24,9 @@ export const LIVE_FLOAT_CONCURRENT = 12;
 export const LIVE_FLOAT_QUEUE = 24;
 /// 重複の判定に覚える数。
 const FLOAT_SEEN_LIMIT = 256;
-/// 浮かべるのは、開いた時点以降に付いたものだけ(端末の時計のずれを 2 秒まで許す)。付いてから 30 秒を過ぎた版は、runtime が
-/// 知らせない(再接続や照合で届いた古い版)。
-const FLOAT_CLOCK_SLACK_MS = 2_000;
+/// 新着として扱うのは、開いた時点以降に作られた投稿と付いたリアクションだけ。開いた時点との比較では、端末の時計のずれを 2 秒まで
+/// 許す。付いてから 30 秒を過ぎたリアクションの版は、runtime が知らせない(再接続や照合で届いた古い版)。
+const CLOCK_SLACK_MS = 2_000;
 
 const EMPTY_POSTS: PostView[] = [];
 
@@ -86,16 +86,19 @@ export function useLiveOverlay(
     }))
   );
   const conversation = conversationAccess(channelId, joined);
-  const shown = (conversation === 'readable' ? (pending ?? timeline ?? EMPTY_POSTS) : EMPTY_POSTS).filter(
+  // `undefined` は、会話の場所の投稿をまだ読んでいない。
+  const loaded = conversation === 'readable' ? (pending ?? timeline) : undefined;
+  const shown = (loaded ?? EMPTY_POSTS).filter(
     (post) => !post.withdrawal && post.content_status !== 'Missing' && !hidden?.(post)
   );
   const [openedAt] = useState(() => Date.now());
-  // 開いた時点の投稿。最初に読めた分を覚え、それ以降に届いた分だけを新着とする(覚えるまでは新着にしない)。
+  // 開いた時点の投稿。会話の場所の投稿を最初に読めたときの分(空でもよい)を覚え、それ以降に届いた分だけを新着とする(読めるまでは
+  // 新着にしない)。
   const [snapshot, setSnapshot] = useState<ReadonlySet<string> | null>(null);
-  const firstIds = shown.length > 0 ? shown.slice(0, SNAPSHOT_LIMIT).map((post) => post.object_id).join('\n') : '';
+  const firstKey = loaded ? shown.slice(0, SNAPSHOT_LIMIT).map((post) => post.object_id).join('\n') : null;
   useEffect(() => {
-    if (firstIds) setSnapshot((current) => current ?? new Set(firstIds.split('\n')));
-  }, [firstIds]);
+    if (firstKey !== null) setSnapshot((current) => current ?? new Set(firstKey ? firstKey.split('\n') : []));
+  }, [firstKey]);
   const posts: LiveOverlayPost[] = shown
     .slice(0, LIVE_OVERLAY_POST_LIMIT)
     .reverse()
@@ -105,9 +108,11 @@ export function useLiveOverlay(
         Boolean(startPostId) &&
         post.object_id !== startPostId &&
         (post.reply_to === startPostId || post.root_id === startPostId),
-      fresh: snapshot !== null && !snapshot.has(post.object_id) && post.created_at * 1000 >= openedAt,
+      fresh:
+        snapshot !== null && !snapshot.has(post.object_id) && post.created_at * 1000 >= openedAt - CLOCK_SLACK_MS,
     }));
-  const floats = useLiveReactionFloats(startPostId ?? null, animate);
+  // 開始 post を読めて、取り下げられていない間だけ浮かべる(数の表示と同じ条件)。
+  const floats = useLiveReactionFloats(startPost?.object_id ?? null, animate);
   return { element, session, startPost, conversation, posts, floats };
 }
 
@@ -166,7 +171,7 @@ export function useLiveReactionFloats(startPostId: string | null, active: boolea
       }
     };
     const unsubscribe = subscribeReactionReceived((received) => {
-      if (received.target_object_id !== startPostId || received.updated_at < openedAt - FLOAT_CLOCK_SLACK_MS) {
+      if (received.target_object_id !== startPostId || received.updated_at < openedAt - CLOCK_SLACK_MS) {
         return;
       }
       const id = `${received.reaction_id}:${received.updated_at}`;

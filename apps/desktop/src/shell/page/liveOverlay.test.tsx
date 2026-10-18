@@ -221,6 +221,31 @@ test('marks only posts that arrive after opening and are newer than the opening 
   expect(fresh).toEqual({ before: false, 'late-but-old': false, new: true });
 });
 
+test('treats the first posts as fresh when the conversation was empty at opening', async () => {
+  const opened = Math.ceil(Date.now() / 1000);
+  const { store, key, hook } = setup(source({ topic: ORIGIN, channelId: THREAD }), { posts: [] });
+  await waitFor(() => expect(hook.result.current.session).toBeTruthy());
+  act(() => store.getState().setField('timelinesByKey', { [key]: [post('first', { created_at: opened + 1 })] }));
+  expect(hook.result.current.posts.map((entry) => entry.fresh)).toEqual([true]);
+});
+
+test('floats reactions to the start post once it is read, but not to a withdrawn start post', async () => {
+  const live = setup(source({ topic: ORIGIN, channelId: THREAD }), { animate: true });
+  await waitFor(() => expect(live.hook.result.current.startPost?.object_id).toBe('start'));
+  act(() => announceReactionReceived(received('on-start')));
+  expect(live.hook.result.current.floats).toHaveLength(1);
+  live.hook.unmount();
+
+  const withdrawn = setup(source({ topic: ORIGIN, channelId: THREAD }), {
+    animate: true,
+    startPost: post('start', { withdrawal: { withdrawn_at: 2, reason_visibility: 'none' } }),
+  });
+  await waitFor(() => expect(withdrawn.api.listThread).toHaveBeenCalled());
+  await waitFor(() => expect(withdrawn.hook.result.current.startPost).toBeNull());
+  act(() => announceReactionReceived(received('on-withdrawn')));
+  expect(withdrawn.hook.result.current.floats).toEqual([]);
+});
+
 function received(id: string, overrides: Partial<ReactionReceivedView> = {}): ReactionReceivedView {
   return {
     target_object_id: 'start',
