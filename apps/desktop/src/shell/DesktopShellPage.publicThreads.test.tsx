@@ -194,6 +194,33 @@ test('the list order is chosen with the keyboard, stored with the pinned column 
   expect(window.location.hash).toBe(LIST_ROUTE);
 }, 30_000);
 
+// 返信の列を active にしたまま再起動しても、公開の scope の返信の列をもう 1 本開かない(#1873)。
+test('a reply column in a public thread is restored after a restart without opening another one', async () => {
+  const user = userEvent.setup();
+  const createApi = () => createDesktopMockApi({
+    seedPublicChannels: { [TOPIC]: [{ ...thread(CHANNEL, 'Weekly sync', 1_700_000_000_000, 1_700_000_000_000), first_post_id: 'first-post' }] },
+    seedPosts: { [TOPIC]: [post('first-post', 'Agenda for this week', CHANNEL, 1_700_000_000_000)] },
+  });
+  const first = renderAtHash(buildPublicThreadLink(TOPIC, CHANNEL), createApi());
+  const detail = await waitFor(() => getActiveColumn('Public thread'));
+  const agenda = (await within(detail).findByText('Agenda for this week')).closest('article');
+  if (!(agenda instanceof HTMLElement)) throw new Error('thread post not found');
+  await user.click(within(agenda).getByRole('button', { name: 'Reply' }));
+  await waitFor(() => expect(window.location.hash).toContain('threadId=first-post'));
+  const replyRoute = window.location.hash;
+  const columns = persistedColumns().map((column) => column.id);
+
+  first.unmount();
+  window.history.replaceState(null, '', '/');
+  render(<App api={createApi()} />);
+  const restored = await waitFor(() => getActiveColumn('Thread'));
+  // 返信の投稿を読み込んだ後に比べる。
+  expect(await within(restored).findByText('Agenda for this week')).toBeInTheDocument();
+  expect(persistedColumns().map((column) => column.id)).toEqual(columns);
+  expect(getActiveColumn('Thread')).toBe(restored);
+  expect(window.location.hash).toBe(replyRoute);
+}, 30_000);
+
 test('public thread links in a post show their titles and the first post, and open the thread under its list', async () => {
   const user = userEvent.setup();
   const link = buildPublicThreadLink(TOPIC, CHANNEL);
