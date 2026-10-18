@@ -62,6 +62,34 @@
     "video": "Broadcast video",
     "volume": "Volume"
   },
+  "stage": {
+    "attachments": "{{count}} attachment(s)",
+    "broadcasting": "You are broadcasting (check your video in the broadcast controls at the top)",
+    "conversation": "Conversation: {{place}}",
+    "ended": "This live session has ended",
+    "joinToWatch": "Join to watch the video",
+    "label": "{{title}} with overlay",
+    "layers": "Overlay",
+    "liveReply": "Live reply",
+    "position": "Post position",
+    "positions": {
+      "left": "Bottom left",
+      "right": "Bottom right"
+    },
+    "posts": "Posts",
+    "react": "React to the live",
+    "reactionSize": "Reaction size",
+    "reactions": "Reactions",
+    "reply": "Reply to the live",
+    "settings": "Display settings",
+    "sizes": {
+      "large": "Large",
+      "medium": "Medium",
+      "small": "Small"
+    },
+    "text": "Text size",
+    "unreadable": "You can't read posts in this place"
+  },
   "statuses": {
     "Ended": "Ended",
     "Live": "Live",

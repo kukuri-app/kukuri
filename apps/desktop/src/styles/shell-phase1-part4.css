@@ -593,3 +593,198 @@
     min-height: 2.75rem;
   }
 }
+
+/* #1841: ライブの列の左側に選んだ Live を大きく出し、投稿とリアクションを重ねる。重ねる層は pointer を受けない。 */
+.live-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.live-stage-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+.live-stage-context {
+  color: var(--muted-foreground);
+  font-size: 0.8rem;
+}
+
+.live-stage .live-viewer-screen {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--radius-input);
+  background: var(--surface-panel-muted);
+}
+
+.live-stage .live-viewer-screen > canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+
+/* 映像の代わりの案内は上の中央に置き、重ねた投稿より手前に描く(DOM の順)。 */
+.live-stage .live-viewer-screen > [role='status'],
+.live-stage-placeholder > p {
+  position: absolute;
+  top: var(--space-sm);
+  inset-inline: var(--space-sm);
+  width: fit-content;
+  margin: 0 auto;
+  padding: var(--space-2xs) var(--space-sm);
+  border-radius: var(--radius-input);
+  background: color-mix(in srgb, var(--surface-overlay) 82%, transparent);
+  color: var(--foreground-strong);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.live-stage-layers {
+  --live-overlay-text: 0.875rem;
+  --live-overlay-reaction: 1.5rem;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  pointer-events: none;
+}
+
+.live-stage-layers[data-position='right'] {
+  flex-direction: row-reverse;
+}
+
+.live-stage-layers[data-text='small'] { --live-overlay-text: 0.75rem; }
+.live-stage-layers[data-text='large'] { --live-overlay-text: 1.125rem; }
+.live-stage-layers[data-reaction-size='small'] { --live-overlay-reaction: 1.125rem; }
+.live-stage-layers[data-reaction-size='large'] { --live-overlay-reaction: 2.25rem; }
+
+.live-stage-posts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  max-width: min(60%, 28rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--live-overlay-text);
+  line-height: 1.4;
+}
+
+.live-stage-post {
+  display: -webkit-box;
+  overflow: hidden;
+  /* 上下の余白は border で取る(padding だと、3 行で切った次の行が余白に見える)。 */
+  padding-inline: var(--space-xs);
+  border-block: var(--space-2xs) solid transparent;
+  border-radius: var(--radius-input);
+  background: color-mix(in srgb, var(--surface-overlay) 82%, transparent);
+  color: var(--foreground-strong);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.live-stage-post-fresh {
+  animation: live-stage-post-enter var(--motion-duration-standard) var(--motion-easing-enter);
+}
+
+.live-stage-author {
+  margin-inline-end: var(--space-xs);
+  font-weight: 600;
+}
+
+.live-stage-badge {
+  margin-inline-end: var(--space-xs);
+  color: var(--accent-foreground);
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.live-stage-chips,
+.live-stage-counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.live-stage-chips {
+  margin-inline-start: var(--space-xs);
+  font-size: 0.85em;
+}
+
+.live-stage-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25em;
+  height: 1.25em;
+}
+
+.shell-phase1 .live-stage-glyph .post-reaction-chip-image {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  object-fit: contain;
+}
+
+.live-stage-reactions {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: 40%;
+  font-size: var(--live-overlay-reaction);
+}
+
+.live-stage-layers[data-position='right'] .live-stage-reactions {
+  align-items: flex-start;
+}
+
+.live-stage-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15em;
+  padding: 0.1em 0.3em;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-overlay) 82%, transparent);
+  color: var(--foreground-strong);
+  font-size: 0.6em;
+}
+
+.live-stage-count .live-stage-glyph {
+  width: 1.6em;
+  height: 1.6em;
+}
+
+.live-stage-float {
+  position: absolute;
+  bottom: 100%;
+  animation: live-stage-float 3s var(--motion-easing-standard) forwards;
+}
+
+.live-stage-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+@keyframes live-stage-post-enter {
+  from { opacity: 0; }
+}
+
+@keyframes live-stage-float {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-6em); }
+}

@@ -62,6 +62,34 @@
     "video": "直播画面",
     "volume": "音量"
   },
+  "stage": {
+    "attachments": "{{count}} 个附件",
+    "broadcasting": "正在直播（可在顶部的直播操作中查看自己的画面）",
+    "conversation": "对话：{{place}}",
+    "ended": "此直播已结束",
+    "joinToWatch": "加入后显示直播画面",
+    "label": "{{title}} 叠加显示",
+    "layers": "叠加内容",
+    "liveReply": "直播回复",
+    "position": "帖子位置",
+    "positions": {
+      "left": "左下",
+      "right": "右下"
+    },
+    "posts": "帖子",
+    "react": "回应直播",
+    "reactionSize": "回应大小",
+    "reactions": "回应",
+    "reply": "回复直播",
+    "settings": "显示设置",
+    "sizes": {
+      "large": "大",
+      "medium": "中",
+      "small": "小"
+    },
+    "text": "文字大小",
+    "unreadable": "无法读取此处的帖子"
+  },
   "statuses": {
     "Ended": "已结束",
     "Live": "直播中",

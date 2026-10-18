@@ -62,6 +62,34 @@
     "video": "配信の映像",
     "volume": "音量"
   },
+  "stage": {
+    "attachments": "添付 {{count}} 件",
+    "broadcasting": "配信中です（自分の映像は上部の配信の操作で確かめられます）",
+    "conversation": "会話: {{place}}",
+    "ended": "このライブは終了しました",
+    "joinToWatch": "参加すると映像が出ます",
+    "label": "{{title}} を重ねて表示",
+    "layers": "重ねる内容",
+    "liveReply": "ライブへの返信",
+    "position": "投稿の位置",
+    "positions": {
+      "left": "左下",
+      "right": "右下"
+    },
+    "posts": "投稿",
+    "react": "ライブにリアクション",
+    "reactionSize": "リアクションの大きさ",
+    "reactions": "リアクション",
+    "reply": "ライブに返信",
+    "settings": "表示の設定",
+    "sizes": {
+      "large": "大",
+      "medium": "中",
+      "small": "小"
+    },
+    "text": "文字の大きさ",
+    "unreadable": "この場所の投稿を読めません"
+  },
   "statuses": {
     "Ended": "終了",
     "Live": "配信中",

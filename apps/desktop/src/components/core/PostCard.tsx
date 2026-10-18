@@ -734,16 +734,12 @@ export function PostCard({
                 {reactionSummary.map((reaction) => {
                   const reactionKey = reactionKeyInputFromView(reaction);
                   const customAsset = reaction.custom_asset ?? null;
-                  const previewUrl =
-                    customAsset && typeof mediaObjectUrls[customAsset.blob_hash] === 'string'
-                      ? mediaObjectUrls[customAsset.blob_hash]
-                      : null;
                   return (
                     <PostReactionChip
                       key={reaction.normalized_reaction_key}
                       reaction={reaction}
                       active={myReactionKeys.has(reaction.normalized_reaction_key)}
-                      previewUrl={previewUrl}
+                      mediaObjectUrls={mediaObjectUrls}
                       onToggle={
                         reactionKey && onToggleReaction
                           ? () => onToggleReaction(actionPost, reactionKey)

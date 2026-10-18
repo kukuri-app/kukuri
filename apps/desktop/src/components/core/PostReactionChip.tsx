@@ -5,12 +5,13 @@ import {
   type ContextActionMenuPosition,
 } from '@/components/ui/context-action-menu';
 
+import { ReactionGlyph } from './ReactionGlyph';
 import { ReactionTooltipButton } from './ReactionTooltipButton';
 
 type PostReactionChipProps = {
   reaction: ReactionSummaryView;
   active: boolean;
-  previewUrl: string | null;
+  mediaObjectUrls: Record<string, string | null>;
   onToggle?: () => void;
   onOpenContextMenu?: (position: ContextActionMenuPosition) => void;
 };
@@ -18,7 +19,7 @@ type PostReactionChipProps = {
 export function PostReactionChip({
   reaction,
   active,
-  previewUrl,
+  mediaObjectUrls,
   onToggle,
   onOpenContextMenu,
 }: PostReactionChipProps) {
@@ -43,13 +44,7 @@ export function PostReactionChip({
         if (position) onOpenContextMenu(position);
       }}
     >
-      {previewUrl ? (
-        <img className='post-reaction-chip-image' src={previewUrl} alt='' />
-      ) : customReactionLabel ? (
-        <span aria-hidden='true'>{customReactionLabel.slice(0, 2)}</span>
-      ) : (
-        <span>{reaction.emoji ?? '?'}</span>
-      )}
+      <ReactionGlyph reaction={reaction} mediaObjectUrls={mediaObjectUrls} />
       <span>{reaction.count}</span>
     </button>
   );
