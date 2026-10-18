@@ -5,9 +5,11 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import { App } from '@/App';
 import {
+  getActiveColumn,
   openChannelManager,
   openControlCenter,
   publishPost,
+  renderAtHash,
   setViewportWidth,
 } from './DesktopShellPage.testHelpers';
 
@@ -154,6 +156,45 @@ test('non-active な private Column の Reply ボタンで開いた Thread も p
       null
     );
   });
+});
+
+function columnIds() {
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-column-id]')).map(
+    (column) => column.dataset.columnId
+  );
+}
+
+// 返信の列を active にしたまま再起動しても、参加中の一覧を読む前に公開の scope へ移らない(#1875)。
+test('private channel の返信の列は、再起動の後も公開の scope の返信の列を開かずに戻る', async () => {
+  const user = userEvent.setup();
+  const api = createDesktopMockApi();
+  const channel = await api.createPrivateChannel('kukuri:topic:general', 'core', 'invite_only');
+  await api.createPost('kukuri:topic:general', 'channel post', null, [], {
+    kind: 'private_channel',
+    channel_id: channel.channel_id,
+  });
+  const first = renderAtHash(`${DEMO_TOPIC_HASH}&channel=${channel.channel_id}`, api);
+  const post = (await screen.findByText('channel post')).closest('article');
+  if (!(post instanceof HTMLElement)) {
+    throw new Error('channel post not found');
+  }
+  await user.click(within(post).getByRole('button', { name: 'Reply' }));
+  await waitFor(() => expect(window.location.hash).toContain('context=thread'));
+  const replyRoute = window.location.hash;
+  const columns = columnIds();
+
+  first.unmount();
+  window.history.replaceState(null, '', '/');
+  render(<App api={api} />);
+  // 返信の投稿を読み込んだ後に比べる。
+  await waitFor(() => {
+    expect(within(getActiveColumn('Thread')).getByText('channel post')).toBeInTheDocument();
+  });
+  expect(columnIds()).toEqual(columns);
+  expect(getActiveColumn('Thread').querySelector('.shell-column-header')).toHaveTextContent(
+    'Thread · core · general'
+  );
+  expect(window.location.hash).toBe(replyRoute);
 });
 
 test('private Column 選択直後に別 Column の本文ボタンを押しても Column 順は変わらず、押した Column が active になる (Issue #1053)', async () => {
