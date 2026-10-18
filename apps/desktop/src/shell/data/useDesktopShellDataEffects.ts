@@ -580,9 +580,14 @@ export function useDesktopShellDataEffects({
     });
   }, [activeGameRooms, setGameDrafts]);
 
+  // 参加中の一覧を読み終えるまでは、参加していないと決めない（起動直後に、保存した private channel の列を外さない。#1875）。
+  // route の反映の参加の確認と同じ条件。
+  const joinedChannelsLoaded = useDesktopShellStore(
+    (state) => state.channelPanelStateByTopic[activeTopic]?.status === 'ready'
+  );
   useEffect(() => {
     // 公開スレッド（#1840）には参加が無いので、選んだままにする。
-    if (!selectedPrivateChannelId || isPublicChannelId(selectedPrivateChannelId)) {
+    if (!selectedPrivateChannelId || isPublicChannelId(selectedPrivateChannelId) || !joinedChannelsLoaded) {
       return;
     }
     const selectedStillJoined = activeJoinedChannels.some(
@@ -613,6 +618,7 @@ export function useDesktopShellDataEffects({
   }, [
     activeJoinedChannels,
     activeTopic,
+    joinedChannelsLoaded,
     selectedPrivateChannelId,
     setComposeChannelByTopic,
     setSelectedChannelIdByTopic,
