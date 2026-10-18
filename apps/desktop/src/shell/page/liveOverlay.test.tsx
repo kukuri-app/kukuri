@@ -57,6 +57,7 @@ function post(id: string, overrides: Partial<PostView> = {}): PostView {
     author_pubkey: 'a'.repeat(64),
     content: id,
     content_status: 'Available',
+    attachments: [],
     created_at: 1,
     withdrawal: null,
     reply_to: null,
@@ -181,6 +182,20 @@ test('leaves out withdrawn, unfetched, and hidden posts and follows a reload wit
   // mute の後は、一覧の読み直しが作者の投稿を除く(backend)。重ねた表示もそれに従う。
   act(() => store.getState().setField('timelinesByKey', { [key]: [post('kept')] }));
   expect(ids(hook.result.current.posts)).toEqual(['kept']);
+});
+
+// 2026-10-18 のユーザー判断: 本文も添付も無い投稿(本文を空にした開始 post・単純な repost)は重ねず、最新 5 件は残りから数える。
+test('leaves out posts with neither text nor attachments and counts the latest five from the rest', () => {
+  const image = { hash: 'image-hash', mime: 'image/png', bytes: 1, role: 'image_original', status: 'Available' };
+  const { hook } = setup(source({ topic: ORIGIN, channelId: THREAD }), {
+    posts: [
+      post('empty', { content: '' }),
+      post('blank', { content: '  ' }),
+      post('image', { content: '', attachments: [image] as PostView['attachments'] }),
+      ...['p4', 'p3', 'p2', 'p1', 'p0'].map((id) => post(id)),
+    ],
+  });
+  expect(ids(hook.result.current.posts)).toEqual(['p1', 'p2', 'p3', 'p4', 'image']);
 });
 
 test('does not read a start post or float reactions for a live the viewer cannot see', async () => {
