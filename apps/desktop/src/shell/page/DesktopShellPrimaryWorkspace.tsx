@@ -128,7 +128,7 @@ export type DesktopShellPrimarySurfaceProps = {
   loadMoreTimeline: (topic: string, channelId?: string | null) => Promise<void>;
   openAuthorDetail: OpenAuthorDetail;
   openThread: OpenThread;
-  beginColumnReply: (post: PostView) => void;
+  beginColumnReply: (post: PostView, parentColumnId?: string) => void;
   handleSimpleRepost: (post: PostView) => Promise<void>;
   beginColumnQuoteRepost: (post: PostView) => void;
   handleRetryLocalPost: (post: PostView) => void;
@@ -728,7 +728,7 @@ export function DesktopShellPrimarySurface({
                 buildPostCardView={buildPostCardView}
                 onReactionPickerOpen={() => void loadReactionCatalogData()}
                 onToggleReaction={(post, reactionKey) => void handleToggleReaction(post, reactionKey)}
-                onReply={beginColumnReply}
+                onReply={(post) => beginColumnReply(post, column.id)}
               />
             ) : (
               <section className='shell-column-content'>{liveListHeader}</section>
@@ -774,7 +774,7 @@ export function DesktopShellPrimarySurface({
                 })}
               </ul>
               <PendingSessionCards context={{ api, topic: surfaceTopic, scope: surfaceTimelineScope }}
-                kind="live" targetId={column.entityId} onCountChange={setPendingLiveCount} refreshToken={surfaceLiveSessions} knownIds={surfaceLiveSessions.map((item) => item.session_id)} />
+                kind="live" targetId={column.live ? undefined : column.entityId} onCountChange={setPendingLiveCount} refreshToken={surfaceLiveSessions} knownIds={surfaceLiveSessions.map((item) => item.session_id)} />
             </div>
           </div>
         ) : null}

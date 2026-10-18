@@ -120,6 +120,8 @@ test("a post's live opens large in the post's place, keeps the live place, joins
     live: { topicId: TOPIC, channelId: null },
   });
   expect(window.location.hash).toContain('liveTopic=kukuri%3Atopic%3Ageneral');
+  // この場所の一覧に載らない Live なので、右側の一覧に取得待ちのカードを出さない(2026-10-18 のユーザー判断)。
+  expect(within(column).queryByText('Session information is not available yet.')).toBeNull();
   // Live の場所も購読する(列の id に #live を付けた observer)。
   await waitFor(() =>
     expect(setScopeDisplay).toHaveBeenCalledWith({
@@ -143,4 +145,32 @@ test("a post's live opens large in the post's place, keeps the live place, joins
       visible: false,
     })
   );
+}, 30_000);
+
+// 2026-10-18 のユーザー判断: 左側の「ライブに返信」は、返信の列をライブの列の右(子)に開き、ライブの列を残す。
+test("replying from the stage opens the reply column next to the live column and keeps the live column", async () => {
+  const user = userEvent.setup();
+  const api = createDesktopMockApi();
+  const thread = await api.createPublicChannel(TOPIC, 'Watch party', '');
+  await api.createLiveSession(TOPIC, 'Night stream', '', { kind: 'public_channel', channel_id: thread.channel_id }, 'night start');
+  renderAtHash(`#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=${thread.channel_id}`, api);
+  const detail = await waitFor(() => getActiveColumn('Public thread'));
+  // 詳細の上部の行から、詳細を親にしたライブの列を開くと、左側にその Live が出る。
+  await user.click(await within(detail).findByRole('button', { name: /^Live Night stream / }));
+  const column = await waitFor(() => getActiveColumn('Live'));
+  const stage = await waitFor(() => column.querySelector<HTMLElement>('.live-stage')!);
+  await user.click(await within(stage).findByRole('button', { name: 'Reply to the live' }));
+
+  await waitFor(() => expect(persistedColumns().some((item) => item.kind === 'thread')).toBe(true));
+  const columns = persistedColumns();
+  const detailColumn = columns.find((item) => item.kind === 'timeline' && item.scope?.channelId === thread.channel_id);
+  const stream = columns.find((item) => item.kind === 'stream');
+  const reply = columns.find((item) => item.kind === 'thread');
+  // 詳細の列 → ライブの列 → 返信の列の並びのまま(詳細の列を開き直さない)。返信の入力欄が開く。
+  expect(columns.slice(-3).map((item) => item.id)).toEqual([detailColumn?.id, stream?.id, reply?.id]);
+  expect(detailColumn?.parentColumnId).toBe(columns.find((item) => item.kind === 'publicThreads')?.id);
+  expect(stream?.parentColumnId).toBe(detailColumn?.id);
+  expect(reply?.parentColumnId).toBe(stream?.id);
+  expect(document.querySelector('.live-stage')).not.toBeNull();
+  expect(await waitFor(() => getActiveColumn('Thread').querySelector('textarea'))).not.toBeNull();
 }, 30_000);
