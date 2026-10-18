@@ -131,9 +131,9 @@ pub enum RuntimeEvent {
         pubkey: Option<String>,
     },
     /// 手元へ反映したリアクションの新しい版(#1841)。Live の表示が新しく届いたものを浮かべる。外した版と非表示の作者のものは
-    /// 送らない。溢れた分は送り直さない。
+    /// 送らない。溢れた分は送り直さない。中身は大きいので box に置く(event を持つ受け手の大きさを増やさない)。
     ReactionReceived {
-        reaction: ReactionReceivedView,
+        reaction: Box<ReactionReceivedView>,
     },
 }
 
@@ -736,7 +736,9 @@ impl DesktopRuntime {
                                 if let Ok(Some(reaction)) = app.reaction_received_view(&row).await
                                     && reaction_budget.take(chrono::Utc::now().timestamp_millis())
                                 {
-                                    let _ = sender.send(RuntimeEvent::ReactionReceived { reaction });
+                                    let _ = sender.send(RuntimeEvent::ReactionReceived {
+                                        reaction: Box::new(reaction),
+                                    });
                                 }
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}

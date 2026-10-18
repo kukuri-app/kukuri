@@ -89,7 +89,7 @@ post・リアクションの正本、Live の寿命・権限・視聴の共有�
   event の channel は全種類で共有し、溢れると画面へ読み直し（画像の解放・関係の読み直し）を促すので、照合で多くのリアクションをまとめて反映しても溢れさせない。
   溢れた分は送り直さない。表示を閉じる・Live を切り替えると、待ち・timer・購読を捨てる。
 - Feature Data Classification: Transient / Local Only。runtime event と演出の待ちは保存しない。表示の設定は端末に 1 組だけ保存する（他の利用者へ送らない）。
-  docs・wire・SQLite・IndexedDB・backup の形式は変えない。
+  docs・wire・SQLite・IndexedDB・backup の形式は変えない。runtime event は CLI の `events.watch` にも流れる（種類が 1 つ増えるだけで、既存の種類の形は変えない）。
 
 ## Consequences
 - 映像・音声の搬送は [ADR 0067](0067-media-transport-moq.md) に従う。manifest の descriptor は上の追補による（分類は ADR 0067 の Feature Data Classification）。
