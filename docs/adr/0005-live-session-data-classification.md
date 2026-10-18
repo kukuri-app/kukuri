@@ -69,6 +69,28 @@ Accepted
   `channel_id` が一致しない参照は展開しない。紹介 post は出し先を選ぶ Dialog で作り、限定 channel の Live はその channel に固定する。UI の記録は
   `docs/ui-reviews/2026-10-17-1839-live-object.md`。
 
+### 追補: 映像に投稿とリアクションを重ねる表示（#1841、2026-10-18）
+判断と D1〜D3 の結論は [#1841 のコメント](https://github.com/kukuri-app/kukuri/issues/1841#issuecomment-6243763891)。重ねる表示は視聴する端末の画面だけで作り、映像の bytes・署名・時刻、
+post・リアクションの正本、Live の寿命・権限・視聴の共有（#1839）を変えない。新しい正本・会話の写し・Live 専用の反応の台帳は作らない。
+- 入力の結び付け: 重ねる Live（参照の topic・channel・session）、会話を読む場所（ライブの列の scope）、Live の開始 post（manifest の `start_post_id`）の 3 つを
+  別々に持つ。Live は参照から表示要求で 1 件読み、会話の場所の投稿は通常の列と共用する scope ごとの cache から読む。Live の視聴の資格と会話の場所の閲覧の資格は
+  別々に満たす（private channel の会話は、参加しているときだけ読む）。
+- Live への反応は開始 post だけに属する。紹介 post やスレッドの別の投稿へのリアクションを、Live への反応として数えたり浮かべたりしない。会話の場所の投稿のうち、
+  開始 post の返信ツリーに入るもの（返信先か root が開始 post）は「ライブへの返信」として示す。
+- 数: 開始 post を返信ツリーの root だけで読み、その `reaction_summary` を使う。読み直しは同期の時刻の変化で行う（timer は使わない）。集計には通常の表示と同じく
+  非表示の作者のリアクションも入る。
+- 新着: 手元へ反映したリアクションの新しい版のうち、付いてから 30 秒の内のものを runtime event `reaction_received` で受け（[ADR 0017](0017-reaction-data-classification.md) §4.4）、
+  対象が開始 post で、開いた時点以降に付いたものだけを浮かべる。初回の表示・再接続・照合で届いた古い版は浮かべず、外した版は数の読み直しで減るだけにする。
+  履歴は読まない。
+- 投稿の差分: 開いた時点の投稿は動かさずに出し、後から届いた、開いた時点より新しい投稿だけを新着として示す。取り下げた投稿・本文を取得できない投稿・成人向けや
+  信頼値の評価で隠す投稿は重ねない（mute・block の作者の投稿は、既存どおり一覧から除かれる）。
+- 上限（描画の資源の管理で、元の post とリアクションは消さない）: 重ねる投稿は最新 5 件。新着の判定に覚える投稿は 25 件。浮かべるのは 1 個 3 秒、同時に 12 個、
+  待ちは 24 個（溢れたら古いものを捨てる）、重複の判定に覚えるのは 256 件。リアクションの runtime event は 1 秒に 36 件まで（浮かべる同時の数と待ちの数の和）。
+  event の channel は全種類で共有し、溢れると画面へ読み直し（画像の解放・関係の読み直し）を促すので、照合で多くのリアクションをまとめて反映しても溢れさせない。
+  溢れた分は送り直さない。表示を閉じる・Live を切り替えると、待ち・timer・購読を捨てる。
+- Feature Data Classification: Transient / Local Only。runtime event と演出の待ちは保存しない。表示の設定は端末に 1 組だけ保存する（他の利用者へ送らない）。
+  docs・wire・SQLite・IndexedDB・backup の形式は変えない。runtime event は CLI の `events.watch` にも流れる（種類が 1 つ増えるだけで、既存の種類の形は変えない）。
+
 ## Consequences
 - 映像・音声の搬送は [ADR 0067](0067-media-transport-moq.md) に従う。manifest の descriptor は上の追補による（分類は ADR 0067 の Feature Data Classification）。
 - #1262: state/envelopeの到着による個別反映、表示中だけのmanifest取得、未取得候補と検証済みsessionの区別はADR 0052「Session の個別反映と表示要求」に従う。timerによる反映retryはしない。

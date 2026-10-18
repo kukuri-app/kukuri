@@ -390,6 +390,7 @@ async fn read_reaction_window(
         services.docs_sync.as_ref(),
         services.projection_store.as_ref(),
         services.blob_service.as_ref(),
+        &services.reaction_changes,
         topic_id,
         replica,
         object_id,

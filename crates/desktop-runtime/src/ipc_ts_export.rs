@@ -168,6 +168,7 @@ fn export_ipc_types() {
         ReactionSummaryView,
         ReactionStateView,
         RecentReactionView,
+        ReactionReceivedView,
         CustomReactionAssetView,
         CustomReactionSetView,
         ImportedCustomReactionSetView,

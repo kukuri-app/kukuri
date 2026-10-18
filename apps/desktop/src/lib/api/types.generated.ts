@@ -57,6 +57,8 @@ export type ReactionStateView = { target_object_id: string, source_replica_id: s
 
 export type RecentReactionView = { reaction_key_kind: string, normalized_reaction_key: string, emoji?: string | null, custom_asset?: CustomReactionAssetView | null, updated_at: number, };
 
+export type ReactionReceivedView = { target_object_id: string, reaction_id: string, reaction: ReactionKeyView, updated_at: number, };
+
 export type CustomReactionAssetView = { asset_id: string, owner_pubkey: string, blob_hash: string, search_key: string, mime: string, bytes: number, width: number, height: number, };
 
 export type CustomReactionSetView = { set_hash: string, name: string, item_count: number, created_at: number, };
@@ -801,7 +803,7 @@ reference_id?: string | null,
  */
 disputed_risk_signal_id?: string | null, };
 
-export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "startup_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, } | { "type": "author_relationship_changed", pubkey?: string | null, };
+export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "startup_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, } | { "type": "author_relationship_changed", pubkey?: string | null, } | { "type": "reaction_received", reaction: ReactionReceivedView, };
 
 export type CreatePostRequest = { topic: string, content: string, reply_to?: string | null, channel_ref: ChannelRef, attachments: Array<CreateAttachmentRequest>, 
 /**

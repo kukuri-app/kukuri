@@ -20,8 +20,8 @@ use kukuri_app_api::{
     JoinedPrivateChannelView, LiveSessionView, MetaverseAssetRefView, MetaverseRoomEventView,
     MoveDomeInput, NotificationPageView, NotificationStatusView, NotificationView, PostView,
     PrepareCommunityNodeDomeHostingInput, PrepareDomeTransitionInput, PrivateChannelCapability,
-    ProfileInput, PublishMetaverseRoomEventInput, ReactionStateView, RecentReactionView,
-    ResyncDomeSnapshotsInput, RevokeDomeConnectionInput, ServiceHandles,
+    ProfileInput, PublishMetaverseRoomEventInput, ReactionReceivedView, ReactionStateView,
+    RecentReactionView, ResyncDomeSnapshotsInput, RevokeDomeConnectionInput, ServiceHandles,
     StartOwnerDomeHostingInput, SubmitDomeSessionInput, SyncStatus, TimelineView,
     UpdateGameRoomInput, UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
 };
@@ -40,6 +40,7 @@ use kukuri_core::{
     verify_signed_dome_physics_snapshot,
 };
 use kukuri_docs_sync::{DocQuery, DocsSync};
+use kukuri_store::ReactionProjectionRow;
 #[cfg(not(target_family = "wasm"))]
 use kukuri_store::SqliteStore;
 use kukuri_transport::{DhtDiscoveryOptions, TransportNetworkConfig, TransportRelayConfig};
@@ -130,6 +131,102 @@ pub enum RuntimeEvent {
     AuthorRelationshipChanged {
         pubkey: Option<String>,
     },
+    /// 手元へ反映したリアクションの新しい版(#1841)。Live の表示が新しく届いたものを浮かべる。外した版と非表示の作者のものは
+    /// 送らない。溢れた分は送り直さない。中身は大きいので box に置く(event を持つ受け手の大きさを増やさない)。
+    ReactionReceived {
+        reaction: Box<ReactionReceivedView>,
+    },
+}
+
+/// #1841: 画面へ送るリアクションの新着の上限(1 秒あたり)。画面が浮かべる同時の数と待ちの数の和で、表示できる分は減らさない。
+/// event の channel は全種類で共有し、溢れると画面へ読み直し(画像の解放・関係の読み直し)を促すので、照合で多くのリアクションを
+/// まとめて反映しても溢れさせない。
+pub(crate) const REACTION_EVENTS_PER_SECOND: u32 = 36;
+
+/// 1 秒の区切りは単調な時計で数える(端末の時計を戻しても止まらない)。
+#[derive(Default)]
+pub(crate) struct ReactionEventBudget {
+    window_started_at: Option<n0_future::time::Instant>,
+    sent: u32,
+}
+
+impl ReactionEventBudget {
+    pub(crate) fn take(&mut self, now: n0_future::time::Instant) -> bool {
+        if self
+            .window_started_at
+            .is_none_or(|started| now.saturating_duration_since(started).as_millis() >= 1_000)
+        {
+            self.window_started_at = Some(now);
+            self.sent = 0;
+        }
+        if self.sent >= REACTION_EVENTS_PER_SECOND {
+            return false;
+        }
+        self.sent += 1;
+        true
+    }
+}
+
+/// runtime の event を画面へ送る(通知・成人向けの印・関係の変化・#1841 のリアクション)。
+///
+/// 通知の Notify(`notify_waiters`)は待っている相手がいないと知らせが残らないので、待っている相手として登録し続ける。リアクションの
+/// 分岐は `reaction_view`(非表示の作者を store から読む)を待つので、その間に来た通知も受けられるようにする。broadcast の 3 つは
+/// 溜まる(#1521 AC-1b)。リアクションは溢れた分を送り直さない(浮かべる演出だけが使い、数は投稿の読み直しで揃う)。
+pub(crate) async fn forward_runtime_events<V, F>(
+    notify: Arc<tokio::sync::Notify>,
+    mut label_evictions: tokio::sync::broadcast::Receiver<String>,
+    mut relationship_changes: tokio::sync::broadcast::Receiver<String>,
+    mut reaction_changes: tokio::sync::broadcast::Receiver<ReactionProjectionRow>,
+    reaction_view: V,
+    sender: tokio::sync::broadcast::Sender<RuntimeEvent>,
+) where
+    V: Fn(ReactionProjectionRow) -> F,
+    F: std::future::Future<Output = Option<ReactionReceivedView>>,
+{
+    use tokio::sync::broadcast::error::RecvError;
+    let mut reaction_budget = ReactionEventBudget::default();
+    let notified = notify.notified();
+    tokio::pin!(notified);
+    notified.as_mut().enable();
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut notified => {
+                notified.set(notify.notified());
+                notified.as_mut().enable();
+                let _ = sender.send(RuntimeEvent::NotificationStatusChanged);
+            }
+            label = label_evictions.recv() => match label {
+                Ok(hash) => {
+                    let _ = sender.send(RuntimeEvent::AdultMediaLabelEvicted { hash: Some(hash) });
+                }
+                Err(RecvError::Lagged(_)) => {
+                    let _ = sender.send(RuntimeEvent::AdultMediaLabelEvicted { hash: None });
+                }
+                Err(RecvError::Closed) => break,
+            },
+            change = relationship_changes.recv() => match change {
+                Ok(pubkey) => {
+                    let _ = sender.send(RuntimeEvent::AuthorRelationshipChanged { pubkey: Some(pubkey) });
+                }
+                Err(RecvError::Lagged(_)) => {
+                    let _ = sender.send(RuntimeEvent::AuthorRelationshipChanged { pubkey: None });
+                }
+                Err(RecvError::Closed) => break,
+            },
+            change = reaction_changes.recv() => match change {
+                Ok(row) => {
+                    if let Some(reaction) = reaction_view(row).await
+                        && reaction_budget.take(n0_future::time::Instant::now())
+                    {
+                        let _ = sender.send(RuntimeEvent::ReactionReceived { reaction: Box::new(reaction) });
+                    }
+                }
+                Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => break,
+            },
+        }
+    }
 }
 
 pub struct DesktopRuntime {
@@ -666,39 +763,24 @@ impl DesktopRuntime {
         );
         let (event_sender, _) = tokio::sync::broadcast::channel(64);
         let notification_event_task = {
-            let notify = app_service.notification_inserted_notify();
-            let mut label_evictions = store.subscribe_adult_label_evictions();
-            let mut relationship_changes = app_service.subscribe_author_relationship_changes();
-            let sender = event_sender.clone();
-            n0_future::task::spawn(async move {
-                loop {
-                    // 通知の Notify は受け損なうと残らないので、先に見る(broadcast の 2 つは溜まる。#1521 AC-1b)。
-                    tokio::select! {
-                        biased;
-                        _ = notify.notified() => {
-                            let _ = sender.send(RuntimeEvent::NotificationStatusChanged);
-                        }
-                        label = label_evictions.recv() => match label {
-                            Ok(hash) => {
-                                let _ = sender.send(RuntimeEvent::AdultMediaLabelEvicted { hash: Some(hash) });
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                                let _ = sender.send(RuntimeEvent::AdultMediaLabelEvicted { hash: None });
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                        },
-                        change = relationship_changes.recv() => match change {
-                            Ok(pubkey) => {
-                                let _ = sender.send(RuntimeEvent::AuthorRelationshipChanged { pubkey: Some(pubkey) });
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                                let _ = sender.send(RuntimeEvent::AuthorRelationshipChanged { pubkey: None });
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                        },
+            let reactions_app = Arc::downgrade(&app_service);
+            n0_future::task::spawn(forward_runtime_events(
+                app_service.notification_inserted_notify(),
+                store.subscribe_adult_label_evictions(),
+                app_service.subscribe_author_relationship_changes(),
+                app_service.subscribe_reaction_changes(),
+                move |row| {
+                    let app = reactions_app.clone();
+                    async move {
+                        app.upgrade()?
+                            .reaction_received_view(&row)
+                            .await
+                            .ok()
+                            .flatten()
                     }
-                }
-            })
+                },
+                event_sender.clone(),
+            ))
         };
 
         Ok(Self {

@@ -345,6 +345,8 @@ custom asset / bookmark view は少なくとも次を持つ。
 - `width`
 - `height`
 
+#1841（2026-10-18）: 手元へ反映したリアクションの新しい版（保存済みの行より新しいもの。hint からの取り込み・表示の照合・自分の付け外し）を、runtime event `reaction_received` で画面へ知らせる。中身は対象の投稿・reaction id・key・時刻だけで、作者は含めない。外した版、付いてから 30 秒を過ぎた版、非表示の作者（mute と、どちらの向きの block）のものは知らせず、1 秒に 36 件までにする。使うのは Live の重ねる表示の新着の演出だけで、保存しない（[ADR 0005](0005-live-session-data-classification.md) の追補）。reactor list は引き続き扱わない。
+
 ## 5. UX Boundary
 
 reaction affordance は次の surface に出す。
