@@ -307,6 +307,12 @@ export function useRouteSynchronization({
       nextTimelineView !== 'bookmarks' &&
       unjoinedPrivateChannel &&
       channelPanelState?.status !== 'ready';
+    const routeScope = {
+      topicId: nextTopic,
+      channelId: channelRoutePendingValidation
+        ? currentSelectedChannelIdForTopic
+        : nextSelectedChannelId,
+    };
     const routeScopeKey = timelineStorageKeyForChannel(nextTopic, nextSelectedChannelId);
     const gameRoomsForTopic = gameRoomsByScopeKey[routeScopeKey] ?? [];
     const gamePanelState = gamePanelStateByScopeKey[routeScopeKey];
@@ -580,11 +586,13 @@ export function useRouteSynchronization({
       ) {
         normalizedSelectedThread = requestedThreadId;
         normalizedFocusedObjectId = requestedFocusObjectId;
+        // channel を省くと公開の scope で開き、復元した channel の返信の列にもう 1 本足す(#1873)。
         void openThread(requestedThreadId, {
           focusObjectId: requestedFocusObjectId,
           historyMode: 'replace',
           normalizeOnEmpty: true,
           topic: nextTopic,
+          channelId: routeScope.channelId,
         });
       } else {
         normalizedSelectedThread = requestedThreadId;
@@ -846,12 +854,6 @@ export function useRouteSynchronization({
       }
     }
 
-    const routeScope = {
-      topicId: nextTopic,
-      channelId: channelRoutePendingValidation
-        ? currentSelectedChannelIdForTopic
-        : nextSelectedChannelId,
-    };
     const selectedRouteGameRoom = normalizedSelectedGameRoomId
       ? gameRoomsForTopic.find((room) => room.room_id === normalizedSelectedGameRoomId)
       : undefined;

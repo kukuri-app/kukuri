@@ -187,6 +187,7 @@ describe('useRouteSynchronization', () => {
         historyMode: 'replace',
         normalizeOnEmpty: true,
         topic: 'kukuri:topic:dev',
+        channelId: null,
       });
       expect(args.syncRoute).not.toHaveBeenCalled();
       view.unmount();
@@ -365,6 +366,7 @@ describe('useRouteSynchronization', () => {
         historyMode: 'replace',
         normalizeOnEmpty: true,
         topic: 'kukuri:topic:general',
+        channelId: null,
       });
       expect(args.syncRoute).not.toHaveBeenCalled();
 
