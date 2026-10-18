@@ -197,6 +197,34 @@ test('private channel の返信の列は、再起動の後も公開の scope の
   expect(window.location.hash).toBe(replyRoute);
 });
 
+// 保存した layout が無い状態で返信の URL を開いても、参加中の一覧を読む前に公開の scope の返信の列を開かない(#1877)。
+test('private channel の返信の URL を直接開くと、private channel の返信の列が開き URL も変わらない', async () => {
+  const api = createDesktopMockApi();
+  const channel = await api.createPrivateChannel('kukuri:topic:general', 'core', 'invite_only');
+  const postId = await api.createPost('kukuri:topic:general', 'channel post', null, [], {
+    kind: 'private_channel',
+    channel_id: channel.channel_id,
+  });
+  const replyRoute = `${CHANNEL_HASH}&context=thread&threadId=${encodeURIComponent(postId)}`;
+  renderAtHash(replyRoute, api);
+  await waitFor(() => {
+    expect(within(getActiveColumn('Thread')).getByText('channel post')).toBeInTheDocument();
+  });
+  expect(columnIds()).toEqual([
+    'column:timeline:kukuri%3Atopic%3Ageneral:-:-',
+    'column:profile:kukuri%3Atopic%3Ageneral:-:-',
+    'column:explore:kukuri%3Atopic%3Ageneral:-:-',
+    'column:notifications:kukuri%3Atopic%3Ageneral:-:-',
+    'column:messages:kukuri%3Atopic%3Ageneral:-:-',
+    'column:timeline:kukuri%3Atopic%3Ageneral:channel-1:-',
+    `column:thread:kukuri%3Atopic%3Ageneral:channel-1:${encodeURIComponent(postId)}`,
+  ]);
+  expect(getActiveColumn('Thread').querySelector('.shell-column-header')).toHaveTextContent(
+    'Thread · core · general'
+  );
+  expect(window.location.hash).toBe(replyRoute);
+});
+
 test('private Column 選択直後に別 Column の本文ボタンを押しても Column 順は変わらず、押した Column が active になる (Issue #1053)', async () => {
   const user = userEvent.setup();
   render(<App api={createDesktopMockApi()} />);

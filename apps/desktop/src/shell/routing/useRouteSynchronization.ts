@@ -580,6 +580,10 @@ export function useRouteSynchronization({
           setSelectedAuthor(null);
           setAuthorError(null);
         }
+      } else if (routeScope.channelId !== nextSelectedChannelId) {
+        // 参加の確認待ちで、今の選択が URL の channel と違う間は開かない。
+        // 今の選択で開くと、openThread が URL から channel を消す(#1877)。
+        normalizedSelectedThread = null;
       } else if (
         requestedThreadId !== selectedThread ||
         (threadsById[requestedThreadId]?.length ?? 0) === 0
