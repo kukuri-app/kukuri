@@ -676,6 +676,10 @@ export function useDesktopShellSectionLoaders({
       if (activePrimarySection === 'live' || showsThreadLives(activeColumn, state.developerModeEnabled)) {
         tasks.push(loadLiveSection(topic, selectedChannelId));
       }
+      // 別の場所の Live を左側に出すライブの列は、列の下部の参加のために Live の場所の一覧も読む(#1841)。
+      if (activeColumn.kind === 'stream' && activeColumn.live) {
+        tasks.push(loadLiveSection(activeColumn.live.topicId, activeColumn.live.channelId));
+      }
       if (activePrimarySection === 'game') {
         tasks.push(loadGameSection(topic, selectedChannelId));
       }

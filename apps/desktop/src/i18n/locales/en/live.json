@@ -2,6 +2,7 @@
   "actions": {
     "introduce": "Share",
     "openStartPost": "Open original post",
+    "stage": "Show large",
     "start": "Start Live"
   },
   "empty": "No live sessions",

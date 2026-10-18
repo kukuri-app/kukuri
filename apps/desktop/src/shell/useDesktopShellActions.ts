@@ -781,7 +781,8 @@ export function useDesktopShellActions({
     }
   }
 
-  function beginColumnReply(post: PostView) {
+  // `parentColumnId` を渡すと、返信の列をその列の子として開く(ライブの列の左側からの返信は、ライブの列を残す。#1841)。
+  function beginColumnReply(post: PostView, parentColumnId?: string) {
     const topicId = publishedTopicIdForPost(post) ?? activeTopic;
     const scope = { topicId, channelId: post.channel_id ?? null };
     const threadId = post.root_id ?? post.object_id;
@@ -808,15 +809,18 @@ export function useDesktopShellActions({
         kind: 'thread',
         scope,
         entityId: threadId,
-        parentColumnId: timelineColumnId,
+        parentColumnId: parentColumnId ?? timelineColumnId,
         pinned: false,
       })
     );
-    setActiveTopic(topicId);
-    setSelectedChannelIdByTopic(setRecordEntry(topicId, scope.channelId));
+    // 親の列を指定した返信は、scope の timeline の列を開き直さない(列の並びを変えない)。
+    if (!parentColumnId) {
+      setActiveTopic(topicId);
+      setSelectedChannelIdByTopic(setRecordEntry(topicId, scope.channelId));
+    }
     setTimelineScopeByTopic(setRecordEntry(topicId, channelTimelineScope(scope.channelId)));
     // 返信元投稿の channel を route / selection にも載せ、Thread Column の scope を global 選択に依存させない。
-    void openThread(threadId, { topic: topicId, channelId: scope.channelId });
+    void openThread(threadId, { topic: topicId, channelId: scope.channelId, ...(parentColumnId ? { parentColumnId } : {}) });
   }
 
   function beginColumnQuoteRepost(post: PostView) {

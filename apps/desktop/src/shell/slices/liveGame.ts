@@ -1,4 +1,4 @@
-import type { GameRoomStatus, GameRoomView, LiveSessionView } from '@/lib/api';
+import type { GameRoomStatus, GameRoomView, LiveSessionView, PostView } from '@/lib/api';
 
 import type { AsyncPanelState } from '@/shell/slices/shared';
 
@@ -20,6 +20,8 @@ export type LiveGameSliceState = {
   liveCreatePending: boolean;
   livePendingBySessionId: Record<string, true>;
   selectedLiveSessionId: string | null;
+  // #1841: ライブの列の左側に出している Live の開始 post(id ごと)。数の表示の custom reaction の画像を取得の対象にする。
+  liveStageStartPosts: Record<string, PostView>;
   gameTitle: string;
   gameDescription: string;
   gameParticipantsInput: string;
@@ -42,6 +44,7 @@ export function createInitialLiveGameSlice(): LiveGameSliceState {
     liveCreatePending: false,
     livePendingBySessionId: {},
     selectedLiveSessionId: null,
+    liveStageStartPosts: {},
     gameTitle: '',
     gameDescription: '',
     gameParticipantsInput: '',

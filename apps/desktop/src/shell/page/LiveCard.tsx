@@ -1,5 +1,5 @@
 import { useContext } from 'react';
-import { Camera, Link2, MonitorUp, Repeat2, Reply } from 'lucide-react';
+import { Camera, Link2, Maximize2, MonitorUp, Repeat2, Reply } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { SmartReferenceText } from '@/components/core/SmartReferenceText';
@@ -20,10 +20,13 @@ type LiveCardProps = {
   // 投稿の中の表示では、その投稿の id。開始 post そのものなら「開始 post を開く」を出さない。
   postId?: string;
   targeted?: boolean;
+  // #1841: 映像を出すか(ライブの列の左側に大きく出している Live のカードでは出さない)と、「大きく表示」の操作。
+  media?: boolean;
+  onStage?: () => void;
 };
 
 /** Live の一覧と、投稿の中の Live の表示が共用するカード(#1839)。 */
-export function LiveCard({ topic, session, postId, targeted = false }: LiveCardProps) {
+export function LiveCard({ topic, session, postId, targeted = false, media = true, onStage }: LiveCardProps) {
   const { t } = useTranslation(['common', 'live']);
   const actions = useContext(LiveActionsContext);
   if (!actions) return null;
@@ -67,7 +70,7 @@ export function LiveCard({ topic, session, postId, targeted = false }: LiveCardP
           </span>
         </div>
       ) : null}
-      <LiveSessionMedia api={actions.api} topic={topic} session={session} isOwner={isOwner} />
+      {media ? <LiveSessionMedia api={actions.api} topic={topic} session={session} isOwner={isOwner} /> : null}
       <div className='post-actions'>
         {isOwner && !ended && actions.broadcastingSessionId === null
           ? (['camera', 'screen'] as const).map((source) => (
@@ -104,6 +107,12 @@ export function LiveCard({ topic, session, postId, targeted = false }: LiveCardP
             onClick={() => void actions.end(topic, id)}
           >
             {t('common:actions.end')}
+          </Button>
+        ) : null}
+        {onStage && !ended ? (
+          <Button variant='secondary' type='button' onClick={onStage}>
+            <Maximize2 className='size-4' aria-hidden='true' />
+            {t('live:actions.stage')}
           </Button>
         ) : null}
         <Button

@@ -46,6 +46,7 @@ function PostLiveStory({ postId, session, channelId = null }: {
     openPost: () => undefined,
     copyLink: () => undefined,
     activateReference: () => undefined,
+    stage: () => undefined,
   };
   const post = {
     object_id: postId,

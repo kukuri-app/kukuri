@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useContext, useMemo, useState } from 'react';
 
 import { BookmarksEmptyState, BookmarksListFrame } from '@/components/core/BookmarksEmptyState';
 import { PagedList } from '@/components/core/PagedList';
@@ -54,7 +54,10 @@ import {
   resolveProfilePictureSrc,
 } from '@/shell/presentation';
 import { useDesktopShellViewModels } from '@/shell/useDesktopShellViewModels';
+import { ColumnLiveStage } from './ColumnLiveStage';
 import { LiveCard } from './LiveCard';
+import { LiveActionsContext } from './liveActions';
+import { useLiveSurfacesEnabled } from './publicThreadActions';
 import type { OpenAuthorDetail, OpenThread, Translate } from '@/shell/actions/shared';
 import { useShallow } from 'zustand/react/shallow';
 import { DEFAULT_ASYNC_PANEL_STATE } from '@/shell/slices/shared';
@@ -125,7 +128,7 @@ export type DesktopShellPrimarySurfaceProps = {
   loadMoreTimeline: (topic: string, channelId?: string | null) => Promise<void>;
   openAuthorDetail: OpenAuthorDetail;
   openThread: OpenThread;
-  beginColumnReply: (post: PostView) => void;
+  beginColumnReply: (post: PostView, parentColumnId?: string) => void;
   handleSimpleRepost: (post: PostView) => Promise<void>;
   beginColumnQuoteRepost: (post: PostView) => void;
   handleRetryLocalPost: (post: PostView) => void;
@@ -340,6 +343,12 @@ export function DesktopShellPrimarySurface({
   );
   // #1061: 配信一覧の折りたたみと、この一覧だけの「表示する」。
   const liveTrustGate = useAuthorTrustGateReveal(authorTrustGates);
+  // #1841: ライブの列の左側に列の Live を大きく出す(開発者モードでだけ)。一覧のカードの「大きく表示」は、この列を置き換える。
+  const liveActions = useContext(LiveActionsContext);
+  const liveSurfaces = useLiveSurfacesEnabled();
+  const stagedColumn = liveSurfaces && column.scope && column.entityId
+    ? { ...column, scope: column.scope, entityId: column.entityId }
+    : null;
   const setGameTitle = useDesktopShellFieldSetter('gameTitle');
   const setGameDescription = useDesktopShellFieldSetter('gameDescription');
   const setGameParticipantsInput = useDesktopShellFieldSetter('gameParticipantsInput');
@@ -429,6 +438,21 @@ export function DesktopShellPrimarySurface({
     isOwner: session.host_pubkey === syncStatus.local_author_pubkey,
     pending: Boolean(livePendingBySessionId[session.session_id]),
   }));
+  // Live の一覧の見出しと状態。左側に Live を大きく出している間は、一覧の上に置く。
+  const liveListHeader = (
+    <>
+      <div className='panel-header'>
+        <div>
+          <h3>{t('live:title')}</h3>
+          <small>{t('live:summary', { count: surfaceLiveSessionListItems.length })}</small>
+        </div>
+      </div>
+      {surfaceLivePanelState.status === 'loading' ? <Notice>{t('live:loading')}</Notice> : null}
+      {surfaceLivePanelState.status === 'error' && (liveError ?? surfaceLivePanelState.error) ? (
+        <Notice tone='destructive'>{liveError ?? surfaceLivePanelState.error}</Notice>
+      ) : null}
+    </>
+  );
   const surfaceGameDraftViews = Object.fromEntries(
     surfaceGameRooms.map((room) => {
       const draft = gameDrafts[room.room_id] ?? createGameEditorDraft(room);
@@ -697,22 +721,20 @@ export function DesktopShellPrimarySurface({
 
         {activeSurfaceSection === 'live' ? (
           <div className='shell-stream-layout'>
-            <section className='shell-column-content'>
-              <div className='panel-header'>
-                <div>
-                  <h3>{t('live:title')}</h3>
-                  <small>{t('live:summary', { count: surfaceLiveSessionListItems.length })}</small>
-                </div>
-              </div>
-              {surfaceLivePanelState.status === 'loading' ? (
-                <Notice>{t('live:loading')}</Notice>
-              ) : null}
-              {surfaceLivePanelState.status === 'error' &&
-              (liveError ?? surfaceLivePanelState.error) ? (
-                <Notice tone='destructive'>{liveError ?? surfaceLivePanelState.error}</Notice>
-              ) : null}
-            </section>
+            {stagedColumn ? (
+              <ColumnLiveStage
+                column={stagedColumn}
+                joinedChannels={surfaceJoinedChannels}
+                buildPostCardView={buildPostCardView}
+                onReactionPickerOpen={() => void loadReactionCatalogData()}
+                onToggleReaction={(post, reactionKey) => void handleToggleReaction(post, reactionKey)}
+                onReply={(post) => beginColumnReply(post, column.id)}
+              />
+            ) : (
+              <section className='shell-column-content'>{liveListHeader}</section>
+            )}
             <div className='shell-column-content'>
+              {stagedColumn ? liveListHeader : null}
               {surfaceLiveSessionListItems.length === 0 && pendingLiveCount === 0 &&
               surfaceLivePanelState.status === 'ready' ? (
                 <p className='empty-state'>{t('live:empty')}</p>
@@ -738,13 +760,21 @@ export function DesktopShellPrimarySurface({
                       topic={surfaceTopic}
                       session={session}
                       targeted={selectedLiveSessionId === session.session_id}
+                      media={!liveSurfaces || session.session_id !== column.entityId}
+                      onStage={liveActions && liveSurfaces && session.session_id !== column.entityId
+                        ? () => liveActions.stage(
+                          { session_id: session.session_id, topic_id: surfaceTopic, channel_id: surfaceChannelId },
+                          { topicId: surfaceTopic, channelId: surfaceChannelId },
+                          column
+                        )
+                        : undefined}
                     />
                   </SessionVisibility>
                   );
                 })}
               </ul>
               <PendingSessionCards context={{ api, topic: surfaceTopic, scope: surfaceTimelineScope }}
-                kind="live" targetId={column.entityId} onCountChange={setPendingLiveCount} refreshToken={surfaceLiveSessions} knownIds={surfaceLiveSessions.map((item) => item.session_id)} />
+                kind="live" targetId={column.live ? undefined : column.entityId} onCountChange={setPendingLiveCount} refreshToken={surfaceLiveSessions} knownIds={surfaceLiveSessions.map((item) => item.session_id)} />
             </div>
           </div>
         ) : null}

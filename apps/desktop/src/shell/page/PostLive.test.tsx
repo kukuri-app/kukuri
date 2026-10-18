@@ -63,6 +63,7 @@ function renderLive(target: PostView, found: LiveSessionView | null) {
     openPost: vi.fn(),
     copyLink: vi.fn(),
     activateReference: vi.fn(),
+    stage: vi.fn(),
   };
   render(
     <DesktopShellStoreContext.Provider value={createDesktopShellStore()}>

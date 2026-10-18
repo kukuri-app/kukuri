@@ -38,6 +38,7 @@ type LiveProvidersProps = {
   openThread: (threadId: string, options: { topic: string }) => void;
   copyLink: (link: string) => void;
   activateReference: (reference: InternalSmartReference) => void;
+  stage: LiveActions['stage'];
   children: ReactNode;
 };
 
@@ -54,6 +55,7 @@ export function LiveProviders({
   openThread,
   copyLink,
   activateReference,
+  stage,
   children,
 }: LiveProvidersProps) {
   const { localPubkey, pendingBySessionId } = useDesktopShellStore(
@@ -82,8 +84,10 @@ export function LiveProviders({
       openPost: (topic, postId) => openThread(postId, { topic }),
       copyLink,
       activateReference,
+      stage,
     }),
-    [api, locale, localPubkey, pendingBySessionId, join, leave, end, broadcast, broadcastingSessionId, openThread, copyLink, activateReference]
+    [api, locale, localPubkey, pendingBySessionId, join, leave, end, broadcast, broadcastingSessionId, openThread, copyLink, activateReference,
+      stage]
   );
   const renderLive = useCallback((post: PostView) => <PostLive post={post} />, []);
   return (

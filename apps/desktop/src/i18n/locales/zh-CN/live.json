@@ -2,6 +2,7 @@
   "actions": {
     "introduce": "分享",
     "openStartPost": "打开原帖",
+    "stage": "放大显示",
     "start": "开始直播"
   },
   "empty": "暂无直播会话",

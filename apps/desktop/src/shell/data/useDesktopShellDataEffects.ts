@@ -35,6 +35,7 @@ import {
   type DesktopShellStateValue,
   type DesktopShellStoreApi,
 } from '@/shell/store';
+import { liveSurfacesEnabled } from '@/shell/slices/publicThreads';
 import { activeWorkspaceScope } from '@/shell/slices/workspace';
 import { setRecordEntry } from '@/shell/stateUpdates';
 import {
@@ -255,8 +256,13 @@ export function useDesktopShellDataEffects({
           `${activeTopic}\u0000`,
         ]);
         const backgroundScopes = currentState.workspaceState.columns.flatMap((column) => {
-          if (column.kind !== 'timeline' || !column.scope) return [];
-          if (!column.timelineFlow && !visibleIds.has(column.id)) return [];
+          if (!column.scope) return [];
+          // #1841: 左側に Live を大きく出している表示中のライブの列は、会話の場所を読み直す(参加していない private channel は除く)。
+          const channelId = column.scope.channelId;
+          const staged = column.kind === 'stream' && Boolean(column.entityId) && visibleIds.has(column.id) &&
+            liveSurfacesEnabled(currentState.developerModeEnabled) && (!channelId || isPublicChannelId(channelId) ||
+              (currentState.joinedChannelsByTopic[column.scope.topicId] ?? []).some((channel) => channel.channel_id === channelId));
+          if (!staged && (column.kind !== 'timeline' || (!column.timelineFlow && !visibleIds.has(column.id)))) return [];
           const key = `${column.scope.topicId}\u0000${column.scope.channelId ?? ''}`;
           if (seenScopeKeys.has(key)) return [];
           seenScopeKeys.add(key);

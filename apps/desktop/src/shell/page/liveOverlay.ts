@@ -64,7 +64,8 @@ function conversationAccess(
  * #1841 AC-1: 重ねる Live・会話の場所・Live の開始 post を結び付ける。
  * - Live は参照から表示要求で 1 件読む(`element` が画面にある間)。開始 post は Live の `start_post_id` だけで、紹介 post は使わない。
  * - 投稿は、通常の列と共用する scope ごとの cache(保留中の新着を含む)から最新の `LIVE_OVERLAY_POST_LIMIT` 件を古い順に返す。
- *   取り下げた投稿・本文の無い投稿・`hidden`(成人向け・信頼値の評価で隠すもの)は除く。読めない場所の投稿は返さない。
+ *   取り下げた投稿・本文を取得できない投稿・本文も添付も無い投稿(本文を空にした開始 post・単純な repost)・`hidden`(成人向け・
+ *   信頼値の評価で隠すもの)は除き、最新の件数は残りから数える。読めない場所の投稿は返さない。
  * - 開始 post は返信ツリーの root だけを読み、数の表示に使う。読み直しは同期の時刻の変化(timer は使わない)。
  * - `animate` の間だけ、開始 post へ新しく届いたリアクションを浮かべる候補にする。
  */
@@ -89,7 +90,11 @@ export function useLiveOverlay(
   // `undefined` は、会話の場所の投稿をまだ読んでいない。
   const loaded = conversation === 'readable' ? (pending ?? timeline) : undefined;
   const shown = (loaded ?? EMPTY_POSTS).filter(
-    (post) => !post.withdrawal && post.content_status !== 'Missing' && !hidden?.(post)
+    (post) =>
+      !post.withdrawal &&
+      post.content_status !== 'Missing' &&
+      (post.content.trim() !== '' || post.attachments.length > 0) &&
+      !hidden?.(post)
   );
   const [openedAt] = useState(() => Date.now());
   // 開いた時点の投稿。会話の場所の投稿を最初に読めたときの分(空でもよい)を覚え、それ以降に届いた分だけを新着とする(読めるまでは

@@ -239,6 +239,14 @@ function received(id: string, overrides: Partial<ReactionReceivedView> = {}): Re
   };
 }
 
+// #1841 AC-3: 開いている間だけ、開始 post を数の表示の custom reaction の画像の取得の対象に載せる。
+test('lists the start post for image fetching while open and drops it when closed', async () => {
+  const { store, unmount } = setup();
+  await waitFor(() => expect(Object.keys(store.getState().liveStageStartPosts)).toEqual(['start']));
+  unmount();
+  expect(store.getState().liveStageStartPosts).toEqual({});
+});
+
 test('floats a new reaction once, even across re-renders and a repeated announcement', async () => {
   const { container, rerender } = setup();
   await waitFor(() => expect(layers(container).querySelectorAll('.live-stage-count')).toHaveLength(2));

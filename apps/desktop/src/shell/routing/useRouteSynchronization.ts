@@ -229,6 +229,7 @@ export function useRouteSynchronization({
       requestedAuthorPubkey,
       requestedPeerPubkey,
       requestedSessionId,
+      requestedLivePlace,
       requestedRoomId,
     } = parseShellRouteState({
       pathname: resolvedRouteLocation.pathname,
@@ -861,6 +862,8 @@ export function useRouteSynchronization({
         gamePanelState?.status !== 'ready' &&
         gamePanelState?.status !== 'error'
     );
+    // 左側に出す Live の場所は、Live を示す route だけが持つ(#1841)。
+    const normalizedLivePlace = routeSection === 'live' && normalizedSelectedLiveSessionId ? requestedLivePlace : null;
     const currentRouteColumn = activeWorkspaceColumn(storeApi.getState().workspaceState);
     const resolvingCurrentGameColumn = Boolean(
       routeSection === 'game' &&
@@ -893,6 +896,7 @@ export function useRouteSynchronization({
           selectedDirectMessagePeerPubkey: normalizedSelectedDirectMessagePeerPubkey,
           selectedGameRoomId: normalizedSelectedGameRoomId,
           selectedLiveSessionId: normalizedSelectedLiveSessionId,
+          selectedLivePlace: normalizedLivePlace,
           selectedThread: normalizedSelectedThread,
           publicThreadList: routeSection === 'timeline' && requestedContext === 'publicThreads',
         })
@@ -923,6 +927,7 @@ export function useRouteSynchronization({
           selectedDirectMessagePeerPubkey: normalizedSelectedDirectMessagePeerPubkey,
           selectedGameRoomId: normalizedSelectedGameRoomId,
           selectedLiveSessionId: normalizedSelectedLiveSessionId,
+          ...(normalizedLivePlace ? { selectedLivePlace: normalizedLivePlace } : {}),
           selectedThread: normalizedSelectedThread,
           settingsOpen: nextSettingsOpen,
           settingsSection: nextSettingsResolvedSection,

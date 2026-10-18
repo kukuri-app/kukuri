@@ -68,6 +68,7 @@ export function routeStateForColumn(column: ColumnState): RouteState | null {
     case 'stream':
       route.primarySection = 'live';
       route.selectedLiveSessionId = column.entityId ?? null;
+      route.selectedLivePlace = column.live ?? null;
       return route;
     case 'game':
     case 'metaverse':

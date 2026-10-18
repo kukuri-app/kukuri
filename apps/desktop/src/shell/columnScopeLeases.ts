@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { DesktopApi, ScopeDisplayTarget } from '@/lib/api';
 import { normalizeInvokeError } from '@/lib/api/invoke/error';
 import { channelTimelineScope } from '@/shell/presentation';
-import type { ColumnState } from '@/shell/slices/workspace';
+import type { ColumnScope, ColumnState } from '@/shell/slices/workspace';
 
 // #1221 R2-C: 購読する scope は account 全体で 64 件まで。超えた操作は backend がこの code で拒否する。
 export const SCOPE_LIMIT_REACHED = 'SCOPE_LIMIT_REACHED';
@@ -42,6 +42,15 @@ export function useScopeLimitNotice() {
   return [kind, setKind] as const;
 }
 
+// #1841: 別の場所の Live を左側に出すライブの列が、Live の場所を購読する observer の接尾辞(上限で取れなくても列は閉じない)。
+const LIVE_PLACE_OBSERVER = '#live';
+
+const timelineTarget = (scope: ColumnScope): ScopeDisplayTarget => ({
+  kind: 'timeline',
+  topic: scope.topicId,
+  scope: channelTimelineScope(scope.channelId),
+});
+
 // 列が購読する対象。timeline 系は列の scope、profile は表示中の author、conversation は DM の相手。
 export function columnScopeTarget(column: ColumnState): ScopeDisplayTarget | null {
   switch (column.kind) {
@@ -51,13 +60,7 @@ export function columnScopeTarget(column: ColumnState): ScopeDisplayTarget | nul
     case 'stream':
     case 'game':
     case 'metaverse':
-      return column.scope
-        ? {
-            kind: 'timeline',
-            topic: column.scope.topicId,
-            scope: channelTimelineScope(column.scope.channelId),
-          }
-        : null;
+      return column.scope ? timelineTarget(column.scope) : null;
     case 'profile':
     case 'conversation':
       return column.entityId ? { kind: 'author', pubkey: column.entityId } : null;
@@ -82,7 +85,12 @@ export function useColumnScopeLeases(
   const targets = JSON.stringify(
     columns.flatMap((column) => {
       const target = columnScopeTarget(column);
-      return target ? [[column.id, target] as const] : [];
+      return [
+        ...(target ? [[column.id, target] as const] : []),
+        ...(column.kind === 'stream' && column.live
+          ? [[`${column.id}${LIVE_PLACE_OBSERVER}`, timelineTarget(column.live)] as const]
+          : []),
+      ];
     })
   );
   useEffect(() => {
@@ -106,7 +114,7 @@ export function useColumnScopeLeases(
             // 置き換えの拒否では前の key が残るので、列の holder を外してから列を取り消す。
             registered.current.delete(observer);
             send(observer, target, false);
-            limitReached.current(observer);
+            if (!observer.endsWith(LIVE_PLACE_OBSERVER)) limitReached.current(observer);
           }
         }
       });

@@ -1,4 +1,4 @@
-import { useContext, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, Reply, SlidersHorizontal } from 'lucide-react';
 
@@ -20,7 +20,8 @@ import type {
 import { MENTION_PATTERN } from '@/lib/internalLinks';
 import { prefersReducedMotion } from '@/lib/reducedMotion';
 import { authorDisplayLabel, translateLiveStatus } from '@/shell/presentation';
-import { useDesktopShellStore } from '@/shell/store';
+import { removeRecordEntry, setRecordEntry } from '@/shell/stateUpdates';
+import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
 
 import { LiveActionsContext } from './liveActions';
 import { type LiveOverlayFloat, type LiveOverlayPost, type LiveOverlaySource, useLiveOverlay } from './liveOverlay';
@@ -74,6 +75,14 @@ export function LiveStage({
     hidden,
     animate: visible && !prefersReducedMotion(),
   });
+  // 開いている間、開始 post を数の表示の custom reaction の画像の取得の対象にする(#1841 AC-3)。
+  const setStartPosts = useDesktopShellFieldSetter('liveStageStartPosts');
+  useEffect(() => {
+    if (!startPost) return;
+    const id = startPost.object_id;
+    setStartPosts(setRecordEntry(id, startPost));
+    return () => setStartPosts(removeRecordEntry(id));
+  }, [setStartPosts, startPost]);
   let body;
   if (session === undefined) body = <Notice>{t('live:loading')}</Notice>;
   else if (session === null) body = <Notice>{t('live:unavailable')}</Notice>;
