@@ -7,7 +7,7 @@ import { App } from '@/App';
 import type { PostView, PublicChannelView } from '@/lib/api';
 import { buildPublicThreadLink } from '@/lib/internalLinks';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
-import type { ColumnState } from '@/shell/slices/workspace';
+import { columnIdentityId, type ColumnState } from '@/shell/slices/workspace';
 import { WORKSPACE_LAYOUT_STORAGE_KEY } from '@/shell/workspacePersistence';
 
 import { getActiveColumn, openControlCenter, renderAtHash, setViewportWidth } from './DesktopShellPage.testHelpers';
@@ -272,4 +272,44 @@ test('a direct link opens the thread under its list, copies its link and is rest
 
   await user.click(within(restored).getByRole('button', { name: 'Close Public thread' }));
   await waitFor(() => expect(getActiveColumn('Public threads')).toBeInTheDocument());
+}, 30_000);
+
+// 詳細の列の投稿から返信しても、詳細の列は並びの位置と親(一覧の列)を変えず、返信の列はその右(子)に開く。
+test('replying to a post in the detail keeps the detail in place under its list', async () => {
+  const user = userEvent.setup();
+  const general = { topicId: TOPIC, channelId: null };
+  const dev = { topicId: 'kukuri:topic:dev', channelId: null };
+  const detailScope = { topicId: TOPIC, channelId: CHANNEL };
+  const timelineId = columnIdentityId('timeline', general);
+  const listId = columnIdentityId('publicThreads', general);
+  const detailId = columnIdentityId('timeline', detailScope);
+  const devId = columnIdentityId('timeline', dev);
+  // 詳細の列の右に、別の列がある並び。
+  window.localStorage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, JSON.stringify({
+    version: 1,
+    activeColumnId: detailId,
+    columns: [
+      { id: timelineId, kind: 'timeline', scope: general, pinned: true },
+      { id: listId, kind: 'publicThreads', scope: general, pinned: false },
+      { id: detailId, kind: 'timeline', scope: detailScope, parentColumnId: listId, pinned: false },
+      { id: devId, kind: 'timeline', scope: dev, pinned: true },
+    ],
+  }));
+  render(<App api={createDesktopMockApi({
+    seedPublicChannels: { [TOPIC]: [{ ...thread(CHANNEL, 'Weekly sync', 1_700_000_000_000, 1_700_000_000_000), first_post_id: 'first-post' }] },
+    seedPosts: { [TOPIC]: [post('first-post', 'Agenda for this week', CHANNEL, 1_700_000_000_000)] },
+  })} />);
+  const detail = await waitFor(() => getActiveColumn('Public thread'));
+  const agenda = (await within(detail).findByText('Agenda for this week')).closest('article');
+  if (!(agenda instanceof HTMLElement)) throw new Error('thread post not found');
+
+  await user.click(within(agenda).getByRole('button', { name: 'Reply' }));
+  const reply = await waitFor(() => getActiveColumn('Thread'));
+  expect(await within(reply).findByPlaceholderText('Write a reply')).toBeInTheDocument();
+  await waitFor(() => expect(window.location.hash).toContain('threadId=first-post'));
+  const replyId = columnIdentityId('thread', detailScope, 'first-post');
+  const columns = persistedColumns();
+  expect(columns.map((column) => column.id)).toEqual([timelineId, listId, detailId, replyId, devId]);
+  expect(columns.find((column) => column.id === detailId)?.parentColumnId).toBe(listId);
+  expect(columns.find((column) => column.id === replyId)?.parentColumnId).toBe(detailId);
 }, 30_000);
