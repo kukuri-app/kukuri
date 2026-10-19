@@ -3,7 +3,9 @@
 class KukuriLiveCapture extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.buffer = new Float32Array(Math.round(sampleRate / 50));
+    // 送った buffer は転送で長さ 0 になるので、長さは別に持つ。
+    this.size = Math.round(sampleRate / 50);
+    this.buffer = new Float32Array(this.size);
     this.filled = 0;
   }
 
@@ -11,13 +13,13 @@ class KukuriLiveCapture extends AudioWorkletProcessor {
     const channel = inputs[0]?.[0];
     if (!channel) return true;
     for (let at = 0; at < channel.length; ) {
-      const count = Math.min(channel.length - at, this.buffer.length - this.filled);
+      const count = Math.min(channel.length - at, this.size - this.filled);
       this.buffer.set(channel.subarray(at, at + count), this.filled);
       this.filled += count;
       at += count;
-      if (this.filled === this.buffer.length) {
+      if (this.filled === this.size) {
         this.port.postMessage(this.buffer, [this.buffer.buffer]);
-        this.buffer = new Float32Array(this.buffer.length);
+        this.buffer = new Float32Array(this.size);
         this.filled = 0;
       }
     }

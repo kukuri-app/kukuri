@@ -1961,14 +1961,19 @@ async function live() {
 
   // 映像（keyframe を含む）と、映像の時刻に追いつく音声の再生時刻を受ける。
   const watch = (options) => fixture('/fixture/live-watch', { ...request, ms: 3_000, ...options });
-  const heard = (watched) => watched.keyframes > 0 && watched.audio_clock_us > 0 && watched.video_us - watched.audio_clock_us < 1_000_000;
+  let watched;
+  const hear = (what) =>
+    eventually(what, async () => {
+      watched = await watch();
+      return watched.keyframes > 0 && watched.audio_clock_us > 0 && watched.video_us - watched.audio_clock_us < 1_000_000;
+    }).catch((error) => assert.fail(`${error.message}: ${JSON.stringify(watched)}`));
   await eventually('native sees the live session', async () =>
     (await native('list_live_sessions', { request: { topic: TOPIC, scope: { kind: 'public' } } })).some(
       (session) => session.session_id === request.session_id
     )
   );
   await watch({ restart: true, ms: 0 });
-  await eventually('native receives the video and the sound', async () => heard(await watch()));
+  await hear('native receives the video and the sound');
 
   // mic を止めた後に始めた視聴は、映像を受けても、音声の再生時刻が映像の時刻に追いつかない。
   await bar.$('button[aria-label="Disable microphone"]').click();
@@ -1982,7 +1987,7 @@ async function live() {
   );
   await bar.$('button[aria-label="Enable microphone"]').click();
   await bar.$('button[aria-label="Disable microphone"]').waitForExist({ timeout: WAIT });
-  await eventually('native receives the sound again', async () => heard(await watch()));
+  await hear('native receives the sound again');
 
   // 配信を止めると、native の視聴は終わる。
   await bar.$('button=Stop video broadcast').click();
