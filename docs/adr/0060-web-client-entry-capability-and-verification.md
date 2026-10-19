@@ -62,13 +62,14 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 
 | 分類 | 件数 | Web での扱い |
 | --- | --- | --- |
-| (a) `DesktopRuntime` への委譲 | 134 | ADR 0056 §6 の dispatch 表から、Web でもそのまま使う。ただし live・game・metaverse・Dome の 34 件は今回の合意の外なので、Web では「この platform では使えない」を返し、画面で未対応と示す |
+| (a) `DesktopRuntime` への委譲 | 134 | ADR 0056 §6 の dispatch 表から、Web でもそのまま使う。ただし game・metaverse・Dome の command は今回の合意の外なので、Web では「この platform では使えない」を返し、画面で未対応と示す（live は #1879 で Web でも使う。下の 2026-10-19 のユーザー判断） |
 | (b) 端末固有 | 19 | Web では「この platform では使えない」を返す。media は payload と Blob URL の経路（ADR 0056 §5）、locale は `navigator.languages`、外部 URL は通常の link で置き換える。link preview の HTTP 取得は Web では行わず、投稿者が書いた record を (a) の `read_link_preview_record` で読む（ADR 0051 §7、#1220 AC-2d で追加） |
 | (c) Tauri 側に処理がある | 21 | 起動・同意・account 切替・identity の処理と起動 gate を host へ移して Web でも使う（起動 gate は W1 AC-3、残りは W1 AC-5）。device backup（完全な端末 backup）は Web では使えないとし、鍵の export・import（ADR 0047）と QR・リンクの移行（#1211）で代える |
 
 - 必須の主要導線（初回の同意、account の生成・移行・切替、profile、topic、投稿・返信・反応、DM、private channel、設定）は、すべて (a) のうち Web で使う command と (c) の移設で成り立つ。matrix だけで省略しない。
 - 最終の matrix は W1 AC-5 の capability の実装と一緒に確定し、W8 AC-5 の実測の結果と合わせて記録する。
 - 2026-10-03 のユーザー判断（W8 AC-2a）: 「画面で未対応と示す」は、Web では使えない機能（live・game・metaverse・Dome、device backup・restore、アプリの更新、ウィンドウを閉じるときの設定、OS 通知の設定、開発者ログの閲覧）の入口を出さず、設定の About に短い説明を 1 つ出す形で満たす。
+- 2026-10-19 のユーザー判断（#1879）: live を Web でも使う。desktop と同じく開発者モードの間だけ、配信と視聴を出す（映像・音声の処理は ADR 0067 §9 の Web の項）。live の command は Web の dispatch の表へ移し、設定の About の説明から live を外す。game・metaverse・Dome は今のまま使えない。live の動きの自動試験は Chrome だけで行い、PR の CI の merge の条件にする（Firefox・Safari・Android の Chrome では確かめない。§4 の夜間の実行では未確認の制約として示す）。
 
 ### 4. 実ブラウザの検証環境
 
@@ -210,7 +211,7 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 ## Consequences
 
 - `apps/desktop` の build は、Tauri と Web の 2 つの mode を持つ。Web の mode は Tauri の API を実行時に触らないことを、Playwright の Web の試験で確かめる。
-- live・game・metaverse・Dome は Web では未対応として示す。
+- game・metaverse・Dome は Web では未対応として示す（live は #1879 で Web でも使う）。
 
 ## Data classification
 

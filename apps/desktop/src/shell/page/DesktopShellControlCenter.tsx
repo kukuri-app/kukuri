@@ -61,6 +61,7 @@ import {
 } from '@/shell/slices/workspace';
 import { communityNodeConsentLabel, formatCount } from '@/shell/presentation';
 import { connectivityGuidance } from '@/shell/connectivityGuidance';
+import { primarySectionHidden } from '@/shell/routes';
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
 import { SavedWorkspaceLayouts } from '@/components/shell/SavedWorkspaceLayouts';
 import { applySavedWorkspaceLayout } from '@/shell/savedWorkspaceLayouts';
@@ -193,12 +194,12 @@ export function DesktopShellControlCenter({
       : 'shell:controlCenter.openWithStatus',
     { status: statusLabel }
   );
-  // live・game・metaverse は Web では使えない（ADR 0060 §3）。
-  const addableColumnKinds = developerModeEnabled && !IS_WEB_RUNTIME
-    ? ADDABLE_COLUMN_KINDS
-    : ADDABLE_COLUMN_KINDS.filter(
-        (kind) => kind !== 'stream' && kind !== 'metaverse'
-      );
+  // live・game・metaverse は開発者モードでだけ出し、game・metaverse は Web では使えない（ADR 0060 §3）。
+  const addableColumnKinds = ADDABLE_COLUMN_KINDS.filter(
+    (kind) =>
+      !(kind === 'stream' && primarySectionHidden('live', developerModeEnabled)) &&
+      !(kind === 'metaverse' && primarySectionHidden('game', developerModeEnabled))
+  );
 
   const restoreTriggerFocus = useRef(false);
   useEffect(() => {

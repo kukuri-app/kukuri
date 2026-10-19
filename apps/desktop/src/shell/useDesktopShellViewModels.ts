@@ -26,6 +26,7 @@ import { useTimelineViewModels } from '@/shell/viewModels/useTimelineViewModels'
 import { useShallow } from 'zustand/react/shallow';
 import {
   PRIMARY_SECTION_ITEMS,
+  primarySectionHidden,
   SETTINGS_SECTION_COPY,
 } from '@/shell/routes';
 import {
@@ -45,7 +46,6 @@ import {
   resolveProfilePictureSrc,
 } from '@/shell/presentation';
 import { selectShellViewModelsSlice } from '@/shell/storeSelectors';
-import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
 type UseDesktopShellViewModelsArgs = {
   t: (key: string, options?: Record<string, unknown>) => string;
@@ -341,11 +341,7 @@ export function useDesktopShellViewModels({
   );
   const primarySectionItems = useMemo(
     () =>
-      PRIMARY_SECTION_ITEMS.filter(
-        (item) =>
-          (state.developerModeEnabled && !IS_WEB_RUNTIME) ||
-          (item.id !== 'live' && item.id !== 'game')
-      ).map((item) => ({
+      PRIMARY_SECTION_ITEMS.filter((item) => !primarySectionHidden(item.id, state.developerModeEnabled)).map((item) => ({
         ...item,
         label: t(`shell:primarySections.${item.id}`),
       })),

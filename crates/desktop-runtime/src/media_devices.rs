@@ -1,9 +1,10 @@
 //! 音声の機器(metaverse の空間音声と live の配信で共用。ADR 0067 §9)。`audio-devices`(Tauri の app だけ)は
-//! cpal と echo cancellation、無い build(CLI・harness・試験)は mic を開けず、再生は試験が確かめる記録だけを残す。
+//! cpal と echo cancellation、Web はブラウザの mic(#1879)、無い build(CLI・harness・試験)は mic を開けず、再生は
+//! 試験が確かめる記録だけを残す。
 
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 /// Opus の設定(声。ADR 0067 §9)。
 pub(crate) const OPUS_SAMPLE_RATE: u32 = 48_000;
@@ -154,7 +155,7 @@ mod real {
                     status,
                     encode::Status::Starting | encode::Status::Waiting | encode::Status::Stopped
                 ) {
-                    bail!("the microphone could not be opened");
+                    anyhow::bail!("the microphone could not be opened");
                 }
                 status = match timeout(OPEN_TIMEOUT, self.publication.changed()).await {
                     Ok(Some(state)) => state.status(),
@@ -226,8 +227,10 @@ mod null {
         }
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) struct Capture;
 
+    #[cfg(not(target_family = "wasm"))]
     impl Capture {
         pub(crate) async fn open(
             _broadcast: &mut moq_net::broadcast::Producer,
@@ -235,18 +238,211 @@ mod null {
             _track_name: &str,
             _playback: Option<&Playback>,
         ) -> Result<Self> {
-            bail!("audio devices are not available in this build")
+            anyhow::bail!("audio devices are not available in this build")
         }
 
         pub(crate) fn stop(&self) {}
 
         pub(crate) async fn start(&mut self) -> Result<()> {
-            bail!("audio devices are not available in this build")
+            anyhow::bail!("audio devices are not available in this build")
         }
     }
 }
 
-#[cfg(not(feature = "audio-devices"))]
+/// Web の mic(#1879): ブラウザの `getUserMedia` の音を AudioWorklet(`live_audio_worklet.js`)で 20 ms ずつ受け、
+/// moq-audio で Opus に圧縮して置く。echo cancellation・雑音抑制はブラウザの機能を使う。JS の object は main thread
+/// だけで触る(runtime は Web では live の状態を `SendWrapper` に入れて持つ)。
+#[cfg(target_family = "wasm")]
+mod web {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    use anyhow::{Context as _, anyhow};
+    use moq_audio::{Frame, Layout, encode};
+    use moq_net::Timestamp;
+    use n0_future::time::timeout;
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::{JsCast, JsValue};
+    use wasm_bindgen_futures::JsFuture;
+
+    use super::*;
+
+    /// mic の許可を求めてから最初の音が届くまで待つ上限(状態の変わり目ごと)。
+    const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+    const OPUS_BITRATE_BPS: u64 = 24_000;
+
+    fn js(error: JsValue) -> anyhow::Error {
+        anyhow!("{error:?}")
+    }
+
+    /// mic の取り込みと Opus の圧縮・公開。落とすと止まる。
+    pub(crate) struct Capture {
+        context: web_sys::AudioContext,
+        node: web_sys::AudioWorkletNode,
+        producer: Rc<RefCell<encode::Producer>>,
+        /// 開いている mic(`stop` で閉じる。track と catalog は残る)。
+        source: RefCell<Option<(web_sys::MediaStream, web_sys::MediaStreamAudioSourceNode)>>,
+        /// 受けた音の数と、届いたことの知らせ(開いた後の最初の音を待つ)。
+        heard: Rc<Cell<u64>>,
+        arrived: Rc<tokio::sync::Notify>,
+        _on_audio: Closure<dyn FnMut(web_sys::MessageEvent)>,
+    }
+
+    impl Capture {
+        /// `catalog` の broadcast に `track_name` の Opus の track を置き、mic を開く。timestamp は catalog の clock(同じ
+        /// broadcast の映像と同じ時計)で付ける。
+        pub(crate) async fn open(
+            broadcast: &mut moq_net::broadcast::Producer,
+            catalog: moq_mux::catalog::Producer,
+            track_name: &str,
+            _playback: Option<&super::Playback>,
+        ) -> Result<Self> {
+            let context = web_sys::AudioContext::new().map_err(js)?;
+            let worklet = wasm_bindgen::link_to!(module = "/src/live_audio_worklet.js");
+            JsFuture::from(
+                context
+                    .audio_worklet()
+                    .map_err(js)?
+                    .add_module(&worklet)
+                    .map_err(js)?,
+            )
+            .await
+            .map_err(js)?;
+            let node =
+                web_sys::AudioWorkletNode::new(&context, "kukuri-live-capture").map_err(js)?;
+            // 出力は無音。destination へつながない node は、ブラウザによっては処理されない。
+            node.connect_with_audio_node(&context.destination())
+                .map_err(js)?;
+            let mut options = encode::Options::default();
+            options.track = Some(track_name.to_string());
+            options.settings = encode::Settings::new(OPUS_SAMPLE_RATE, Layout::Mono);
+            options.settings.bitrate = Some(moq_net::bandwidth::Rate::from_bps(OPUS_BITRATE_BPS));
+            let clock = catalog.clock();
+            let input = encode::Input::new(context.sample_rate() as u32, Layout::Mono);
+            let producer = Rc::new(RefCell::new(encode::Producer::new(
+                broadcast, catalog, input, &options,
+            )?));
+            let heard = Rc::new(Cell::new(0));
+            let arrived = Rc::new(tokio::sync::Notify::new());
+            let rate = f64::from(context.sample_rate());
+            let on_audio = Closure::<dyn FnMut(web_sys::MessageEvent)>::new({
+                let (producer, heard, arrived) = (producer.clone(), heard.clone(), arrived.clone());
+                move |event: web_sys::MessageEvent| {
+                    let samples = js_sys::Float32Array::new(&event.data()).to_vec();
+                    // 受けた 20 ms の始まりの時刻(取り込みからの遅れは数 ms で、映像の時刻合わせの範囲に収まる)。
+                    let span = (samples.len() as f64 / rate * 1_000_000.0) as u64;
+                    let now = u64::try_from(clock.now().as_micros()).unwrap_or(u64::MAX);
+                    let data: Vec<u8> = samples
+                        .iter()
+                        .flat_map(|sample| sample.to_le_bytes())
+                        .collect();
+                    if let Ok(timestamp) = Timestamp::from_micros(now.saturating_sub(span)) {
+                        let _ = producer
+                            .borrow_mut()
+                            .write(&Frame::new(data.into(), timestamp));
+                    }
+                    heard.set(heard.get() + 1);
+                    arrived.notify_waiters();
+                }
+            });
+            node.port()
+                .map_err(js)?
+                .set_onmessage(Some(on_audio.as_ref().unchecked_ref()));
+            let mut capture = Self {
+                context,
+                node,
+                producer,
+                source: RefCell::default(),
+                heard,
+                arrived,
+                _on_audio: on_audio,
+            };
+            capture.start().await?;
+            Ok(capture)
+        }
+
+        /// mic を閉じる(track と catalog は残し、`start` で同じ track に戻る)。
+        pub(crate) fn stop(&self) {
+            if let Some((stream, source)) = self.source.borrow_mut().take() {
+                let _ = source.disconnect();
+                stop_tracks(&stream);
+            }
+        }
+
+        /// `stop` した mic を開き直す。許可を含め、最初の音が届くまで待つ。開けなければ閉じたままにする。
+        pub(crate) async fn start(&mut self) -> Result<()> {
+            let opened = self.open_source().await;
+            if opened.is_err() {
+                self.stop();
+            }
+            opened
+        }
+
+        async fn open_source(&self) -> Result<()> {
+            let audio = js_sys::Object::new();
+            for key in ["echoCancellation", "noiseSuppression", "autoGainControl"] {
+                js_sys::Reflect::set(&audio, &key.into(), &JsValue::TRUE).map_err(js)?;
+            }
+            let constraints = web_sys::MediaStreamConstraints::new();
+            constraints.set_audio(&audio);
+            let devices = web_sys::window()
+                .context("the window is not available")?
+                .navigator()
+                .media_devices()
+                .map_err(js)?;
+            let stream: web_sys::MediaStream = JsFuture::from(
+                devices
+                    .get_user_media_with_constraints(&constraints)
+                    .map_err(js)?,
+            )
+            .await
+            .map_err(js)?
+            .unchecked_into();
+            let source = match self.context.create_media_stream_source(&stream) {
+                Ok(source) => source,
+                Err(error) => {
+                    stop_tracks(&stream);
+                    return Err(js(error));
+                }
+            };
+            *self.source.borrow_mut() = Some((stream, source.clone()));
+            source.connect_with_audio_node(&self.node).map_err(js)?;
+            // 止めていた間は時刻に空きを残す(映像の時計に合わせる)。
+            self.producer.borrow_mut().reset_epoch();
+            let before = self.heard.get();
+            JsFuture::from(self.context.resume().map_err(js)?)
+                .await
+                .map_err(js)?;
+            timeout(OPEN_TIMEOUT, async {
+                while self.heard.get() == before {
+                    self.arrived.notified().await;
+                }
+            })
+            .await
+            .context("the microphone sent no sound")
+        }
+    }
+
+    impl Drop for Capture {
+        fn drop(&mut self) {
+            self.stop();
+            let _ = self.context.close();
+        }
+    }
+
+    fn stop_tracks(stream: &web_sys::MediaStream) {
+        for track in stream.get_tracks() {
+            track.unchecked_into::<web_sys::MediaStreamTrack>().stop();
+        }
+    }
+}
+
+#[cfg(all(not(feature = "audio-devices"), not(target_family = "wasm")))]
 pub(super) use null::*;
+// Web の再生(視聴)は #1879 AC-2。
+#[cfg(target_family = "wasm")]
+pub(super) use null::{Output, Playback};
 #[cfg(feature = "audio-devices")]
 pub(super) use real::*;
+#[cfg(target_family = "wasm")]
+pub(super) use web::Capture;

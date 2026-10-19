@@ -101,7 +101,6 @@ pub fn map_error(error: anyhow::Error) -> CommandError {
     if error.downcast_ref::<ScopeLimitReached>().is_some() {
         return CommandError::new(SCOPE_LIMIT_REACHED_CODE, format!("{error:#}"));
     }
-    #[cfg(not(target_family = "wasm"))]
     if error.downcast_ref::<LiveBroadcastElsewhere>().is_some() {
         return CommandError::new(LIVE_BROADCAST_ELSEWHERE_CODE, format!("{error:#}"));
     }
@@ -282,6 +281,8 @@ pub fn dispatched_commands() -> Vec<&'static str> {
     commands.extend(runtime_commands());
     #[cfg(not(target_family = "wasm"))]
     commands.extend(session_commands());
+    #[cfg(target_family = "wasm")]
+    commands.extend(live_media_commands());
     commands.into_iter().map(|(name, _)| name).collect()
 }
 
@@ -310,6 +311,11 @@ pub async fn dispatch_command(
     #[cfg(not(target_family = "wasm"))]
     let result = match result {
         Err(args) => dispatch_sessions(&runtime, ctx, command, args).await,
+        result => result,
+    };
+    #[cfg(target_family = "wasm")]
+    let result = match result {
+        Err(args) => dispatch_live_media(&runtime, ctx, command, args).await,
         result => result,
     };
     let result = result.map_err(|_| {
@@ -367,6 +373,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     create_account_transfer_invite() => runtime.create_account_transfer_invite().await.map_err(map_error);
     create_custom_reaction_asset(request: CreateCustomReactionAssetRequest) => runtime.create_custom_reaction_asset(request).await.map_err(map_error);
     create_custom_reaction_set(request: CreateCustomReactionSetRequest) => runtime.create_custom_reaction_set(request).await.map_err(map_error);
+    create_live_session(request: CreateLiveSessionRequest) => runtime.create_live_session(request).await.map_err(map_error);
     create_post(request: CreatePostRequest) => runtime.create_post(request).await.map_err(map_error);
     create_private_channel(request: CreatePrivateChannelRequest) => runtime.create_private_channel(request).await.map_err(map_error);
     create_public_channel(request: CreatePublicChannelRequest) => runtime.create_public_channel(request).await.map_err(map_error);
@@ -375,6 +382,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     delete_direct_message_message(request: DeleteDirectMessageMessageRequest) => runtime.delete_direct_message_message(request).await.map_err(map_error);
     disable_community_node_observation_sharing(request: CommunityNodeTargetRequest) => runtime.disable_community_node_observation_sharing(request).await.map_err(map_error);
     discover_community_node_index(request: CommunityNodeIndexQueryRequest) => runtime.discover_community_node_index(request).await.map_err(CommandError::from);
+    end_live_session(request: LiveSessionCommandRequest) => runtime.end_live_session(request).await.map_err(map_error);
     evaluate_author_trust_gates(request: AuthorTrustGateRequest) => runtime.evaluate_author_trust_gates(request).await.map_err(map_error);
     export_account_key(request: ExportAccountKeyRequest) => runtime.export_account_key(request).await.map_err(map_error);
     export_channel_access_token(request: ExportChannelAccessTokenRequest) => runtime.export_channel_access_token(request).await.map_err(map_error);
@@ -394,6 +402,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     get_community_node_statuses() => runtime.get_community_node_statuses().await.map_err(map_error);
     get_direct_message_status(request: DirectMessageRequest) => runtime.get_direct_message_status(request).await.map_err(map_error);
     get_discovery_config() => runtime.get_discovery_config().await.map_err(map_error);
+    get_live_session(request: LiveSessionCommandRequest) => runtime.get_live_session(request).await.map_err(map_error);
     get_local_peer_ticket() => runtime.local_peer_ticket().await.map_err(map_error);
     get_my_profile() => runtime.get_my_profile().await.map_err(map_error);
     get_notification(request: NotificationIdRequest) => runtime.get_notification(request).await.map_err(map_error);
@@ -406,6 +415,8 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     import_friend_plus_share(request: ImportFriendPlusShareRequest) => runtime.import_friend_plus_share(request).await.map_err(map_error);
     import_peer_ticket(request: ImportPeerTicketRequest) => runtime.import_peer_ticket(request).await.map_err(map_error);
     import_private_channel_invite(request: ImportPrivateChannelInviteRequest) => runtime.import_private_channel_invite(request).await.map_err(map_error);
+    join_live_session(request: LiveSessionCommandRequest) => runtime.join_live_session(request).await.map_err(map_error);
+    leave_live_session(request: LiveSessionCommandRequest) => runtime.leave_live_session(request).await.map_err(map_error);
     leave_private_channel(request: LeavePrivateChannelRequest) => runtime.leave_private_channel(request).await.map_err(map_error);
     list_author_trust_display_exceptions() => runtime.list_author_trust_display_exceptions().await.map_err(map_error);
     list_bookmarked_custom_reactions() => runtime.list_bookmarked_custom_reactions().await.map_err(map_error);
@@ -415,12 +426,14 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     list_direct_message_messages(request: ListDirectMessageMessagesRequest) => runtime.list_direct_message_messages(request).await.map_err(map_error);
     list_direct_messages() => runtime.list_direct_messages().await.map_err(map_error);
     list_joined_private_channels(request: ListJoinedPrivateChannelsRequest) => runtime.list_joined_private_channels(request).await.map_err(map_error);
+    list_live_sessions(request: ListLiveSessionsRequest) => runtime.list_live_sessions(request).await.map_err(map_error);
     list_my_custom_reaction_assets() => runtime.list_my_custom_reaction_assets().await.map_err(map_error);
     list_my_custom_reaction_sets() => runtime.list_my_custom_reaction_sets().await.map_err(map_error);
     list_notifications_page(request: ListNotificationsPageRequest) => runtime.list_notifications_page(request).await.map_err(map_error);
     list_profile_timeline(request: ListProfileTimelineRequest) => runtime.list_profile_timeline(request).await.map_err(map_error);
     list_public_channels(request: ListPublicChannelsRequest) => runtime.list_public_channels(request).await.map_err(map_error);
     list_recent_reactions(request: ListRecentReactionsRequest) => runtime.list_recent_reactions(request).await.map_err(map_error);
+    list_session_candidates(request: ListLiveSessionsRequest) => runtime.list_session_candidates(request).await.map_err(map_error);
     list_social_connections(request: ListSocialConnectionsRequest) => runtime.list_social_connections(request).await.map_err(map_error);
     list_thread(request: ListThreadRequest) => runtime.list_thread(request).await.map_err(map_error);
     list_timeline(request: ListTimelineRequest) => runtime.list_timeline(request).await.map_err(map_error);
@@ -452,6 +465,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     set_public_blob_discovery(request: SetPublicBlobDiscoveryRequest) => runtime.set_public_blob_discovery(request).await.map_err(map_error);
     set_my_profile(request: SetMyProfileRequest) => runtime.set_my_profile(request).await.map_err(map_error);
     set_scope_display(request: crate::ScopeDisplayRequest) => runtime.set_scope_display(request).await.map_err(map_error);
+    set_session_display(request: kukuri_app_api::SessionDisplayRequest) => runtime.set_session_display(request).await.map_err(map_error);
     set_topic_gossip_enabled(request: SetTopicGossipEnabledRequest) => runtime.set_topic_gossip_enabled(request).await.map_err(map_error);
     submit_community_node_indexing_request(request: CommunityNodeIndexingRequest) => runtime.submit_community_node_indexing_request(request).await.map_err(CommandError::from);
     submit_community_node_report(request: SubmitCommunityNodeReportRequest) => runtime.submit_community_node_report(request).await.map_err(CommandError::from);
@@ -562,8 +576,8 @@ mod tests {
     }
 }
 
-// live・game・metaverse・Dome は Web では今回の合意の外（ADR 0060 §3）なので、native だけの表に置く。Web の dispatch では
-// 表に無い command として `unsupported_platform` になる。
+// game・metaverse・Dome は Web では今回の合意の外（ADR 0060 §3）なので、native だけの表に置く。Web の dispatch では
+// 表に無い command として `unsupported_platform` になる。live は Web でも使う（#1879）。
 #[cfg(not(target_family = "wasm"))]
 dispatch_table! { session_commands, dispatch_sessions(runtime: &Arc<DesktopRuntime>, _ctx);
     abort_dome_transition(request: AbortDomeTransitionRequest) => runtime.abort_dome_transition(request).await.map_err(map_error);
@@ -573,22 +587,15 @@ dispatch_table! { session_commands, dispatch_sessions(runtime: &Arc<DesktopRunti
     commit_dome_transition(request: CommitDomeTransitionRequest) => runtime.commit_dome_transition(request).await.map_err(map_error);
     create_dome_connection_proposal(request: CreateDomeConnectionProposalRequest) => runtime.create_dome_connection_proposal(request).await.map_err(map_error);
     create_game_room(request: CreateGameRoomRequest) => runtime.create_game_room(request).await.map_err(map_error);
-    create_live_session(request: CreateLiveSessionRequest) => runtime.create_live_session(request).await.map_err(map_error);
     create_metaverse_room(request: CreateMetaverseRoomRequest) => runtime.create_metaverse_room(request).await.map_err(map_error);
     delegate_dome_hosting(request: DelegateDomeHostingRequest) => runtime.delegate_dome_hosting(request).await.map_err(map_error);
     delete_dome(request: crate::DeleteDomeRequest) => runtime.delete_dome(request).await.map_err(map_error);
-    end_live_session(request: LiveSessionCommandRequest) => runtime.end_live_session(request).await.map_err(map_error);
     get_dome_hosting(request: GetDomeHostingRequest) => runtime.get_dome_hosting(request).await.map_err(map_error);
-    get_live_session(request: LiveSessionCommandRequest) => runtime.get_live_session(request).await.map_err(map_error);
     import_metaverse_room_asset(request: ImportMetaverseRoomAssetRequest) => runtime.import_metaverse_room_asset(request).await.map_err(map_error);
-    join_live_session(request: LiveSessionCommandRequest) => runtime.join_live_session(request).await.map_err(map_error);
-    leave_live_session(request: LiveSessionCommandRequest) => runtime.leave_live_session(request).await.map_err(map_error);
     list_dome_connection_topology(request: ListDomeConnectionTopologyRequest) => runtime.list_dome_connection_topology(request).await.map_err(map_error);
     list_game_rooms(request: ListGameRoomsRequest) => runtime.list_game_rooms(request).await.map_err(map_error);
-    list_live_sessions(request: ListLiveSessionsRequest) => runtime.list_live_sessions(request).await.map_err(map_error);
     list_metaverse_room_events(request: ListMetaverseRoomEventsRequest) => runtime.list_metaverse_room_events(request).await.map_err(map_error);
     list_pending_dome_deletions(spatial_context: kukuri_core::SpatialContextV1) => runtime.list_pending_dome_deletions(spatial_context).await.map_err(map_error);
-    list_session_candidates(request: ListLiveSessionsRequest) => runtime.list_session_candidates(request).await.map_err(map_error);
     move_dome(request: MoveDomeRequest) => runtime.move_dome(request).await.map_err(map_error);
     prepare_dome_transition(request: PrepareDomeTransitionRequest) => runtime.prepare_dome_transition(request).await.map_err(map_error);
     preview_dome_transition_access(request: PrepareDomeTransitionRequest) => runtime.preview_dome_transition_access(request).await.map_err(map_error);
@@ -596,10 +603,17 @@ dispatch_table! { session_commands, dispatch_sessions(runtime: &Arc<DesktopRunti
     resync_dome_snapshots(request: ResyncDomeSnapshotsRequest) => runtime.resync_dome_snapshots(request).await.map_err(map_error);
     revoke_dome_connection(request: RevokeDomeConnectionRequest) => runtime.revoke_dome_connection(request).await.map_err(map_error);
     set_private_channel_entry_dome(request: SetPrivateChannelEntryDomeRequest) => runtime.set_private_channel_entry_dome(request).await.map_err(map_error);
-    set_session_display(request: kukuri_app_api::SessionDisplayRequest) => runtime.set_session_display(request).await.map_err(map_error);
     start_owner_dome_hosting(request: StartOwnerDomeHostingRequest) => runtime.start_owner_dome_hosting(request).await.map_err(map_error);
     submit_dome_session_input(request: SubmitDomeSessionInputRequest) => runtime.submit_dome_session_input(request).await.map_err(map_error);
     update_game_room(request: UpdateGameRoomRequest) => runtime.update_game_room(request).await.map_err(map_error);
     update_metaverse_room(request: UpdateMetaverseRoomRequest) => runtime.update_metaverse_room(request).await.map_err(map_error);
     withdraw_dome_connection_proposal(request: WithdrawDomeConnectionProposalRequest) => runtime.withdraw_dome_connection_proposal(request).await.map_err(map_error);
+}
+
+// live の配信の command（#1879）。Tauri は camera・画面の取り込みの許可（`LiveCaptureGate`）と raw の IPC を持つ
+// 自前の command で呼ぶので、この表は Web だけが使う。映像の chunk は web-runtime の `push_live_video` が渡す。
+#[cfg(target_family = "wasm")]
+dispatch_table! { live_media_commands, dispatch_live_media(runtime: &Arc<DesktopRuntime>, _ctx);
+    set_live_broadcast(request: SetLiveBroadcastRequest) => runtime.set_live_broadcast(request).await.map_err(map_error);
+    stop_live_broadcast(request: LiveMediaRequest) => runtime.stop_live_broadcast(request).await.map_err(map_error);
 }

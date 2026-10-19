@@ -33,6 +33,11 @@ kukuri-webrtc-transport = { path = "../webrtc-transport" }
 kukuri-store = { path = "../store" }
 kukuri-transport = { path = "../transport" }
 ts-rs = { workspace = true, optional = true }
+# live の Opus と moq-lite の broadcast（ADR 0067）。Web も live を扱う（#1879）。
+moq-audio.workspace = true
+moq-mux.workspace = true
+moq-net.workspace = true
+hang.workspace = true
 
 [features]
 # IPC 型の TypeScript 生成専用(codegen 時のみ有効。生成器はこの crate に置く
@@ -54,26 +59,38 @@ audio-devices = ["moq-audio/capture", "moq-audio/playback", "moq-audio/aec"]
 keyring = { workspace = true, features = ["v1"] }
 sqlx.workspace = true
 tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
-# 空間音声の Opus・mix と moq-lite の broadcast（ADR 0067）。Web は metaverse を扱わない（ADR 0060）。
-moq-audio.workspace = true
-moq-mux.workspace = true
-moq-net.workspace = true
-hang.workspace = true
 
-# 通報の送信（ブラウザの fetch の転送の拒否。ADR 0056 §2）と、passphrase の鍵の導出の Worker（src/kdf.rs）。
+# 通報の送信（ブラウザの fetch の転送の拒否。ADR 0056 §2）、passphrase の鍵の導出の Worker（src/kdf.rs）、
+# live の mic（src/media_devices.rs の Web の実装。#1879）。
 [target.'cfg(target_family = "wasm")'.dependencies]
 js-sys = "0.3.106"
+# Web の live の状態(moq-lite の型は Send でない)を runtime に置く包み（src/live_media）。
+send_wrapper = "0.6.0"
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4.79"
 web-sys = { version = "0.3.106", features = [
   "AbortSignal",
+  "AudioContext",
+  "AudioDestinationNode",
+  "AudioNode",
+  "AudioWorklet",
+  "AudioWorkletNode",
+  "BaseAudioContext",
   "Headers",
+  "MediaDevices",
+  "MediaStream",
+  "MediaStreamAudioSourceNode",
+  "MediaStreamConstraints",
+  "MediaStreamTrack",
   "MessageEvent",
+  "MessagePort",
+  "Navigator",
   "RequestInit",
   "RequestRedirect",
   "Response",
   "Window",
   "Worker",
+  "Worklet",
 ] }
 
 [dev-dependencies]

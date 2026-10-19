@@ -20,5 +20,6 @@ declare module '@kukuri/web-runtime' {
   export function invoke(command: string, args: unknown): Promise<unknown>;
   export function prepare_attachment(blob: Blob): Promise<{ owner: string; hash: string }>;
   export function invoke_with_attachments(command: string, args: unknown, sources: unknown[]): Promise<unknown>;
+  export function push_live_video(sessionId: string, keyframe: boolean, ageUs: number, data: Uint8Array): Promise<void>;
   export function listen(callback: (event: never) => void): void;
 }

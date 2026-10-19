@@ -296,8 +296,7 @@ pub(crate) struct SharedIrohStack {
     /// 再構築するendpointでも同じaccountだけを広告する。stack/account寿命に限定する。
     receive_binding_keys: Mutex<Option<Arc<KukuriKeys>>>,
     dome_session_handler: Mutex<Option<kukuri_iroh_node::DomeSessionHandler>>,
-    /// 空間音声の受け口の認可(ADR 0067)。作り直す node にも付け直す。
-    #[cfg(not(target_family = "wasm"))]
+    /// 空間音声と live の受け口の認可(ADR 0067)。作り直す node にも付け直す。
     media_authorizer: Mutex<Option<kukuri_iroh_node::MediaAuthorizer>>,
     /// 公開 blob の保持端末の候補の源（Web の Community Node の検索。#1632 AC-6）。作り直す node にも付け直す。
     public_blob_providers:
@@ -470,7 +469,6 @@ impl SharedIrohStack {
             docs_author_seed: Mutex::new(None),
             receive_binding_keys: Mutex::new(None),
             dome_session_handler: Mutex::new(None),
-            #[cfg(not(target_family = "wasm"))]
             media_authorizer: Mutex::new(None),
             public_blob_providers: Mutex::new(None),
             current_shut_down: AtomicBool::new(false),
@@ -543,8 +541,7 @@ impl SharedIrohStack {
         Ok(())
     }
 
-    /// 空間音声の受け口の認可を、今の node と作り直す node へ付ける(ADR 0067)。
-    #[cfg(not(target_family = "wasm"))]
+    /// 空間音声と live の受け口の認可を、今の node と作り直す node へ付ける(ADR 0067)。
     pub(crate) async fn use_media_authorizer(
         &self,
         authorizer: kukuri_iroh_node::MediaAuthorizer,
@@ -560,7 +557,6 @@ impl SharedIrohStack {
     }
 
     /// 今の node(停止中・作り直しの前なら `None`)。
-    #[cfg(not(target_family = "wasm"))]
     pub(crate) async fn current_node(&self) -> Option<Arc<IrohDocsNode>> {
         self.current
             .lock()
@@ -647,7 +643,6 @@ impl SharedIrohStack {
         if let Some(handler) = self.dome_session_handler.lock().await.as_ref() {
             next.node.install_dome_session_handler(handler.clone());
         }
-        #[cfg(not(target_family = "wasm"))]
         if let Some(authorizer) = self.media_authorizer.lock().await.as_ref() {
             next.node.install_media_authorizer(Some(authorizer.clone()));
         }

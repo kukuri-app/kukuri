@@ -17,7 +17,6 @@ mod account_transfer;
 mod dome_session;
 #[cfg(not(target_family = "wasm"))]
 mod legacy;
-#[cfg(not(target_family = "wasm"))]
 mod media;
 mod network_work;
 mod node;
@@ -40,7 +39,6 @@ pub use account_transfer::{
 pub use dome_session::{DomeHostUnreachable, DomeSessionHandler};
 #[cfg(not(target_family = "wasm"))]
 pub use legacy::{LegacyStore, adopt_endpoint_secret, remove_dir_step, retire_legacy_layout};
-#[cfg(not(target_family = "wasm"))]
 pub use media::{
     MEDIA_ACCESS_REQUEST_MAX_BYTES, MEDIA_MAX_INBOUND_SESSIONS, MEDIA_REVALIDATE_INTERVAL,
     MediaAuthorizer, MediaDenied, MediaGrant, MediaRevalidate, MediaSubscription,

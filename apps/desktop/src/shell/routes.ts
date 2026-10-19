@@ -6,6 +6,7 @@ import type {
   SettingsSection,
   TimelineWorkspaceView,
 } from '@/components/shell/types';
+import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
 export type DesktopShellRouteOverrides = {
   activeTopic?: string;
@@ -69,6 +70,14 @@ export const PRIMARY_SECTION_ITEMS: Array<{
   { id: 'messages', label: 'Messages' },
   { id: 'profile', label: 'Profile' },
 ];
+
+/// 出さない欄。live・game は開発者モードでだけ出し(README の Experimental)、game は Web では使えない(ADR 0060 §3。
+/// live は #1879 で Web でも使う)。
+export function primarySectionHidden(section: PrimarySection, developerModeEnabled: boolean): boolean {
+  if (section === 'live') return !developerModeEnabled;
+  if (section === 'game') return !developerModeEnabled || IS_WEB_RUNTIME;
+  return false;
+}
 
 export const SETTINGS_SECTION_COPY: Array<{
   id: SettingsSection;

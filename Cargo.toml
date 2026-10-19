@@ -137,7 +137,12 @@ n0-mainline = { git = "https://github.com/KingYoSun/n0-mainline", rev = "7571f18
 iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-address-lookups", rev = "e2740b75997e9e3d0776f6b80846cafc2681fe29" }
 # #1805（fork だけの変更。上流へは PR を出さない）: echo cancellation の参照の channel を作った直後に 1 回読み、
 # 再生の mix が canceller へ届くようにする。moq-audio 0.1.11 起点で、moq 系の依存は crates.io の同じ版にした。
-moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "77553ada566a9b6c3e6bdcf4143f7f9468793086" }
+# #1879（同じ fork の続き）: moq-tokio を Web（wasm）でも build できるようにし、Web では poll 型への変換
+# （`transport`）だけを含める。moq-mux・moq-audio の時刻を web-time にする（ブラウザには std の時計が無い。
+# native では std と同じ型）。
+moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "6573706f68cb7c8244e4e5855400ff80d2fc29a9" }
+moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "6573706f68cb7c8244e4e5855400ff80d2fc29a9" }
+moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "6573706f68cb7c8244e4e5855400ff80d2fc29a9" }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"
