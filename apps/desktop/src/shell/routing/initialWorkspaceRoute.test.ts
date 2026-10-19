@@ -35,6 +35,17 @@ describe('isDefaultStartupHash', () => {
 });
 
 describe('initialHashForRestoredWorkspace', () => {
+  it('keeps a public-thread channel when a saved column still selects bookmarks', () => {
+    const channelId = 'pc-1700000000000-0123456789abcdef';
+    const workspace = workspaceWith({
+      id: 'detail', kind: 'timeline', scope: { ...SCOPE, channelId },
+      timelineView: 'bookmarks', timelineFilter: 'following',
+    });
+    expect(initialHashForRestoredWorkspace(workspace))
+      .toBe(`#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=${channelId}`);
+    expect(workspace.columns[0].timelineView).toBe('bookmarks');
+  });
+
   it('maps each Column kind to its canonical target', () => {
     expect(
       initialHashForRestoredWorkspace(workspaceWith({ id: 'c', kind: 'timeline', scope: PRIVATE_SCOPE }))
