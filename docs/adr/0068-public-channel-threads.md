@@ -105,7 +105,7 @@ kukuri の channel は、招待や相互フォローで参加する private chan
   - Live の変化（作成・終了）と視聴の presence（参加・退出・10 秒ごとの継続）は topic の hint に送り、参加の lease は topic だけを取る。一覧の列は topic の lease だけで配信中の印を変える。topic の hint で届いた presence は、受け取る側が Live の行の channel（公開 channel）に結び付けて視聴者に数える（private channel の Live の presence は、従来どおり channel の hint で届いたものだけを数える）。
   - 視聴の資格は topic の公開の Live と同じ（資格の判定の Spatial Context は topic）。private channel の参加を求めない。
   - 公開の Live なので、どこからでも紹介できる（`LiveRefV1::allowed_in`）。紹介の Dialog の出し先は、始めたスレッドを先頭（既定）にし、ほかは公開の Live と同じ（2026-10-18 のユーザー判断 17。#1839 の判断 1）。
-- 一覧の行は配信中の印（`live_now`）を持つ。行ごとに、配信中の行だけの部分索引（`idx_live_session_cache_live_now`）から 8 件まで読み、非表示の主催者の Live は数えない。終わった Live の数に比例しない。Web は Live を扱わない（[ADR 0060](0060-web-client-entry-capability-and-verification.md)）ので印は付けない。
+- 一覧の行は配信中の印（`live_now`）を持つ。行ごとに、配信中の行だけの部分索引（`idx_live_session_cache_live_now`）から 8 件まで読み、非表示の主催者の Live は数えない。終わった Live の数に比例しない。Web は、IndexedDB の cache の database の版 4 で足した配信中の Live だけの store（`live_now`。Live の行を書く transaction で、配信中なら写し、終わったら外す）から同じ形で読む（#1879。2026-10-19 のユーザー判断 4。版の更新の時点ですでに配信中だった Live は、その行が次に書き換わるまで印が出ない）。
 - 画面:
   - 詳細の列の上部（本文と一緒に流れない）に、そのスレッドで始めた配信中の Live を、新しく始まった順に 3 件まで、タイトルと配信者の 1 行ずつで出す（判断 6・14）。押すと、詳細の列を親にしたスレッドの「ライブ」の列（列の種類 `stream`、scope は公開スレッド）を開いてその Live を示す。より多いときは「すべての配信」から列を開く。
   - 上部の「ライブ」（「リンクをコピー」の隣）もこの列を開き、列の下部の「ライブを開始」でスレッドに Live を始める（判断 15）。topic の「ライブ」の列には、スレッドの Live を出さない（判断 16）。

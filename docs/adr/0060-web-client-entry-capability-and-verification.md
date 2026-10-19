@@ -69,7 +69,7 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 - 必須の主要導線（初回の同意、account の生成・移行・切替、profile、topic、投稿・返信・反応、DM、private channel、設定）は、すべて (a) のうち Web で使う command と (c) の移設で成り立つ。matrix だけで省略しない。
 - 最終の matrix は W1 AC-5 の capability の実装と一緒に確定し、W8 AC-5 の実測の結果と合わせて記録する。
 - 2026-10-03 のユーザー判断（W8 AC-2a）: 「画面で未対応と示す」は、Web では使えない機能（live・game・metaverse・Dome、device backup・restore、アプリの更新、ウィンドウを閉じるときの設定、OS 通知の設定、開発者ログの閲覧）の入口を出さず、設定の About に短い説明を 1 つ出す形で満たす。
-- 2026-10-19 のユーザー判断（#1879）: live を Web でも使う。desktop と同じく開発者モードの間だけ、配信と視聴を出す（映像・音声の処理は ADR 0067 §9 の Web の項）。live の command は Web の dispatch の表へ移し、設定の About の説明から live を外す。game・metaverse・Dome は今のまま使えない。live の動きの自動試験は Chrome だけで行い、PR の CI の merge の条件にする（Firefox・Safari・Android の Chrome では確かめない。§4 の夜間の実行では未確認の制約として示す）。
+- 2026-10-19 のユーザー判断（#1879）: live を Web でも使い、desktop と同じ条件で配信と視聴を出す（live の列・作成・公開スレッドの印・大きな表示は開発者モードの間だけ、投稿の中の Live は開発者モードに関係なく出す。映像・音声の処理は ADR 0067 §9 の Web の項）。live の command は Web の dispatch の表へ移し、設定の About の説明から live を外す。game・metaverse・Dome は今のまま使えない。live の動きの自動試験は Chrome だけで行い、PR の CI の merge の条件にする（Firefox・Safari・Android の Chrome では確かめない。§4 の夜間の実行では未確認の制約として示す）。
 
 ### 4. 実ブラウザの検証環境
 

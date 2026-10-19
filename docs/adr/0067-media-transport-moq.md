@@ -174,10 +174,10 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
     | H.264 | 往復する | `avc` 形式（description つき）なら往復する。Annex B は decode に失敗 |
     | AV1 | 往復する | decode に失敗 |
 
-- Web（#1879。2026-10-19 のユーザー判断で、desktop と同じく開発者モードの間だけ live の配信と視聴を出す。game・metaverse・Dome は Web では使えないまま）:
+- Web（#1879。2026-10-19 のユーザー判断で、desktop と同じ条件で live の配信と視聴を出す。live の列・作成・公開スレッドの印・大きな表示は開発者モードの間だけ、投稿の中の Live は開発者モードに関係なく出す。game・metaverse・Dome は Web では使えないまま）:
   - ブラウザの node も `/kukuri/media/1` を受け、desktop と同じ認可・転送・署名・上限で配信者と転送する視聴者になる。moq-lite の型はブラウザでは Send でないので、受け口は main thread の task で動かし（`confine_local`）、runtime は live の状態を作った thread だけから触る包み（`SendWrapper`。Web の build は thread を使わない）に入れて持つ。空間音声の認可要求は断る。
   - 映像: 取り込み・圧縮・復号は desktop と同じ画面の処理で、chunk は web-runtime の `push_live_video` へ渡す。camera・画面の取り込みの許可はブラウザの確認に任せる（Tauri の `on_permission_request` にあたる処理は無い）。
-  - 音声: Rust（WASM）が、ブラウザの `getUserMedia`（echo cancellation・雑音抑制・自動の音量はブラウザの機能）の音を AudioWorklet（`live_audio_worklet.js`）で 20 ms ずつ受け、`moq-audio` で Opus に圧縮して、desktop と同じく署名して配信の音声の track へ写す。mic の off は mic の取り込みを閉じ、track と catalog は残す。再生（視聴）は #1879 AC-2。
+  - 音声: Rust（WASM）が、ブラウザの `getUserMedia`（echo cancellation・雑音抑制・自動の音量はブラウザの機能）の音を AudioWorklet（`live_audio_worklet.js`）で 20 ms ずつ受け、`moq-audio` で Opus に圧縮して、desktop と同じく署名して配信の音声の track へ写す。mic の off は mic の取り込みを閉じ、track と catalog は残す。再生は、Rust が復号した PCM を AudioBuffer にして前の音に続けて鳴らし（鳴らし始める前の保持は既定 50 ms、上限は §1 と同じ）、音量は GainNode で掛ける。音声の再生時刻（映像の時刻合わせ）は、AudioContext の時計で、まだ鳴らしていない量を引いて求める。映像の chunk は web-runtime の `next_live_video` で取りに来る。再生の AudioContext は視聴を始めるときに作る。ブラウザは利用者が操作した後の page にだけ音を出させるので、参加の操作から始めた視聴は鳴る（自動試験は自動再生を許す起動の引数で動かすので、この制限の下の動きは確かめていない）。
 
 ### 10. builder preview（D3）
 

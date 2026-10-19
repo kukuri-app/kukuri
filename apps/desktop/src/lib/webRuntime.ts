@@ -58,6 +58,13 @@ export function pushWebLiveVideo(sessionId: string, keyframe: boolean, ageUs: nu
   return runtime.push_live_video(sessionId, keyframe, ageUs, data);
 }
 
+/// 視聴中の live の送りかけの映像と視聴の状態（#1879。Tauri の raw の応答にあたる）。
+export async function nextWebLiveVideo({ topic, session_id }: { topic: string; session_id: string }): Promise<ArrayBuffer> {
+  if (!runtime) throw { code: 'command_failed', message: 'the web runtime is not loaded' };
+  const batch = await runtime.next_live_video(topic, session_id);
+  return batch.buffer.slice(batch.byteOffset, batch.byteOffset + batch.byteLength);
+}
+
 export function prepareWebAttachment(blob: Blob): Promise<{ owner: string; hash: string }> {
   if (!runtime) return Promise.reject({ code: 'command_failed', message: 'the web runtime is not loaded' });
   return runtime.prepare_attachment(blob);

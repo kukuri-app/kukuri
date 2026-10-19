@@ -11,9 +11,10 @@ use async_trait::async_trait;
 use kukuri_desktop_runtime::{
     AcceptedAppConsentDocument, ClientGate, ClientHost, ClientHostStart, ClientStartupError,
     ClientStartupState, ClientStartupStatus, CommandError, CommunityNodeConfig, DesktopRuntime,
-    DispatchContext, RuntimeBuilder, RuntimeEvent, admit_command, app_consent_status,
-    dispatch_command, failed_startup_status, install_platform_storage, map_error,
-    record_app_consents, require_consent_acceptance_state, validate_app_consent_documents,
+    DispatchContext, LiveMediaRequest, RuntimeBuilder, RuntimeEvent, admit_command,
+    app_consent_status, dispatch_command, failed_startup_status, install_platform_storage,
+    map_error, record_app_consents, require_consent_acceptance_state,
+    validate_app_consent_documents,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -435,18 +436,22 @@ pub async fn invoke(command: String, args: JsValue) -> Result<JsValue, JsValue> 
     }
 }
 
-#[wasm_bindgen]
-pub async fn prepare_attachment(blob: web_sys::Blob) -> Result<JsValue, JsValue> {
+/// 終了の要求の前で、アカウントの runtime を始めた host。
+fn running_host() -> Result<Arc<ClientHost>, JsValue> {
     let client = current()?;
     client
         .gate
         .require_running()
         .map_err(|error| error_value(&error))?;
-    let host = client
+    client
         .gate
         .host()
-        .ok_or_else(|| JsValue::from_str("the account is not started"))?;
-    let value = crate::attachments::fingerprint(blob, host)
+        .ok_or_else(|| JsValue::from_str("the account is not started"))
+}
+
+#[wasm_bindgen]
+pub async fn prepare_attachment(blob: web_sys::Blob) -> Result<JsValue, JsValue> {
+    let value = crate::attachments::fingerprint(blob, running_host()?)
         .await
         .map_err(|error| error_value(&CommandError::from(error)))?;
     to_js(&value)
@@ -458,17 +463,9 @@ pub async fn invoke_with_attachments(
     args: JsValue,
     sources: js_sys::Array,
 ) -> Result<JsValue, JsValue> {
-    let client = current()?;
-    client
-        .gate
-        .require_running()
-        .map_err(|error| error_value(&error))?;
-    let host = client
-        .gate
-        .host()
-        .ok_or_else(|| JsValue::from_str("the account is not started"))?;
-    let _inputs = crate::attachments::Inputs::register(sources, host)
+    let _inputs = crate::attachments::Inputs::register(sources, running_host()?)
         .map_err(|error| error_value(&CommandError::from(error)))?;
+    let client = current()?;
     let args = from_js(&args).map_err(|error| error_value(&error))?;
     match invoke_command(&client, &command, args).await {
         Ok(value) => to_js(&value),
@@ -485,22 +482,25 @@ pub async fn push_live_video(
     age_us: f64,
     data: Vec<u8>,
 ) -> Result<(), JsValue> {
-    let client = current()?;
-    client
-        .gate
-        .require_running()
-        .map_err(|error| error_value(&error))?;
-    let host = client
-        .gate
-        .host()
-        .ok_or_else(|| JsValue::from_str("the account is not started"))?;
-    host.runtime()
+    running_host()?
+        .runtime()
         .push_live_video(
             &session_id,
             keyframe,
             std::time::Duration::from_micros(age_us.max(0.0) as u64),
             data,
         )
+        .await
+        .map_err(|error| error_value(&map_error(error)))
+}
+
+/// 視聴中の live の送りかけの映像と視聴の状態（#1879。Tauri の raw の応答の `next_live_video` にあたる。届くまで
+/// 最大 1 秒待つ）。
+#[wasm_bindgen]
+pub async fn next_live_video(topic: String, session_id: String) -> Result<Vec<u8>, JsValue> {
+    running_host()?
+        .runtime()
+        .next_live_video(LiveMediaRequest { topic, session_id })
         .await
         .map_err(|error| error_value(&map_error(error)))
 }

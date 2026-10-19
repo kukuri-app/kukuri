@@ -1,6 +1,6 @@
 //! 音声の機器(metaverse の空間音声と live の配信で共用。ADR 0067 §9)。`audio-devices`(Tauri の app だけ)は
-//! cpal と echo cancellation、Web はブラウザの mic(#1879)、無い build(CLI・harness・試験)は mic を開けず、再生は
-//! 試験が確かめる記録だけを残す。
+//! cpal と echo cancellation、Web はブラウザの mic と再生(#1879)、無い build(CLI・harness・試験)は mic を開けず、
+//! 再生は試験が確かめる記録だけを残す。
 
 use std::time::Duration;
 
@@ -167,7 +167,7 @@ mod real {
     }
 }
 
-#[cfg(not(feature = "audio-devices"))]
+#[cfg(all(not(feature = "audio-devices"), not(target_family = "wasm")))]
 mod null {
     use super::*;
     use std::sync::{Arc, Mutex as StdMutex};
@@ -227,10 +227,8 @@ mod null {
         }
     }
 
-    #[cfg(not(target_family = "wasm"))]
     pub(crate) struct Capture;
 
-    #[cfg(not(target_family = "wasm"))]
     impl Capture {
         pub(crate) async fn open(
             _broadcast: &mut moq_net::broadcast::Producer,
@@ -249,9 +247,10 @@ mod null {
     }
 }
 
-/// Web の mic(#1879): ブラウザの `getUserMedia` の音を AudioWorklet(`live_audio_worklet.js`)で 20 ms ずつ受け、
-/// moq-audio で Opus に圧縮して置く。echo cancellation・雑音抑制はブラウザの機能を使う。JS の object は main thread
-/// だけで触る(runtime は Web では live の状態を `SendWrapper` に入れて持つ)。
+/// Web の mic と再生(#1879): mic は、ブラウザの `getUserMedia` の音を AudioWorklet(`live_audio_worklet.js`)で 20 ms
+/// ずつ受け、moq-audio で Opus に圧縮して置く。echo cancellation・雑音抑制はブラウザの機能を使う。再生は、復号した PCM を
+/// AudioBuffer にして前の音に続けて鳴らし、音量は GainNode で掛ける。JS の object は main thread だけで触る(runtime は
+/// Web では live の状態を `SendWrapper` に入れて持ち、再生は視聴の task が持つ)。
 #[cfg(target_family = "wasm")]
 mod web {
     use std::cell::{Cell, RefCell};
@@ -270,9 +269,89 @@ mod web {
     /// mic の許可を求めてから最初の音が届くまで待つ上限(状態の変わり目ごと)。
     const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
     const OPUS_BITRATE_BPS: u64 = 24_000;
+    /// 鳴らし始める前に保持する量(ADR 0067 §1 の既定 50 ms。秒)。
+    const OUTPUT_LEAD: f64 = 0.05;
 
     fn js(error: JsValue) -> anyhow::Error {
         anyhow!("{error:?}")
+    }
+
+    /// 再生の AudioContext。落とすと閉じる。利用者の操作の前は止まっていて、保持の上限を超える音は捨てる(参加・音量の
+    /// 操作の後なので、ここでは待たない)。
+    pub(crate) struct Playback {
+        context: web_sys::AudioContext,
+    }
+
+    impl Playback {
+        pub(crate) async fn open() -> Result<Self> {
+            let context = web_sys::AudioContext::new().map_err(js)?;
+            let _ = context.resume();
+            Ok(Self { context })
+        }
+
+        pub(crate) fn output(&self) -> Result<Output> {
+            let gain = self.context.create_gain().map_err(js)?;
+            gain.connect_with_audio_node(&self.context.destination())
+                .map_err(js)?;
+            Ok(Output {
+                context: self.context.clone(),
+                gain,
+                next: 0.0,
+            })
+        }
+    }
+
+    impl Drop for Playback {
+        fn drop(&mut self) {
+            let _ = self.context.close();
+        }
+    }
+
+    pub(crate) struct Output {
+        context: web_sys::AudioContext,
+        gain: web_sys::GainNode,
+        /// 次の音を鳴らし始める時刻(AudioContext の時計。秒)。
+        next: f64,
+    }
+
+    #[derive(Clone)]
+    pub(crate) struct Volume(web_sys::GainNode);
+
+    impl Volume {
+        pub(crate) fn set(&self, gain: f32) {
+            self.0.gain().set_value(gain);
+        }
+    }
+
+    impl Output {
+        pub(crate) fn volume(&self) -> Volume {
+            Volume(self.gain.clone())
+        }
+
+        /// 再生前に保持している量。
+        pub(crate) fn buffered(&self) -> Duration {
+            Duration::from_secs_f64((self.next - self.context.current_time()).max(0.0))
+        }
+
+        /// 再生前の保持が上限(`max_buffered`)を超える分は書かずに捨てる(ADR 0067 §4)。
+        pub(crate) fn write(&mut self, samples: &[f32], max_buffered: Duration) -> Result<()> {
+            let duration = samples.len() as f64 / f64::from(OPUS_SAMPLE_RATE);
+            if self.buffered().as_secs_f64() + duration > max_buffered.as_secs_f64() {
+                return Ok(());
+            }
+            let buffer = self
+                .context
+                .create_buffer(1, samples.len() as u32, OPUS_SAMPLE_RATE as f32)
+                .map_err(js)?;
+            buffer.copy_to_channel(samples, 0).map_err(js)?;
+            let source = self.context.create_buffer_source().map_err(js)?;
+            source.set_buffer(Some(&buffer));
+            source.connect_with_audio_node(&self.gain).map_err(js)?;
+            let at = self.next.max(self.context.current_time() + OUTPUT_LEAD);
+            source.start_with_when(at).map_err(js)?;
+            self.next = at + duration;
+            Ok(())
+        }
     }
 
     /// mic の取り込みと Opus の圧縮・公開。落とすと止まる。
@@ -295,7 +374,7 @@ mod web {
             broadcast: &mut moq_net::broadcast::Producer,
             catalog: moq_mux::catalog::Producer,
             track_name: &str,
-            _playback: Option<&super::Playback>,
+            _playback: Option<&Playback>,
         ) -> Result<Self> {
             let context = web_sys::AudioContext::new().map_err(js)?;
             let worklet = wasm_bindgen::link_to!(module = "/src/live_audio_worklet.js");
@@ -439,10 +518,7 @@ mod web {
 
 #[cfg(all(not(feature = "audio-devices"), not(target_family = "wasm")))]
 pub(super) use null::*;
-// Web の再生(視聴)は #1879 AC-2。
-#[cfg(target_family = "wasm")]
-pub(super) use null::{Output, Playback};
 #[cfg(feature = "audio-devices")]
 pub(super) use real::*;
 #[cfg(target_family = "wasm")]
-pub(super) use web::Capture;
+pub(super) use web::*;
