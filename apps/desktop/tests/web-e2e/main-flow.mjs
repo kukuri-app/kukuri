@@ -1935,7 +1935,10 @@ async function sameAccount() {
   assert.ok(afterLoss.archived - beforeLoss.archived <= 1, 'one request advances the epoch at most once');
 }
 
-/** 視聴者の page で、live の canvas に描いた frame の数と、ブラウザの出力へつないだ音の大きさを控える（試験だけの観測）。 */
+/** 視聴者の page で、live の canvas に描いた frame の数と、ブラウザの出力へつないだ音の大きさを控える（試験だけの観測）。
+ * 偽の mic は 500 ms ごとに 20 ms だけ鳴るので、1 回の読みでは切れ目に当たる。`__liveLevelOver(ms)` は `ms` の間を 10 ms
+ * ごとに読んだ最大を返す。`__livePlaybackClosed()` は、出力へつないだ AudioContext（再生。視聴の task が終わると閉じる）が
+ * すべて閉じたかを返す。page で動く関数なので、中に日本語を書かない。 */
 function observeLivePlayback() {
   window.__liveDraws = 0;
   const drawImage = CanvasRenderingContext2D.prototype.drawImage;
@@ -1953,7 +1956,7 @@ function observeLivePlayback() {
     }
     return connect.call(this, target, ...rest);
   };
-  window.__liveLevel = () =>
+  const level = () =>
     Math.max(
       0,
       ...taps.map((analyser) => {
@@ -1962,10 +1965,19 @@ function observeLivePlayback() {
         return Math.max(...samples.map(Math.abs));
       })
     );
+  window.__liveLevelOver = async (ms) => {
+    let loudest = 0;
+    for (const end = performance.now() + ms; performance.now() < end; ) {
+      loudest = Math.max(loudest, level());
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return loudest;
+  };
+  window.__livePlaybackClosed = () => taps.length > 0 && taps.every((analyser) => analyser.context.state === 'closed');
 }
 
 /** `live`（#1879 AC-1・AC-2）: 開発者モードの Web が Live を作り、camera と mic で配信する。native の相手は映像と音声を受ける。
- * 別の Web は参加すると映像が描かれ、音がブラウザの出力へ渡り、音量 0 で無音になり、退出で描画が止まる。mic を止めた間は音声
+ * 別の Web は参加すると映像が描かれ、音がブラウザの出力へ渡り、音量 0 で無音になり、退出で受信が止まる。mic を止めた間は音声
  * だけが届かず、戻すとまた届き、配信を止めると視聴が終わる。公開スレッドの Live は一覧に配信中の印が付き、終わると消える。
  * 偽の camera・mic は Chrome の起動の引数で作るので、Chrome だけで確かめる（2026-10-19 のユーザー判断）。 */
 async function live() {
@@ -2010,7 +2022,7 @@ async function live() {
   await watch({ restart: true, ms: 0 });
   await hear('native receives the video and the sound');
 
-  // 別の Web が live の列から参加すると、映像が描かれ、音がブラウザの出力へ渡る。音量 0 で無音になり、退出で描画が止まる。
+  // 別の Web が live の列から参加すると、映像が描かれ、音がブラウザの出力へ渡る。音量 0 で無音になり、退出で受信が止まる。
   const viewer = await openClient('web-viewer', { ice: true, media: true });
   await enableDeveloperMode(viewer);
   await viewer.$('button[aria-label="Close settings"]').click();
@@ -2024,20 +2036,21 @@ async function live() {
   await viewerCard.waitForExist({ timeout: WAIT });
   await viewerCard.$('button=Join').click();
   const drawn = () => viewer.execute(() => window.__liveDraws);
-  const level = () => viewer.execute(() => window.__liveLevel());
+  const loudest = () => viewer.execute(() => window.__liveLevelOver(1_200));
   await eventually('the web viewer draws the video', async () => (await drawn()) > 10);
-  await eventually('the web viewer plays the sound', async () => (await level()) > 0.001);
+  await eventually('the web viewer plays the sound', async () => (await loudest()) > 0.001);
   await viewer.execute(() => {
     const volume = document.querySelector('input[type=range][aria-label="Volume"]');
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(volume, '0');
     volume.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await eventually('the web viewer is silent at volume 0', async () => (await level()) < 0.0001);
+  await eventually('the web viewer is silent at volume 0', async () => (await loudest()) < 0.0001);
   await viewerCard.$('button=Leave').click();
   await viewerCard.$('button=Join').waitForExist({ timeout: WAIT });
-  const stopped = await drawn();
+  const closed = () => viewer.execute(() => window.__livePlaybackClosed());
+  await eventually('the web viewer stops receiving', closed);
   await new Promise((resolve) => setTimeout(resolve, 3_000));
-  assert.equal(await drawn(), stopped, 'the web viewer stops drawing after leaving');
+  assert.ok(await closed(), 'the web viewer does not receive again after leaving');
 
   // mic を止めた後に始めた視聴は、映像を受けても、音声の再生時刻が映像の時刻に追いつかない。
   await bar.$('button[aria-label="Disable microphone"]').click();
@@ -2075,7 +2088,10 @@ async function live() {
   const row = viewer.$(`li[data-post-id="${thread.channel_id}"]`);
   await eventually('the public thread shows that it is live', () => row.$('.public-thread-row-live').isExisting());
   await native('end_live_session', { request: { topic: TOPIC, session_id: threadLive } });
-  await eventually('the public thread is no longer live', async () => !(await row.$('.public-thread-row-live').isExisting()));
+  await eventually(
+    'the public thread is no longer live',
+    async () => (await row.isExisting()) && !(await row.$('.public-thread-row-live').isExisting())
+  );
 }
 
 const inputProbe = phase => () => pwaInputFlow({ openClient, greetNative, openSettings, openChannelDialog, dialogWith, nativeCreatesChannel, native,

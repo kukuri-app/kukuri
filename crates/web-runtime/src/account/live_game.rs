@@ -100,15 +100,22 @@ impl LiveGameProjectionStore for IndexedDbCache {
         list_channel(self, LIVE_SESSIONS, topic_id, channel_id, limit).await
     }
 
+    /// 行の channel だけを読む（視聴者は数えない）。
     async fn live_session_channel(
         &self,
         topic_id: &str,
         session_id: &str,
     ) -> Result<Option<String>> {
-        Ok(self
-            .get_live_session(topic_id, session_id)
-            .await?
-            .map(|row| row.channel_id))
+        let (topic, session) = (topic_id.to_owned(), session_id.to_owned());
+        self.run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[LIVE_SESSIONS], Mode::Read)?;
+            let row =
+                rows::get::<LiveSessionProjectionRow>(&tx, LIVE_SESSIONS, &text(&session)).await?;
+            Ok(row
+                .filter(|row| row.topic_id == topic)
+                .map(|row| row.channel_id))
+        })
+        .await
     }
 
     /// 配信中の Live の store だけを読む（#1840 AC-4 の印。終わった Live の数に比例しない。#1879）。

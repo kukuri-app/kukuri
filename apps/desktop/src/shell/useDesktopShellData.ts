@@ -22,7 +22,7 @@ import { useAdultGatedMediaHashes } from '@/shell/data/useAdultGatedMediaHashes'
 import { useCommunityNodeRecovery } from '@/shell/actions/useCommunityNodeRecovery';
 import { useDesktopShellDataEffects } from '@/shell/data/useDesktopShellDataEffects';
 import { useMediaVisibilityDemand } from '@/shell/data/useMediaVisibilityDemand';
-import { liveSurfacesEnabled, SHOWN_THREAD_LIVE_SESSIONS, showsThreadLives } from '@/shell/slices/publicThreads';
+import { SHOWN_THREAD_LIVE_SESSIONS, showsThreadLives } from '@/shell/slices/publicThreads';
 import {
   activeWorkspaceScope,
   columnIdentityId,
@@ -211,7 +211,7 @@ export function useDesktopShellData({
   const pendingTimelineSnapshotsByKey = state.pendingTimelineSnapshotsByKey;
   const authorTimelinesByPubkey = state.authorTimelinesByPubkey;
   const liveStageStartPosts = state.liveStageStartPosts;
-  const stagesShown = useDesktopShellStore((s) => liveSurfacesEnabled(s.developerModeEnabled));
+  const stagesShown = useDesktopShellStore((s) => s.developerModeEnabled);
   const advisoryLookupPosts = useMemo(() => {
     const columnPosts = visibleColumns.flatMap((column) => {
       if (column.kind === 'timeline' && column.scope) {
