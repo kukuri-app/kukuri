@@ -52,6 +52,12 @@ export function invokeWebRuntime<T>(command: string, args?: Record<string, unkno
   return (sources.length ? runtime.invoke_with_attachments(command, request, sources) : runtime.invoke(command, request)) as Promise<T>;
 }
 
+/// live の映像の chunk を渡す（#1879。Tauri の raw の IPC にあたる）。
+export function pushWebLiveVideo(sessionId: string, keyframe: boolean, ageUs: number, data: Uint8Array): Promise<void> {
+  if (!runtime) return Promise.reject({ code: 'command_failed', message: 'the web runtime is not loaded' });
+  return runtime.push_live_video(sessionId, keyframe, ageUs, data);
+}
+
 export function prepareWebAttachment(blob: Blob): Promise<{ owner: string; hash: string }> {
   if (!runtime) return Promise.reject({ code: 'command_failed', message: 'the web runtime is not loaded' });
   return runtime.prepare_attachment(blob);

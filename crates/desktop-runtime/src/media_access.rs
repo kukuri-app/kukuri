@@ -1,7 +1,7 @@
 //! media の受け口(`/kukuri/media/1`)の認可と、受ける側で共用する部品(ADR 0067 §3・§4)。
 //!
 //! 認可要求の種類ごとに、metaverse の空間音声か live の配信へ振り分ける。拒否は理由の code だけを返し、他の参加者の
-//! 識別子と media を返さない。
+//! 識別子と media を返さない。Web は metaverse を扱わない(ADR 0060)ので、空間音声の要求は断る。
 
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -14,8 +14,9 @@ use moq_mux::catalog::hang::{Catalog, Container};
 use moq_net::track;
 use n0_future::time::{Instant, timeout};
 
-use crate::live_media::LiveMedia;
+use crate::live_media::RuntimeLiveMedia;
 use crate::media_devices::OPUS_SAMPLE_RATE;
+#[cfg(not(target_family = "wasm"))]
 use crate::metaverse_audio::MetaverseAudio;
 
 pub(crate) const DENIED_ACCESS: &str = "access_denied";
@@ -42,21 +43,26 @@ pub(crate) const SUBSCRIBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// iroh-node の media の受け口へ付ける認可。runtime を所有しない(止まった後の要求は拒否する)。
 pub(crate) fn media_authorizer(
-    audio: Weak<MetaverseAudio>,
-    live: Weak<LiveMedia>,
+    #[cfg(not(target_family = "wasm"))] audio: Weak<MetaverseAudio>,
+    live: Weak<RuntimeLiveMedia>,
     app: Weak<AppService>,
 ) -> MediaAuthorizer {
     Arc::new(move |remote, request| {
-        let (audio, live, app) = (audio.clone(), live.clone(), app.clone());
+        #[cfg(not(target_family = "wasm"))]
+        let audio = audio.clone();
+        let (live, app) = (live.clone(), app.clone());
         Box::pin(async move {
             let app = app
                 .upgrade()
                 .ok_or_else(|| DENIED_UNAVAILABLE.to_string())?;
             match serde_json::from_slice::<MediaAccessRequestV1>(&request) {
+                #[cfg(not(target_family = "wasm"))]
                 Ok(MediaAccessRequestV1::MetaverseAudio(request)) => match audio.upgrade() {
                     Some(audio) => audio.grant(&app, request).await,
                     None => Err(DENIED_UNAVAILABLE.to_string()),
                 },
+                #[cfg(target_family = "wasm")]
+                Ok(MediaAccessRequestV1::MetaverseAudio(_)) => Err(DENIED_UNAVAILABLE.to_string()),
                 Ok(MediaAccessRequestV1::Live(request)) => match live.upgrade() {
                     Some(live) => live.grant(&app, remote, request).await,
                     None => Err(DENIED_UNAVAILABLE.to_string()),
@@ -110,10 +116,13 @@ impl RateBudget {
         }
     }
 
+    // 上限の値を示すのは metaverse の空間音声の拒否だけ(Web は metaverse を扱わない)。
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn max_frames(&self) -> u64 {
         self.max_frames
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn max_bytes(&self) -> u64 {
         self.max_bytes
     }

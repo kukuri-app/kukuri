@@ -28,6 +28,11 @@ kukuri-core = { path = "../core" }
 kukuri-store = { path = "../store" }
 kukuri-transport = { path = "../transport" }
 kukuri-webrtc-transport = { path = "../webrtc-transport" }
+# media の搬送（ADR 0067）。Web も live を扱う（#1879）。
+moq-net.workspace = true
+hang.workspace = true
+web-transport-iroh.workspace = true
+moq-tokio.workspace = true
 
 # 永続 store・rpc・file は native だけ（ADR 0056 §3、ADR 0058）。
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
@@ -37,11 +42,6 @@ tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 # 公開 blob の発見（#1632、ADR 0063）。DHT は UDP を使うので native だけ。
 n0-mainline.workspace = true
 iroh-mainline-endpoint-discovery.workspace = true
-# media の搬送（ADR 0067）。Web は metaverse・live を扱わない（ADR 0060）。
-moq-net.workspace = true
-hang.workspace = true
-web-transport-iroh.workspace = true
-moq-tokio.workspace = true
 
 [dev-dependencies]
 kukuri-webrtc-transport = { path = "../webrtc-transport", features = ["test-signaling"] }

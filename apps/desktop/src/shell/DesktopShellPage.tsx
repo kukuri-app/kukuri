@@ -420,7 +420,7 @@ export function DesktopShellPage({
         });
         return;
       }
-      if ((reference.kind === 'live' || reference.kind === 'game') && (!developerModeEnabled || IS_WEB_RUNTIME)) {
+      if ((reference.kind === 'live' && !developerModeEnabled) || (reference.kind === 'game' && (!developerModeEnabled || IS_WEB_RUNTIME))) {
         // WIP機能が隠れている間は live/game リンクを topic timeline へ落とす。
         await syncTopicContext(reference.topic, reference.channelId);
         setSelectedLiveSessionId(null);

@@ -27,7 +27,7 @@ use kukuri_app_api::LinkPreviewRecordInput;
 use kukuri_desktop_runtime::{
     ClientGate, ClientHost, ClientStartupState, ClientStartupStatus, CommandError,
     CommunityNodeConsentDocumentRef, DispatchContext, FetchCommunityNodePoliciesRequest,
-    SetCommunityNodeConfigNode, dispatch_command,
+    LiveMediaRequest, SetCommunityNodeConfigNode, dispatch_command,
 };
 use kukuri_store::AccountSyncStore;
 use kukuri_transport::{DhtDiscoveryOptions, PublicBlobIndex};
@@ -196,6 +196,8 @@ pub async fn run_web_e2e_fixture() -> Result<()> {
         .route("/fixture/relay-bytes", get(relay_bytes))
         .route("/fixture/payload.png", get(payload_png))
         .route("/fixture/link-preview", post(link_preview))
+        .route("/fixture/live-watch", post(live_watch))
+        .route("/fixture/live-watch/stop", post(stop_live_watch))
         .route("/fixture/shutdown", post(shutdown))
         .route(
             "/fixture/shell-build",
@@ -451,6 +453,94 @@ async fn link_preview(
         .await
         .map_err(failed)?;
     Ok(Json(json!({ "image_data_url": image_data_url })))
+}
+
+#[derive(Deserialize)]
+struct LiveWatchBody {
+    topic: String,
+    session_id: String,
+    /// 前の視聴を止めて、新しい視聴で受け始める。
+    #[serde(default)]
+    restart: bool,
+    /// 受け取る時間（ms）。
+    #[serde(default)]
+    ms: u64,
+}
+
+/// native の相手で Web の live を視聴し、`ms` の間に画面へ渡された映像の chunk の数・keyframe の数・最後の映像の時刻と、
+/// 音声の再生時刻の最大を返す（#1879 AC-1）。音声の再生時刻は、音声を受けて再生へ渡すまで 0 で、届かない間は映像の時刻に
+/// 追いつかない。視聴は `/fixture/live-watch/stop` まで続く。
+async fn live_watch(
+    State(fixture): State<Shared>,
+    Json(body): Json<LiveWatchBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let runtime = fixture.gate.host.runtime();
+    let request = LiveMediaRequest {
+        topic: body.topic,
+        session_id: body.session_id,
+    };
+    if body.restart {
+        runtime
+            .stop_watching_live_media(request.clone())
+            .await
+            .map_err(failed)?;
+        runtime
+            .watch_live_media(request.clone())
+            .await
+            .map_err(failed)?;
+    }
+    let deadline = Instant::now() + Duration::from_millis(body.ms);
+    let (mut chunks, mut keyframes, mut video_us, mut audio_clock_us, mut state) = (0, 0, 0, 0, 0);
+    while Instant::now() < deadline {
+        let batch = runtime
+            .next_live_video(request.clone())
+            .await
+            .map_err(failed)?;
+        // `encode_screen_batch` の形: state(1)・音声の再生時刻(8)・chunk の数(2)、chunk ごとに timestamp(8)・keyframe(1)・
+        // 長さ(4)・bytes。数値は little endian。
+        let number = |at: usize, len: usize| {
+            batch[at..at + len]
+                .iter()
+                .rev()
+                .fold(0u64, |value, byte| value << 8 | u64::from(*byte))
+        };
+        state = batch[0];
+        audio_clock_us = audio_clock_us.max(number(1, 8));
+        let mut at = 11;
+        for _ in 0..number(9, 2) {
+            video_us = video_us.max(number(at, 8));
+            keyframes += u64::from(batch[at + 8] == 1);
+            chunks += 1;
+            at += 13 + number(at + 9, 4) as usize;
+        }
+        if state != 0 {
+            break;
+        }
+    }
+    Ok(Json(json!({
+        "state": state,
+        "chunks": chunks,
+        "keyframes": keyframes,
+        "video_us": video_us,
+        "audio_clock_us": audio_clock_us,
+    })))
+}
+
+async fn stop_live_watch(
+    State(fixture): State<Shared>,
+    Json(body): Json<LiveWatchBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    fixture
+        .gate
+        .host
+        .runtime()
+        .stop_watching_live_media(LiveMediaRequest {
+            topic: body.topic,
+            session_id: body.session_id,
+        })
+        .await
+        .map_err(failed)?;
+    Ok(Json(json!({})))
 }
 
 /// native を止める（#1220 AC-2g。投稿者の native が居ないときの中継を確かめる。以後は native を操作できない）。

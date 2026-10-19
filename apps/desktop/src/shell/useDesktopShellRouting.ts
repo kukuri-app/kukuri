@@ -21,6 +21,7 @@ import {
   type OpenAuthorOptions,
   type OpenThreadOptions,
   parsePrimarySectionPath,
+  primarySectionHidden,
   resolveHashBackedRouteLocation,
 } from '@/shell/routes';
 import { setRecordEntry } from '@/shell/stateUpdates';
@@ -163,7 +164,7 @@ export function useDesktopShellRouting({
     const candidate =
       parsePrimarySectionPath(resolvedRouteLocation.pathname) ??
       primarySectionForColumn(activeWorkspaceColumn(storeApi.getState().workspaceState));
-    if ((!developerModeEnabled || IS_WEB_RUNTIME) && (candidate === 'live' || candidate === 'game')) {
+    if (primarySectionHidden(candidate, developerModeEnabled)) {
       return 'timeline';
     }
     return candidate;

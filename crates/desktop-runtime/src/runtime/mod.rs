@@ -284,9 +284,8 @@ pub struct DesktopRuntime {
     /// metaverse の空間音声(ADR 0067、#1033)。Web は扱わない(ADR 0060)。
     #[cfg(not(target_family = "wasm"))]
     pub(crate) metaverse_audio: Arc<crate::metaverse_audio::MetaverseAudio>,
-    /// live の配信と視聴(ADR 0067、#1034)。
-    #[cfg(not(target_family = "wasm"))]
-    pub(crate) live_media: Arc<crate::live_media::LiveMedia>,
+    /// live の配信と視聴(ADR 0067、#1034。Web は #1879)。
+    pub(crate) live_media: Arc<crate::live_media::RuntimeLiveMedia>,
 }
 
 async fn load_private_channel_capabilities(
@@ -743,11 +742,10 @@ impl DesktopRuntime {
         // media の受け口の認可(ADR 0067)。参加中の Dome の音声と配信中の live だけを、proof と access で確かめて公開する。
         #[cfg(not(target_family = "wasm"))]
         let metaverse_audio = Arc::new(crate::metaverse_audio::MetaverseAudio::default());
-        #[cfg(not(target_family = "wasm"))]
-        let live_media = Arc::new(crate::live_media::LiveMedia::default());
-        #[cfg(not(target_family = "wasm"))]
+        let live_media = Arc::new(crate::live_media::runtime_live_media());
         iroh_stack
             .use_media_authorizer(crate::media_access::media_authorizer(
+                #[cfg(not(target_family = "wasm"))]
                 Arc::downgrade(&metaverse_audio),
                 Arc::downgrade(&live_media),
                 Arc::downgrade(&app_service),
@@ -825,7 +823,6 @@ impl DesktopRuntime {
             event_sender,
             #[cfg(not(target_family = "wasm"))]
             metaverse_audio,
-            #[cfg(not(target_family = "wasm"))]
             live_media,
         })
     }

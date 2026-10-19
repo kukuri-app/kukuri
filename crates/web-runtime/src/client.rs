@@ -12,8 +12,8 @@ use kukuri_desktop_runtime::{
     AcceptedAppConsentDocument, ClientGate, ClientHost, ClientHostStart, ClientStartupError,
     ClientStartupState, ClientStartupStatus, CommandError, CommunityNodeConfig, DesktopRuntime,
     DispatchContext, RuntimeBuilder, RuntimeEvent, admit_command, app_consent_status,
-    dispatch_command, failed_startup_status, install_platform_storage, record_app_consents,
-    require_consent_acceptance_state, validate_app_consent_documents,
+    dispatch_command, failed_startup_status, install_platform_storage, map_error,
+    record_app_consents, require_consent_acceptance_state, validate_app_consent_documents,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -474,6 +474,35 @@ pub async fn invoke_with_attachments(
         Ok(value) => to_js(&value),
         Err(error) => Err(error_value(&error)),
     }
+}
+
+/// 画面が VP8 に圧縮した live の映像の chunk を、配信中の session に置く（#1879。Tauri の raw の IPC の
+/// `push_live_video` にあたる）。`age_us` は取り込みから今までの時間。
+#[wasm_bindgen]
+pub async fn push_live_video(
+    session_id: String,
+    keyframe: bool,
+    age_us: f64,
+    data: Vec<u8>,
+) -> Result<(), JsValue> {
+    let client = current()?;
+    client
+        .gate
+        .require_running()
+        .map_err(|error| error_value(&error))?;
+    let host = client
+        .gate
+        .host()
+        .ok_or_else(|| JsValue::from_str("the account is not started"))?;
+    host.runtime()
+        .push_live_video(
+            &session_id,
+            keyframe,
+            std::time::Duration::from_micros(age_us.max(0.0) as u64),
+            data,
+        )
+        .await
+        .map_err(|error| error_value(&map_error(error)))
 }
 
 /// runtime の event（`RuntimeEvent`）を受け取る callback を足す。`shutdown` で外れる。

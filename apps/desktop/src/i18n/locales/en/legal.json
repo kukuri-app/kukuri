@@ -23,7 +23,7 @@
     "ageAttestationHeading": "Age self-attestation",
     "ageAttestedValue": "Attested as 18 or older (attested {{attestedAt}})",
     "notAttested": "Not attested",
-    "webUnavailable": "The web version does not support device backup, window and OS notification settings, developer logs, or live / game / metaverse / Dome. To move to another device, export your account key."
+    "webUnavailable": "The web version does not support device backup, window and OS notification settings, developer logs, or game / metaverse / Dome. To move to another device, export your account key."
   },
   "metadata": {
     "effectiveDate": "Effective date: {{date}}",

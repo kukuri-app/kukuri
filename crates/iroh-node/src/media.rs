@@ -9,7 +9,6 @@ use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
-use futures_util::future::BoxFuture;
 use iroh::EndpointId;
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler};
@@ -45,8 +44,17 @@ const CLOSE_DENIED: u32 = 2;
 /// moq-net の app の close code(`Error::App`)。access が失われた。
 const APP_REVOKED: u16 = 1;
 
+/// 認可の future。ブラウザの moq-lite の型は Send でない(受け口は main thread の task で動かす)。
+#[cfg(not(target_family = "wasm"))]
+pub type MediaFuture<T> = futures_util::future::BoxFuture<'static, T>;
+#[cfg(target_family = "wasm")]
+pub type MediaFuture<T> = futures_util::future::LocalBoxFuture<'static, T>;
+
 /// 認可を評価し直す。偽なら接続を閉じる。
-pub type MediaRevalidate = Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>;
+#[cfg(not(target_family = "wasm"))]
+pub type MediaRevalidate = Arc<dyn Fn() -> MediaFuture<bool> + Send + Sync>;
+#[cfg(target_family = "wasm")]
+pub type MediaRevalidate = Arc<dyn Fn() -> MediaFuture<bool>>;
 
 /// 認可の結果。`publish` には、この相手に見せてよい broadcast だけが載る。`detail` は許可の応答に添える(空なら付けない)。
 pub struct MediaGrant {
@@ -57,7 +65,7 @@ pub struct MediaGrant {
 
 /// 相手の endpoint id と認可要求の bytes から、許可(`MediaGrant`)か拒否の code を返す。
 pub type MediaAuthorizer = Arc<
-    dyn Fn(EndpointId, Vec<u8>) -> BoxFuture<'static, std::result::Result<MediaGrant, String>>
+    dyn Fn(EndpointId, Vec<u8>) -> MediaFuture<std::result::Result<MediaGrant, String>>
         + Send
         + Sync,
 >;
@@ -146,9 +154,13 @@ pub fn media_origin_config() -> origin::Config {
     config
 }
 
-/// moq-net の driver は tokio の時計で poll される(`moq_net::time::run`)ので、始点も同じ時計から取る。
-fn driver_now() -> std::time::Instant {
-    tokio::time::Instant::now().into_std()
+/// moq-net の driver は tokio の時計(Web は `performance.now()` の時計)で poll される(`moq_net::time::run`)ので、
+/// 始点も同じ時計から取る。
+fn driver_now() -> moq_net::time::Instant {
+    #[cfg(not(target_family = "wasm"))]
+    return tokio::time::Instant::now().into_std();
+    #[cfg(target_family = "wasm")]
+    moq_net::time::Instant::now()
 }
 
 #[derive(Clone)]
@@ -187,6 +199,16 @@ impl MediaSlot {
 
 impl ProtocolHandler for MediaSlot {
     async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
+        // ブラウザの moq-lite の session は Send でないので、main thread の task で動かす(ADR 0056 §4)。
+        crate::confine_local(self.clone().serve_connection(connection)).await
+    }
+}
+
+impl MediaSlot {
+    async fn serve_connection(
+        self,
+        connection: Connection,
+    ) -> std::result::Result<(), AcceptError> {
         let Ok(_session) = self.sessions.clone().try_acquire_owned() else {
             connection.close(CLOSE_BUSY.into(), b"busy");
             return Ok(());

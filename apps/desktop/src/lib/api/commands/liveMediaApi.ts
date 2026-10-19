@@ -1,11 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 
+import { IS_WEB_RUNTIME, pushWebLiveVideo } from '../../webRuntime';
 import type { DesktopApi, LiveBroadcastStatus } from '../types';
 import { invokeDesktop } from '../invoke/desktop';
 import { command } from '../invoke/dispatch';
 import { normalizeInvokeError } from '../invoke/error';
 
-// #1034: live の配信と視聴(ADR 0067 §9)。映像の chunk は raw の body と応答で渡す。Tauri の app だけの command。
+// #1034: live の配信と視聴(ADR 0067 §9)。映像の chunk は raw の body と応答で渡す(Web は web-runtime の関数。#1879)。
 // runtimeApi.ts の大型ファイル ratchet を増やさないため別 module に置く。
 export const liveMediaApi: Pick<
   DesktopApi,
@@ -21,6 +22,7 @@ export const liveMediaApi: Pick<
     invokeDesktop<LiveBroadcastStatus>('set_live_broadcast', { request })),
   pushLiveVideo: command('pushLiveVideo', async (sessionId, keyframe, ageMicros, data) => {
     try {
+      if (IS_WEB_RUNTIME) return await pushWebLiveVideo(sessionId, keyframe, Math.max(0, ageMicros), data);
       await invoke('push_live_video', data, {
         headers: {
           'x-session-id': sessionId,

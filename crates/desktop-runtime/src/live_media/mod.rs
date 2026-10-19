@@ -4,8 +4,8 @@
 //! 署名し、同じ clock の timestamp で 1 つの broadcast に置く。最初の keyframe が届くまで broadcast を公開しない
 //! (取り込みが拒否されたら送信 0)。配信者が直接送るのは 4 人まで、受けた視聴者は確かめた frame を中身を変えずに
 //! 2 人まで転送する(`watch`)。視聴者は音声を Rust で再生し、映像の chunk を送りかけ 1 秒分までで画面へ渡す(音声の
-//! 再生時刻を添える。`screen`)。音声と映像の bytes は memory にだけ置き、docs・blob・SQLite・log へ出さない。Web は
-//! 扱わない(ADR 0060)。
+//! 再生時刻を添える。`screen`)。音声と映像の bytes は memory にだけ置き、docs・blob・SQLite(Web は IndexedDB)・log
+//! へ出さない。Web(#1879)も同じ処理を使い、音声の機器だけを `media_devices` の Web の実装が扱う。
 
 mod screen;
 mod watch;
@@ -160,6 +160,20 @@ impl std::fmt::Display for LiveBroadcastElsewhere {
 }
 
 impl std::error::Error for LiveBroadcastElsewhere {}
+
+/// runtime が持つ live の配信と視聴。moq-lite の型はブラウザでは Send でない(main thread だけで動かす)ので、Web では
+/// 作った thread だけから触れる包みに入れて runtime を Send・Sync に保つ(Web の build は thread を使わない。ADR 0060 §2)。
+#[cfg(not(target_family = "wasm"))]
+pub(crate) type RuntimeLiveMedia = LiveMedia;
+#[cfg(target_family = "wasm")]
+pub(crate) type RuntimeLiveMedia = send_wrapper::SendWrapper<LiveMedia>;
+
+pub(crate) fn runtime_live_media() -> RuntimeLiveMedia {
+    #[cfg(not(target_family = "wasm"))]
+    return LiveMedia::default();
+    #[cfg(target_family = "wasm")]
+    send_wrapper::SendWrapper::new(LiveMedia::default())
+}
 
 /// 端末の live の配信と視聴。
 #[derive(Default)]
@@ -340,6 +354,13 @@ struct FanoutLinks {
 }
 
 impl Fanout {
+    #[cfg_attr(
+        target_family = "wasm",
+        expect(
+            clippy::arc_with_non_send_sync,
+            reason = "Web の moq-lite の型は main thread だけで使う"
+        )
+    )]
     fn new(topic_id: String, limit: usize, route: Vec<String>) -> Arc<Self> {
         let (origin, driver) = origin::Producer::new(media_origin_config());
         let driver = n0_future::task::spawn(async move {
@@ -519,6 +540,13 @@ impl LiveMedia {
 
     /// 受け口が呼ぶ(配信者の端末と、転送する視聴者)。子へ公開している session への要求だけを、要求した端末が祖先で
     /// ないこと・proof・access で確かめて許す。満員なら子の一覧と経路を添えて断る(ADR 0067 §8)。
+    #[cfg_attr(
+        target_family = "wasm",
+        expect(
+            clippy::arc_with_non_send_sync,
+            reason = "Web の moq-lite の型は main thread だけで使う"
+        )
+    )]
     pub(crate) async fn grant(
         &self,
         app: &Arc<AppService>,

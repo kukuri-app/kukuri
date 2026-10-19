@@ -112,8 +112,18 @@ const nativeReact = (target, emoji) =>
 /** scenario が開いた client（失敗したときの手がかりと、終わりの CSP の確認・session の終了の対象）。 */
 const clients = [];
 
-/** 新しい profile のブラウザを開き、初回同意 → Community Node の同意まで進める（profile の dialog が出ている）。 */
-async function startClient(name, { ice, beforeConsent }) {
+/** 偽の camera・mic を使い、取り込みの許可の確認を出さない Chrome（live の scenario。#1879）。 */
+const withFakeMedia = (capabilities) => ({
+  ...capabilities,
+  'goog:chromeOptions': {
+    ...capabilities['goog:chromeOptions'],
+    args: [...capabilities['goog:chromeOptions'].args, '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
+  },
+});
+
+/** 新しい profile のブラウザを開き、初回同意 → Community Node の同意まで進める（profile の dialog が出ている）。`media` は偽の
+ * camera・mic（Chrome だけ）。 */
+async function startClient(name, { ice, beforeConsent, media = false }) {
   const kind = SINGLE && clients.length > 0 ? 'chrome' : BROWSER;
   const paired = `${SINGLE} with ${SINGLE} (the driver opens one session at a time)`;
   if (kind !== BROWSER && !unconfirmed.includes(paired)) unconfirmed.push(paired);
@@ -122,7 +132,8 @@ async function startClient(name, { ice, beforeConsent }) {
     const { community_node: communityNode, relay_port: relayPort } = await fixture('/fixture/info');
     for (const port of [new URL(ORIGIN).port, new URL(communityNode).port, relayPort]) await adb('reverse', `tcp:${port}`, `tcp:${port}`);
   }
-  const browser = await remote({ logLevel: 'warn', capabilities: BROWSERS[kind] });
+  const capabilities = media ? withFakeMedia(BROWSERS[kind]) : BROWSERS[kind];
+  const browser = await remote({ logLevel: 'warn', capabilities });
   browser.label = `${name}-${RUN}`;
   browser.kind = kind;
   console.log(browser.label, browser.capabilities.browserName, browser.capabilities.browserVersion);
@@ -207,8 +218,8 @@ async function startClient(name, { ice, beforeConsent }) {
 }
 
 /** 新しい profile のブラウザを開き、初回同意 → Community Node の同意 → アカウントの profile まで進める。 */
-async function openClient(name, { ice, beforeConsent }) {
-  const browser = await startClient(name, { ice, beforeConsent });
+async function openClient(name, { ice, beforeConsent, media }) {
+  const browser = await startClient(name, { ice, beforeConsent, media });
   const profile = await dialogWith(browser, 'Set up your profile');
   const displayName = profile.$('input');
   await displayName.waitForClickable({ timeout: WAIT });
@@ -1919,6 +1930,72 @@ async function sameAccount() {
   assert.ok(afterLoss.archived - beforeLoss.archived <= 1, 'one request advances the epoch at most once');
 }
 
+/** `live`（#1879 AC-1）: 開発者モードの Web が Live を作り、camera と mic で配信する。native の相手は映像と音声を受け、mic を
+ * 止めた間は音声だけが届かず、戻すとまた届き、配信を止めると視聴が終わる。偽の camera・mic は Chrome の起動の引数で作るので、
+ * Chrome だけで確かめる（2026-10-19 のユーザー判断）。 */
+async function live() {
+  if (BROWSER !== 'chrome') {
+    unconfirmed.push('live (checked on Chrome only)');
+    return;
+  }
+  const browser = await openClient('web-live', { ice: true, media: true });
+  await enableDeveloperMode(browser);
+  await browser.$('button[aria-label="Close settings"]').click();
+  await browser.execute((topic) => {
+    location.hash = `#/live?topic=${encodeURIComponent(topic)}`;
+  }, TOPIC);
+  const title = `web live ${RUN}`;
+  await browser.$('button=Start Live').click();
+  const dialog = await dialogWith(browser, 'Start Live');
+  await dialog.$('input[placeholder="Friday stream"]').setValue(title);
+  await (await dialog.$$('button=Start Live')).at(-1).click();
+  const card = browser.$(
+    `//article[@data-live-session-id and not(ancestor::*[contains(@class, "post-live")]) and contains(., "${title}")]`
+  );
+  await card.waitForExist({ timeout: WAIT });
+  const request = { topic: TOPIC, session_id: await card.getAttribute('data-live-session-id') };
+  await card.$('button=Broadcast camera').click();
+  const bar = browser.$('section.shell-live-broadcast');
+  await bar.$('span=Broadcasting video').waitForExist({ timeout: WAIT });
+  await bar.$('button[aria-label="Disable microphone"]').waitForExist({ timeout: WAIT });
+
+  // 映像（keyframe を含む）と、映像の時刻に追いつく音声の再生時刻を受ける。
+  const watch = (options) => fixture('/fixture/live-watch', { ...request, ms: 3_000, ...options });
+  let watched;
+  const hear = (what) =>
+    eventually(what, async () => {
+      watched = await watch();
+      return watched.keyframes > 0 && watched.audio_clock_us > 0 && watched.video_us - watched.audio_clock_us < 1_000_000;
+    }).catch((error) => assert.fail(`${error.message}: ${JSON.stringify(watched)}`));
+  await eventually('native sees the live session', async () =>
+    (await native('list_live_sessions', { request: { topic: TOPIC, scope: { kind: 'public' } } })).some(
+      (session) => session.session_id === request.session_id
+    )
+  );
+  await watch({ restart: true, ms: 0 });
+  await hear('native receives the video and the sound');
+
+  // mic を止めた後に始めた視聴は、映像を受けても、音声の再生時刻が映像の時刻に追いつかない。
+  await bar.$('button[aria-label="Disable microphone"]').click();
+  await bar.$('button[aria-label="Enable microphone"]').waitForExist({ timeout: WAIT });
+  await new Promise((resolve) => setTimeout(resolve, 3_000));
+  const muted = await watch({ restart: true, ms: 4_000 });
+  assert.ok(muted.chunks > 0, `native still receives the video: ${JSON.stringify(muted)}`);
+  assert.ok(
+    muted.audio_clock_us === 0 || muted.video_us - muted.audio_clock_us > 2_000_000,
+    `native receives no sound while the microphone is off: ${JSON.stringify(muted)}`
+  );
+  await bar.$('button[aria-label="Enable microphone"]').click();
+  await bar.$('button[aria-label="Disable microphone"]').waitForExist({ timeout: WAIT });
+  await hear('native receives the sound again');
+
+  // 配信を止めると、native の視聴は終わる。
+  await bar.$('button=Stop video broadcast').click();
+  await bar.waitForExist({ reverse: true, timeout: WAIT });
+  await eventually('the native viewing ends', async () => (await watch()).state !== 0);
+  await fixture('/fixture/live-watch/stop', request);
+}
+
 const inputProbe = phase => () => pwaInputFlow({ openClient, greetNative, openSettings, openChannelDialog, dialogWith, nativeCreatesChannel, native,
     nativeLinkPost, sees, enableDeveloperMode, openDirectMessage, fixture, publicColumn, openComposer, replaceValue, browserName: BROWSER, adb, origin: ORIGIN, topic: TOPIC, phase, unconfirmed });
 
@@ -1943,6 +2020,7 @@ const scenarios = {
   transfer,
   'same-account': sameAccount,
   'public-blob': publicBlob,
+  live,
 };
 
 const [name, selected] = process.argv.slice(2);

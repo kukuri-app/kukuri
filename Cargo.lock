@@ -4319,6 +4319,7 @@ dependencies = [
  "n0-future",
  "n0-mainline",
  "reqwest",
+ "send_wrapper",
  "serde",
  "serde_json",
  "sqlx",
@@ -4912,7 +4913,7 @@ dependencies = [
 [[package]]
 name = "moq-audio"
 version = "0.1.11"
-source = "git+https://github.com/KingYoSun/moq?rev=77553ada566a9b6c3e6bdcf4143f7f9468793086#77553ada566a9b6c3e6bdcf4143f7f9468793086"
+source = "git+https://github.com/KingYoSun/moq?rev=6573706f68cb7c8244e4e5855400ff80d2fc29a9#6573706f68cb7c8244e4e5855400ff80d2fc29a9"
 dependencies = [
  "block2",
  "bytes",
@@ -4937,6 +4938,7 @@ dependencies = [
  "tokio",
  "tracing",
  "unsafe-libopus",
+ "web-time",
 ]
 
 [[package]]
@@ -5006,8 +5008,7 @@ dependencies = [
 [[package]]
 name = "moq-mux"
 version = "0.10.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a24cafdb92a271d7a52d4a4a953f6bbd4d7aea610b38e641d41488b6e3cc2b50"
+source = "git+https://github.com/KingYoSun/moq?rev=6573706f68cb7c8244e4e5855400ff80d2fc29a9#6573706f68cb7c8244e4e5855400ff80d2fc29a9"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -5035,6 +5036,7 @@ dependencies = [
  "tracing",
  "url",
  "web-async",
+ "web-time",
  "webm-iterable",
 ]
 
@@ -5085,8 +5087,7 @@ dependencies = [
 [[package]]
 name = "moq-tokio"
 version = "0.19.24"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4999ba9d4b4ec081fc8a39f8ea7d561d5add8159ae6e42ff27010b29c46ef0f"
+source = "git+https://github.com/KingYoSun/moq?rev=6573706f68cb7c8244e4e5855400ff80d2fc29a9#6573706f68cb7c8244e4e5855400ff80d2fc29a9"
 dependencies = [
  "bytes",
  "futures",
@@ -5110,6 +5111,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "usage-rs",
+ "web-async",
  "web-transport-iroh",
  "web-transport-proto",
  "web-transport-trait",

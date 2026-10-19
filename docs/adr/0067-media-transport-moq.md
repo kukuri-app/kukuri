@@ -64,7 +64,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - protocol は moq-lite（`moq-net`）、形式は `hang` を使う。`iroh-moq` crate は使わない。理由は、peer ごとの認可が無いこと、crates.io に無く API の全面改修が未 merge であること、Windows で実行されていないこと。同じ働き（iroh の接続を moq-net の session にする部分）は kukuri の受け口が持つ。
 - 専用の ALPN `/kukuri/media/1` を既存の `Router` に 1 つ登録する（moq の 15 個の ALPN は登録しない）。接続の上で使う moq-lite の版は kukuri の版ごとに固定し（`moq-net` の版の明示）、版の違う kukuri の間では media が届かない。旧版との互換は設けない。
 - iroh の接続は `web-transport-iroh` の raw session を、`moq-tokio` の `transport::Session`（moq-net が要求する poll 型への変換。web-transport-iroh は async 型だけを実装する）で moq-net の transport へ渡す。kukuri の ALPN では moq-net が版を選べないため、session は moq-net の moq-lite の版の名前を protocol として返す。認可要求は moq-lite の handshake の前に、接続の最初の双方向 stream で送る（moq-lite の SETUP は token を運ばない）。受け口は相手ごとに moq-net の session を作り、その session の公開範囲（origin）には、認可した対象の broadcast だけを置く（§3）。
-- 置き場所: 受け口・接続・上限は `kukuri-iroh-node`、認可要求と descriptor の型は `kukuri-core`、access 判定は既存の `kukuri-app-api`、機器と codec は `kukuri-desktop-runtime`（native だけ）。新しい crate・trait は作らない。
+- 置き場所: 受け口・接続・上限は `kukuri-iroh-node`、認可要求と descriptor の型は `kukuri-core`、access 判定は既存の `kukuri-app-api`、機器と codec は `kukuri-desktop-runtime`（native。Web は live だけ、#1879）。新しい crate・trait は作らない。
 - broadcast は送る端末ごと・対象ごとに 1 つ。metaverse は話者の音声 track（hang の catalog つき）と、話者の位置の track（JSON の frame、最新の group だけを読む）。live は配信の映像 track と音声 track。
 - 時刻: 送る側は取り込み時刻（単調時計、μs）を `hang` の frame の timestamp に入れる。受ける側は話者ごと（metaverse）、または broadcast ごと（live。音声の再生時刻を基準に映像を合わせる）に再生時刻を決める。
 - 揺れの吸収: 受ける側は再生前に保持する量を話者ごとに既定 50 ms、上限は ADR 0041 client の jitter frame の数 × 20 ms（既定 8 で 160 ms）とする。順序の入れ替わりは moq-net の group の順と timestamp で並べ直し、上限より遅れた group は古いものから飛ばす。それでも再生前の保持が上限を超える分は書かずに捨てる。
@@ -130,6 +130,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - #1032 の構成（iroh・iroh-base・iroh-dns・iroh-relay の fork `eef6af69364b5df1aa33c30e4c5731aad9d32046`、iroh-docs `e7233d14853cb4db9966e30050bac1e689cdeec8`、iroh-gossip の fork `23cd6cc76d51582b3678b3b743db72d51ce296d4`）を変えない。
 - 追加（#1033 で両方の workspace の `Cargo.lock` に固定）: `moq-net` 0.3.11・`hang` 0.21.12・`moq-mux` 0.10.12・`web-transport-iroh` 0.7.0（既定の feature を外し `ring`。web-transport-trait 0.4 系）・`moq-tokio` 0.19.24（既定の feature を外し `iroh`。増える crate は 8 個）・`moq-audio` 0.1.11（既定の feature を外す。機器の `capture`・`playback`・`aec` は desktop-runtime の `audio-devices` で Tauri の app だけが有効にし、CLI・harness は codec だけを使う）。映像の crate は #1034 AC-1 で決める。
 - `moq-audio` は fork `KingYoSun/moq` の `77553ada566a9b6c3e6bdcf4143f7f9468793086` に固定する（#1805。上流へは PR を出さない）。0.1.11 は echo cancellation の参照の channel を一度も読まないため、再生の mix が canceller へ届かない。fork は 0.1.11 の commit に、channel を作った直後に 1 回読む修正を載せ、moq 系の依存（`hang`・`kio`・`moq-mux`・`moq-net`）を crates.io の同じ版にしたもの（workspace の path のままだと、git の依存では moq-net が crates.io の版と別の crate になる）。moq-audio の版を上げるときは、上流に同じ修正があるかを確かめる。
+- #1879（Web の live）で、同じ fork の branch `kukuri/moq-0.1.11-wasm-transport` の `6573706f68cb7c8244e4e5855400ff80d2fc29a9` に進め、`moq-tokio`・`moq-mux` も fork から取る（上流へは PR を出さない）。moq-tokio は tokio の `full` を要求して wasm32 で build できないので、Web では poll 型への変換（`transport`）だけを含め、その変換の future は Web では Send にしない。moq-mux・moq-audio は `std::time` の `Instant`・`SystemTime` の `now` を使い、ブラウザでは実行時に止まるので、`web-time` の型を使う（native では std と同じ型）。moq-mux・moq-tokio の moq 系の依存も crates.io の同じ版にした。版を上げるときは、上流に同じ修正があるかを確かめる。
 - Linux の build は libasound の開発 package、配布物は libasound を要する。
 - aws-lc は既に desktop の build に入っている（str0m 経由）ため、web-transport-iroh の既定の TLS で新しい C の build は増えない。
 - 輻輳制御と QUIC の stream 数の上限は endpoint の既定のままとし、変える必要は #1033・#1034 の計測で示す。
@@ -172,6 +173,11 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
     | 取り込み→encode の遅延（fake・mock の camera、720p、p50／p95） | 1／3 ms | 7〜8／9 ms |
     | H.264 | 往復する | `avc` 形式（description つき）なら往復する。Annex B は decode に失敗 |
     | AV1 | 往復する | decode に失敗 |
+
+- Web（#1879。2026-10-19 のユーザー判断で、desktop と同じく開発者モードの間だけ live の配信と視聴を出す。game・metaverse・Dome は Web では使えないまま）:
+  - ブラウザの node も `/kukuri/media/1` を受け、desktop と同じ認可・転送・署名・上限で配信者と転送する視聴者になる。moq-lite の型はブラウザでは Send でないので、受け口は main thread の task で動かし（`confine_local`）、runtime は live の状態を作った thread だけから触る包み（`SendWrapper`。Web の build は thread を使わない）に入れて持つ。空間音声の認可要求は断る。
+  - 映像: 取り込み・圧縮・復号は desktop と同じ画面の処理で、chunk は web-runtime の `push_live_video` へ渡す。camera・画面の取り込みの許可はブラウザの確認に任せる（Tauri の `on_permission_request` にあたる処理は無い）。
+  - 音声: Rust（WASM）が、ブラウザの `getUserMedia`（echo cancellation・雑音抑制・自動の音量はブラウザの機能）の音を AudioWorklet（`live_audio_worklet.js`）で 20 ms ずつ受け、`moq-audio` で Opus に圧縮して、desktop と同じく署名して配信の音声の track へ写す。mic の off は mic の取り込みを閉じ、track と catalog は残す。再生（視聴）は #1879 AC-2。
 
 ### 10. builder preview（D3）
 
