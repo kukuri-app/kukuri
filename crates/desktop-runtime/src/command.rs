@@ -610,10 +610,14 @@ dispatch_table! { session_commands, dispatch_sessions(runtime: &Arc<DesktopRunti
     withdraw_dome_connection_proposal(request: WithdrawDomeConnectionProposalRequest) => runtime.withdraw_dome_connection_proposal(request).await.map_err(map_error);
 }
 
-// live の配信の command（#1879）。Tauri は camera・画面の取り込みの許可（`LiveCaptureGate`）と raw の IPC を持つ
-// 自前の command で呼ぶので、この表は Web だけが使う。映像の chunk は web-runtime の `push_live_video` が渡す。
+// live の配信と視聴の command（#1879）。Tauri は camera・画面の取り込みの許可（`LiveCaptureGate`）と raw の IPC を持つ
+// 自前の command で呼ぶので、この表は Web だけが使う。映像の chunk は web-runtime の `push_live_video`・
+// `next_live_video` が渡す。
 #[cfg(target_family = "wasm")]
 dispatch_table! { live_media_commands, dispatch_live_media(runtime: &Arc<DesktopRuntime>, _ctx);
     set_live_broadcast(request: SetLiveBroadcastRequest) => runtime.set_live_broadcast(request).await.map_err(map_error);
+    set_live_volume(request: LiveVolumeRequest) => runtime.set_live_volume(request).await.map_err(map_error);
     stop_live_broadcast(request: LiveMediaRequest) => runtime.stop_live_broadcast(request).await.map_err(map_error);
+    stop_watching_live_media(request: LiveMediaRequest) => runtime.stop_watching_live_media(request).await.map_err(map_error);
+    watch_live_media(request: LiveMediaRequest) => runtime.watch_live_media(request).await.map_err(map_error);
 }

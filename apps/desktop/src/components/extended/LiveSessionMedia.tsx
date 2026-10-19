@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { Volume2 } from 'lucide-react';
 
 import type { DesktopApi, LiveMediaRequest, LiveSessionView } from '@/lib/api';
-import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
 import { createLivePlayer, type LiveWatchState } from './liveMedia';
 import { joinLiveWatch, setLiveWatchVolume } from './liveWatch';
@@ -17,10 +16,10 @@ type LiveSessionMediaProps = {
   isOwner: boolean;
 };
 
-/// 配信中の live session の映像(#1034、ADR 0067 §9)。参加した視聴者に映像を出す。配信の操作は shell の上部の
-/// `LiveBroadcastBar`(#1839)。Web は扱わない。
+/// 配信中の live session の映像(#1034、ADR 0067 §9。Web は #1879)。参加した視聴者に映像を出す。配信の操作は shell の
+/// 上部の `LiveBroadcastBar`(#1839)。
 export function LiveSessionMedia({ api, topic, session, isOwner }: LiveSessionMediaProps) {
-  if (IS_WEB_RUNTIME || session.status !== 'Live' || isOwner || !session.joined_by_me) return null;
+  if (session.status !== 'Live' || isOwner || !session.joined_by_me) return null;
   return <LiveViewer api={api} request={{ topic, session_id: session.session_id }} />;
 }
 

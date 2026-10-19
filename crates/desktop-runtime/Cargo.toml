@@ -61,7 +61,7 @@ sqlx.workspace = true
 tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 
 # 通報の送信（ブラウザの fetch の転送の拒否。ADR 0056 §2）、passphrase の鍵の導出の Worker（src/kdf.rs）、
-# live の mic（src/media_devices.rs の Web の実装。#1879）。
+# live の mic と再生（src/media_devices.rs の Web の実装。#1879）。
 [target.'cfg(target_family = "wasm")'.dependencies]
 js-sys = "0.3.106"
 # Web の live の状態(moq-lite の型は Send でない)を runtime に置く包み（src/live_media）。
@@ -70,12 +70,17 @@ wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4.79"
 web-sys = { version = "0.3.106", features = [
   "AbortSignal",
+  "AudioBuffer",
+  "AudioBufferSourceNode",
   "AudioContext",
   "AudioDestinationNode",
   "AudioNode",
+  "AudioParam",
+  "AudioScheduledSourceNode",
   "AudioWorklet",
   "AudioWorkletNode",
   "BaseAudioContext",
+  "GainNode",
   "Headers",
   "MediaDevices",
   "MediaStream",

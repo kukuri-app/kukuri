@@ -11,7 +11,9 @@ use kukuri_store::{
 use web_sys::IdbTransaction;
 
 use crate::IndexedDbCache;
-use crate::content_cache::{DOME_CONNECTIONS, DOME_HOSTING, GAME_ROOMS, LIVE_SESSIONS, PRESENCE};
+use crate::content_cache::{
+    DOME_CONNECTIONS, DOME_HOSTING, GAME_ROOMS, LIVE_NOW, LIVE_SESSIONS, PRESENCE,
+};
 use crate::idb::Mode;
 use crate::rows::{self, Txn, key, num, prefix, text};
 
@@ -43,17 +45,46 @@ async fn with_viewers(
     Ok(row)
 }
 
+/// `store` の topic・channel の行を、新しく始まった順に `limit` 件まで読み、視聴者を数える。
+async fn list_channel(
+    cache: &IndexedDbCache,
+    store: &'static str,
+    topic_id: &str,
+    channel_id: &str,
+    limit: usize,
+) -> Result<Vec<LiveSessionProjectionRow>> {
+    let (topic, channel) = (topic_id.to_owned(), channel_id.to_owned());
+    cache
+        .run(move |db| async move {
+            let tx = Txn::begin(&db.idb, &[store, PRESENCE], Mode::Read)?;
+            let range = prefix(&[text(&topic), text(&channel)])?;
+            let rows: Vec<LiveSessionProjectionRow> =
+                rows::scan(&tx, store, Some("channel"), &range, true, limit).await?;
+            let mut counted = Vec::with_capacity(rows.len());
+            for row in rows {
+                counted.push(with_viewers(&tx, row).await?);
+            }
+            Ok(counted)
+        })
+        .await
+}
+
 #[async_trait]
 impl LiveGameProjectionStore for IndexedDbCache {
-    /// revision が新しいときだけ置き換える。
+    /// revision が新しいときだけ置き換える。配信中の行は、配信中の Live の store にも同じ transaction で写す。
     async fn upsert_live_session_cache(&self, row: LiveSessionProjectionRow) -> Result<()> {
         self.run(move |db| async move {
-            let tx = Txn::begin(&db.idb, &[LIVE_SESSIONS], Mode::Write)?;
+            let tx = Txn::begin(&db.idb, &[LIVE_SESSIONS, LIVE_NOW], Mode::Write)?;
             let existing =
                 rows::get::<LiveSessionProjectionRow>(&tx, LIVE_SESSIONS, &text(&row.session_id))
                     .await?;
             if existing.is_none_or(|existing| row.revision > existing.revision) {
                 rows::put(&tx, LIVE_SESSIONS, &row, &[])?;
+                if row.status == LiveSessionStatus::Live {
+                    rows::put(&tx, LIVE_NOW, &row, &[])?;
+                } else {
+                    rows::delete(&tx, LIVE_NOW, &text(&row.session_id))?;
+                }
             }
             tx.commit().await
         })
@@ -66,38 +97,28 @@ impl LiveGameProjectionStore for IndexedDbCache {
         channel_id: &str,
         limit: usize,
     ) -> Result<Vec<LiveSessionProjectionRow>> {
-        let (topic, channel) = (topic_id.to_owned(), channel_id.to_owned());
-        self.run(move |db| async move {
-            let tx = Txn::begin(&db.idb, &[LIVE_SESSIONS, PRESENCE], Mode::Read)?;
-            let range = prefix(&[text(&topic), text(&channel)])?;
-            let rows: Vec<LiveSessionProjectionRow> =
-                rows::scan(&tx, LIVE_SESSIONS, Some("channel"), &range, true, limit).await?;
-            let mut counted = Vec::with_capacity(rows.len());
-            for row in rows {
-                counted.push(with_viewers(&tx, row).await?);
-            }
-            Ok(counted)
-        })
-        .await
+        list_channel(self, LIVE_SESSIONS, topic_id, channel_id, limit).await
     }
 
-    /// Web は Live を扱わない(ADR 0060。command は `unsupported_platform` を返し、画面に入口を出さない)ので、公開スレッドの
-    /// 配信中の印(#1840 AC-4)も出さず、受け取った presence も公開スレッドの Live に結び付けない。
     async fn live_session_channel(
         &self,
-        _topic_id: &str,
-        _session_id: &str,
+        topic_id: &str,
+        session_id: &str,
     ) -> Result<Option<String>> {
-        Ok(None)
+        Ok(self
+            .get_live_session(topic_id, session_id)
+            .await?
+            .map(|row| row.channel_id))
     }
 
+    /// 配信中の Live の store だけを読む（#1840 AC-4 の印。終わった Live の数に比例しない。#1879）。
     async fn list_channel_live_now_sessions(
         &self,
-        _topic_id: &str,
-        _channel_id: &str,
-        _limit: usize,
+        topic_id: &str,
+        channel_id: &str,
+        limit: usize,
     ) -> Result<Vec<LiveSessionProjectionRow>> {
-        Ok(Vec::new())
+        list_channel(self, LIVE_NOW, topic_id, channel_id, limit).await
     }
 
     async fn get_live_session(

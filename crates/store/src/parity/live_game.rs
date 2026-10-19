@@ -702,3 +702,73 @@ pub(super) async fn session_revision_guards_match_between_backends<S: Store + Pr
     assert_eq!(from_backend.2.score_revision, None);
     assert_eq!(from_backend.2.status, GameRoomStatus::Ended);
 }
+
+/// #1840 AC-4・#1879: 配信中の Live の一覧(公開スレッドの印)は、配信中の行だけを新しく始まった順に上限まで返し、終わった
+/// 行は外れる。session の channel は、作った topic でだけ引ける。
+async fn live_now_scenario<S: Store + ProjectionStore>(
+    store: &S,
+) -> (Vec<String>, Vec<String>, Option<String>, Option<String>) {
+    let topic = "kukuri:topic:parity-live-now";
+    for (session_id, channel_id, status, started_at) in [
+        ("now-old", "thread", LiveSessionStatus::Live, 10),
+        ("ended", "thread", LiveSessionStatus::Ended, 20),
+        ("now-new", "thread", LiveSessionStatus::Live, 30),
+        ("elsewhere", "other", LiveSessionStatus::Live, 40),
+    ] {
+        LiveGameProjectionStore::upsert_live_session_cache(
+            store,
+            parity_live_session(session_id, topic, channel_id, status, started_at),
+        )
+        .await
+        .expect("upsert live session");
+    }
+    let ids = |rows: Vec<LiveSessionProjectionRow>| {
+        rows.into_iter()
+            .map(|row| row.session_id)
+            .collect::<Vec<_>>()
+    };
+    let before = ids(LiveGameProjectionStore::list_channel_live_now_sessions(
+        store, topic, "thread", 8,
+    )
+    .await
+    .expect("live now before"));
+    let mut ended = parity_live_session("now-new", topic, "thread", LiveSessionStatus::Ended, 30);
+    ended.revision = 2;
+    LiveGameProjectionStore::upsert_live_session_cache(store, ended)
+        .await
+        .expect("end live session");
+    let after = ids(LiveGameProjectionStore::list_channel_live_now_sessions(
+        store, topic, "thread", 8,
+    )
+    .await
+    .expect("live now after"));
+    (
+        before,
+        after,
+        LiveGameProjectionStore::live_session_channel(store, topic, "now-old")
+            .await
+            .expect("session channel"),
+        LiveGameProjectionStore::live_session_channel(store, "kukuri:topic:other", "now-old")
+            .await
+            .expect("session channel in another topic"),
+    )
+}
+
+pub(super) async fn live_now_sessions_match_between_backends<S: Store + ProjectionStore>(
+    make: &impl AsyncFn() -> S,
+) {
+    let from_backend = live_now_scenario(&make().await).await;
+    assert_eq!(
+        from_backend,
+        live_now_scenario(&MemoryStore::default()).await
+    );
+    assert_eq!(
+        from_backend,
+        (
+            vec!["now-new".to_string(), "now-old".to_string()],
+            vec!["now-old".to_string()],
+            Some("thread".to_string()),
+            None,
+        )
+    );
+}

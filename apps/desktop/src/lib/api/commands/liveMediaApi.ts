@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-import { IS_WEB_RUNTIME, pushWebLiveVideo } from '../../webRuntime';
+import { IS_WEB_RUNTIME, nextWebLiveVideo, pushWebLiveVideo } from '../../webRuntime';
 import type { DesktopApi, LiveBroadcastStatus } from '../types';
 import { invokeDesktop } from '../invoke/desktop';
 import { command } from '../invoke/dispatch';
@@ -39,7 +39,7 @@ export const liveMediaApi: Pick<
   watchLiveMedia: command('watchLiveMedia', (request) =>
     invokeDesktop<void>('watch_live_media', { request })),
   nextLiveVideo: command('nextLiveVideo', (request) =>
-    invokeDesktop<ArrayBuffer>('next_live_video', { request })),
+    IS_WEB_RUNTIME ? nextWebLiveVideo(request) : invokeDesktop<ArrayBuffer>('next_live_video', { request })),
   stopWatchingLiveMedia: command('stopWatchingLiveMedia', (request) =>
     invokeDesktop<void>('stop_watching_live_media', { request })),
   setLiveVolume: command('setLiveVolume', (request) =>

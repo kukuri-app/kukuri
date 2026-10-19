@@ -45,8 +45,9 @@ pub(crate) use tx::prefix_upper_bound;
 use tx::{RecordMeta, delete_step, make_room, put_content, record_key};
 pub(crate) use tx::{Tx, place};
 
-/// 版 2（#1632 AC-6）で公開参照の索引を、版 3（#1840）で公開 channel の一覧の行を足した。既存の store は変えない。
-const VERSION: u32 = 3;
+/// 版 2（#1632 AC-6）で公開参照の索引を、版 3（#1840）で公開 channel の一覧の行を、版 4（#1879）で配信中の Live の行を
+/// 足した。既存の store は変えない。
+const VERSION: u32 = 4;
 /// 1 つの chunk の上限（`/kukuri/remote-blob/1` の 1 回の単位と同じ）。
 const CHUNK_BYTES: usize = 1024 * 1024;
 /// 内容の transaction が触る object store。remote の投稿の projection（`projection` の内容）を消すときは、その行と
@@ -230,13 +231,16 @@ async fn quota_capacity() -> Result<i64> {
 }
 
 pub(crate) fn create_stores(db: &IdbDatabase) -> std::result::Result<(), JsValue> {
-    // 既存の database には、まだ無い store だけを足す(版 2 の公開参照、版 3 の公開 channel の一覧)。
+    // 既存の database には、まだ無い store だけを足す(版 2 の公開参照、版 3 の公開 channel の一覧、版 4 の配信中の Live)。
     if db.object_store_names().contains("contents") {
         if !db.object_store_names().contains(PUBLIC_REFS) {
             schema::create_public_refs(db)?;
         }
         if !db.object_store_names().contains(PUBLIC_CHANNELS) {
             schema::create_public_channels(db)?;
+        }
+        if !db.object_store_names().contains(LIVE_NOW) {
+            schema::create_live_now(db)?;
         }
         return Ok(());
     }

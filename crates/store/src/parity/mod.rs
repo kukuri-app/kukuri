@@ -70,6 +70,7 @@ pub async fn check_backend<S: Store + ProjectionStore>(make: impl AsyncFn() -> S
     live_game::dome_connection_projection_matches_between_backends(&make).await;
     live_game::dome_hosting_projection_matches_between_backends(&make).await;
     live_game::session_revision_guards_match_between_backends(&make).await;
+    live_game::live_now_sessions_match_between_backends(&make).await;
     pagination::store_envelope_pagination_matches_between_backends(&make).await;
     pagination::projection_timeline_pagination_matches_between_backends(&make).await;
     pagination::projection_thread_pagination_matches_between_backends(&make).await;

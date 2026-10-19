@@ -569,11 +569,12 @@ impl ObjectProjectionStore for IndexedDbCache {
 
     /// 投稿・live・game・presence・reaction の行と成人向けの印を作り直す。object store の `clear` は行を読まない。
     async fn rebuild_object_projections(&self, rows: Vec<ObjectProjectionRow>) -> Result<()> {
-        use crate::content_cache::{GAME_ROOMS, LIVE_SESSIONS, PRESENCE, REACTIONS};
+        use crate::content_cache::{GAME_ROOMS, LIVE_NOW, LIVE_SESSIONS, PRESENCE, REACTIONS};
         self.run(|db| async move {
             let stores = [
                 OBJECTS,
                 LIVE_SESSIONS,
+                LIVE_NOW,
                 GAME_ROOMS,
                 PRESENCE,
                 REACTIONS,

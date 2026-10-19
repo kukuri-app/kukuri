@@ -55,6 +55,7 @@ Web クライアントは、ページを閉じても回線が変わっても、�
   - 既存の行の書換え・索引の作成は、レイアウトを出した後に背景で、key と cursor の有界な単位に分けて進める（起動の条件にしない）。
   - 更新した database を古い版の client で開くことは考えない（通常の操作では起きない）。
   - 版 2（#1632 AC-6、ADR 0063 §8）で、`kukuri-cache-v1-<account>` に公開参照の索引 `public_refs` を足した。
+  - 版 4（#1879、ADR 0068 §8）で、配信中の Live の行だけの store `live_now` を足した（2026-10-19 のユーザー判断）。
 - 実装（W4 AC-2）: `crates/web-runtime` の `BrowserStorage`（`ClientStorage` の実装）。
   - 振り分け: path・keyring の account が `accounts/<account の ID>/` を含む値はその account の vault、それ以外（account の一覧、作成中の account の一時の値）は device の database。
   - keyring の値は `secrets`、file の値は `settings` に置く。どの値も device の `CryptoKey` で包み、`service` と `account` を AAD にする（別の key へ移した値は開けない）。
