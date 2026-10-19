@@ -493,7 +493,7 @@ export function DesktopShellColumnWorkspace({
       );
     }
     if (column.kind === 'publicThreads') return <PublicThreadOrderMenu column={column} />;
-    if (column.kind === 'timeline') {
+    if (column.kind === 'timeline' && !isPublicChannelId(column.scope?.channelId)) {
       return (
         <TimelineViewIconTabs
           // 表示・切替の正本は Column 単位の timelineView(Issue #765)。

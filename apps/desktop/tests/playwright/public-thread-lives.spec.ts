@@ -49,7 +49,7 @@ test('a live started in a public thread stays reachable from the detail header a
     await back.locator('.shell-column-composer').getByRole('button', { name: 'Post', exact: true }).click();
     await expect(back.getByText(`message ${index}`, { exact: true })).toBeVisible();
   }
-  await back.locator('.shell-column-body').evaluate((body) => body.scrollTo({ top: 0 }));
+  await back.locator('.shell-column-body').evaluate((body) => body.scrollTo({ top: body.scrollHeight }));
   await expect(back.locator('.post-live')).not.toBeInViewport();
   await expect(row).toBeInViewport();
 

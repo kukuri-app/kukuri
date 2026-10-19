@@ -1,4 +1,5 @@
 import { useSessionProjectionRefresh } from '@/shell/data/useSessionProjectionRefresh';
+import { isPublicChannelId } from '@/lib/publicChannels';
 import {
   startTransition,
   useCallback,
@@ -909,7 +910,7 @@ export function useDesktopShellData({
       if (!visible.has(column.id) || visibleListLoads.current.has(column.id)) continue;
       visibleListLoads.current.add(column.id);
       if (column.id === state.workspaceState.activeColumnId) continue;
-      if (column.kind === 'timeline' && column.timelineView === 'bookmarks') {
+      if (column.kind === 'timeline' && column.timelineView === 'bookmarks' && !isPublicChannelId(column.scope?.channelId)) {
         if (!storeApi.getState().bookmarkedPosts.length) void loadBookmarksSection({ preserveCurrent: true });
       } else if (column.kind === 'timeline' && column.scope) {
         const key = timelineStorageKeyForChannel(column.scope.topicId, column.scope.channelId);

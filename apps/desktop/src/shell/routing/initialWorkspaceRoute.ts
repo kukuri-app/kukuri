@@ -1,4 +1,5 @@
 import { buildShellUrl, type RouteState } from '@/shell/routes';
+import { isPublicChannelId } from '@/lib/publicChannels';
 import type { ColumnState, WorkspaceState } from '@/shell/slices/workspace';
 
 // Issue #765 T4: hash を持たない cold start で、復元済み layout の active Column の
@@ -38,7 +39,7 @@ export function routeStateForColumn(column: ColumnState): RouteState | null {
   route.selectedChannelId = column.scope?.channelId ?? null;
   switch (column.kind) {
     case 'timeline':
-      route.timelineView = column.timelineView ?? 'feed';
+      route.timelineView = isPublicChannelId(column.scope?.channelId) ? 'feed' : column.timelineView ?? 'feed';
       return route;
     case 'thread':
       if (!column.entityId) return null;

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { App } from '@/App';
-import type { PostView, PublicChannelView } from '@/lib/api';
+import type { DesktopApi, PostView, PublicChannelView } from '@/lib/api';
 import { buildPublicThreadLink } from '@/lib/internalLinks';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import { columnIdentityId, type ColumnState } from '@/shell/slices/workspace';
@@ -58,6 +58,56 @@ function persistedColumns(): ColumnState[] {
   return (JSON.parse(window.localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY) ?? '{}') as { columns?: ColumnState[] })
     .columns ?? [];
 }
+
+test.each(['feed', 'bookmarks'] as const)('public detail ignores saved %s view and filter without deleting bookmarks', async (timelineView) => {
+  const scope = { topicId: TOPIC, channelId: CHANNEL };
+  const id = columnIdentityId('timeline', scope);
+  window.localStorage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, JSON.stringify({
+    version: 1, activeColumnId: id,
+    columns: [{ id, kind: 'timeline', scope, pinned: true, preferredDesktopSpan: 1,
+      timelineView, timelineFilter: 'following' }],
+  }));
+  const api = createDesktopMockApi({ seedPosts: { [TOPIC]: [post('saved', 'Visible conversation', CHANNEL, 10)] } });
+  await api.bookmarkPost(TOPIC, 'saved');
+  const removeBookmark = vi.spyOn(api, 'removeBookmarkedPost');
+  render(<App api={api} />);
+  const detail = await waitFor(() => getActiveColumn('Public thread'));
+  expect(await within(detail).findByText('Visible conversation')).toBeInTheDocument();
+  expect(within(detail).queryByRole('tablist')).not.toBeInTheDocument();
+  expect(within(detail).queryByRole('button', { name: /Filter/ })).not.toBeInTheDocument();
+  expect(within(detail).queryByRole('button', { name: /bookmark/i })).not.toBeInTheDocument();
+  expect(within(detail).getByRole('button', { name: 'Reply' })).toBeInTheDocument();
+  expect(removeBookmark).not.toHaveBeenCalled();
+  expect(await api.bookmarkedPostIds(['saved'])).toEqual(['saved']);
+});
+
+test('public detail prepends older pages and appends new posts in cursor order', async () => {
+  const user = userEvent.setup();
+  const base = createDesktopMockApi();
+  const recent = [post('b', 'Recent B', CHANNEL, 20), post('a', 'Recent A', CHANNEL, 20)];
+  const older = post('old', 'Older page', CHANNEL, 10);
+  let head = recent;
+  const listTimeline = vi.fn<DesktopApi['listTimeline']>(async (topic, cursor, limit, scope) => {
+    if (scope?.kind !== 'public_channel') return base.listTimeline(topic, cursor, limit, scope);
+    return cursor
+      ? { items: [older], next_cursor: null }
+      : { items: head, next_cursor: { created_at: 20, object_id: head.at(-1)!.object_id } };
+  });
+  renderAtHash(`#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=${CHANNEL}`, { ...base, listTimeline });
+  const detail = await waitFor(() => getActiveColumn('Public thread'));
+  await within(detail).findByText('Recent A');
+  const ids = () => [...detail.querySelectorAll('[data-post-id]')].map((row) => row.getAttribute('data-post-id'));
+  expect(ids()).toEqual(['a', 'b']);
+  const more = within(detail).getByRole('button', { name: 'Load more' });
+  expect(more.closest('li')).toBe(detail.querySelector('.post-list')?.firstElementChild);
+  await user.click(more);
+  await waitFor(() => expect(ids()).toEqual(['old', 'a', 'b']));
+  expect(listTimeline).toHaveBeenCalledWith(TOPIC, { created_at: 20, object_id: 'a' }, expect.any(Number), { kind: 'public_channel', channel_id: CHANNEL });
+  head = [post('new', 'New arrival', CHANNEL, 30), recent[0]!];
+  window.dispatchEvent(new Event('focus'));
+  await user.click(await within(detail).findByRole('button', { name: 'Show 1 new post' }));
+  await waitFor(() => expect(ids()).toEqual(['old', 'a', 'b', 'new']));
+}, 30_000);
 
 test('a public thread is created from the topic list, opens its detail and keeps its posts out of the topic timeline', async () => {
   const user = userEvent.setup();
@@ -115,6 +165,8 @@ test('a public thread is created from the topic list, opens its detail and keeps
     ])
   );
   expect(await within(detail).findByText('second post')).toBeInTheDocument();
+  expect([...detail.querySelectorAll('[data-post-id]')].map((row) => row.textContent).join('|'))
+    .toMatch(/What changed in 0.5.*\|.*second post/);
 
   // 公開スレッドの中で返信する。返信ツリーの列は公開スレッドの scope のままで、返信も同じスレッドへ送る。
   await user.click(within(detail).getAllByRole('button', { name: 'Reply' })[0]!);
@@ -139,6 +191,8 @@ test('a public thread is created from the topic list, opens its detail and keeps
 
   // 公開スレッドの投稿は topic のタイムラインに出さない(判断 4)。
   const timeline = screen.getByRole('region', { name: /^Timeline Column,/ });
+  expect(within(timeline).getByRole('button', { name: 'Filter' })).toBeInTheDocument();
+  expect(within(timeline).getByRole('tab', { name: 'Bookmarks' })).toBeInTheDocument();
   expect(within(timeline).queryByText('What changed in 0.5')).not.toBeInTheDocument();
   expect(within(timeline).queryByText('second post')).not.toBeInTheDocument();
   expect(within(timeline).queryByText('a reply in the thread')).not.toBeInTheDocument();

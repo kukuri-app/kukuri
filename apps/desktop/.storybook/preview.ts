@@ -1,4 +1,4 @@
-import { createElement } from 'react';
+import { createElement, Fragment } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 
 import type { Preview } from '@storybook/react-vite';
@@ -115,7 +115,7 @@ const preview: Preview = {
           },
         },
         createElement(
-          MemoryRouter,
+          context.parameters.ownRouter ? Fragment : MemoryRouter,
           null,
           createElement(
             'div',

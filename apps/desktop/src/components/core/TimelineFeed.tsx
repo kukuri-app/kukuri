@@ -57,6 +57,7 @@ function useStableCallbacks<T extends Record<string, Callback | undefined>>(call
 
 type TimelineFeedProps = {
   posts: PostCardView[];
+  olderFirst?: boolean;
   emptyCopy: string;
   /**
    * #994: 0 件時の描画を呼出し側が差し替える。`null` は空文言も出さない(loading / error を呼出し側が示す)。
@@ -110,8 +111,14 @@ type TimelineFeedProps = {
   onMuteReportAuthor?: (authorPubkey: string) => Promise<void> | void;
 };
 
+/** Public detail keeps the existing descending cursor window; only presentation is reversed. */
+export function PublicThreadFeed({ posts, ...props }: TimelineFeedProps) {
+  return <TimelineFeed {...props} posts={[...posts].reverse()} olderFirst showBookmarkAction={false} />;
+}
+
 export function TimelineFeed({
   posts,
+  olderFirst = false,
   emptyCopy,
   emptyState,
   listClassName = 'post-list',
@@ -206,7 +213,7 @@ export function TimelineFeed({
   };
 
   const handleWheel = (event: React.WheelEvent<HTMLUListElement>) => {
-    if (!onApplyPending || posts.length === 0) {
+    if (olderFirst || !onApplyPending || posts.length === 0) {
       return;
     }
     if (scrolledDown(event.currentTarget) || event.deltaY >= 0) {
@@ -224,7 +231,7 @@ export function TimelineFeed({
   };
 
   const handleTouchMove = (event: React.TouchEvent<HTMLUListElement>) => {
-    if (!onApplyPending || posts.length === 0) {
+    if (olderFirst || !onApplyPending || posts.length === 0) {
       return;
     }
     const startY = touchStartYRef.current;
@@ -247,6 +254,37 @@ export function TimelineFeed({
     return <p className='empty'>{emptyCopy}</p>;
   }
 
+  const paging = hasMore ? (
+    <li className={itemClassName}>
+      {loadMoreError ? <p className='error'>{loadMoreError}</p> : null}
+      {canAutoLoad && !loadMoreError ? <div ref={loadMoreRef} aria-hidden='true' /> : null}
+      {(!canAutoLoad || manualFallback || loadMoreError) && onLoadMore ? (
+        <Button variant='secondary' type='button' disabled={loadingMore} onClick={loadMore}>
+          {loadingMore
+            ? t('fallbacks.loadingMore')
+            : loadMoreError
+              ? t('actions.retry')
+              : t('fallbacks.loadMore')}
+        </Button>
+      ) : null}
+      {canAutoLoad && !loadMoreError && loadingMore ? (
+        <p className='empty'>{t('fallbacks.loadingMore')}</p>
+      ) : null}
+    </li>
+  ) : null;
+  const refresh = canApplyPending ? (
+    <li className={itemClassName}>
+      <Button
+        variant='secondary'
+        type='button'
+        className='timeline-feed-refresh-banner'
+        onClick={() => onApplyPending()}
+      >
+        {returnToLatest ? t('feed.backToLatest') : t('feed.pendingPosts', { count: pendingCount })}
+      </Button>
+    </li>
+  ) : null;
+
   return (
     <ul
       ref={listRef}
@@ -255,18 +293,7 @@ export function TimelineFeed({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
     >
-      {canApplyPending ? (
-        <li className={itemClassName}>
-          <Button
-            variant='secondary'
-            type='button'
-            className='timeline-feed-refresh-banner'
-            onClick={() => onApplyPending()}
-          >
-            {returnToLatest ? t('feed.backToLatest') : t('feed.pendingPosts', { count: pendingCount })}
-          </Button>
-        </li>
-      ) : null}
+      {olderFirst ? paging : refresh}
       {posts.map((view) => (
         <li key={view.post.object_id} className={itemClassName} data-post-id={view.post.object_id}>
         <TimelineFeedRow
@@ -290,24 +317,7 @@ export function TimelineFeed({
           <UnavailablePostsNotice count={unavailableCount} />
         </li>
       ) : null}
-      {hasMore ? (
-        <li className={itemClassName}>
-          {loadMoreError ? <p className='error'>{loadMoreError}</p> : null}
-          {canAutoLoad && !loadMoreError ? <div ref={loadMoreRef} aria-hidden='true' /> : null}
-          {(!canAutoLoad || manualFallback || loadMoreError) && onLoadMore ? (
-            <Button variant='secondary' type='button' disabled={loadingMore} onClick={loadMore}>
-              {loadingMore
-                ? t('fallbacks.loadingMore')
-                : loadMoreError
-                  ? t('actions.retry')
-                  : t('fallbacks.loadMore')}
-            </Button>
-          ) : null}
-          {canAutoLoad && !loadMoreError && loadingMore ? (
-            <p className='empty'>{t('fallbacks.loadingMore')}</p>
-          ) : null}
-        </li>
-      ) : null}
+      {olderFirst ? refresh : paging}
     </ul>
   );
 }

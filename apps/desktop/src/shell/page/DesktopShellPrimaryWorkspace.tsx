@@ -2,7 +2,7 @@ import { type FormEvent, type ReactNode, useContext, useMemo, useState } from 'r
 
 import { BookmarksEmptyState, BookmarksListFrame } from '@/components/core/BookmarksEmptyState';
 import { PagedList } from '@/components/core/PagedList';
-import { TimelineFeed } from '@/components/core/TimelineFeed';
+import { PublicThreadFeed, TimelineFeed } from '@/components/core/TimelineFeed';
 import type { PostCardView } from '@/components/core/types';
 import { CommunityIndexWorkspace } from '@/components/core/CommunityIndexWorkspace';
 import type { CommunityIndexingTarget } from '@/components/core/CommunityIndexingRequestDialog';
@@ -377,6 +377,8 @@ export function DesktopShellPrimarySurface({
   const copyReportContact = (value: string) => void copyTextToClipboard(value);
   const surfaceTopic = column.scope?.topicId ?? '';
   const surfaceChannelId = column.scope?.channelId ?? null;
+  const isPublicThread = column.kind === 'timeline' && isPublicChannelId(surfaceChannelId);
+  const SurfaceFeed = isPublicThread ? PublicThreadFeed : TimelineFeed;
   const surfaceTimelineScope = channelTimelineScope(surfaceChannelId);
   // Thread は「この surface(Column)の scope」で開く。非 active Column の投稿本文クリックは
   // Column の activate(route 同期)を伴わないため、global の選択 channel に依存すると別 channel の
@@ -401,7 +403,7 @@ export function DesktopShellPrimarySurface({
     joinedChannels: typeof surfaceJoinedChannels;
     view: PostCardView;
   }>());
-  const { timelineFilter } = column;
+  const timelineFilter = isPublicThread ? undefined : column.timelineFilter;
   const localAuthorPubkey = syncStatus.local_author_pubkey;
   const surfaceTimelinePostViews = useMemo(
     () =>
@@ -489,7 +491,7 @@ export function DesktopShellPrimarySurface({
   const profileMode = shellChromeState.profileMode;
   const profileConnectionsView = shellChromeState.profileConnectionsView;
   const activeSurfaceSection = primarySectionForColumn(column);
-  const activeTimelineView = column.kind === 'timeline' ? column.timelineView ?? 'feed' : 'feed';
+  const activeTimelineView = column.kind === 'timeline' && !isPublicThread ? column.timelineView ?? 'feed' : 'feed';
   const eligibleIndexNodeBaseUrls = useMemo(
     () =>
       eligibleCommunityIndexNodes(
@@ -541,7 +543,7 @@ export function DesktopShellPrimarySurface({
           <>
             <div className='shell-column-content'>
               {activeTimelineView === 'feed' ? (
-                <TimelineFeed
+                <SurfaceFeed
                   posts={surfaceTimelinePostViews}
                   emptyCopy={t(
                     timelineFilter
