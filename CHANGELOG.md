@@ -18,6 +18,46 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.4.6-preview.1] - 2026-10-19
+
+### Features
+
+- Web でも Live を視聴でき、公開スレッドに配信中の印を出す（#1879 AC-2） ([#1882](https://github.com/kukuri-app/kukuri/pull/1882))
+- Web でも開発者モードで Live を作成して配信できるようにする（#1879 AC-1） ([#1881](https://github.com/kukuri-app/kukuri/pull/1881))
+- ライブの列の左側に Live を大きく出し、一覧のカードと投稿の中の Live から開けるようにする（#1841 AC-3） ([#1870](https://github.com/kukuri-app/kukuri/pull/1870))
+- Live の映像に会話の投稿と開始 post のリアクションを重ねる部品を足す（#1841 AC-2） ([#1869](https://github.com/kukuri-app/kukuri/pull/1869))
+- Live の重ねる表示の土台として、Live・会話の場所・開始 post を結び付け、リアクションの新着を知らせる（#1841 AC-1） ([#1868](https://github.com/kukuri-app/kukuri/pull/1868))
+- 公開スレッドで Live を始め、詳細の上部と一覧の行で配信中を示す（#1840 AC-4） ([#1867](https://github.com/kukuri-app/kukuri/pull/1867))
+- topic の公開スレッドの一覧の列と、作成・詳細・本文のリンクの表示を足す（#1840 AC-3） ([#1866](https://github.com/kukuri-app/kukuri/pull/1866))
+- topic の公開スレッドの一覧を足し、別の端末のスレッドを 2 つの並び順で取得できるようにする（#1840 AC-2） ([#1865](https://github.com/kukuri-app/kukuri/pull/1865))
+- 公開 channel（公開スレッド）を channel の基盤に足し、招待の無い端末が ID から読み書きできるようにする（#1840 AC-1） ([#1864](https://github.com/kukuri-app/kukuri/pull/1864))
+- 同じ Live の表示で視聴を共有し、Live ごとの音量を端末に保存する（#1839 AC-4） ([#1863](https://github.com/kukuri-app/kukuri/pull/1863))
+- Live の配信を shell の上部の操作に移し、列や画面を移っても続ける（#1839 AC-3） ([#1862](https://github.com/kukuri-app/kukuri/pull/1862))
+- 投稿から Live を始め、別の topic・channel へ紹介し、紹介から同じ Live に参加できるようにする（#1839 AC-2） ([#1861](https://github.com/kukuri-app/kukuri/pull/1861))
+- Live を開始 post と結び付け、別の場所の紹介 post から同じ Live を解決する（#1839 AC-1） ([#1860](https://github.com/kukuri-app/kukuri/pull/1860))
+- malware の通報から添付の blob hash を制限・解除できるようにする（#1062 AC-2） ([#1857](https://github.com/kukuri-app/kukuri/pull/1857))
+- malware の通報を運営者の確認から投稿の制限・解除へつなぐ（#1062 AC-1） ([#1854](https://github.com/kukuri-app/kukuri/pull/1854))
+
+### Fixes
+
+- 配布の WASM を大きさ優先で最適化し、25 MiB の上限の下に収める（#1884） ([#1885](https://github.com/kukuri-app/kukuri/pull/1885))
+- private channel の返信の URL を起動直後に開いても、公開の scope の返信の列を開かない（#1877） ([#1878](https://github.com/kukuri-app/kukuri/pull/1878))
+- private channel の返信の列を開いたまま再起動しても、公開の scope の返信の列を開かない（#1875） ([#1876](https://github.com/kukuri-app/kukuri/pull/1876))
+- 公開スレッドの返信の列を開いたまま再起動しても、同じ投稿の返信の列をもう 1 本開かない（#1873） ([#1874](https://github.com/kukuri-app/kukuri/pull/1874))
+- 公開スレッドの詳細の列から返信しても、詳細の列の位置と親を変えない（#1871） ([#1872](https://github.com/kukuri-app/kukuri/pull/1872))
+- 配信の CSP の connect-src で blob: を許す（#1858 AC-1） ([#1859](https://github.com/kukuri-app/kukuri/pull/1859))
+- 先頭のページが欠けて表示された後に届いた古い行を新着として保留せず、続きを読めるようにする（#1851 AC-2） ([#1856](https://github.com/kukuri-app/kukuri/pull/1856))
+- Dome のアバターが texture を読めず白一色になるのを直す（#1141 AC-1） ([#1855](https://github.com/kukuri-app/kukuri/pull/1855))
+- タイムラインの途中で上へ scroll しても、読み込んだ続きのページを捨てない（#1851 AC-1） ([#1853](https://github.com/kukuri-app/kukuri/pull/1853))
+- Linux の kukuri:// の登録で、AppImage の library の環境を host の command へ渡さない（#1797 AC-1） ([#1852](https://github.com/kukuri-app/kukuri/pull/1852))
+- 実アプリの試験の失敗時の診断と終了の評価に期限を付け、応答しない画面があっても止まらずに log を残す（#1842 AC-1） ([#1843](https://github.com/kukuri-app/kukuri/pull/1843))
+- 起動直後の URL の正規化で、直後に移った URL を既定の topic に戻さない（#1837 AC-1） ([#1838](https://github.com/kukuri-app/kukuri/pull/1838))
+
+### Other
+
+- リリースの版を 0.4.6 にする ([#1883](https://github.com/kukuri-app/kukuri/pull/1883))
+- 0.4.5 preview の公開と LP・運用記録 ([#1836](https://github.com/kukuri-app/kukuri/pull/1836))
+
 ## [v0.4.5-preview.2] - 2026-10-15
 
 ### Features
