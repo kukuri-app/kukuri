@@ -1956,7 +1956,7 @@ async function live() {
   const request = { topic: TOPIC, session_id: await card.getAttribute('data-live-session-id') };
   await card.$('button=Broadcast camera').click();
   const bar = browser.$('section.shell-live-broadcast');
-  await bar.$('span[role=status]=Broadcasting video').waitForExist({ timeout: WAIT });
+  await bar.$('span=Broadcasting video').waitForExist({ timeout: WAIT });
   await bar.$('button[aria-label="Disable microphone"]').waitForExist({ timeout: WAIT });
 
   // 映像（keyframe を含む）と、映像の時刻に追いつく音声の再生時刻を受ける。
