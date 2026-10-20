@@ -2,6 +2,7 @@ import {
   type ChannelAccessTokenExport,
   type ChannelAccessTokenPreview,
   type ChannelAudienceKind,
+  type CreateAttachmentInput,
   type DesktopApi,
   type FriendOnlyGrantPreview,
   type FriendPlusSharePreview,
@@ -62,16 +63,23 @@ export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
 
   return {
     // 最初の投稿は投稿の mock（合成した 1 つの api の this）で作る。
-    async createPublicChannel(this: DesktopApi, topic: string, title: string, firstPost: string) {
+    async createPublicChannel(
+      this: DesktopApi,
+      topic: string,
+      title: string,
+      firstPost: string,
+      attachments: CreateAttachmentInput[] = []
+    ) {
       const createdAt = Date.now();
       const channelId = `pc-${createdAt}-${syncStatus.local_author_pubkey.slice(0, 16)}`;
       // 最初の投稿は channel の投稿として先に作る（native と同じ順）。
-      const firstPostId = firstPost.trim()
-        ? await this.createPost(topic, firstPost, null, [], {
-            kind: 'public_channel',
-            channel_id: channelId,
-          })
-        : null;
+      const firstPostId =
+        firstPost.trim() || attachments.length > 0
+          ? await this.createPost(topic, firstPost, null, attachments, {
+              kind: 'public_channel',
+              channel_id: channelId,
+            })
+          : null;
       const channel: PublicChannelView = {
         channel_id: channelId,
         topic_id: topic,

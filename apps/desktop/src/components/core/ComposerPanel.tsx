@@ -4,18 +4,17 @@ import type {
   FormEventHandler,
   KeyboardEventHandler,
 } from 'react';
-import { useId, useRef } from 'react';
 
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { clipboardImageFiles } from '@/lib/attachments';
 
 import { AuthorAvatar } from './AuthorAvatar';
+import { ComposerAttachmentField } from './ComposerAttachmentField';
 import { ComposerDraftPreviewList } from './ComposerDraftPreviewList';
 import { MentionHoverCard } from './MentionHoverCard';
 import { PostCard } from './PostCard';
@@ -102,10 +101,6 @@ export function ComposerPanel({
   onAdultLabeledChange,
 }: ComposerPanelProps) {
   const { t } = useTranslation(['common']);
-  const attachmentInputRef = useRef<HTMLInputElement>(null);
-  const attachmentStatusId = useId();
-  // #965: 対応形式は選ぶ前に見える位置へ置き、ボタンの説明としても渡す。
-  const attachmentFormatsId = useId();
   const clearActiveTarget = replyTarget ? onClearReply : onClearRepost;
   const bannerAriaLabel = replyTarget ? t('composer.clearReply') : t('composer.clearQuoteRepost');
   const {
@@ -262,40 +257,12 @@ export function ComposerPanel({
         ) : null}
       </div>
 
-      <div className='file-field file-field-compact flex flex-col'>
-        <span>{t('common:fallbacks.attachment')}</span>
-        <div className='flex min-w-0 flex-wrap items-center gap-2'>
-          <Button
-            type='button'
-            variant='secondary'
-            disabled={attachmentsDisabled}
-            aria-describedby={`${attachmentStatusId} ${attachmentFormatsId}`}
-            onClick={() => attachmentInputRef.current?.click()}
-          >
-            {t('composer.chooseFiles')}
-          </Button>
-          <span id={attachmentStatusId} role='status' className='text-sm text-muted-foreground'>
-            {draftMediaItems.length === 0
-              ? t('composer.noFilesSelected')
-              : t('composer.selectedFiles', { count: draftMediaItems.length })}
-          </span>
-        </div>
-        <p id={attachmentFormatsId} className='composer-attachment-formats'>
-          {t('composer.supportedFormats')}
-        </p>
-        <Input
-          key={attachmentInputKey}
-          ref={attachmentInputRef}
-          hidden
-          className='hidden'
-          aria-label={t('common:fallbacks.attachment')}
-          type='file'
-          accept='image/*,video/*'
-          multiple
-          disabled={attachmentsDisabled}
-          onChange={onAttachmentSelection}
-        />
-      </div>
+      <ComposerAttachmentField
+        inputKey={attachmentInputKey}
+        count={draftMediaItems.length}
+        disabled={attachmentsDisabled}
+        onChange={onAttachmentSelection}
+      />
 
       {onAdultLabeledChange && mode !== 'message' ? (
         <label className='topic-diagnostic topic-diagnostic-secondary flex items-center gap-2'>

@@ -602,6 +602,9 @@ pub struct CreatePublicChannelRequest {
     pub title: String,
     #[serde(default)]
     pub first_post: String,
+    /// #1889: 最初の投稿の添付(タイムラインの投稿と同じ)。
+    #[serde(default)]
+    pub attachments: Vec<CreateAttachmentRequest>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

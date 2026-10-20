@@ -468,8 +468,13 @@ export interface DesktopApi {
   ): Promise<JoinedPrivateChannelView>;
   leavePrivateChannel(topic: string, channelId: string): Promise<void>;
   listJoinedPrivateChannels(topic: string, cursor?: string | null): Promise<JoinedPrivateChannelPage>;
-  // 公開スレッド(公開 channel。#1840)。`firstPost` は空でもよい(最初の投稿を書かない)。
-  createPublicChannel(topic: string, title: string, firstPost: string): Promise<PublicChannelView>;
+  // 公開スレッド(公開 channel。#1840)。`firstPost` と `attachments`(#1889)が両方空なら最初の投稿を書かない。
+  createPublicChannel(
+    topic: string,
+    title: string,
+    firstPost: string,
+    attachments?: CreateAttachmentInput[]
+  ): Promise<PublicChannelView>;
   getPublicChannel(topic: string, channelId: string): Promise<PublicChannelView | null>;
   listPublicChannels(
     topic: string,

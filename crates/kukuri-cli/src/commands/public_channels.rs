@@ -6,7 +6,7 @@ use kukuri_desktop_runtime::{
 };
 use serde_json::{Value, json};
 
-use super::{command, command_error, decode, encode, host_guards, runtime, schema};
+use super::{command, command_error, decode, encode, host_guards, media, runtime, schema};
 use crate::{
     protocol::{CommandEffect, ProtocolError, SecretInput},
     registry::{CommandHandler, CommandOutput, CommandRegistration, HandlerContext},
@@ -34,7 +34,14 @@ impl CommandHandler for Handler {
         match self.0 {
             Operation::Create => encode(
                 runtime
-                    .create_public_channel(decode::<CreatePublicChannelRequest>(payload)?)
+                    .create_public_channel(
+                        media::decode_with_files::<CreatePublicChannelRequest>(
+                            payload,
+                            "attachments",
+                            true,
+                        )
+                        .await?,
+                    )
                     .await
                     .map_err(command_error)?,
             ),
@@ -62,7 +69,8 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
             Operation::Create,
             schema::object(
                 json!({"topic": {"type": "string"}, "title": {"type": "string"},
-                "first_post": {"type": "string", "default": ""}}),
+                "first_post": {"type": "string", "default": ""},
+                "attachments": schema::array(media::input_schema())}),
                 &["topic", "title"],
             ),
             public_channel_schema(),

@@ -4,9 +4,9 @@ import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ComposerPanel } from '@/components/core/ComposerPanel';
-import type { ComposerDraftMediaView, MentionCandidate } from '@/components/core/types';
+import type { MentionCandidate } from '@/components/core/types';
 import { Button } from '@/components/ui/button';
-import { formatLocalizedBytes } from '@/i18n/format';
+import { composerDraftMediaViews } from '@/shell/media';
 import { authorDisplayLabel } from '@/shell/presentation';
 import {
   columnDraftKey,
@@ -68,17 +68,7 @@ export function ColumnComposerFooter({
   const settingsOpen = useDesktopShellStore((state) => state.shellChromeState.settingsOpen);
   const Icon = ICON_BY_ACTION[target.action];
   const actionLabel = t(LABEL_KEY_BY_ACTION[target.action]);
-  const draftMediaViews: ComposerDraftMediaView[] = draft.mediaItems.map((item) => ({
-    id: item.id,
-    sourceName: item.source_name,
-    previewUrl: item.preview_url,
-    attachments: item.attachments.map((attachment, index) => ({
-      key: `${item.id}:${index}`,
-      label: attachment.role ?? attachment.mime,
-      mime: attachment.mime,
-      byteSizeLabel: formatLocalizedBytes(attachment.byte_size, locale),
-    })),
-  }));
+  const draftMediaViews = composerDraftMediaViews(draft.mediaItems, locale);
   const updateDraft = (update: Parameters<typeof setColumnDraft>[2]) => {
     setColumnDraftsByKey((current) => setColumnDraft(current, target, update));
   };
