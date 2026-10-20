@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
@@ -86,6 +87,45 @@ test('offline shell, explicit update, live-client retention, and static-only cac
     await context.setOffline(true);
     await first.reload();
     assert.equal(await first.locator('main').textContent(), 'two', 'preparation failure preserves the prior usable build');
+  } finally {
+    await browser.close();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+// incognitoのHTTP cacheは1 entryを数MBまでしか持てない。同じ資源を並行に取得すると、
+// 再検証で書込み途中のentryを読む側が、entryの破棄で失敗する（#1901）。
+test('install and the page can fetch one large asset at once in an in-memory HTTP cache', { timeout: 30_000 }, async () => {
+  const large = randomBytes(8 << 20);
+  let overlap;
+  const overlapped = new Promise(resolve => { overlap = resolve; });
+  let requests = 0;
+  const server = createServer(async (request, response) => {
+    if (request.url === '/sw.js') {
+      response.setHeader('Content-Type', 'text/javascript');
+      response.end(await pwaWorkerSource('one', ['/large.bin']));
+      return;
+    }
+    if (request.url !== '/large.bin') { response.setHeader('Content-Type', 'text/html'); response.end('<main>one</main>'); return; }
+    if (requests++) overlap();
+    if (request.headers['if-none-match'] === '"large"') { response.writeHead(304, { ETag: '"large"' }); response.end(); return; }
+    response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'max-age=0, must-revalidate', ETag: '"large"' });
+    // 2本目の取得が届くまで本体の残りを止め、2本の取得を必ず重ねる。
+    response.write(large.subarray(0, 1 << 20));
+    await Promise.race([overlapped, new Promise(resolve => setTimeout(resolve, 5000))]);
+    response.end(large.subarray(1 << 20));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await (await browser.newContext()).newPage();
+    await page.goto(`http://127.0.0.1:${server.address().port}`);
+    assert.deepEqual(await page.evaluate(async () => {
+      const worker = (await navigator.serviceWorker.register('/sw.js')).installing;
+      const installed = new Promise(resolve => worker.addEventListener('statechange', () => { if (worker.state !== 'installing') resolve(worker.state); }));
+      const fetched = await fetch('/large.bin').then(response => response.arrayBuffer()).then(body => body.byteLength, error => error.message);
+      return { fetched, installed: await installed };
+    }), { fetched: 8 << 20, installed: 'installed' });
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

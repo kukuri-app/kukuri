@@ -46,7 +46,8 @@ globalThis.addEventListener('install', event => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
     if (await cache.match('/')) return;
-    try { await cache.addAll(BUILD.assets); }
+    // HTTP cacheを通すと、同じ資源を並行に読むpage側と1 entryを取り合って片方が失敗する（#1901）。
+    try { await cache.addAll(BUILD.assets.map(asset => new Request(asset, { cache: 'no-store' }))); }
     catch (error) { await caches.delete(CACHE); throw error; }
   })());
 });
