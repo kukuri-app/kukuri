@@ -933,7 +933,7 @@ export type ImportMetaverseRoomAssetRequest = { topic: string, room_id: string, 
 
 export type CreatePrivateChannelRequest = { topic: string, label: string, audience_kind: ChannelAudienceKind, };
 
-export type CreatePublicChannelRequest = { topic: string, title: string, first_post: string, };
+export type CreatePublicChannelRequest = { topic: string, title: string, first_post: string, attachments: Array<CreateAttachmentRequest>, content_labels: Array<string>, };
 
 export type GetPublicChannelRequest = { topic: string, channel_id: string, };
 

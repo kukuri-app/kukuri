@@ -1,5 +1,5 @@
 // #1840 AC-3: 公開スレッドの一覧の列・作成・詳細の列・リンクの表示。
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, test, vi } from 'vitest';
 
@@ -10,7 +10,13 @@ import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import { columnIdentityId, type ColumnState } from '@/shell/slices/workspace';
 import { WORKSPACE_LAYOUT_STORAGE_KEY } from '@/shell/workspacePersistence';
 
-import { getActiveColumn, openControlCenter, renderAtHash, setViewportWidth } from './DesktopShellPage.testHelpers';
+import {
+  getActiveColumn,
+  installObjectUrlMocks,
+  openControlCenter,
+  renderAtHash,
+  setViewportWidth,
+} from './DesktopShellPage.testHelpers';
 
 const TOPIC = 'kukuri:topic:general';
 const OTHER = 'b'.repeat(64);
@@ -109,6 +115,51 @@ test('public detail prepends older pages and appends new posts in cursor order',
   await waitFor(() => expect(ids()).toEqual(['old', 'a', 'b', 'new']));
 }, 30_000);
 
+// #1889: 作成の Dialog はタイムラインの投稿と同じ添付欄と成人向けの自己申告を持ち、本文が空でも添付だけの最初の投稿を作る。
+test('a public thread is created with an attachment-only, adult-labeled first post', async () => {
+  installObjectUrlMocks();
+  const user = userEvent.setup();
+  const api = createDesktopMockApi();
+  const createPublicChannel = vi.spyOn(api, 'createPublicChannel');
+  renderAtHash(LIST_ROUTE, api);
+  const list = await waitFor(() => getActiveColumn('Public threads'));
+  await user.click(
+    within(list.querySelector<HTMLElement>('.shell-column-footer') ?? list).getByRole('button', {
+      name: 'Create public thread',
+    })
+  );
+  const dialog = await screen.findByRole('dialog', { name: 'Create a public thread' });
+  await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Screenshots');
+  await user.upload(within(dialog).getByLabelText(/attachment/i), [
+    new File([Uint8Array.from([1, 2, 3, 4])], 'first.png', { type: 'image/png' }),
+    new File([Uint8Array.from([5, 6, 7, 8])], 'second.png', { type: 'image/png' }),
+  ]);
+  expect(await within(dialog).findByText('Attached files: 2')).toBeVisible();
+  // 取り外した添付は送らない。
+  const second = within(dialog).getByText('second.png').closest('li')!;
+  await user.click(within(second).getByRole('button', { name: 'Remove' }));
+  expect(within(dialog).queryByText('second.png')).not.toBeInTheDocument();
+  // 本文の欄に貼り付けた画像も添付になる。
+  const pasted = new File([Uint8Array.from([9])], 'pasted.png', { type: 'image/png' });
+  fireEvent.paste(within(dialog).getByRole('textbox', { name: 'First post (optional)' }), {
+    clipboardData: { items: [{ kind: 'file', type: pasted.type, getAsFile: () => pasted }], files: [pasted] },
+  });
+  expect(await within(dialog).findByText('pasted.png')).toBeInTheDocument();
+  await user.click(within(dialog).getByTestId('composer-adult-label-toggle'));
+  await user.click(within(dialog).getByRole('button', { name: 'Create' }));
+
+  await waitFor(() =>
+    expect(createPublicChannel).toHaveBeenCalledWith(TOPIC, 'Screenshots', '', [
+      expect.objectContaining({ file_name: 'first.png', mime: 'image/png', role: 'image_original' }),
+      expect.objectContaining({ file_name: 'pasted.png', mime: 'image/png', role: 'image_original' }),
+    ], ['adult'])
+  );
+  const created = await createPublicChannel.mock.results[0]!.value;
+  expect(created.first_post_id).toBeTruthy();
+  const detail = await waitFor(() => getActiveColumn('Public thread'));
+  await waitFor(() => expect(detail.querySelector(`[data-post-id="${created.first_post_id}"] .media-frame`)).not.toBeNull());
+});
+
 test('a public thread is created from the topic list, opens its detail and keeps its posts out of the topic timeline', async () => {
   const user = userEvent.setup();
   const api = createDesktopMockApi();
@@ -138,7 +189,7 @@ test('a public thread is created from the topic list, opens its detail and keeps
   await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Release notes');
   await user.type(within(dialog).getByRole('textbox', { name: 'First post (optional)' }), 'What changed in 0.5');
   await user.click(within(dialog).getByRole('button', { name: 'Create' }));
-  await waitFor(() => expect(createPublicChannel).toHaveBeenCalledWith(TOPIC, 'Release notes', 'What changed in 0.5'));
+  await waitFor(() => expect(createPublicChannel).toHaveBeenCalledWith(TOPIC, 'Release notes', 'What changed in 0.5', [], []));
   const created = await createPublicChannel.mock.results[0]!.value;
 
   // 作った後は、一覧の列を親にした詳細の列を開く。

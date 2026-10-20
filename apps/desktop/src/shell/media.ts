@@ -3,9 +3,12 @@ import {
   type BlobMediaPayload,
   type ContentAdvisory,
 } from '@/lib/api';
+import type { ComposerDraftMediaView } from '@/components/core/types';
+import { formatLocalizedBytes } from '@/i18n/format';
 import {
   blobToCreateAttachment,
   fileToCreateAttachment,
+  formatUnsupportedAttachmentMessage,
 } from '@/lib/attachments';
 
 import {
@@ -449,4 +452,59 @@ export async function buildVideoDraftItem(
       await blobToCreateAttachment(posterFile, posterFile.name, 'video_poster'),
     ],
   };
+}
+
+type DraftMediaBuilders = {
+  image: (file: File) => Promise<DraftMediaItem>;
+  video: (file: File) => Promise<DraftMediaItem>;
+};
+
+/// 選んだ・貼り付けたファイルから下書きの添付を作る(列の投稿と公開スレッドの作成で共用。#1889)。#965: 非対応の
+/// ファイルは読み込まずに名前だけ集め、失敗と合わせて 1 つの理由文にまとめる。
+export async function buildDraftMediaItems(
+  files: File[],
+  build: DraftMediaBuilders,
+  translate: (key: string, options?: Record<string, unknown>) => string
+): Promise<{ items: DraftMediaItem[]; error: string | null }> {
+  const items: DraftMediaItem[] = [];
+  const rejectedNames: string[] = [];
+  let imageFailed = false;
+  let posterFailed = false;
+  for (const file of files) {
+    try {
+      if (file.type.startsWith('image/')) {
+        items.push(await build.image(file));
+      } else if (file.type.startsWith('video/')) {
+        items.push(await build.video(file));
+      } else {
+        rejectedNames.push(file.name);
+      }
+    } catch {
+      if (file.type.startsWith('image/')) {
+        imageFailed = true;
+      } else {
+        posterFailed = true;
+      }
+    }
+  }
+  const failures = [
+    formatUnsupportedAttachmentMessage(translate, rejectedNames),
+    imageFailed ? translate('common:errors.failedToPrepareImageAttachment') : null,
+    posterFailed ? translate('common:errors.failedToGenerateVideoPoster') : null,
+  ].filter((message): message is string => message !== null);
+  return { items, error: failures.length > 0 ? failures.join(' ') : null };
+}
+
+export function composerDraftMediaViews(items: DraftMediaItem[], locale?: string): ComposerDraftMediaView[] {
+  return items.map((item) => ({
+    id: item.id,
+    sourceName: item.source_name,
+    previewUrl: item.preview_url,
+    attachments: item.attachments.map((attachment, index) => ({
+      key: `${item.id}:${index}`,
+      label: attachment.role ?? attachment.mime,
+      mime: attachment.mime,
+      byteSizeLabel: formatLocalizedBytes(attachment.byte_size, locale),
+    })),
+  }));
 }
