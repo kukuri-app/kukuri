@@ -594,8 +594,8 @@ pub struct ResyncDomeSnapshotsRequest {
     pub after_sequence: u64,
 }
 
-/// 公開 channel(公開スレッド。#1840)を作る。`attachments` は最初の投稿の添付(タイムラインの投稿と同じ。#1889)。
-/// `first_post` と `attachments` が両方空なら最初の投稿を書かない。
+/// 公開 channel(公開スレッド。#1840)を作る。`attachments` と `content_labels` は最初の投稿の添付と自己申告のラベル
+/// (タイムラインの投稿と同じ。#1889)。`first_post` と `attachments` が両方空なら最初の投稿を書かない。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct CreatePublicChannelRequest {
@@ -605,6 +605,8 @@ pub struct CreatePublicChannelRequest {
     pub first_post: String,
     #[serde(default)]
     pub attachments: Vec<CreateAttachmentRequest>,
+    #[serde(default)]
+    pub content_labels: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

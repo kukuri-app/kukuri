@@ -68,17 +68,22 @@ export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
       topic: string,
       title: string,
       firstPost: string,
-      attachments: CreateAttachmentInput[] = []
+      attachments: CreateAttachmentInput[] = [],
+      contentLabels: string[] = []
     ) {
       const createdAt = Date.now();
       const channelId = `pc-${createdAt}-${syncStatus.local_author_pubkey.slice(0, 16)}`;
       // 最初の投稿は channel の投稿として先に作る（native と同じ順）。
       const firstPostId =
         firstPost.trim() || attachments.length > 0
-          ? await this.createPost(topic, firstPost, null, attachments, {
-              kind: 'public_channel',
-              channel_id: channelId,
-            })
+          ? await this.createPost(
+              topic,
+              firstPost,
+              null,
+              attachments,
+              { kind: 'public_channel', channel_id: channelId },
+              contentLabels
+            )
           : null;
       const channel: PublicChannelView = {
         channel_id: channelId,

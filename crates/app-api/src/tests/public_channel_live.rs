@@ -84,7 +84,7 @@ async fn lives_started_in_a_public_thread_are_listed_and_marked_until_the_last_o
     open_list(&a).await;
     open_list(&b).await;
     let thread = a
-        .create_public_channel(TOPIC, "配信の場所", "", Vec::new())
+        .create_public_channel(TOPIC, "配信の場所", "", Vec::new(), Vec::new())
         .await
         .expect("create the public thread");
     let id = thread.channel_id.as_str();
@@ -211,7 +211,7 @@ async fn a_thread_live_is_watched_with_the_topic_access_and_hidden_hosts_are_not
     open_list(&a).await;
     open_list(&b).await;
     let thread = a
-        .create_public_channel(TOPIC, "配信の場所", "", Vec::new())
+        .create_public_channel(TOPIC, "配信の場所", "", Vec::new(), Vec::new())
         .await
         .expect("create the public thread");
     let id = thread.channel_id.as_str();
@@ -275,7 +275,7 @@ async fn a_viewer_of_a_thread_live_is_counted_on_the_host_that_only_has_the_list
     open_list(&a).await;
     open_list(&b).await;
     let thread = b
-        .create_public_channel(TOPIC, "配信の場所", "", Vec::new())
+        .create_public_channel(TOPIC, "配信の場所", "", Vec::new(), Vec::new())
         .await
         .expect("create the public thread");
     let id = thread.channel_id.as_str();

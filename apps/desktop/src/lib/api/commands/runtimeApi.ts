@@ -660,9 +660,9 @@ export const runtimeApi: DesktopApi = {
       request: { topic, cursor: cursor ?? null } satisfies ListJoinedPrivateChannelsRequest,
     });
   }),
-  createPublicChannel: command('createPublicChannel', async (topic, title, firstPost, attachments = []) => {
+  createPublicChannel: command('createPublicChannel', async (topic, title, firstPost, attachments = [], contentLabels = []) => {
     return invokeDesktop<PublicChannelView>('create_public_channel', {
-      request: { topic, title, first_post: firstPost, attachments } satisfies CreatePublicChannelRequest,
+      request: { topic, title, first_post: firstPost, attachments, content_labels: contentLabels } satisfies CreatePublicChannelRequest,
     });
   }),
   getPublicChannel: command('getPublicChannel', async (topic, channelId) => {

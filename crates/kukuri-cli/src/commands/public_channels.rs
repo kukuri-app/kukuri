@@ -70,7 +70,8 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
             schema::object(
                 json!({"topic": {"type": "string"}, "title": {"type": "string"},
                 "first_post": {"type": "string", "default": ""},
-                "attachments": schema::array(media::input_schema())}),
+                "attachments": schema::array(media::input_schema()),
+                "content_labels": schema::array(json!({"type": "string"}))}),
                 &["topic", "title"],
             ),
             public_channel_schema(),

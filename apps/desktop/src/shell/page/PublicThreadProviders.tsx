@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { ComposerAdultLabelToggle } from '@/components/core/ComposerAdultLabelToggle';
 import { ComposerAttachmentField } from '@/components/core/ComposerAttachmentField';
 import { ComposerDraftPreviewList } from '@/components/core/ComposerDraftPreviewList';
 import { PublicThreadSlot, type PublicThreadSlotValue } from '@/components/core/publicThreadSlot';
@@ -21,7 +22,13 @@ import type { DesktopApi, PublicChannelView } from '@/lib/api';
 import { clipboardImageFiles } from '@/lib/attachments';
 import { buildPublicThreadLink } from '@/lib/internalLinks';
 import { topicDisplayName } from '@/lib/topicId';
-import { buildDraftMediaItems, buildImageDraftItem, buildVideoDraftItem, composerDraftMediaViews } from '@/shell/media';
+import {
+  ADULT_CONTENT_LABEL,
+  buildDraftMediaItems,
+  buildImageDraftItem,
+  buildVideoDraftItem,
+  composerDraftMediaViews,
+} from '@/shell/media';
 import {
   KNOWN_PUBLIC_THREAD_LIMIT,
   isHiddenAuthor,
@@ -166,7 +173,7 @@ function PublicThreadChipTitle({ topic, channelId, fallback }: { topic: string; 
 }
 
 /** 一覧の列の「スレッドを作る」。タイトル(1〜200 文字)と最初の投稿(空でもよい)を書く(判断 3)。最初の投稿には
- * タイムラインの投稿と同じ添付を付けられる(#1889)。閉じると下書きは残さない。 */
+ * タイムラインの投稿と同じ添付と成人向けの自己申告を付けられる(#1889)。閉じると下書きは残さない。 */
 function CreatePublicThreadDialog({
   api,
   topic,
@@ -184,6 +191,7 @@ function CreatePublicThreadDialog({
   const [media, setMedia] = useState<DraftMediaItem[]>([]);
   const [attachmentInputKey, setAttachmentInputKey] = useState(0);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [adultLabeled, setAdultLabeled] = useState(false);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   const draftSequence = useRef(0);
@@ -220,7 +228,8 @@ function CreatePublicThreadDialog({
           topic,
           title.trim(),
           firstPost.trim(),
-          media.flatMap((item) => item.attachments)
+          media.flatMap((item) => item.attachments),
+          adultLabeled ? [ADULT_CONTENT_LABEL] : []
         )
       );
     } catch {
@@ -279,6 +288,7 @@ function CreatePublicThreadDialog({
               </p>
             ) : null}
             <ComposerDraftPreviewList items={composerDraftMediaViews(media)} onRemove={removeFile} />
+            <ComposerAdultLabelToggle checked={adultLabeled} onChange={setAdultLabeled} />
             {failed ? <p className='error error-inline'>{t('shell:publicThreads.create.failed')}</p> : null}
             <Button type='submit' disabled={pending || !title.trim()}>
               {t('shell:publicThreads.create.submit')}

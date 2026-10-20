@@ -14,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { clipboardImageFiles } from '@/lib/attachments';
 
 import { AuthorAvatar } from './AuthorAvatar';
+import { ComposerAdultLabelToggle } from './ComposerAdultLabelToggle';
 import { ComposerAttachmentField } from './ComposerAttachmentField';
 import { ComposerDraftPreviewList } from './ComposerDraftPreviewList';
 import { MentionHoverCard } from './MentionHoverCard';
@@ -265,15 +266,7 @@ export function ComposerPanel({
       />
 
       {onAdultLabeledChange && mode !== 'message' ? (
-        <label className='topic-diagnostic topic-diagnostic-secondary flex items-center gap-2'>
-          <input
-            type='checkbox'
-            checked={adultLabeled}
-            onChange={(event) => onAdultLabeledChange(event.currentTarget.checked)}
-            data-testid='composer-adult-label-toggle'
-          />
-          <span>{t('composer.adultLabel')}</span>
-        </label>
+        <ComposerAdultLabelToggle checked={adultLabeled} onChange={onAdultLabeledChange} />
       ) : null}
 
       {composerError ? (

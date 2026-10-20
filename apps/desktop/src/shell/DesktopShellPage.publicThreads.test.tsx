@@ -115,8 +115,8 @@ test('public detail prepends older pages and appends new posts in cursor order',
   await waitFor(() => expect(ids()).toEqual(['old', 'a', 'b', 'new']));
 }, 30_000);
 
-// #1889: 作成の Dialog はタイムラインの投稿と同じ添付欄を持ち、本文が空でも添付だけの最初の投稿を作る。
-test('a public thread is created with an attachment-only first post', async () => {
+// #1889: 作成の Dialog はタイムラインの投稿と同じ添付欄と成人向けの自己申告を持ち、本文が空でも添付だけの最初の投稿を作る。
+test('a public thread is created with an attachment-only, adult-labeled first post', async () => {
   installObjectUrlMocks();
   const user = userEvent.setup();
   const api = createDesktopMockApi();
@@ -145,13 +145,14 @@ test('a public thread is created with an attachment-only first post', async () =
     clipboardData: { items: [{ kind: 'file', type: pasted.type, getAsFile: () => pasted }], files: [pasted] },
   });
   expect(await within(dialog).findByText('pasted.png')).toBeInTheDocument();
+  await user.click(within(dialog).getByTestId('composer-adult-label-toggle'));
   await user.click(within(dialog).getByRole('button', { name: 'Create' }));
 
   await waitFor(() =>
     expect(createPublicChannel).toHaveBeenCalledWith(TOPIC, 'Screenshots', '', [
       expect.objectContaining({ file_name: 'first.png', mime: 'image/png', role: 'image_original' }),
       expect.objectContaining({ file_name: 'pasted.png', mime: 'image/png', role: 'image_original' }),
-    ])
+    ], ['adult'])
   );
   const created = await createPublicChannel.mock.results[0]!.value;
   expect(created.first_post_id).toBeTruthy();
@@ -188,7 +189,7 @@ test('a public thread is created from the topic list, opens its detail and keeps
   await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Release notes');
   await user.type(within(dialog).getByRole('textbox', { name: 'First post (optional)' }), 'What changed in 0.5');
   await user.click(within(dialog).getByRole('button', { name: 'Create' }));
-  await waitFor(() => expect(createPublicChannel).toHaveBeenCalledWith(TOPIC, 'Release notes', 'What changed in 0.5', []));
+  await waitFor(() => expect(createPublicChannel).toHaveBeenCalledWith(TOPIC, 'Release notes', 'What changed in 0.5', [], []));
   const created = await createPublicChannel.mock.results[0]!.value;
 
   // 作った後は、一覧の列を親にした詳細の列を開く。

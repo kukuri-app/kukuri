@@ -13,6 +13,7 @@ impl DesktopRuntime {
                 &request.title,
                 &request.first_post,
                 attachments,
+                request.content_labels,
             )
             .await
     }
