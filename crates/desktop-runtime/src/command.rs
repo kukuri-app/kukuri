@@ -379,6 +379,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     create_public_channel(request: CreatePublicChannelRequest) => runtime.create_public_channel(request).await.map_err(map_error);
     create_repost(request: CreateRepostRequest) => runtime.create_repost(request).await.map_err(map_error);
     decide_account_transfer(request: DecideAccountTransferRequest) => runtime.decide_account_transfer(request).await.map_err(map_error);
+    delete_public_channel(request: GetPublicChannelRequest) => runtime.delete_public_channel(request).await.map_err(map_error);
     delete_direct_message_message(request: DeleteDirectMessageMessageRequest) => runtime.delete_direct_message_message(request).await.map_err(map_error);
     disable_community_node_observation_sharing(request: CommunityNodeTargetRequest) => runtime.disable_community_node_observation_sharing(request).await.map_err(map_error);
     discover_community_node_index(request: CommunityNodeIndexQueryRequest) => runtime.discover_community_node_index(request).await.map_err(CommandError::from);
@@ -475,6 +476,7 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     unblock_author(request: AuthorRequest) => runtime.unblock_author(request).await.map_err(map_error);
     unfollow_author(request: AuthorRequest) => runtime.unfollow_author(request).await.map_err(map_error);
     unmute_author(request: AuthorRequest) => runtime.unmute_author(request).await.map_err(map_error);
+    update_public_channel_title(request: UpdatePublicChannelTitleRequest) => runtime.update_public_channel_title(request).await.map_err(map_error);
     unsubscribe_topic(request: UnsubscribeTopicRequest) => runtime.unsubscribe_topic(request).await.map_err(map_error);
     withdraw_community_node_consents(request: CommunityNodeTargetRequest) => runtime.withdraw_community_node_consents(request).await.map_err(map_error);
     withdraw_post(request: WithdrawPostRequest) => runtime.withdraw_post(request).await.map_err(map_error);

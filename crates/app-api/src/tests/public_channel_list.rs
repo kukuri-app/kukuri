@@ -485,6 +485,8 @@ async fn pages_continue_from_the_known_rows_without_repeating_them() {
                     created_at,
                     first_post_id: None,
                     last_post_at: created_at,
+                    revision: 0,
+                    deleted: false,
                 },
                 false,
             )

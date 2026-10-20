@@ -77,6 +77,7 @@ mod notifications;
 mod private_channels;
 mod public_channel_list;
 mod public_channel_live;
+mod public_channel_revisions;
 mod public_channels;
 mod reaction_events;
 mod reaction_sets;

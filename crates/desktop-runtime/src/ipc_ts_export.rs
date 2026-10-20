@@ -90,8 +90,9 @@ fn export_ipc_types() {
         SubmitCommunityNodeReportStatus, SubmitDomeSessionInputRequest,
         SubmitIndexingRequestResponse, SwitchAccountRequest, TakePrivateChannelControllerRequest,
         ToggleReactionRequest, TrustUserReadResponse, UnsubscribeTopicRequest,
-        UpdateGameRoomRequest, UpdateMetaverseRoomRequest, WithdrawDomeConnectionProposalRequest,
-        WithdrawPostRequest, WithdrawalReasonVisibilityRequest,
+        UpdateGameRoomRequest, UpdateMetaverseRoomRequest, UpdatePublicChannelTitleRequest,
+        WithdrawDomeConnectionProposalRequest, WithdrawPostRequest,
+        WithdrawalReasonVisibilityRequest,
     };
     use kukuri_app_api::*;
     use kukuri_cn_protocol::{
@@ -438,6 +439,7 @@ fn export_ipc_types() {
         CreatePrivateChannelRequest,
         CreatePublicChannelRequest,
         GetPublicChannelRequest,
+        UpdatePublicChannelTitleRequest,
         ListPublicChannelsRequest,
         ExportPrivateChannelInviteRequest,
         ImportPrivateChannelInviteRequest,

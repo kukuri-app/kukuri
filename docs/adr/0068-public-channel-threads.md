@@ -4,6 +4,8 @@
 
 Accepted（2026-10-17、#1840）。#1840 の AC-1 で識別・署名・置き場所・投稿の経路を、AC-2 で topic ごとの一覧（§6）を、AC-3 で画面（§7）を、AC-4 で配信中の Live（§8）を実装した。
 
+**2026-10-20 改訂**（#1888）: 作成者のタイトルの変更とスレッドの削除を §9 に足した。§1 の「どの欄も後から変えない。タイトルの変更と channel の削除は無い」は失効し、ID・topic・最初の投稿・署名の時刻だけを変えない欄とする。AC-1 で metadata の版・届け方・API を実装した。
+
 ## Context
 
 kukuri の channel は、招待や相互フォローで参加する private channel だけだった。`ChannelRef` は topic の公開タイムライン（ID なし）と private channel（ID あり）の 2 種類で、多くの処理が「channel の ID があれば private」と決めていた。
@@ -20,7 +22,7 @@ kukuri の channel は、招待や相互フォローで参加する private chan
   - 公開 channel かどうかは ID の形で見分ける（`ChannelId::is_public_channel`）。「ID があるか」では決めない。
 - metadata は作成者が署名した envelope（種類 `public-channel`）で、中身は ID・所属 topic・タイトル（1〜200 文字、前後に空白なし）・作成時の最初の投稿の ID（無くてもよい）。
   - 署名の時刻は ID の作成時刻（秒）にする。読む側は署名、ID と署名者・時刻の結び付き、上限を確かめる。
-  - どの欄も後から変えない。タイトルの変更と channel の削除は無い。
+  - ID・所属 topic・最初の投稿と署名の時刻は後から変えない。作成者はタイトルを変え、channel を削除できる（§9。#1888）。
 - 作成の順は、ID を決める → 最初の投稿を channel の投稿として保存する → その ID を入れた metadata を署名して保存する。投稿は channel の ID だけを参照するので、互いの hash を待つ循環は起きない。
 - ID から読むときは、metadata と、作成時の最初の投稿を作成日と翌日の bucket から 1 件ずつ読む。作成から日を跨いだ channel でも、ID から最初の投稿の返信ツリーを開ける。
 
@@ -70,7 +72,7 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 - `list_public_channels(topic, order, cursor, limit)` は、topic の公開 channel を新しい順に返す。order は「最後の投稿」（既定）と「作成」の 2 つ（2026-10-17 のユーザー判断 2）。戻り値は行・続きの位置・取得できなかった数（`unavailable_count`）。
 - 表示は手元の行だけを読む（[ADR 0052](0052-scale-independent-timeline-sync.md) §2）。
   - 行は SQLite の `public_channels`（索引は (topic, 作成時刻, ID) と (topic, 最後の投稿の時刻, ID)）と、Web の IndexedDB の版 3 の store（同日の判断 7）に置く。
-  - 非表示の作者（mute と、どちらの向きでも有効な block）のスレッドは除く。読み飛ばすのは 4 ページまで（ADR 0052 §5）。
+  - 非表示の作者（mute と、どちらの向きでも有効な block）のスレッドと、削除したスレッド（§9）は除く。読み飛ばすのは 4 ページまで（ADR 0052 §5）。
 - 行の最後の投稿の時刻は、公開 channel の投稿を projection に反映するたびに新しい方へ進める（自分の投稿も同じ）。非表示の作者の投稿は数えない。
 - 照合（ページの範囲の照合と同じ扱い）:
   - 先頭のページは背景で照合を始めて 300 ms だけ待ち、続きのページは照合を待つ（タイムラインと同じ。#1624）。同じ範囲は 30 秒の間隔の内では繰り返さない。
@@ -115,19 +117,34 @@ kukuri の channel は、招待や相互フォローで参加する private chan
   - 上部の行・「ライブ」・一覧の印は、既存の Live の画面と同じく開発者モードでだけ出す（README の Experimental）。
   - 上部と印を出すだけでは、映像・音声を受信も送信もしない。視聴は「ライブ」の列や投稿の中の Live の「参加」からで、列を閉じても配信は止めない（#1839）。
 
+### 9. タイトルの変更と削除（#1888）
+
+投稿の取り下げ（[ADR 0032](0032-author-withdrawal-transmission-prevention.md)）と同じく、対応する端末が表示を変える努力目標とする。第三者の端末へ複製済みの内容の回収は保証しない（2026-10-20 のユーザー判断）。
+
+- 作成者だけが、手元の行の版を 1 つ進めた metadata に署名し、作成の bucket の同じ key（§2）を上書きする。署名の時刻は版によらず ID の作成時刻のまま。
+  - metadata は版（`revision`。作成は 0 で、0 のときは欄を書かない）と削除（`deleted`）を持つ。削除した版はタイトルを空にし、版は 1 以上。
+  - 削除は取り消せず、削除の後はタイトルも変えない。投稿は各投稿者のものなので消さない。同じ版の競合（同じ account の別の端末が同時に変えた）は、先に置いた方を残す。
+- 読む側は、記録のうち検証に通った最も大きい版を選び、行の版より大きいときだけ行のタイトルと削除を置き換える（最後の投稿の時刻は従来どおり新しい方）。行は SQLite の `public_channels` の版と削除の列、IndexedDB の行の同じ欄に持つ。
+- 届け方（判断 3）:
+  - 作成者は変更と削除を、作成と同じ topic の hint（`SessionChanged`、種類 `public-channel`）で知らせる。topic の lease を持つ端末は、手元と読み先の順に行より新しい版を探して反映する。
+  - ID からの取得（`get_public_channel`）は、手元に行があればそれを返し、背景で同じ順に読み直す。読み直しは channel ごとに 60 秒の間隔を空け、取り下げの確認と同じ台帳（上限 4,096 件、同時に 4 つ）で数える。反映したら同期の時刻を進め、画面に読み直させる。
+  - 一覧の照合は変更を拾わない。一覧の行だけを見ている端末は、知らせを逃すと、そのスレッドを開くまで古いタイトル・削除前の行を出すことがある（受け入れ済み）。
+- 削除した行は一覧に出さず（§6）、ID からの取得は削除済み（`deleted`、タイトルは空）として返す。行は回収まで残し、照合が同じ channel を読み直さないようにする。
+- API・CLI: `update_public_channel_title(topic, channel_id, title)` と `delete_public_channel(topic, channel_id)`。どちらも変えた後の行を返す。
+
 ## 互換
 
 | 対象 | 変更 | 旧版・既存データへの影響 |
 | --- | --- | --- |
 | 投稿の envelope | 形は変えない。「channel_id あり + Public」の組を新たに使う | 旧版は受け付けず、表示しない |
-| channel の metadata | 新しい種類の署名つき envelope | 旧版は読まない |
+| channel の metadata | 新しい種類の署名つき envelope。#1888 で版と削除の欄を足した（版 0 は欄を書かない） | 旧版は読まない。#1888 より前の版は、手元の行があれば古いタイトルのまま・削除を解釈しない。新しく読む場合は変更後のタイトルが見え、削除した記録はタイトルが空なので読めず一覧に出ない（2026-10-20 のユーザー判断 4） |
 | docs の key | topic の bucket に `channels/list/…`・`channels/activity/…`・`channels/<ID>/timeline/…` を足す | 旧版と CN は読まない |
 | hint | channel ごとの hint の topic を新設する。作成の知らせは既存の `SessionChanged` に種類を足す | 旧版は購読しない。未知の種類は読まない |
-| API・CLI | `ChannelRef`・`TimelineScope` に種類を足し、作成・取得・一覧の command を足す。行に作成者の名前（無いときは欄を出さない）と配信中の印（`live_now`）を足す。Live の作成で `public_channel` を受け付ける | 既存の値と出力の意味は変えない |
+| API・CLI | `ChannelRef`・`TimelineScope` に種類を足し、作成・取得・一覧・タイトルの変更・削除の command を足す。行に削除済みの印（`deleted`）を足す。行に作成者の名前（無いときは欄を出さない）と配信中の印（`live_now`）を足す。Live の作成で `public_channel` を受け付ける | 既存の値と出力の意味は変えない |
 | Live の manifest・参照 | 形は変えない。channel に公開 channel の ID を使う。公開 channel の Live への参照はどこでも許す | 旧版は公開 channel の Live を受け付けない。旧版は、別の場所の紹介 post の参照を限定 channel の Live と見て捨てる（Live の表示の無い投稿に見える。#1839 の判断 3 と同じ） |
 | workspace の保存・route | 列の種類 `publicThreads` と並び順の欄、route の `context=publicThreads` を足す。詳細の列は既存の timeline の列（scope の channel が公開スレッドの ID） | 旧版は一覧の列を読み飛ばし、`context=publicThreads` を topic のタイムラインへ正規化する。詳細の列とそのリンクは、旧版では参加していない channel として投稿が出ない（判断 8 の範囲） |
-| SQLite | 一覧の表 `public_channels` と migration を足し、remote cache に種類 `public_channel` を足す。Live の表に配信中の行の部分索引を足す（AC-4） | 既存の表と行は変えない |
-| IndexedDB | 版を 2 から 3 に上げ、一覧の store を足す | 更新の間は「データの移行中です」で待つ。更新した database を旧版で開くことは扱わない（2026-10-08 の決まり） |
+| SQLite | 一覧の表 `public_channels` と migration を足し、remote cache に種類 `public_channel` を足す。Live の表に配信中の行の部分索引を足す（AC-4）。#1888 で `public_channels` に版と削除の列を足す（既定は 0） | 既存の行は版 0・削除なしとして読む |
+| IndexedDB | 版を 2 から 3 に上げ、一覧の store を足す。#1888 の版と削除は行の欄で、database の版は変えない | 更新の間は「データの移行中です」で待つ。更新した database を旧版で開くことは扱わない（2026-10-08 の決まり）。欄の無い既存の行は版 0・削除なしとして読む |
 | backup・account 同期 | 変えない（公開 channel には参加の状態が無い。一覧の行は account の SQLite に入る） | — |
 
 ## Feature Data Classification
@@ -141,8 +158,8 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 - Gossip Hint 必要有無: あり（channel ごとの hint の topic）
 - Blob 必要有無: 投稿の本文と添付（既存の投稿と同じ）
 - SQLite projection 必要有無: 投稿は既存の projection（channel の値は公開 channel の ID）。一覧の行は `public_channels`（§6）
-- 必須 contract: 公開 channel の ID の形と結び付き、metadata の署名、topic の bucket での受け入れと拒否（`crates/core/src/tests/public_channels.rs`、`hydration_integrity_contract.rs`）
-- 必須 scenario: 招待の無い端末が ID から読み、投稿・返信・リアクションし、作成者に同じ channel の文脈で届く（`crates/app-api/src/tests/public_channels.rs`）。別の端末のスレッドを 2 つの並び順で一覧から取得し、新しい投稿で上へ移り、読めない記録を数え、無関係なデータで読む量が増えない（`crates/app-api/src/tests/public_channel_list.rs`）。2 人が同じスレッドで始めた Live がスレッドの Live の一覧と一覧の行の印に出て、片方を終えても残り、topic の資格で視聴できる（`crates/app-api/src/tests/public_channel_live.rs`）
+- 必須 contract: 公開 channel の ID の形と結び付き、metadata の署名、版と削除の形（`crates/core/src/tests/public_channels.rs`）、topic の bucket での受け入れと拒否（`hydration_integrity_contract.rs`）、行の版の大きい方を残すこと（`crates/store/src/parity/public_channels.rs`）
+- 必須 scenario: 招待の無い端末が ID から読み、投稿・返信・リアクションし、作成者に同じ channel の文脈で届く（`crates/app-api/src/tests/public_channels.rs`）。別の端末のスレッドを 2 つの並び順で一覧から取得し、新しい投稿で上へ移り、読めない記録を数え、無関係なデータで読む量が増えない（`crates/app-api/src/tests/public_channel_list.rs`）。2 人が同じスレッドで始めた Live がスレッドの Live の一覧と一覧の行の印に出て、片方を終えても残り、topic の資格で視聴できる（`crates/app-api/src/tests/public_channel_live.rs`）。作成者の変更と削除が、topic の lease を持つ端末へ知らせで、持たない端末へ ID からの取得の後の読み直しで届き、作成者以外と削除の後は変えられない（`crates/app-api/src/tests/public_channel_revisions.rs`）
 
 ## References
 

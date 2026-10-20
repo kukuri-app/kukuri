@@ -361,6 +361,8 @@ table public_channels
   column cid=4 name=created_at type=INTEGER notnull=1 default=None pk=0
   column cid=5 name=first_post_id type=TEXT notnull=0 default=None pk=0
   column cid=6 name=last_post_at type=INTEGER notnull=1 default=None pk=0
+  column cid=7 name=revision type=INTEGER notnull=1 default=Some("0") pk=0
+  column cid=8 name=deleted type=INTEGER notnull=1 default=Some("0") pk=0
 table reaction_cache
   column cid=0 name=source_replica_id type=TEXT notnull=1 default=None pk=1
   column cid=1 name=target_object_id type=TEXT notnull=1 default=None pk=2

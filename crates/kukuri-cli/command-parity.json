@@ -85,6 +85,8 @@
     {"tauri":"list_joined_private_channels","cli":"list_joined_private_channels","inventory":"INV-4"},
     {"tauri":"create_public_channel","cli":"create_public_channel","inventory":"INV-4"},
     {"tauri":"get_public_channel","cli":"get_public_channel","inventory":"INV-4"},
+    {"tauri":"update_public_channel_title","cli":"update_public_channel_title","inventory":"INV-4"},
+    {"tauri":"delete_public_channel","cli":"delete_public_channel","inventory":"INV-4"},
     {"tauri":"list_public_channels","cli":"list_public_channels","inventory":"INV-4"},
     {"tauri":"list_timeline","cli":"list_timeline","inventory":"INV-2"},
     {"tauri":"resolve_community_index_posts","cli":"resolve_community_index_posts","inventory":"INV-2"},

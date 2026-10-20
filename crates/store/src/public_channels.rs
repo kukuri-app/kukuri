@@ -19,9 +19,26 @@ pub struct PublicChannelRow {
     pub first_post_id: Option<String>,
     /// 最後の投稿の時刻。投稿が無ければ作成時刻。
     pub last_post_at: i64,
+    /// metadata の版（#1888）。行のタイトルと削除は、版の大きい記録のもの。
+    #[serde(default)]
+    pub revision: u32,
+    /// 作成者が削除した（タイトルは空）。一覧に出さない。
+    #[serde(default)]
+    pub deleted: bool,
 }
 
 impl PublicChannelRow {
+    /// 既にある行に重ねた行。最後の投稿の時刻は新しい方を、タイトルと削除は版の大きい方を残す（同じ版は既にある方）。
+    pub fn merged_onto(mut self, previous: &Self) -> Self {
+        self.last_post_at = self.last_post_at.max(previous.last_post_at);
+        if self.revision <= previous.revision {
+            self.title.clone_from(&previous.title);
+            self.revision = previous.revision;
+            self.deleted = previous.deleted;
+        }
+        self
+    }
+
     pub fn sort_at(&self, order: PublicChannelOrder) -> i64 {
         match order {
             PublicChannelOrder::LastPost => self.last_post_at,
@@ -60,7 +77,7 @@ pub struct PublicChannelCursor {
 #[async_trait]
 pub trait PublicChannelStore: Send + Sync {
     /// 行を置く。`remote`（他人が作った channel）の行は remote cache の容量に数え、収まらなければ失敗にする。
-    /// 既にある行は、最後の投稿の時刻の新しい方を残す。
+    /// 既にある行には `PublicChannelRow::merged_onto` で重ねる。
     async fn put_public_channel(&self, row: PublicChannelRow, remote: bool) -> Result<()>;
     async fn get_public_channel_row(&self, channel_id: &str) -> Result<Option<PublicChannelRow>>;
     /// 最後の投稿の時刻を、新しいときだけ進める。行が無ければ何もしない。

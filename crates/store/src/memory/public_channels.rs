@@ -7,7 +7,7 @@ impl PublicChannelStore for MemoryStore {
     async fn put_public_channel(&self, mut row: PublicChannelRow, _remote: bool) -> Result<()> {
         let mut rows = self.public_channels.write().await;
         if let Some(previous) = rows.get(row.channel_id.as_str()) {
-            row.last_post_at = row.last_post_at.max(previous.last_post_at);
+            row = row.merged_onto(previous);
         }
         rows.insert(row.channel_id.clone(), row);
         Ok(())

@@ -6,8 +6,13 @@ use super::*;
 use crate::public_channels::next_public_channel_cursor;
 use crate::{PublicChannelCursor, PublicChannelOrder, PublicChannelRow, PublicChannelStore};
 
-const COLUMNS: &str =
-    "channel_id, topic_id, title, creator_pubkey, created_at, first_post_id, last_post_at";
+macro_rules! columns {
+    () => {
+        "channel_id, topic_id, title, creator_pubkey, created_at, first_post_id, last_post_at, \
+         revision, deleted"
+    };
+}
+const COLUMNS: &str = columns!();
 
 /// topic の行を `order` の新しい順に読む SQL。cursor の有無で SQL を分け、(topic, 時刻, ID) の索引の範囲だけを読む
 /// (ADR 0052 §5)。`prefix` は試験が `EXPLAIN QUERY PLAN ` を付ける。
@@ -47,6 +52,8 @@ fn public_channel_row(row: &sqlx::sqlite::SqliteRow) -> Result<PublicChannelRow>
         created_at: row.try_get("created_at")?,
         first_post_id: row.try_get("first_post_id")?,
         last_post_at: row.try_get("last_post_at")?,
+        revision: row.try_get("revision")?,
+        deleted: row.try_get("deleted")?,
     })
 }
 
@@ -86,13 +93,19 @@ impl PublicChannelStore for SqliteStore {
                 "remote public channel cache capacity exceeded"
             );
         }
-        sqlx::query(
-            "INSERT INTO public_channels \
-             (channel_id, topic_id, title, creator_pubkey, created_at, first_post_id, last_post_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+        // タイトルと削除は版の大きい方を残す(`PublicChannelRow::merged_onto` と同じ)。
+        sqlx::query(concat!(
+            "INSERT INTO public_channels (",
+            columns!(),
+            ") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
              ON CONFLICT(channel_id) DO UPDATE SET \
-             last_post_at = MAX(public_channels.last_post_at, excluded.last_post_at)",
-        )
+             last_post_at = MAX(public_channels.last_post_at, excluded.last_post_at), \
+             title = IIF(excluded.revision > public_channels.revision, excluded.title, \
+             public_channels.title), \
+             deleted = IIF(excluded.revision > public_channels.revision, excluded.deleted, \
+             public_channels.deleted), \
+             revision = MAX(public_channels.revision, excluded.revision)"
+        ))
         .bind(&row.channel_id)
         .bind(&row.topic_id)
         .bind(&row.title)
@@ -100,6 +113,8 @@ impl PublicChannelStore for SqliteStore {
         .bind(row.created_at)
         .bind(&row.first_post_id)
         .bind(row.last_post_at)
+        .bind(row.revision)
+        .bind(row.deleted)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -108,10 +123,11 @@ impl PublicChannelStore for SqliteStore {
     }
 
     async fn get_public_channel_row(&self, channel_id: &str) -> Result<Option<PublicChannelRow>> {
-        let Some(row) = sqlx::query(
-            "SELECT channel_id, topic_id, title, creator_pubkey, created_at, first_post_id, \
-             last_post_at FROM public_channels WHERE channel_id = ?1",
-        )
+        let Some(row) = sqlx::query(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM public_channels WHERE channel_id = ?1"
+        ))
         .bind(channel_id)
         .fetch_optional(&self.pool)
         .await?

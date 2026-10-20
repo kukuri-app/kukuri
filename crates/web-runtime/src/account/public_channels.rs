@@ -43,7 +43,7 @@ impl PublicChannelStore for IndexedDbCache {
             if let Some(previous) =
                 rows::get::<PublicChannelRow>(&tx, PUBLIC_CHANNELS, &text(&row.channel_id)).await?
             {
-                row.last_post_at = row.last_post_at.max(previous.last_post_at);
+                row = row.merged_onto(&previous);
             }
             rows::put(&tx, PUBLIC_CHANNELS, &row, &[])?;
             tx.commit().await

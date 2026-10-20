@@ -181,8 +181,8 @@ pub use requests::{
     SetPrivateChannelEntryDomeRequest, SetTopicGossipEnabledRequest, StartOwnerDomeHostingRequest,
     SubmitDomeSessionInputRequest, SwitchAccountRequest, TakePrivateChannelControllerRequest,
     ToggleReactionRequest, UnsubscribeTopicRequest, UpdateGameRoomRequest,
-    UpdateMetaverseRoomRequest, WithdrawDomeConnectionProposalRequest, WithdrawPostRequest,
-    WithdrawalReasonVisibilityRequest,
+    UpdateMetaverseRoomRequest, UpdatePublicChannelTitleRequest,
+    WithdrawDomeConnectionProposalRequest, WithdrawPostRequest, WithdrawalReasonVisibilityRequest,
 };
 pub use runtime::{DesktopRuntime, RuntimeEvent};
 

@@ -118,7 +118,11 @@ participant_count?: number | null, stale_participant_count: number, entry_dome_i
  */
 controller?: PrivateChannelControllerState | null, };
 
-export type PublicChannelView = { channel_id: string, topic_id: string, title: string, creator_pubkey: string, 
+export type PublicChannelView = { channel_id: string, topic_id: string, 
+/**
+ * 削除したスレッドでは空。
+ */
+title: string, creator_pubkey: string, 
 /**
  * 作成時刻(ミリ秒。channel の ID の時刻)。
  */
@@ -138,7 +142,11 @@ creator_name?: string, creator_display_name?: string,
 /**
  * 配信中の Live がある(手元の Live の行から。非表示の主催者の Live は数えない。一覧の行の印。#1840 AC-4)。
  */
-live_now: boolean, };
+live_now: boolean, 
+/**
+ * 作成者が削除した(#1888)。一覧には出さず、ID からの取得だけが返す。
+ */
+deleted?: boolean, };
 
 export type PublicChannelListView = { items: Array<PublicChannelView>, next_cursor?: PublicChannelCursor | null, 
 /**
@@ -936,6 +944,8 @@ export type CreatePrivateChannelRequest = { topic: string, label: string, audien
 export type CreatePublicChannelRequest = { topic: string, title: string, first_post: string, };
 
 export type GetPublicChannelRequest = { topic: string, channel_id: string, };
+
+export type UpdatePublicChannelTitleRequest = { topic: string, channel_id: string, title: string, };
 
 export type ListPublicChannelsRequest = { topic: string, order: PublicChannelOrder, cursor?: PublicChannelCursor | null, limit?: number | null, };
 

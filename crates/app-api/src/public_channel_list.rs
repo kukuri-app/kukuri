@@ -54,7 +54,7 @@ pub(crate) struct RangeOutcome {
 
 impl AppService {
     /// topic の公開 channel を `order` の新しい順に、`cursor` より後ろから `limit` 件まで返す。非表示の作者の
-    /// スレッドは除く(読み飛ばすのは 4 ページまで。ADR 0052 §5)。
+    /// スレッドと削除したスレッド(#1888)は除く(読み飛ばすのは 4 ページまで。ADR 0052 §5)。
     pub async fn list_public_channels(
         &self,
         topic_id: &str,
@@ -106,7 +106,7 @@ impl AppService {
                 .list_public_channels(topic_id, order, cursor, limit.max(20))
                 .await?;
             for row in page.items {
-                if hidden.contains(&row.creator_pubkey) {
+                if row.deleted || hidden.contains(&row.creator_pubkey) {
                     continue;
                 }
                 items.push(row);
@@ -391,6 +391,7 @@ impl AppService {
                     topic_id,
                     channel_id,
                     DocFetchPolicy::LocalThenRemote,
+                    None,
                 )
                 .await?
                 .is_none()
