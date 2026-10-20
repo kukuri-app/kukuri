@@ -933,11 +933,7 @@ export type ImportMetaverseRoomAssetRequest = { topic: string, room_id: string, 
 
 export type CreatePrivateChannelRequest = { topic: string, label: string, audience_kind: ChannelAudienceKind, };
 
-export type CreatePublicChannelRequest = { topic: string, title: string, first_post: string, 
-/**
- * #1889: 最初の投稿の添付(タイムラインの投稿と同じ)。
- */
-attachments: Array<CreateAttachmentRequest>, };
+export type CreatePublicChannelRequest = { topic: string, title: string, first_post: string, attachments: Array<CreateAttachmentRequest>, };
 
 export type GetPublicChannelRequest = { topic: string, channel_id: string, };
 
