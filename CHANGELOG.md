@@ -18,6 +18,25 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.4.7-preview.1] - 2026-10-20
+
+### Features
+
+- 公開スレッドの作成者がタイトルを変え・削除し、削除済みを一覧・詳細・リンクで示す（#1888 AC-2） ([#1897](https://github.com/kukuri-app/kukuri/pull/1897))
+- 公開スレッドの作成者がタイトルを変え、スレッドを削除できるようにする（#1888 AC-1） ([#1895](https://github.com/kukuri-app/kukuri/pull/1895))
+- 公開スレッドの作成時に最初の投稿へ添付と成人向けラベルを付けられるようにする ([#1889](https://github.com/kukuri-app/kukuri/pull/1889), [#1893](https://github.com/kukuri-app/kukuri/pull/1893))
+- 公開スレッドの詳細で返信をツリー表示し、列の中で返信する ([#1892](https://github.com/kukuri-app/kukuri/pull/1892))
+
+### Fixes
+
+- 公開スレッドを会話順に表示しタイムライン操作から分離 ([#1890](https://github.com/kukuri-app/kukuri/pull/1890))
+
+### Other
+
+- リリースの版を 0.4.7 にする ([#1898](https://github.com/kukuri-app/kukuri/pull/1898))
+- failure_paths の 2 つの間欠失敗の原因を取り除く ([#1894](https://github.com/kukuri-app/kukuri/pull/1894), [#1896](https://github.com/kukuri-app/kukuri/pull/1896))
+- 0.4.6 preview の公開と LP・運用記録 ([#1886](https://github.com/kukuri-app/kukuri/pull/1886))
+
 ## [v0.4.6-preview.1] - 2026-10-19
 
 ### Features
