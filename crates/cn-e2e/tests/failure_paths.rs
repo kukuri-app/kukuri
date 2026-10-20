@@ -173,7 +173,7 @@ async fn oversize_media_holds_posts() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn unreachable_provider_keeps_new_posts_out_of_surfaces_until_recovery() -> Result<()> {
-    let Some(stack) = E2eStack::boot("providerloss").await? else {
+    let Some(mut stack) = E2eStack::boot("providerloss").await? else {
         return Ok(());
     };
 
@@ -191,6 +191,8 @@ async fn unreachable_provider_keeps_new_posts_out_of_surfaces_until_recovery() -
 
     // 投稿者の登録を失効させ、indexer が読める提供元を無くす（bucket の読取りは登録済みの提供元だけを読む）。
     stack.set_author_provider_available(false).await?;
+    // 失効の前に提供元を選んだ巡回が後の投稿を読まないよう、その巡回の終了を待ってから投稿する（#1894）。
+    stack.restart_worker().await?;
     let blocked = stack
         .publish_text_post("replica-failure-marker must stay hidden")
         .await?;

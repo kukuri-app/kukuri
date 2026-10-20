@@ -56,6 +56,8 @@ use crate::scan_stack::{SyntheticBasicAuth, WorkerParts, build_worker};
 
 const DEFAULT_ADMIN_DATABASE_URL: &str = "postgres://cn:cn_password@127.0.0.1:15432/cn";
 const DEFAULT_RENDEZVOUS_REDIS_URL: &str = "redis://127.0.0.1:16379/";
+/// 同じ ArcadeDB へ並行に schema を作ると 500 になることがあるため、同じ process の起動では順に作る（#1894）。
+static ARCADEDB_SCHEMA_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn persist_timeline_index(
     docs: &dyn DocsSync,
@@ -302,10 +304,13 @@ impl E2eStack {
             ArcadeDbProjection::new(ArcadeDbConfig::from_env())
                 .context("failed to build the ArcadeDB projection client")?,
         );
-        projection
-            .ensure_schema()
-            .await
-            .context("ArcadeDB is unreachable; run via `cargo xtask cn-e2e`")?;
+        {
+            let _schema = ARCADEDB_SCHEMA_LOCK.lock().await;
+            projection
+                .ensure_schema()
+                .await
+                .context("ArcadeDB is unreachable; run via `cargo xtask cn-e2e`")?;
+        }
         let search = Arc::new(kukuri_cn_indexer::search::SearchIndex::open(
             &indexer_dir
                 .path()
