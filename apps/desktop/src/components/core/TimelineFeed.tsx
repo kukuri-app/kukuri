@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import { memo, type ReactNode, useInsertionEffect, useRef, useState } from 'react';
+import { memo, type ReactNode, useInsertionEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type {
@@ -16,7 +16,9 @@ import type { InternalSmartReference } from '@/lib/internalLinks';
 
 import { Button } from '@/components/ui/button';
 
+import { buildThreadTree } from './buildThreadTree';
 import { PostCard } from './PostCard';
+import { ThreadTreeItem } from './ThreadTree';
 import { UnavailablePostsNotice } from './UnavailablePostsNotice';
 import { type PostCardView } from './types';
 import { useInfiniteScrollSentinel } from './useInfiniteScrollSentinel';
@@ -57,7 +59,8 @@ function useStableCallbacks<T extends Record<string, Callback | undefined>>(call
 
 type TimelineFeedProps = {
   posts: PostCardView[];
-  olderFirst?: boolean;
+  /** 古い順の窓を返信ツリーで描く(公開スレッドの詳細)。 */
+  tree?: boolean;
   emptyCopy: string;
   /**
    * #994: 0 件時の描画を呼出し側が差し替える。`null` は空文言も出さない(loading / error を呼出し側が示す)。
@@ -111,14 +114,15 @@ type TimelineFeedProps = {
   onMuteReportAuthor?: (authorPubkey: string) => Promise<void> | void;
 };
 
-/** Public detail keeps the existing descending cursor window; only presentation is reversed. */
+/** Public detail keeps the existing descending cursor window; only presentation is reversed and nested. */
 export function PublicThreadFeed({ posts, ...props }: TimelineFeedProps) {
-  return <TimelineFeed {...props} posts={[...posts].reverse()} olderFirst showBookmarkAction={false} />;
+  const olderFirst = useMemo(() => [...posts].reverse(), [posts]);
+  return <TimelineFeed {...props} posts={olderFirst} tree showBookmarkAction={false} />;
 }
 
 export function TimelineFeed({
   posts,
-  olderFirst = false,
+  tree = false,
   emptyCopy,
   emptyState,
   listClassName = 'post-list',
@@ -194,6 +198,27 @@ export function TimelineFeed({
     onFetchNodePolicies,
     onMuteReportAuthor,
   });
+  // #1891: 公開スレッドの詳細は、この一覧そのものが会話。読み込んだ窓の中に親がある返信は親の下に置いて返信先を
+  // 重ねず、どの投稿からも返信の列を開かない。行の view は投稿ごとに使い回し、行の描き直しを増やさない(#1425)。
+  const [treeViews] = useState(() => new WeakMap<PostCardView, PostCardView[]>());
+  const nodes = useMemo(
+    () =>
+      tree
+        ? buildThreadTree(posts).map((node) => {
+            let views = treeViews.get(node.view);
+            if (!views) {
+              views = [false, true].map((nested) => ({
+                ...node.view,
+                canOpenThread: false,
+                suppressReplyPreview: nested || node.view.suppressReplyPreview,
+              }));
+              treeViews.set(node.view, views);
+            }
+            return { ...node, view: views[node.depth > 0 ? 1 : 0]! };
+          })
+        : null,
+    [posts, tree, treeViews]
+  );
   const overscrollAccumulationRef = useRef(0);
   const touchStartYRef = useRef<number | null>(null);
 
@@ -213,7 +238,7 @@ export function TimelineFeed({
   };
 
   const handleWheel = (event: React.WheelEvent<HTMLUListElement>) => {
-    if (olderFirst || !onApplyPending || posts.length === 0) {
+    if (tree || !onApplyPending || posts.length === 0) {
       return;
     }
     if (scrolledDown(event.currentTarget) || event.deltaY >= 0) {
@@ -231,7 +256,7 @@ export function TimelineFeed({
   };
 
   const handleTouchMove = (event: React.TouchEvent<HTMLUListElement>) => {
-    if (olderFirst || !onApplyPending || posts.length === 0) {
+    if (tree || !onApplyPending || posts.length === 0) {
       return;
     }
     const startY = touchStartYRef.current;
@@ -285,6 +310,23 @@ export function TimelineFeed({
     </li>
   ) : null;
 
+  const row = (view: PostCardView) => (
+    <TimelineFeedRow
+      {...rowCallbacks}
+      enableLinkPreview
+      view={view}
+      readOnly={readOnly}
+      localAuthorPubkey={localAuthorPubkey}
+      mediaObjectUrls={mediaObjectUrls}
+      ownedReactionAssets={ownedReactionAssets}
+      bookmarkedReactionAssets={bookmarkedReactionAssets}
+      recentReactions={recentReactions}
+      showBookmarkAction={showBookmarkAction}
+      isBookmarked={bookmarkedPostIds?.has(view.post.object_id) ?? false}
+      isFocused={focusedPostObjectId === view.post.object_id}
+    />
+  );
+
   return (
     <ul
       ref={listRef}
@@ -293,31 +335,24 @@ export function TimelineFeed({
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
     >
-      {olderFirst ? paging : refresh}
-      {posts.map((view) => (
-        <li key={view.post.object_id} className={itemClassName} data-post-id={view.post.object_id}>
-        <TimelineFeedRow
-          {...rowCallbacks}
-          enableLinkPreview
-          view={view}
-          readOnly={readOnly}
-          localAuthorPubkey={localAuthorPubkey}
-          mediaObjectUrls={mediaObjectUrls}
-          ownedReactionAssets={ownedReactionAssets}
-          bookmarkedReactionAssets={bookmarkedReactionAssets}
-          recentReactions={recentReactions}
-          showBookmarkAction={showBookmarkAction}
-          isBookmarked={bookmarkedPostIds?.has(view.post.object_id) ?? false}
-          isFocused={focusedPostObjectId === view.post.object_id}
-        />
-        </li>
-      ))}
+      {tree ? paging : refresh}
+      {nodes
+        ? nodes.map((node) => (
+            <ThreadTreeItem key={node.view.post.object_id} node={node}>
+              {row(node.view)}
+            </ThreadTreeItem>
+          ))
+        : posts.map((view) => (
+            <li key={view.post.object_id} className={itemClassName} data-post-id={view.post.object_id}>
+              {row(view)}
+            </li>
+          ))}
       {unavailableCount > 0 ? (
         <li className={itemClassName}>
           <UnavailablePostsNotice count={unavailableCount} />
         </li>
       ) : null}
-      {olderFirst ? refresh : paging}
+      {tree ? refresh : paging}
     </ul>
   );
 }

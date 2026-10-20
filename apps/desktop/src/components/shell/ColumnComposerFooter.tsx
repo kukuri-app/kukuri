@@ -66,8 +66,10 @@ export function ColumnComposerFooter({
   const draft = storedDraft ?? createColumnDraft(target);
   const setColumnDraftsByKey = useDesktopShellFieldSetter('columnDraftsByKey');
   const settingsOpen = useDesktopShellStore((state) => state.shellChromeState.settingsOpen);
-  const Icon = ICON_BY_ACTION[target.action];
-  const actionLabel = t(LABEL_KEY_BY_ACTION[target.action]);
+  // 投稿の入力欄で返信するとき(公開スレッドの詳細。#1891)は、返信として示す。
+  const action = draft.replyTarget ? 'reply' : target.action;
+  const Icon = ICON_BY_ACTION[action];
+  const actionLabel = t(LABEL_KEY_BY_ACTION[action]);
   const draftMediaViews = composerDraftMediaViews(draft.mediaItems, locale);
   const updateDraft = (update: Parameters<typeof setColumnDraft>[2]) => {
     setColumnDraftsByKey((current) => setColumnDraft(current, target, update));

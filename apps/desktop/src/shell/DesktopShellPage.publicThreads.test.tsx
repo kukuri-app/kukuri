@@ -219,13 +219,9 @@ test('a public thread is created from the topic list, opens its detail and keeps
   expect([...detail.querySelectorAll('[data-post-id]')].map((row) => row.textContent).join('|'))
     .toMatch(/What changed in 0.5.*\|.*second post/);
 
-  // 公開スレッドの中で返信する。返信ツリーの列は公開スレッドの scope のままで、返信も同じスレッドへ送る。
+  // 公開スレッドの中で返信する。返信の列を開かず、この列の入力欄から同じスレッドへ送り、親の下に出す(#1891)。
   await user.click(within(detail).getAllByRole('button', { name: 'Reply' })[0]!);
-  const replyTree = await screen.findByRole('region', { name: /^Thread Column,/ });
-  await waitFor(() =>
-    expect(replyTree.querySelector('.shell-column-header')).toHaveTextContent('Thread · Release notes · general')
-  );
-  const replyInput = await within(replyTree).findByPlaceholderText('Write a reply');
+  const replyInput = await within(detail).findByPlaceholderText('Write a reply');
   await user.type(replyInput, 'a reply in the thread');
   await user.click(within(replyInput.closest('form')!).getByRole('button', { name: 'Reply' }));
   await waitFor(() =>
@@ -237,8 +233,10 @@ test('a public thread is created from the topic list, opens its detail and keeps
       { kind: 'public_channel', channel_id: created.channel_id },
     ])
   );
-  await user.click(within(replyTree).getByRole('button', { name: 'Close Thread' }));
-  await waitFor(() => expect(getActiveColumn('Public thread')).toBe(detail));
+  const reply = (await within(detail).findByText('a reply in the thread')).closest('li');
+  expect(reply).toHaveAttribute('data-depth', '1');
+  expect(screen.queryByRole('region', { name: /^Thread Column,/ })).not.toBeInTheDocument();
+  expect(getActiveColumn('Public thread')).toBe(detail);
 
   // 公開スレッドの投稿は topic のタイムラインに出さない(判断 4)。
   const timeline = screen.getByRole('region', { name: /^Timeline Column,/ });
@@ -301,17 +299,12 @@ test('the list order is chosen with the keyboard, stored with the pinned column 
 
 // 返信の列を active にしたまま再起動しても、公開の scope の返信の列をもう 1 本開かない(#1873)。
 test('a reply column in a public thread is restored after a restart without opening another one', async () => {
-  const user = userEvent.setup();
   const createApi = () => createDesktopMockApi({
     seedPublicChannels: { [TOPIC]: [{ ...thread(CHANNEL, 'Weekly sync', 1_700_000_000_000, 1_700_000_000_000), first_post_id: 'first-post' }] },
     seedPosts: { [TOPIC]: [post('first-post', 'Agenda for this week', CHANNEL, 1_700_000_000_000)] },
   });
-  const first = renderAtHash(buildPublicThreadLink(TOPIC, CHANNEL), createApi());
-  const detail = await waitFor(() => getActiveColumn('Public thread'));
-  const agenda = (await within(detail).findByText('Agenda for this week')).closest('article');
-  if (!(agenda instanceof HTMLElement)) throw new Error('thread post not found');
-  await user.click(within(agenda).getByRole('button', { name: 'Reply' }));
-  await waitFor(() => expect(window.location.hash).toContain('threadId=first-post'));
+  const first = renderAtHash(`${buildPublicThreadLink(TOPIC, CHANNEL)}&context=thread&threadId=first-post`, createApi());
+  expect(await within(await waitFor(() => getActiveColumn('Thread'))).findByText('Agenda for this week')).toBeInTheDocument();
   const replyRoute = window.location.hash;
   const columns = persistedColumns().map((column) => column.id);
 
@@ -406,8 +399,21 @@ test('a direct link opens the thread under its list, copies its link and is rest
   await waitFor(() => expect(getActiveColumn('Public threads')).toBeInTheDocument());
 }, 30_000);
 
-// 詳細の列の投稿から返信しても、詳細の列は並びの位置と親(一覧の列)を変えず、返信の列はその右(子)に開く。
-test('replying to a post in the detail keeps the detail in place under its list', async () => {
+function reply(objectId: string, content: string, parent: PostView, createdAt: number): PostView {
+  return {
+    ...post(objectId, content, CHANNEL, createdAt),
+    reply_to: parent.object_id,
+    root_id: parent.root_id,
+    reply_preview: {
+      object_id: parent.object_id, topic: TOPIC, author: { pubkey: OTHER, name: 'bob' },
+      content: parent.content, content_status: 'Available', attachments: [],
+    },
+  };
+}
+
+// #1891: 詳細の列は読み込んだ窓を返信ツリーで並べ、返信の列を開かずに、この列の入力欄から返信する。
+// 並びの位置と親(一覧の列)も変えない。
+test('the detail shows its replies as a tree and replies in place without opening a reply column', async () => {
   const user = userEvent.setup();
   const general = { topicId: TOPIC, channelId: null };
   const dev = { topicId: 'kukuri:topic:dev', channelId: null };
@@ -427,21 +433,52 @@ test('replying to a post in the detail keeps the detail in place under its list'
       { id: devId, kind: 'timeline', scope: dev, pinned: true },
     ],
   }));
-  render(<App api={createDesktopMockApi({
+  const agenda = post('first-post', 'Agenda for this week', CHANNEL, 1_700_000_000);
+  const gone = post('gone', 'A post outside the window', CHANNEL, 1_600_000_000);
+  const api = createDesktopMockApi({
     seedPublicChannels: { [TOPIC]: [{ ...thread(CHANNEL, 'Weekly sync', 1_700_000_000_000, 1_700_000_000_000), first_post_id: 'first-post' }] },
-    seedPosts: { [TOPIC]: [post('first-post', 'Agenda for this week', CHANNEL, 1_700_000_000_000)] },
-  })} />);
+    seedPosts: { [TOPIC]: [
+      reply('late', 'Replying to an older post', gone, 1_700_000_300),
+      reply('nested', 'Nested answer', agenda, 1_700_000_200),
+      post('second', 'Another topic', CHANNEL, 1_700_000_100),
+      agenda,
+    ] },
+  });
+  const listTimeline = api.listTimeline.bind(api);
+  // 親の 'gone' は読み込んだ窓の外にある。
+  vi.spyOn(api, 'listTimeline').mockImplementation(async (...args) => {
+    const page = await listTimeline(...args);
+    return { ...page, items: page.items.filter((item) => item.object_id !== 'gone') };
+  });
+  const createPost = vi.spyOn(api, 'createPost');
+  render(<App api={api} />);
   const detail = await waitFor(() => getActiveColumn('Public thread'));
-  const agenda = (await within(detail).findByText('Agenda for this week')).closest('article');
-  if (!(agenda instanceof HTMLElement)) throw new Error('thread post not found');
+  await within(detail).findByText('Nested answer');
+  const rows = () => [...detail.querySelectorAll<HTMLElement>('[data-post-id]')]
+    .map((row) => [row.dataset.postId, row.dataset.depth]);
+  expect(rows()).toEqual([['first-post', '0'], ['nested', '1'], ['second', '0'], ['late', '0']]);
+  // 親の下の返信には返信先を重ねず、窓に親が無い返信には残す。どちらを押しても返信の列は開かない。
+  const row = (id: string) => detail.querySelector<HTMLElement>(`[data-post-id="${id}"]`)!;
+  expect(row('nested').querySelector('.post-reply-context')).toBeNull();
+  expect(within(row('late')).getByText('A post outside the window')).toBeInTheDocument();
+  await user.click(within(row('late')).getByText('A post outside the window'));
+  await user.click(within(row('nested')).getByText('Nested answer'));
 
-  await user.click(within(agenda).getByRole('button', { name: 'Reply' }));
-  const reply = await waitFor(() => getActiveColumn('Thread'));
-  expect(await within(reply).findByPlaceholderText('Write a reply')).toBeInTheDocument();
-  await waitFor(() => expect(window.location.hash).toContain('threadId=first-post'));
-  const replyId = columnIdentityId('thread', detailScope, 'first-post');
+  await user.click(within(row('nested')).getByRole('button', { name: 'Reply' }));
+  const replyInput = await within(detail).findByPlaceholderText('Write a reply');
+  expect(replyInput.closest('.shell-column-composer')?.querySelector('strong')).toHaveTextContent('Reply');
+  await user.type(replyInput, 'Following up');
+  await user.click(within(replyInput.closest('form')!).getByRole('button', { name: 'Reply' }));
+  await waitFor(() =>
+    expect(createPost.mock.lastCall?.slice(0, 5)).toEqual([
+      TOPIC, 'Following up', 'nested', [], { kind: 'public_channel', channel_id: CHANNEL },
+    ])
+  );
+  await within(detail).findByText('Following up');
+  expect(rows().map(([, depth]) => depth)).toEqual(['0', '1', '2', '0', '0']);
+  expect(screen.queryByRole('region', { name: /^Thread Column,/ })).not.toBeInTheDocument();
+  expect(window.location.hash).not.toContain('threadId=');
   const columns = persistedColumns();
-  expect(columns.map((column) => column.id)).toEqual([timelineId, listId, detailId, replyId, devId]);
+  expect(columns.map((column) => column.id)).toEqual([timelineId, listId, detailId, devId]);
   expect(columns.find((column) => column.id === detailId)?.parentColumnId).toBe(listId);
-  expect(columns.find((column) => column.id === replyId)?.parentColumnId).toBe(detailId);
 }, 30_000);
