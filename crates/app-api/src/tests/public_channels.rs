@@ -89,7 +89,7 @@ async fn a_device_without_an_invite_reads_a_public_channel_by_id_and_writes_into
     let b = device("b", &network, b_docs, a_docs, blobs);
 
     let channel = a
-        .create_public_channel(TOPIC, " 雑談 ", "最初の投稿")
+        .create_public_channel(TOPIC, " 雑談 ", "最初の投稿", Vec::new(), Vec::new())
         .await
         .expect("create the public channel");
     assert!(ChannelId::new(channel.channel_id.as_str()).is_public_channel());
@@ -254,7 +254,7 @@ async fn a_device_without_an_invite_reads_a_public_channel_by_id_and_writes_into
 
     // topic の公開タイムラインと、別の公開 channel には出ない。
     let other = a
-        .create_public_channel(TOPIC, "別のスレッド", "")
+        .create_public_channel(TOPIC, "別のスレッド", "", Vec::new(), Vec::new())
         .await
         .expect("another public channel");
     assert_eq!(other.first_post_id, None);
@@ -314,7 +314,7 @@ async fn public_channel_rows_carry_the_creator_profile_names() {
     let expected = (Some("alice".to_string()), Some("Alice".to_string()));
 
     let channel = a
-        .create_public_channel(TOPIC, "名前つき", "")
+        .create_public_channel(TOPIC, "名前つき", "", Vec::new(), Vec::new())
         .await
         .expect("create");
     assert_eq!(names(&channel), expected);
@@ -559,7 +559,9 @@ async fn real_iroh_device_without_an_invite_reads_a_public_channel_by_id() -> Re
         })),
     );
 
-    let channel = a.create_public_channel(TOPIC, "雑談", "最初の投稿").await?;
+    let channel = a
+        .create_public_channel(TOPIC, "雑談", "最初の投稿", Vec::new(), Vec::new())
+        .await?;
     assert_eq!(
         b.get_public_channel(TOPIC, &channel.channel_id).await?,
         Some(channel.clone())
@@ -581,4 +583,41 @@ async fn real_iroh_device_without_an_invite_reads_a_public_channel_by_id() -> Re
     publisher_docs.shutdown().await;
     client_node.shutdown().await?;
     publisher_node.shutdown().await
+}
+
+// #1889: 作成時の最初の投稿に添付と成人向けの自己申告ラベルを付けられる。本文が空でも添付があれば最初の投稿を作り、
+// ほかの端末が ID から読める。
+#[tokio::test]
+async fn a_public_channel_is_created_with_an_attachment_only_first_post() {
+    let a_docs = MemoryDocsSync::with_docs_author("07".repeat(32));
+    let b_docs = MemoryDocsSync::with_docs_author("08".repeat(32));
+    let blobs = Arc::new(MemoryBlobService::default());
+    let network = FakeNetwork::default();
+    let a = device("a", &network, a_docs.clone(), b_docs.clone(), blobs.clone());
+    let b = device("b", &network, b_docs, a_docs, blobs);
+
+    let channel = a
+        .create_public_channel(
+            TOPIC,
+            "画像だけ",
+            "",
+            vec![pending_image_attachment("image/png", &tiny_png_bytes())],
+            vec![kukuri_core::ADULT_CONTENT_LABEL.into()],
+        )
+        .await
+        .expect("create with an attachment");
+    let first_post_id = channel.first_post_id.clone().expect("the first post");
+    let thread = b
+        .list_thread(TOPIC, &first_post_id, None, 50)
+        .await
+        .expect("the first post on B")
+        .items;
+    let first = thread
+        .iter()
+        .find(|post| post.object_id == first_post_id)
+        .expect("the first post resolves by id");
+    assert!(in_channel(first, &channel.channel_id), "{first:?}");
+    assert_eq!(first.attachments.len(), 1, "{first:?}");
+    assert_eq!(first.attachments[0].mime, "image/png");
+    assert_eq!(first.content_labels, vec![kukuri_core::ADULT_CONTENT_LABEL]);
 }

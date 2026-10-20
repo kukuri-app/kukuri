@@ -9,7 +9,7 @@ import {
 } from 'react';
 
 import type { DesktopApi, PostView } from '@/lib/api';
-import { formatUnsupportedAttachmentMessage } from '@/lib/attachments';
+import { buildDraftMediaItems } from '@/shell/media';
 
 import {
   PUBLIC_CHANNEL_REF,
@@ -587,39 +587,17 @@ export function useDesktopShellActions({
     resetInput: boolean
   ) {
     if (files.length === 0) return;
-    const nextItems: DraftMediaItem[] = [];
-    // #965: 非対応ファイルは読み込まずに名前だけ集め、1 つの理由文にまとめる。
-    const rejectedNames: string[] = [];
-    let imageFailed = false;
-    let posterFailed = false;
-    for (const file of files) {
-      try {
-        if (file.type.startsWith('image/')) {
-          nextItems.push(await buildImageDraftItem(file));
-        } else if (file.type.startsWith('video/')) {
-          nextItems.push(await buildVideoDraftItem(file));
-        } else {
-          rejectedNames.push(file.name);
-        }
-      } catch {
-        if (file.type.startsWith('image/')) {
-          imageFailed = true;
-        } else {
-          posterFailed = true;
-        }
-      }
-    }
-    const failures = [
-      formatUnsupportedAttachmentMessage(translate, rejectedNames),
-      imageFailed ? translate('common:errors.failedToPrepareImageAttachment') : null,
-      posterFailed ? translate('common:errors.failedToGenerateVideoPoster') : null,
-    ].filter((message): message is string => message !== null);
+    const { items: nextItems, error } = await buildDraftMediaItems(
+      files,
+      { image: buildImageDraftItem, video: buildVideoDraftItem },
+      translate
+    );
     nextItems.forEach(rememberDraftPreview);
     setColumnDraftsByKey((current) =>
       setColumnDraft(current, target, (draft) => ({
         ...draft,
         mediaItems: [...draft.mediaItems, ...nextItems],
-        error: failures.length > 0 ? failures.join(' ') : null,
+        error,
         attachmentInputKey: resetInput ? draft.attachmentInputKey + 1 : draft.attachmentInputKey,
       }))
     );
@@ -717,10 +695,9 @@ export function useDesktopShellActions({
       );
       return;
     }
+    // 公開スレッドの詳細の列は、投稿の入力欄から返信する(#1891)。
     const replyObjectId =
-      target.action === 'reply'
-        ? draft.replyTarget?.object_id ?? target.threadId ?? null
-        : null;
+      draft.replyTarget?.object_id ?? (target.action === 'reply' ? target.threadId : null) ?? null;
     const currentState = storeApi.getState();
     const targetTimeline =
       currentState.timelinesByKey[

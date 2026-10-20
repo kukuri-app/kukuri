@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { type ReactNode, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type {
@@ -15,7 +15,7 @@ import type { InternalSmartReference } from '@/lib/internalLinks';
 
 import { Button } from '@/components/ui/button';
 
-import { buildThreadTree } from './buildThreadTree';
+import { buildThreadTree, type ThreadTreeNode } from './buildThreadTree';
 import { UnavailablePostsNotice } from './UnavailablePostsNotice';
 import { PostCard } from './PostCard';
 import { type PostCardView } from './types';
@@ -23,6 +23,29 @@ import { useInfiniteScrollSentinel } from './useInfiniteScrollSentinel';
 import { useWindowScrollAnchor } from './useWindowScrollAnchor';
 
 const MAX_VISUAL_DEPTH = 6;
+
+/** 返信ツリーの 1 行。深さに応じた字下げと接続線を描き、中身(投稿)は呼出し側が渡す。 */
+export function ThreadTreeItem({ node, children }: { node: ThreadTreeNode; children: ReactNode }) {
+  const visualDepth = Math.min(node.depth, MAX_VISUAL_DEPTH);
+  const visibleRails = node.rails.slice(0, Math.max(0, visualDepth - 1));
+  const id = node.view.post.object_id;
+  return (
+    <li className='thread-tree-item' data-post-id={id} data-depth={visualDepth}>
+      {visualDepth > 0 ? (
+        <span className='thread-tree-rails' aria-hidden='true'>
+          {visibleRails.map((continues, railIndex) => (
+            <span
+              key={`${id}-rail-${railIndex}`}
+              className={continues ? 'thread-rail thread-rail-line' : 'thread-rail'}
+            />
+          ))}
+          <span className='thread-rail thread-rail-elbow' data-last={node.isLast ? 'true' : 'false'} />
+        </span>
+      ) : null}
+      <div className='thread-tree-body'>{children}</div>
+    </li>
+  );
+}
 
 type ThreadTreeProps = {
   posts: PostCardView[];
@@ -122,59 +145,39 @@ export function ThreadTree({
           </Button>
         </li>
       ) : null}
-      {nodes.map(({ view, depth, rails, isLast }) => {
-        const visualDepth = Math.min(depth, MAX_VISUAL_DEPTH);
-        const visibleRails = rails.slice(0, Math.max(0, visualDepth - 1));
-        return (
-          <li key={view.post.object_id} className='thread-tree-item' data-post-id={view.post.object_id} data-depth={visualDepth}>
-            {visualDepth > 0 ? (
-              <span className='thread-tree-rails' aria-hidden='true'>
-                {visibleRails.map((continues, railIndex) => (
-                  <span
-                    key={`${view.post.object_id}-rail-${railIndex}`}
-                    className={continues ? 'thread-rail thread-rail-line' : 'thread-rail'}
-                  />
-                ))}
-                <span
-                  className='thread-rail thread-rail-elbow'
-                  data-last={isLast ? 'true' : 'false'}
-                />
-              </span>
-            ) : null}
-            <div className='thread-tree-body'>
-            <PostCard
-              enableLinkPreview
-              view={view}
-              onOpenAuthor={onOpenAuthor}
-              onOpenThread={onOpenThread}
-              onOpenThreadInTopic={onOpenThreadInTopic}
-              onReply={onReply}
-              onRepost={onRepost}
-              onQuoteRepost={onQuoteRepost}
-              localAuthorPubkey={localAuthorPubkey}
-              mediaObjectUrls={mediaObjectUrls}
-              ownedReactionAssets={ownedReactionAssets}
-              bookmarkedReactionAssets={bookmarkedReactionAssets}
-              recentReactions={recentReactions}
-              onToggleReaction={onToggleReaction}
-              onBookmarkCustomReaction={onBookmarkCustomReaction}
-              onReactionPickerOpen={onReactionPickerOpen}
-              onRetryLocalPost={onRetryLocalPost}
-              onRestoreLocalPost={onRestoreLocalPost}
-              onWithdraw={onWithdraw}
-              onActivateReference={onActivateReference}
-              onCopyLink={onCopyPostLink}
-              isFocused={focusedPostObjectId === view.post.object_id}
-              onSubmitReport={onSubmitReport}
-              onCopyReportContact={onCopyReportContact}
-              onFetchReportManifest={onFetchReportManifest}
-              onFetchNodePolicies={onFetchNodePolicies}
-              onMuteReportAuthor={onMuteReportAuthor}
-            />
-            </div>
-          </li>
-        );
-      })}
+      {nodes.map((node) => (
+        <ThreadTreeItem key={node.view.post.object_id} node={node}>
+          <PostCard
+            enableLinkPreview
+            view={node.view}
+            onOpenAuthor={onOpenAuthor}
+            onOpenThread={onOpenThread}
+            onOpenThreadInTopic={onOpenThreadInTopic}
+            onReply={onReply}
+            onRepost={onRepost}
+            onQuoteRepost={onQuoteRepost}
+            localAuthorPubkey={localAuthorPubkey}
+            mediaObjectUrls={mediaObjectUrls}
+            ownedReactionAssets={ownedReactionAssets}
+            bookmarkedReactionAssets={bookmarkedReactionAssets}
+            recentReactions={recentReactions}
+            onToggleReaction={onToggleReaction}
+            onBookmarkCustomReaction={onBookmarkCustomReaction}
+            onReactionPickerOpen={onReactionPickerOpen}
+            onRetryLocalPost={onRetryLocalPost}
+            onRestoreLocalPost={onRestoreLocalPost}
+            onWithdraw={onWithdraw}
+            onActivateReference={onActivateReference}
+            onCopyLink={onCopyPostLink}
+            isFocused={focusedPostObjectId === node.view.post.object_id}
+            onSubmitReport={onSubmitReport}
+            onCopyReportContact={onCopyReportContact}
+            onFetchReportManifest={onFetchReportManifest}
+            onFetchNodePolicies={onFetchNodePolicies}
+            onMuteReportAuthor={onMuteReportAuthor}
+          />
+        </ThreadTreeItem>
+      ))}
       {unavailableCount > 0 ? (
         <li className='thread-tree-item' data-depth={0}>
           <UnavailablePostsNotice count={unavailableCount} />

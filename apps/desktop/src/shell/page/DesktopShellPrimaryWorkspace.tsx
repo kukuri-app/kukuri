@@ -61,6 +61,7 @@ import { useLiveSurfacesEnabled } from './publicThreadActions';
 import type { OpenAuthorDetail, OpenThread, Translate } from '@/shell/actions/shared';
 import { useShallow } from 'zustand/react/shallow';
 import { DEFAULT_ASYNC_PANEL_STATE } from '@/shell/slices/shared';
+import { setColumnDraft } from '@/shell/slices/columnDrafts';
 
 type ViewModels = ReturnType<typeof useDesktopShellViewModels>;
 
@@ -352,6 +353,7 @@ export function DesktopShellPrimarySurface({
   const setGameTitle = useDesktopShellFieldSetter('gameTitle');
   const setGameDescription = useDesktopShellFieldSetter('gameDescription');
   const setGameParticipantsInput = useDesktopShellFieldSetter('gameParticipantsInput');
+  const setColumnDraftsByKey = useDesktopShellFieldSetter('columnDraftsByKey');
   const profileAuthorLabel = authorDisplayLabel(
     syncStatus.local_author_pubkey,
     localProfile?.display_name,
@@ -390,6 +392,20 @@ export function DesktopShellPrimarySurface({
       topic: topicId,
       channelId: topicId === surfaceTopic ? surfaceChannelId : null,
     });
+  // #1891: 公開スレッドの詳細では返信の列を開かず、この列の下部の入力欄を返信先つきで開く。
+  const replyInPublicThread = (post: PostView) => {
+    const scope = column.scope;
+    if (!scope) return;
+    setColumnDraftsByKey((current) =>
+      setColumnDraft(current, { columnId: column.id, action: 'post', scope }, (draft) => ({
+        ...draft,
+        expanded: true,
+        replyTarget: post,
+        repostTarget: null,
+        error: null,
+      }))
+    );
+  };
   const activeTimelineKey = timelineStorageKeyForChannel(surfaceTopic, surfaceChannelId);
   const surfaceJoinedChannels = useMemo(
     () => joinedChannelsByTopic[surfaceTopic] ?? [],
@@ -555,7 +571,7 @@ export function DesktopShellPrimarySurface({
                   onOpenAuthor={(authorPubkey) => void openAuthorDetail(authorPubkey)}
                   onOpenThread={openThreadInSurfaceScope}
                   onOpenThreadInTopic={openThreadInTopicFromSurface}
-                  onReply={beginColumnReply}
+                  onReply={isPublicThread ? replyInPublicThread : beginColumnReply}
                   onRepost={(post) => void handleSimpleRepost(post)}
                   onQuoteRepost={beginColumnQuoteRepost}
                   onRetryLocalPost={handleRetryLocalPost}

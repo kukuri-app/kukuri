@@ -52,12 +52,12 @@ async fn another_peers_public_channels_are_listed_in_both_orders_and_move_up_on_
     let (b, b_store) = device_with_store("b", &network, b_docs, a_docs, blobs);
 
     let older = a
-        .create_public_channel(TOPIC, "古いスレッド", "最初の投稿")
+        .create_public_channel(TOPIC, "古いスレッド", "最初の投稿", Vec::new(), Vec::new())
         .await
         .expect("the older channel");
     tokio::time::sleep(Duration::from_millis(5)).await;
     let newer = a
-        .create_public_channel(TOPIC, "新しいスレッド", "")
+        .create_public_channel(TOPIC, "新しいスレッド", "", Vec::new(), Vec::new())
         .await
         .expect("the newer channel");
     let both = [newer.channel_id.clone(), older.channel_id.clone()];
@@ -121,7 +121,7 @@ async fn unreadable_index_entries_are_counted_and_left_out_of_the_list() {
     let a = device("a", &network, a_docs.clone(), b_docs.clone(), blobs.clone());
     let b = device("b", &network, b_docs, a_docs.clone(), blobs);
     let real = a
-        .create_public_channel(TOPIC, "読めるスレッド", "")
+        .create_public_channel(TOPIC, "読めるスレッド", "", Vec::new(), Vec::new())
         .await
         .expect("a readable channel");
 
@@ -189,11 +189,11 @@ async fn hidden_creators_threads_are_left_out_of_the_list() {
     let a = device("a", &network, a_docs.clone(), b_docs.clone(), blobs.clone());
     let b = device("b", &network, b_docs, a_docs, blobs);
     let hidden = a
-        .create_public_channel(TOPIC, "mute した作者のスレッド", "")
+        .create_public_channel(TOPIC, "mute した作者のスレッド", "", Vec::new(), Vec::new())
         .await
         .expect("a channel");
     let mine = b
-        .create_public_channel(TOPIC, "自分のスレッド", "")
+        .create_public_channel(TOPIC, "自分のスレッド", "", Vec::new(), Vec::new())
         .await
         .expect("an own channel");
     assert_eq!(
@@ -247,7 +247,7 @@ async fn a_creation_hint_places_the_row_on_a_device_with_the_topic_lease() {
     .await
     .expect("open the topic column");
     let channel = a
-        .create_public_channel(TOPIC, "知らせのあるスレッド", "")
+        .create_public_channel(TOPIC, "知らせのあるスレッド", "", Vec::new(), Vec::new())
         .await
         .expect("create");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -284,14 +284,26 @@ async fn a_list_page_reads_the_same_amount_however_many_unrelated_threads_and_po
         );
         for index in 0..3 {
             creator
-                .create_public_channel(TOPIC, &format!("スレッド {index}"), "")
+                .create_public_channel(
+                    TOPIC,
+                    &format!("スレッド {index}"),
+                    "",
+                    Vec::new(),
+                    Vec::new(),
+                )
                 .await
                 .expect("a listed channel");
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
         for _ in 0..unrelated_channels {
             creator
-                .create_public_channel("kukuri:topic:unrelated", "別の topic のスレッド", "")
+                .create_public_channel(
+                    "kukuri:topic:unrelated",
+                    "別の topic のスレッド",
+                    "",
+                    Vec::new(),
+                    Vec::new(),
+                )
                 .await
                 .expect("an unrelated channel");
         }
@@ -374,12 +386,12 @@ async fn an_own_post_moves_the_thread_up_on_the_own_device() {
         Arc::new(MemoryBlobService::default()),
     );
     let older = a
-        .create_public_channel(TOPIC, "古いスレッド", "")
+        .create_public_channel(TOPIC, "古いスレッド", "", Vec::new(), Vec::new())
         .await
         .expect("the older channel");
     tokio::time::sleep(Duration::from_millis(5)).await;
     let newer = a
-        .create_public_channel(TOPIC, "新しいスレッド", "")
+        .create_public_channel(TOPIC, "新しいスレッド", "", Vec::new(), Vec::new())
         .await
         .expect("the newer channel");
     tokio::time::sleep(Duration::from_millis(1_100)).await;
@@ -422,7 +434,7 @@ async fn an_expired_row_waiting_for_reclaim_is_placed_again_by_the_next_reconcil
     );
     b.switch_writer(1);
     let channel = a
-        .create_public_channel(TOPIC, "期限を過ぎるスレッド", "")
+        .create_public_channel(TOPIC, "期限を過ぎるスレッド", "", Vec::new(), Vec::new())
         .await
         .expect("create");
     let listed = async || {

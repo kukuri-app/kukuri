@@ -120,6 +120,8 @@ impl AppService {
         topic_id: &str,
         title: &str,
         first_post: &str,
+        attachments: Vec<PendingAttachment>,
+        content_labels: Vec<String>,
     ) -> Result<PublicChannelView> {
         anyhow::ensure!(
             self.services.writes_buckets(),
@@ -137,7 +139,8 @@ impl AppService {
         };
         // 最初の投稿を書く前に、metadata の上限を確かめる(投稿だけが残らないように)。
         build_public_channel_envelope(self.keys(), &content)?;
-        if !first_post.trim().is_empty() {
+        // 本文が空でも添付があれば最初の投稿を作る(タイムラインの投稿と同じ。ラベルだけでは作らない。#1889)。
+        if !first_post.trim().is_empty() || !attachments.is_empty() {
             content.first_post_id = Some(EnvelopeId::from(
                 self.create_post_object(
                     topic_id,
@@ -146,8 +149,8 @@ impl AppService {
                     },
                     first_post,
                     None,
-                    Vec::new(),
-                    Vec::new(),
+                    attachments,
+                    content_labels,
                     None,
                 )
                 .await?,

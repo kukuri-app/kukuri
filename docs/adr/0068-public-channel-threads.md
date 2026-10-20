@@ -90,10 +90,13 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 
 #1887: 詳細の描画は通常のタイムラインから分ける。取得済みの有界な降順窓だけを反転し、古いページを上、新着を下へ並べる。同時刻の順序は既存cursorに従う。詳細ではフィルター・ブックマーク表示切替・投稿のブックマーク操作を出さず、保存済みの表示切替・フィルターを無視する。列の種類・route・API・保存形式と既存ブックマークデータは維持する。投稿・返信・Live・リンクのコピーも従来どおりとする。
 
+#1891: 詳細は取得済みの有界な窓だけで返信ツリーを組み、窓の中に親がある返信を親の下に置く（親が窓に無い返信は最上位）。詳細からは返信の列（列の種類 `thread`）を開かず、返信は詳細の列の投稿の入力欄に返信先を付けて送る（`reply_to` は従来どおり）。取得・API・route・保存形式は変えない。ライブの列の「ライブに返信」と、リンク・通知・保存済みの返信の列は従来どおり返信の列を使う。
+
 - 一覧は列の種類 `publicThreads`（scope は topic で、channel は無し）。route は `#/timeline?topic=<topic>&context=publicThreads`。Control Center の topic の「公開」の次の「公開スレッド」の行と、列の追加から開く（2026-10-17 のユーザー判断 9）。
   - 並び順は列ごとの `publicThreadOrder`（既定は `last_post`、ほかに `created`）で、列と一緒に保存する。列の上部の icon の menu で切り替え、切り替えると読み込んだ行を捨てて先頭から読む。
   - 行はタイトル・作成者・並び順の時刻。表示中の列だけが 3 秒ごとに先頭のページ（20 件）を読み直し、読み込んだ続きの行の前に重ねる。続きは下端で読む。行は 200 件までで、超えたら先頭の行を外し、「最新に戻る」で先頭から読み直す（タイムラインと同じ）。
   - 作成は列の下部の「スレッドを作る」の Dialog（タイトルと最初の投稿。判断 3）。作った後は詳細の列を開き、その topic の一覧の列を先頭から読み直す。
+  - 最初の投稿には、タイムラインの投稿と同じ添付（画像・動画の選択、本文の欄への画像の貼り付け、プレビューと取り外し）と成人向けの自己申告を付けられる。本文が空でも添付があれば最初の投稿を作る（ラベルだけでは作らない）。閉じると下書きは残さない（#1889）。
 - 詳細は timeline の列（scope の channel が公開スレッドの ID）で、見出しは「公開スレッド」、scope の表示は「<タイトル> · <topic>」。route は `#/timeline?topic=<topic>&channel=<ID>`。
   - 新しく開くときは、route の反映が、その topic の一覧の列（無ければ作る）を親にする。直接リンクや本文のリンクから開いても、閉じると一覧の列へ戻る。
   - 列の上部の「リンクをコピー」はこの route を写す（判断 5）。タイトルを知らなければ、列が表示中の間に ID から読み、読めなければ「タイトルを取得できません」と出す。Control Center の列の一覧でも「公開スレッド」と呼ぶ。
@@ -140,7 +143,7 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 | channel の metadata | 新しい種類の署名つき envelope。#1888 で版と削除の欄を足した（版 0 は欄を書かない） | 旧版は読まない。#1888 より前の版は、手元の行があれば古いタイトルのまま・削除を解釈しない。新しく読む場合は変更後のタイトルが見え、削除した記録はタイトルが空なので読めず一覧に出ない（2026-10-20 のユーザー判断 4） |
 | docs の key | topic の bucket に `channels/list/…`・`channels/activity/…`・`channels/<ID>/timeline/…` を足す | 旧版と CN は読まない |
 | hint | channel ごとの hint の topic を新設する。作成の知らせは既存の `SessionChanged` に種類を足す | 旧版は購読しない。未知の種類は読まない |
-| API・CLI | `ChannelRef`・`TimelineScope` に種類を足し、作成・取得・一覧・タイトルの変更・削除の command を足す。行に削除済みの印（`deleted`）を足す。行に作成者の名前（無いときは欄を出さない）と配信中の印（`live_now`）を足す。Live の作成で `public_channel` を受け付ける | 既存の値と出力の意味は変えない |
+| API・CLI | `ChannelRef`・`TimelineScope` に種類を足し、作成・取得・一覧・タイトルの変更・削除の command を足す。行に削除済みの印（`deleted`）を足す。行に作成者の名前（無いときは欄を出さない）と配信中の印（`live_now`）を足す。Live の作成で `public_channel` を受け付ける。作成の request に最初の投稿の添付と自己申告のラベル（`attachments`・`content_labels`、既定は空。#1889）を足す | 既存の値と出力の意味は変えない |
 | Live の manifest・参照 | 形は変えない。channel に公開 channel の ID を使う。公開 channel の Live への参照はどこでも許す | 旧版は公開 channel の Live を受け付けない。旧版は、別の場所の紹介 post の参照を限定 channel の Live と見て捨てる（Live の表示の無い投稿に見える。#1839 の判断 3 と同じ） |
 | workspace の保存・route | 列の種類 `publicThreads` と並び順の欄、route の `context=publicThreads` を足す。詳細の列は既存の timeline の列（scope の channel が公開スレッドの ID） | 旧版は一覧の列を読み飛ばし、`context=publicThreads` を topic のタイムラインへ正規化する。詳細の列とそのリンクは、旧版では参加していない channel として投稿が出ない（判断 8 の範囲） |
 | SQLite | 一覧の表 `public_channels` と migration を足し、remote cache に種類 `public_channel` を足す。Live の表に配信中の行の部分索引を足す（AC-4）。#1888 で `public_channels` に版と削除の列を足す（既定は 0） | 既存の行は版 0・削除なしとして読む |

@@ -61,7 +61,7 @@ async fn a_device_with_the_topic_lease_follows_the_creators_rename_and_deletion(
     let (b, b_store) = device_with_store("b", &network, b_docs, a_docs, blobs);
     open_topic(&b).await;
     let channel = a
-        .create_public_channel(TOPIC, "雑談", "最初の投稿")
+        .create_public_channel(TOPIC, "雑談", "最初の投稿", Vec::new(), Vec::new())
         .await
         .expect("create");
     let row = async |done: &dyn Fn(&kukuri_store::PublicChannelRow) -> bool| {
@@ -132,7 +132,7 @@ async fn a_device_without_the_hint_catches_up_after_reading_the_thread_by_id() {
     let a = device("a", &network, a_docs.clone(), b_docs.clone(), blobs.clone());
     let b = device("b", &network, b_docs, a_docs, blobs);
     let channel = a
-        .create_public_channel(TOPIC, "雑談", "")
+        .create_public_channel(TOPIC, "雑談", "", Vec::new(), Vec::new())
         .await
         .expect("create");
     assert_eq!(

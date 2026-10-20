@@ -1,6 +1,9 @@
 import { type FormEvent, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { ComposerAdultLabelToggle } from '@/components/core/ComposerAdultLabelToggle';
+import { ComposerAttachmentField } from '@/components/core/ComposerAttachmentField';
+import { ComposerDraftPreviewList } from '@/components/core/ComposerDraftPreviewList';
 import { PublicThreadSlot, type PublicThreadSlotValue } from '@/components/core/publicThreadSlot';
 import { useOnScreen } from '@/components/core/useOnScreen';
 import { Button } from '@/components/ui/button';
@@ -16,15 +19,23 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import type { DesktopApi, PublicChannelView } from '@/lib/api';
+import { clipboardImageFiles } from '@/lib/attachments';
 import { buildPublicThreadLink } from '@/lib/internalLinks';
 import { topicDisplayName } from '@/lib/topicId';
+import {
+  ADULT_CONTENT_LABEL,
+  buildDraftMediaItems,
+  buildImageDraftItem,
+  buildVideoDraftItem,
+  composerDraftMediaViews,
+} from '@/shell/media';
 import {
   KNOWN_PUBLIC_THREAD_LIMIT,
   isHiddenAuthor,
   knownPublicThreadTitle,
   rememberPublicThreads,
 } from '@/shell/slices/publicThreads';
-import { useDesktopShellStore, useDesktopShellStoreApi } from '@/shell/store';
+import { type DraftMediaItem, useDesktopShellStore, useDesktopShellStoreApi } from '@/shell/store';
 
 import { PublicThreadActionsContext, type PublicThreadActions } from './publicThreadActions';
 import { PublicThreadLinkCard } from './PublicThreadLinkCard';
@@ -161,7 +172,8 @@ function PublicThreadChipTitle({ topic, channelId, fallback }: { topic: string; 
   return <span ref={ref}>{thread && !hidden ? thread.title : fallback}</span>;
 }
 
-/** 一覧の列の「スレッドを作る」。タイトル(1〜200 文字)と最初の投稿(空でもよい)を書く(判断 3)。 */
+/** 一覧の列の「スレッドを作る」。タイトル(1〜200 文字)と最初の投稿(空でもよい)を書く(判断 3)。最初の投稿には
+ * タイムラインの投稿と同じ添付と成人向けの自己申告を付けられる(#1889)。閉じると下書きは残さない。 */
 function CreatePublicThreadDialog({
   api,
   topic,
@@ -176,15 +188,50 @@ function CreatePublicThreadDialog({
   const { t } = useTranslation(['shell', 'common']);
   const [title, setTitle] = useState('');
   const [firstPost, setFirstPost] = useState('');
+  const [media, setMedia] = useState<DraftMediaItem[]>([]);
+  const [attachmentInputKey, setAttachmentInputKey] = useState(0);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [adultLabeled, setAdultLabeled] = useState(false);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  const draftSequence = useRef(0);
+  // 閉じたときに、まだ持っている添付の preview を解放する。
+  const mediaRef = useRef(media);
+  useEffect(() => {
+    mediaRef.current = media;
+  }, [media]);
+  useEffect(() => () => mediaRef.current.forEach((item) => URL.revokeObjectURL(item.preview_url)), []);
+  const addFiles = async (files: File[]) => {
+    if (files.length === 0) return;
+    const nextDraftId = () => `public-thread-draft-${(draftSequence.current += 1)}`;
+    const { items, error } = await buildDraftMediaItems(
+      files,
+      { image: (file) => buildImageDraftItem(file, nextDraftId), video: (file) => buildVideoDraftItem(file, nextDraftId) },
+      t
+    );
+    setMedia((current) => [...current, ...items]);
+    setAttachmentError(error);
+  };
+  const removeFile = (itemId: string) => {
+    const item = media.find((candidate) => candidate.id === itemId);
+    if (item) URL.revokeObjectURL(item.preview_url);
+    setMedia((current) => current.filter((candidate) => candidate.id !== itemId));
+  };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (pending || !title.trim()) return;
     setPending(true);
     setFailed(false);
     try {
-      onCreated(await api.createPublicChannel(topic, title.trim(), firstPost.trim()));
+      onCreated(
+        await api.createPublicChannel(
+          topic,
+          title.trim(),
+          firstPost.trim(),
+          media.flatMap((item) => item.attachments),
+          adultLabeled ? [ADULT_CONTENT_LABEL] : []
+        )
+      );
     } catch {
       setPending(false);
       setFailed(true);
@@ -213,8 +260,35 @@ function CreatePublicThreadDialog({
             </Label>
             <Label>
               <span>{t('shell:publicThreads.create.firstPostLabel')}</span>
-              <Textarea value={firstPost} onChange={(event) => setFirstPost(event.target.value)} disabled={pending} />
+              <Textarea
+                value={firstPost}
+                onChange={(event) => setFirstPost(event.target.value)}
+                onPaste={(event) => {
+                  const images = clipboardImageFiles(event.clipboardData);
+                  if (images.length === 0) return;
+                  event.preventDefault();
+                  void addFiles(images);
+                }}
+                disabled={pending}
+              />
             </Label>
+            <ComposerAttachmentField
+              inputKey={attachmentInputKey}
+              count={media.length}
+              disabled={pending}
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? []);
+                setAttachmentInputKey((key) => key + 1);
+                void addFiles(files);
+              }}
+            />
+            {attachmentError ? (
+              <p className='error error-inline' role='alert'>
+                {attachmentError}
+              </p>
+            ) : null}
+            <ComposerDraftPreviewList items={composerDraftMediaViews(media)} onRemove={removeFile} />
+            <ComposerAdultLabelToggle checked={adultLabeled} onChange={setAdultLabeled} />
             {failed ? <p className='error error-inline'>{t('shell:publicThreads.create.failed')}</p> : null}
             <Button type='submit' disabled={pending || !title.trim()}>
               {t('shell:publicThreads.create.submit')}

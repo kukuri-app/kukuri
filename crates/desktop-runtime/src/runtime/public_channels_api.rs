@@ -6,8 +6,15 @@ impl DesktopRuntime {
         &self,
         request: CreatePublicChannelRequest,
     ) -> Result<kukuri_app_api::PublicChannelView> {
+        let attachments = pending_attachments_from_requests(request.attachments).await?;
         self.app_service
-            .create_public_channel(&request.topic, &request.title, &request.first_post)
+            .create_public_channel(
+                &request.topic,
+                &request.title,
+                &request.first_post,
+                attachments,
+                request.content_labels,
+            )
             .await
     }
 
