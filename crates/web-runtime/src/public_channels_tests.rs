@@ -26,6 +26,8 @@ fn channel(channel_id: &str, created_at: i64) -> PublicChannelRow {
         created_at,
         first_post_id: None,
         last_post_at: created_at,
+        revision: 0,
+        deleted: false,
     }
 }
 

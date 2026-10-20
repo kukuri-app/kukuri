@@ -609,11 +609,21 @@ pub struct CreatePublicChannelRequest {
     pub content_labels: Vec<String>,
 }
 
+/// 公開 channel を 1 件指す(ID からの取得と、作成者の削除。#1888)。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct GetPublicChannelRequest {
     pub topic: String,
     pub channel_id: String,
+}
+
+/// 作成者が公開 channel のタイトルを変える(#1888)。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct UpdatePublicChannelTitleRequest {
+    pub topic: String,
+    pub channel_id: String,
+    pub title: String,
 }
 
 /// topic の公開 channel の一覧の 1 ページ(#1840)。`order` の既定は最後の投稿の新しい順、`limit` の既定は 20。

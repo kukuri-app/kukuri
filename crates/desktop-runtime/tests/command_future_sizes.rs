@@ -170,6 +170,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         ),
         ("delete_dome", size1(DesktopRuntime::delete_dome)),
         (
+            "delete_public_channel",
+            size1(DesktopRuntime::delete_public_channel),
+        ),
+        (
             "disable_community_node_observation_sharing",
             size1(DesktopRuntime::disable_community_node_observation_sharing),
         ),
@@ -629,6 +633,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::unsubscribe_topic),
         ),
         ("update_game_room", size1(DesktopRuntime::update_game_room)),
+        (
+            "update_public_channel_title",
+            size1(DesktopRuntime::update_public_channel_title),
+        ),
         (
             "update_metaverse_room",
             size1(DesktopRuntime::update_metaverse_room),

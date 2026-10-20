@@ -9,6 +9,8 @@ fn content(keys: &KukuriKeys) -> KukuriPublicChannelContentV1 {
         topic_id: TopicId::new("kukuri:topic:threads"),
         title: "雑談".into(),
         first_post_id: Some(EnvelopeId::from("first-post")),
+        revision: 0,
+        deleted: false,
     }
 }
 
@@ -104,4 +106,37 @@ fn public_channel_metadata_roundtrips_and_rejects_unbound_or_invalid_records() {
     let mut longest = content(&keys);
     longest.title = "字".repeat(PUBLIC_CHANNEL_MAX_TITLE_CHARS);
     assert!(build_public_channel_envelope(&keys, &longest).is_ok());
+}
+
+// #1888: 作成者は版を進めてタイトルを変え、削除する。署名の時刻は作成時刻のまま。版 0 の記録は版と削除の欄を持たない
+// (既存の記録と同じ形)。削除した版はタイトルを持たない(旧版の確認はタイトルの無い記録を読まない)。
+#[test]
+fn public_channel_revisions_keep_the_creation_time_and_deletion_drops_the_title() {
+    let keys = generate_keys();
+    let created = build_public_channel_envelope(&keys, &content(&keys)).expect("created");
+    assert!(!created.content.contains("revision") && !created.content.contains("deleted"));
+
+    let mut renamed = content(&keys);
+    renamed.title = "新しい雑談".into();
+    renamed.revision = 1;
+    let envelope = build_public_channel_envelope(&keys, &renamed).expect("renamed");
+    assert_eq!(envelope.created_at, CREATED_AT_MS / 1_000);
+    assert_eq!(verify_public_channel(&envelope).expect("verified"), renamed);
+
+    let mut deleted = content(&keys);
+    deleted.title = String::new();
+    deleted.revision = 2;
+    deleted.deleted = true;
+    let envelope = build_public_channel_envelope(&keys, &deleted).expect("deleted");
+    assert_eq!(verify_public_channel(&envelope).expect("verified"), deleted);
+
+    for (title, revision) in [("雑談", 2), ("", 0)] {
+        let mut invalid = deleted.clone();
+        invalid.title = title.into();
+        invalid.revision = revision;
+        assert!(
+            build_public_channel_envelope(&keys, &invalid).is_err(),
+            "{title:?} {revision}"
+        );
+    }
 }

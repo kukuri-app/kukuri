@@ -1,5 +1,6 @@
 //! #1840: 公開 channel の一覧の行。2 つの並び順の cursor 走査、最後の投稿の時刻の更新（古い時刻では戻らない）、
-//! 置き直しで最後の投稿の時刻を保つこと、topic で分かれることを、両方の実装で同じにする。
+//! 置き直しで最後の投稿の時刻を保つこと、topic で分かれること、タイトルと削除は版の大きい方を残すこと（#1888）を、
+//! 両方の実装で同じにする。
 
 use super::*;
 
@@ -14,6 +15,8 @@ fn channel(id: &str, topic: &str, created_at: i64, last_post_at: i64) -> PublicC
         created_at,
         first_post_id: (created_at % 200 == 0).then(|| format!("first-{id}")),
         last_post_at,
+        revision: 0,
+        deleted: false,
     }
 }
 
@@ -48,6 +51,7 @@ struct PublicChannelScenarioResult {
     created: Vec<Vec<String>>,
     other_topic: Vec<Vec<String>>,
     one: Option<PublicChannelRow>,
+    renamed: Option<PublicChannelRow>,
     missing: Option<PublicChannelRow>,
 }
 
@@ -72,10 +76,27 @@ async fn public_channel_scenario<S: Store + ProjectionStore>(
             .await
             .expect("PublicChannelStore::note_public_channel_post");
     }
-    // 置き直しても、最後の投稿の時刻は新しい方が残る。
-    PublicChannelStore::put_public_channel(store, channel("pc-remote-1", TOPIC, 200, 50), true)
-        .await
-        .expect("PublicChannelStore::put_public_channel again");
+    // 置き直しても、最後の投稿の時刻は新しい方が残る。タイトルと削除は版の大きい方が残り、同じ版と古い版では戻らない。
+    let mut renamed = channel("pc-remote-1", TOPIC, 200, 50);
+    renamed.title = "renamed".into();
+    renamed.revision = 2;
+    let mut deleted = channel("pc-remote-2", TOPIC, 300, 150);
+    deleted.title = String::new();
+    deleted.revision = 1;
+    deleted.deleted = true;
+    let mut same_revision = renamed.clone();
+    same_revision.title = "same revision".into();
+    for row in [
+        renamed,
+        channel("pc-remote-1", TOPIC, 200, 50),
+        same_revision,
+        deleted,
+        channel("pc-remote-2", TOPIC, 300, 150),
+    ] {
+        PublicChannelStore::put_public_channel(store, row, true)
+            .await
+            .expect("PublicChannelStore::put_public_channel again");
+    }
     PublicChannelScenarioResult {
         last_post: all_pages(store, TOPIC, PublicChannelOrder::LastPost).await,
         created: all_pages(store, TOPIC, PublicChannelOrder::Created).await,
@@ -88,6 +109,9 @@ async fn public_channel_scenario<S: Store + ProjectionStore>(
         one: PublicChannelStore::get_public_channel_row(store, "pc-remote-2")
             .await
             .expect("PublicChannelStore::get_public_channel_row"),
+        renamed: PublicChannelStore::get_public_channel_row(store, "pc-remote-1")
+            .await
+            .expect("PublicChannelStore::get_public_channel_row renamed"),
         missing: PublicChannelStore::get_public_channel_row(store, "pc-missing")
             .await
             .expect("PublicChannelStore::get_public_channel_row missing"),
@@ -118,11 +142,23 @@ where
     );
     assert_eq!(backend.other_topic, vec![vec!["pc-other@400".to_string()]]);
     assert_eq!(
-        backend
-            .one
-            .as_ref()
-            .map(|row| (row.last_post_at, row.first_post_id.clone())),
-        Some((150, None))
+        backend.one.as_ref().map(|row| (
+            row.last_post_at,
+            row.first_post_id.clone(),
+            row.title.as_str(),
+            row.revision,
+            row.deleted
+        )),
+        Some((150, None, "", 1, true))
+    );
+    assert_eq!(
+        backend.renamed.as_ref().map(|row| (
+            row.last_post_at,
+            row.title.as_str(),
+            row.revision,
+            row.deleted
+        )),
+        Some((200, "renamed", 2, false))
     );
     assert!(backend.missing.is_none());
 }

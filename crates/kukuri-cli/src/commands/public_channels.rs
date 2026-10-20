@@ -3,6 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kukuri_desktop_runtime::{
     CreatePublicChannelRequest, GetPublicChannelRequest, ListPublicChannelsRequest,
+    UpdatePublicChannelTitleRequest,
 };
 use serde_json::{Value, json};
 
@@ -12,12 +13,14 @@ use crate::{
     registry::{CommandHandler, CommandOutput, CommandRegistration, HandlerContext},
 };
 
-// 公開 channel(公開スレッド。#1840)の作成と、ID からの取得と、topic の一覧。
+// 公開 channel(公開スレッド。#1840)の作成と、ID からの取得と、topic の一覧。作成者のタイトルの変更と削除(#1888)。
 #[derive(Clone, Copy)]
 enum Operation {
     Create,
     Get,
     List,
+    UpdateTitle,
+    Delete,
 }
 
 struct Handler(Operation);
@@ -57,6 +60,20 @@ impl CommandHandler for Handler {
                     .await
                     .map_err(command_error)?,
             ),
+            Operation::UpdateTitle => encode(
+                runtime
+                    .update_public_channel_title(decode::<UpdatePublicChannelTitleRequest>(
+                        payload,
+                    )?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            Operation::Delete => encode(
+                runtime
+                    .delete_public_channel(decode::<GetPublicChannelRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
         }
     }
 }
@@ -85,6 +102,27 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
                 &["topic", "channel_id"],
             ),
             schema::nullable(public_channel_schema()),
+        ),
+        (
+            "update_public_channel_title",
+            CommandEffect::Write,
+            Operation::UpdateTitle,
+            schema::object(
+                json!({"topic": {"type": "string"}, "channel_id": {"type": "string"},
+                "title": {"type": "string"}}),
+                &["topic", "channel_id", "title"],
+            ),
+            public_channel_schema(),
+        ),
+        (
+            "delete_public_channel",
+            CommandEffect::Write,
+            Operation::Delete,
+            schema::object(
+                json!({"topic": {"type": "string"}, "channel_id": {"type": "string"}}),
+                &["topic", "channel_id"],
+            ),
+            public_channel_schema(),
         ),
         (
             "list_public_channels",
@@ -124,7 +162,7 @@ fn public_channel_schema() -> Value {
         json!({"channel_id": {"type": "string"}, "topic_id": {"type": "string"},
         "title": {"type": "string"}, "creator_pubkey": {"type": "string"},
         "created_at": {"type": "integer"}, "first_post_id": {"type": "string"},
-        "last_post_at": {"type": "integer"}}),
+        "last_post_at": {"type": "integer"}, "deleted": {"type": "boolean"}}),
         &[
             "channel_id",
             "topic_id",

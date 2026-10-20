@@ -27,6 +27,24 @@ impl DesktopRuntime {
             .await
     }
 
+    pub async fn update_public_channel_title(
+        &self,
+        request: UpdatePublicChannelTitleRequest,
+    ) -> Result<kukuri_app_api::PublicChannelView> {
+        self.app_service
+            .update_public_channel_title(&request.topic, &request.channel_id, &request.title)
+            .await
+    }
+
+    pub async fn delete_public_channel(
+        &self,
+        request: GetPublicChannelRequest,
+    ) -> Result<kukuri_app_api::PublicChannelView> {
+        self.app_service
+            .delete_public_channel(&request.topic, &request.channel_id)
+            .await
+    }
+
     pub async fn list_public_channels(
         &self,
         request: ListPublicChannelsRequest,

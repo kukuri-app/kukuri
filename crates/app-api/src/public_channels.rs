@@ -3,7 +3,8 @@
 //! metadata は作成時刻の公開 topic の bucket の `channels/list/<作成時刻の秒 20 桁>-<channel ID>/<channel ID>` に置く
 //! (タイムラインの索引と同じ形なので、作成の新しい順に有界に読める)。channel の投稿は既存の投稿の作成
 //! (`ChannelRef::PublicChannel`)で同じ topic の bucket に置く。検証した metadata は、一覧の行(`PublicChannelStore`)
-//! にも置く。
+//! にも置く。タイトルの変更と削除(#1888)は、作成者が版を進めた metadata で同じ key を上書きし、読む側は行より
+//! 新しい版だけを反映する。
 use crate::service::*;
 use kukuri_core::{
     KukuriPublicChannelContentV1, PUBLIC_CHANNEL_KIND, build_public_channel_envelope,
@@ -18,6 +19,7 @@ use kukuri_store::PublicChannelRow;
 pub struct PublicChannelView {
     pub channel_id: String,
     pub topic_id: String,
+    /// 削除したスレッドでは空。
     pub title: String,
     pub creator_pubkey: String,
     /// 作成時刻(ミリ秒。channel の ID の時刻)。
@@ -38,6 +40,10 @@ pub struct PublicChannelView {
     /// 配信中の Live がある(手元の Live の行から。非表示の主催者の Live は数えない。一覧の行の印。#1840 AC-4)。
     #[serde(default)]
     pub live_now: bool,
+    /// 作成者が削除した(#1888)。一覧には出さず、ID からの取得だけが返す。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<bool>", optional))]
+    pub deleted: bool,
 }
 
 impl From<PublicChannelRow> for PublicChannelView {
@@ -53,6 +59,7 @@ impl From<PublicChannelRow> for PublicChannelView {
             creator_name: None,
             creator_display_name: None,
             live_now: false,
+            deleted: row.deleted,
         }
     }
 }
@@ -100,6 +107,8 @@ fn public_channel_row(
         created_at,
         first_post_id: content.first_post_id.map(|id| id.0),
         last_post_at: created_at,
+        revision: content.revision,
+        deleted: content.deleted,
     }
 }
 
@@ -125,6 +134,8 @@ impl AppService {
             topic_id: TopicId::new(topic_id),
             title: title.trim().to_string(),
             first_post_id: None,
+            revision: 0,
+            deleted: false,
         };
         // 最初の投稿を書く前に、metadata の上限を確かめる(投稿だけが残らないように)。
         build_public_channel_envelope(self.keys(), &content)?;
@@ -145,8 +156,71 @@ impl AppService {
                 .await?,
             ));
         }
+        self.publish_public_channel(content).await
+    }
+
+    /// 作成者がタイトルを変える(#1888)。削除したスレッドは変えられない。
+    pub async fn update_public_channel_title(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+        title: &str,
+    ) -> Result<PublicChannelView> {
+        self.revise_public_channel(topic_id, channel_id, Some(title))
+            .await
+    }
+
+    /// 作成者がスレッドを削除する(#1888)。取り消せない。投稿は各投稿者のものなので消さない。
+    pub async fn delete_public_channel(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+    ) -> Result<PublicChannelView> {
+        self.revise_public_channel(topic_id, channel_id, None).await
+    }
+
+    /// 手元の行(無ければ ID から読んだ行)の版を 1 つ進めた metadata を書く。`title` が無ければ削除する(タイトルを
+    /// 空にする)。
+    async fn revise_public_channel(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+        title: Option<&str>,
+    ) -> Result<PublicChannelView> {
+        let store = &self.services.projection_store;
+        if store.get_public_channel_row(channel_id).await?.is_none() {
+            self.read_public_channel(topic_id, channel_id).await?;
+        }
+        let row = store
+            .get_public_channel_row(channel_id)
+            .await?
+            .filter(|row| row.topic_id == topic_id)
+            .ok_or_else(|| anyhow::anyhow!("public channel was not found"))?;
+        anyhow::ensure!(
+            row.creator_pubkey == self.current_author_pubkey().as_str(),
+            "only the creator can change a public channel"
+        );
+        anyhow::ensure!(!row.deleted, "public channel was deleted");
+        self.publish_public_channel(KukuriPublicChannelContentV1 {
+            channel_id: ChannelId::new(channel_id),
+            topic_id: TopicId::new(topic_id),
+            title: title.map(str::trim).unwrap_or_default().to_string(),
+            first_post_id: row.first_post_id.map(EnvelopeId::from),
+            revision: row.revision.saturating_add(1),
+            deleted: title.is_none(),
+        })
+        .await
+    }
+
+    /// 自分の metadata を署名して作成の bucket の key に書き(版を進めた記録は同じ key を上書きする)、行に置いて、topic の
+    /// lease を持つ端末に知らせる(受け取った端末は metadata を読んで一覧の行に置く。旧版は未知の種類として読まない)。
+    async fn publish_public_channel(
+        &self,
+        content: KukuriPublicChannelContentV1,
+    ) -> Result<PublicChannelView> {
         let envelope = build_public_channel_envelope(self.keys(), &content)?;
-        let (replica, key) = public_channel_location(topic_id, &channel_id)?;
+        let topic_id = content.topic_id.as_str().to_string();
+        let (replica, key) = public_channel_location(&topic_id, &content.channel_id)?;
         let docs = self.docs_sync();
         docs.open_replica(&replica).await?;
         docs.apply_doc_op(
@@ -157,20 +231,18 @@ impl AppService {
             },
         )
         .await?;
-        let row = public_channel_row(creator.as_str(), content);
+        let row = public_channel_row(self.current_author_pubkey().as_str(), content);
         self.services
             .projection_store
             .put_public_channel(row.clone(), false)
             .await?;
-        // topic の lease を持つ端末に作成を知らせる(受け取った端末は metadata を 1 件読んで一覧の行に置く)。
-        // 旧版は未知の種類として読まない。
         if let Err(error) = self
             .services
             .hint_transport
             .publish_hint(
-                &channel_hint_topic_for(topic_id, None),
+                &channel_hint_topic_for(&topic_id, None),
                 GossipHint::SessionChanged {
-                    topic_id: TopicId::new(topic_id),
+                    topic_id: TopicId::new(topic_id.as_str()),
                     session_id: row.channel_id.clone(),
                     object_kind: PUBLIC_CHANNEL_KIND.into(),
                     sent_at: Some(Utc::now().timestamp_millis()),
@@ -181,7 +253,7 @@ impl AppService {
             warn!(%error, "failed to announce a public channel");
         }
         Ok(self
-            .with_row_details(topic_id, vec![row.into()], &BTreeSet::new())
+            .with_row_details(&topic_id, vec![row.into()], &BTreeSet::new())
             .await?
             .remove(0))
     }
@@ -230,23 +302,38 @@ impl AppService {
         Ok(views)
     }
 
-    /// 公開 channel を ID から 1 件読む。手元(保持した他人の record を含む)を先に読み、無ければ channel と topic の
+    /// 公開 channel を ID から 1 件読む。手元の行があればそれを返し、背景で変更と削除を読み直す(channel ごとに間隔を
+    /// 空ける。#1888)。行が無ければ手元(保持した他人の record を含む)を先に読み、無ければ channel と topic の
     /// 読み先から読む。検証に通った record は保持し、他の参加者へ提供する(#1395)。見つからなければ `None`。
     /// 作成時の最初の投稿も、作成日(と翌日)の bucket から 1 件読んで反映する(ID から返信ツリーを開けるように)。
-    /// 非表示の作者(mute と、どちらの向きの block)の channel は、一覧と同じく返さない(#1840 AC-3)。
+    /// 非表示の作者(mute と、どちらの向きの block)の channel は、一覧と同じく返さない(#1840 AC-3)。削除した
+    /// channel は削除済みとして返す。
     pub async fn get_public_channel(
         &self,
         topic_id: &str,
         channel_id: &str,
     ) -> Result<Option<PublicChannelView>> {
-        let Some(channel) = self.read_public_channel(topic_id, channel_id).await? else {
-            return Ok(None);
+        let known = self
+            .services
+            .projection_store
+            .get_public_channel_row(channel_id)
+            .await?;
+        let channel = match known {
+            Some(row) if row.topic_id == topic_id => {
+                self.schedule_public_channel_check(topic_id, channel_id);
+                row.into()
+            }
+            _ => match self.read_public_channel(topic_id, channel_id).await? {
+                Some(channel) => channel,
+                None => return Ok(None),
+            },
         };
         let hidden = self.current_hidden_author_pubkeys().await?;
         if hidden.contains(&channel.creator_pubkey) {
             return Ok(None);
         }
-        if let Some(first_post_id) = &channel.first_post_id
+        if !channel.deleted
+            && let Some(first_post_id) = &channel.first_post_id
             && let Err(error) = self
                 .ensure_object_projection_near(
                     topic_id,
@@ -268,7 +355,8 @@ impl AppService {
             .pop())
     }
 
-    /// metadata を ID から 1 件読み、一覧の行に置く(手元を先に、無ければ channel と topic の読み先から)。
+    /// metadata を ID から読み、一覧の行に置く(手元を先に、無ければ channel と topic の読み先から)。行が既にあれば、
+    /// 行より新しい版(変更と削除。#1888)を同じ順に探して反映し、無ければ手元の行を返す。
     pub(crate) async fn read_public_channel(
         &self,
         topic_id: &str,
@@ -276,11 +364,17 @@ impl AppService {
     ) -> Result<Option<PublicChannelView>> {
         let channel_id = ChannelId::new(channel_id);
         let (replica, _) = public_channel_location(topic_id, &channel_id)?;
+        let known = self
+            .services
+            .projection_store
+            .get_public_channel_row(channel_id.as_str())
+            .await?
+            .filter(|row| row.topic_id == topic_id);
         let local: Arc<dyn DocsSync> = Arc::new(LocalSourceReader {
             docs: self.services.docs_sync.clone(),
             replica: replica.clone(),
         });
-        read_local_then_remote(
+        let newer = read_local_then_remote(
             local,
             async {
                 self.remote_post_readers(topic_id, Some(channel_id.as_str()), &replica, None)
@@ -289,24 +383,69 @@ impl AppService {
                     .unwrap_or_default()
             },
             |source: Arc<dyn DocsSync>, policy| {
-                self.read_public_channel_from(source, topic_id, &channel_id, policy)
+                self.read_public_channel_from(
+                    source,
+                    topic_id,
+                    &channel_id,
+                    policy,
+                    known.as_ref().map(|row| row.revision),
+                )
             },
         )
-        .await
+        .await?;
+        Ok(newer.or_else(|| known.map(Into::into)))
     }
 
-    /// 1 つの読み先から metadata の record を読む。検証に通れば保持し、一覧の行が無ければ置く。
+    /// ID から取得した channel の変更と削除を、背景で読み直す(#1888)。channel ごとに間隔を空け、同時に走る数を
+    /// 抑える(取り下げの確認と同じ台帳)。反映したら同期の時刻を進め、画面に読み直させる。
+    fn schedule_public_channel_check(&self, topic_id: &str, channel_id: &str) {
+        let checks = &self.services.withdrawal_checks;
+        let Ok(permit) = checks.permits().try_acquire_owned() else {
+            return;
+        };
+        if !checks.try_begin(
+            &format!("public-channel\n{channel_id}"),
+            Utc::now().timestamp_millis(),
+        ) {
+            return;
+        }
+        let app = self.account_handle();
+        let (topic_id, channel_id) = (topic_id.to_owned(), channel_id.to_owned());
+        n0_future::task::spawn(async move {
+            let _permit = permit;
+            let store = app.services.projection_store.clone();
+            let revision = async || {
+                let row = store.get_public_channel_row(&channel_id).await?;
+                anyhow::Ok(row.map(|row| row.revision))
+            };
+            let checked = async {
+                let before = revision().await?;
+                app.read_public_channel(&topic_id, &channel_id).await?;
+                anyhow::Ok(revision().await? != before)
+            };
+            match checked.await {
+                Ok(true) => app.last_sync_ts.set(Utc::now().timestamp_millis()).await,
+                Ok(false) => {}
+                Err(error) => warn!(%error, "public channel check failed"),
+            }
+        });
+    }
+
+    /// 1 つの読み先から metadata の record を読み、検証に通った最も新しい版を保持して一覧の行に重ねる。`known` (手元の
+    /// 行の版)があれば、それより新しい版だけを反映し、無ければ `None` を返す。
     pub(crate) async fn read_public_channel_from(
         &self,
         source: Arc<dyn DocsSync>,
         topic_id: &str,
         channel_id: &ChannelId,
         policy: DocFetchPolicy,
+        known: Option<u32>,
     ) -> Result<Option<PublicChannelView>> {
         let (replica, key) = public_channel_location(topic_id, channel_id)?;
         let records = source
             .query_replica_exact_bounded(&replica, &key, MAX_ENVELOPE_RECORDS_PER_OBJECT, policy)
             .await?;
+        let mut newest: Option<(KukuriPublicChannelContentV1, String, Option<String>)> = None;
         for record in records {
             let Ok(envelope) = serde_json::from_slice::<KukuriEnvelope>(&record.value) else {
                 continue;
@@ -314,34 +453,36 @@ impl AppService {
             let Ok(content) = verify_public_channel(&envelope) else {
                 continue;
             };
-            if content.channel_id != *channel_id || content.topic_id.as_str() != topic_id {
+            if content.channel_id != *channel_id
+                || content.topic_id.as_str() != topic_id
+                || known.is_some_and(|known| content.revision <= known)
+                || newest
+                    .as_ref()
+                    .is_some_and(|(newest, ..)| content.revision <= newest.revision)
+            {
                 continue;
             }
-            if let Err(error) = source
-                .persist_verified_record(&replica, &key, record.docs_author.as_deref(), &[])
-                .await
-            {
-                warn!(%error, "failed to keep a public channel record");
-            }
-            let store = &self.services.projection_store;
-            if store
-                .get_public_channel_row(channel_id.as_str())
-                .await?
-                .is_none()
-            {
-                let creator = envelope.pubkey.as_str();
-                store
-                    .put_public_channel(
-                        public_channel_row(creator, content),
-                        creator != self.current_author_pubkey().as_str(),
-                    )
-                    .await?;
-            }
-            return Ok(store
-                .get_public_channel_row(channel_id.as_str())
-                .await?
-                .map(Into::into));
+            newest = Some((content, envelope.pubkey.0, record.docs_author));
         }
-        Ok(None)
+        let Some((content, creator, docs_author)) = newest else {
+            return Ok(None);
+        };
+        if let Err(error) = source
+            .persist_verified_record(&replica, &key, docs_author.as_deref(), &[])
+            .await
+        {
+            warn!(%error, "failed to keep a public channel record");
+        }
+        let store = &self.services.projection_store;
+        store
+            .put_public_channel(
+                public_channel_row(&creator, content),
+                creator != self.current_author_pubkey().as_str(),
+            )
+            .await?;
+        Ok(store
+            .get_public_channel_row(channel_id.as_str())
+            .await?
+            .map(Into::into))
     }
 }

@@ -2,6 +2,7 @@
 //!
 //! 作成者が署名した metadata の envelope と、channel の ID の形を決める。channel の投稿は既存の投稿の envelope
 //! （`channel_id` に公開 channel の ID、`visibility` に Public）で表し、公開 topic の bucket に置く。
+//! タイトルの変更と削除は、作成者が版を 1 つ進めた metadata で同じ key を上書きする（#1888）。
 
 use anyhow::{Result, bail, ensure};
 use serde::{Deserialize, Serialize};
@@ -59,25 +60,43 @@ impl ChannelId {
     }
 }
 
-/// 公開 channel の metadata（作成者が署名する）。作成時刻は ID の時刻で、どの欄も後から変えない。
+/// 公開 channel の metadata（作成者が署名する）。署名の時刻は版によらず ID の作成時刻にする。ID・topic・最初の投稿は
+/// 後から変えない。作成者は版を進めてタイトルを変え、削除する（#1888）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KukuriPublicChannelContentV1 {
     pub channel_id: ChannelId,
     pub topic_id: TopicId,
+    /// 削除した版では空（旧版は空のタイトルの記録を読まない）。
     pub title: String,
     /// 作成と同時に書いた最初の投稿。本文を空にして作った channel には無い。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_post_id: Option<EnvelopeId>,
+    /// 版。作成は 0 で、変更と削除のたびに 1 つ進める。読む側は大きい版を残す。
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub revision: u32,
+    /// 削除した版。削除は取り消せない。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 fn validate(content: &KukuriPublicChannelContentV1) -> Result<i64> {
     let title = content.title.as_str();
-    ensure!(
-        !title.trim().is_empty()
-            && title.trim() == title
-            && title.chars().count() <= PUBLIC_CHANNEL_MAX_TITLE_CHARS,
-        "public channel title is empty or too long"
-    );
+    match content.deleted {
+        true => ensure!(
+            title.is_empty() && content.revision > 0,
+            "deleted public channel keeps a title or has no revision"
+        ),
+        false => ensure!(
+            !title.trim().is_empty()
+                && title.trim() == title
+                && title.chars().count() <= PUBLIC_CHANNEL_MAX_TITLE_CHARS,
+            "public channel title is empty or too long"
+        ),
+    }
     ensure!(
         !content.topic_id.as_str().is_empty(),
         "public channel topic is empty"

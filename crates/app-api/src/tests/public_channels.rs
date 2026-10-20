@@ -411,6 +411,8 @@ async fn the_first_post_of_an_older_public_channel_resolves_by_id() {
             topic_id: topic,
             title: "古いスレッド".into(),
             first_post_id: Some(first.id.clone()),
+            revision: 0,
+            deleted: false,
         },
     )
     .expect("metadata");
