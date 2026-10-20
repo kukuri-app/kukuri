@@ -25,11 +25,11 @@ function post(index: number, content: string, parent?: PostView): PostView {
 }
 const first = post(1, '最初の投稿です。ここから会話を読みます。');
 const answer = post(3, '最初の投稿への返信です。親の下に字下げして並びます。', first);
-function PublicThreadDetail() {
+function PublicThreadDetail({ deleted = false, own = false }: { deleted?: boolean; own?: boolean }) {
   const [api] = useState(() => {
     window.history.replaceState(null, '', `#/timeline?topic=${encodeURIComponent(topic)}&channel=${channel}`);
     return createDesktopMockApi({
-      seedPublicChannels: { [topic]: [{ channel_id: channel, topic_id: topic, title: '会話の順序を確認', creator_pubkey: 'b'.repeat(64), created_at: 1_700_000_000, last_post_at: 1_700_000_240, live_now: false }] },
+      seedPublicChannels: { [topic]: [{ channel_id: channel, topic_id: topic, title: deleted ? '' : '会話の順序を確認', creator_pubkey: (own ? 'f' : 'b').repeat(64), created_at: 1_700_000_000, last_post_at: 1_700_000_240, live_now: false, deleted }] },
       seedPosts: { [topic]: [
         post(4, '返信への返信です。さらに一段下がります。', answer), answer,
         post(2, 'あとから届いた投稿です。下に続きます。'), first,
@@ -42,3 +42,7 @@ const meta = { title: 'Shell/PublicThreadDetail', component: PublicThreadDetail,
 export default meta;
 type Story = StoryObj<typeof meta>;
 export const Conversation: Story = {};
+/** 自分が作ったスレッド(#1888)。上部にタイトルの変更と削除の menu を出す(mock の自分の公開鍵は f の 64 桁)。 */
+export const Own: Story = { args: { own: true } };
+/** 作成者が削除したスレッド(#1888)。投稿・投稿欄を出さず、削除されたことだけを出す。 */
+export const Deleted: Story = { args: { deleted: true } };

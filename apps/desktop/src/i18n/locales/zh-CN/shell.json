@@ -628,11 +628,24 @@
     "create": {
       "action": "创建公开帖子",
       "title": "创建公开帖子",
-      "description": "在 {{topic}} 中创建任何人都可以阅读和发帖的公开帖子。标题无法更改，公开帖子也无法删除。",
+      "description": "在 {{topic}} 中创建任何人都可以阅读和发帖的公开帖子。创建后仍可更改标题或删除公开帖子。",
       "titleLabel": "标题",
       "firstPostLabel": "首帖（可留空）",
       "submit": "创建",
       "failed": "无法创建公开帖子，请重试。"
+    },
+    "manage": "管理公开帖子",
+    "rename": {
+      "action": "更改标题",
+      "title": "更改标题",
+      "description": "新标题会在送达各设备后生效。",
+      "submit": "更改",
+      "failed": "无法更改标题，请重试。"
+    },
+    "delete": {
+      "action": "删除公开帖子",
+      "confirm": "要删除“{{title}}”吗？删除后无法撤销。支持的设备将不再在列表和详情中显示它，但已收到的设备不一定会删除其内容。",
+      "failed": "无法删除公开帖子，请重试。"
     },
     "list": {
       "loading": "正在加载公开帖子…",
@@ -646,6 +659,7 @@
       "loadMoreFailed": "无法加载更多公开帖子。"
     },
     "detailEmpty": "这个公开帖子里还没有内容。",
+    "deleted": "此公开帖子已被删除。",
     "titleUnavailable": "无法获取标题",
     "card": {
       "loading": "正在加载公开帖子…",

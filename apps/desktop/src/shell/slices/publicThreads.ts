@@ -41,14 +41,14 @@ export function isHiddenAuthor(author: AuthorSocialView | undefined): boolean {
   return Boolean(author && (author.muted || author.blocking || author.blocked_by));
 }
 
-/// 覚えた公開スレッドのタイトル。知らないか、作成者を非表示にしていれば `undefined`。
+/// 覚えた公開スレッドのタイトル。知らないか、作成者を非表示にしているか、削除されていれば(#1888) `undefined`。
 export function knownPublicThreadTitle(
   threads: Record<string, PublicChannelView>,
   authors: Record<string, AuthorSocialView>,
   channelId: string
 ): string | undefined {
   const thread = threads[channelId];
-  return thread && !isHiddenAuthor(authors[thread.creator_pubkey]) ? thread.title : undefined;
+  return thread && !thread.deleted && !isHiddenAuthor(authors[thread.creator_pubkey]) ? thread.title : undefined;
 }
 
 /// 公開スレッドの詳細の列の上部に出す配信中の Live の数(#1840 判断 14)。より多いときは「すべての配信」から列を開く。

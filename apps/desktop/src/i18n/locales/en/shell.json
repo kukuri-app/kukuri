@@ -628,11 +628,24 @@
     "create": {
       "action": "Create public thread",
       "title": "Create a public thread",
-      "description": "Creates a thread in {{topic}} that anyone can read and post to. The title can't be changed, and the thread can't be deleted.",
+      "description": "Creates a thread in {{topic}} that anyone can read and post to. You can change its title or delete it later.",
       "titleLabel": "Title",
       "firstPostLabel": "First post (optional)",
       "submit": "Create",
       "failed": "Couldn't create the public thread. Try again."
+    },
+    "manage": "Manage thread",
+    "rename": {
+      "action": "Change title",
+      "title": "Change the title",
+      "description": "Devices pick up the new title when it reaches them.",
+      "submit": "Change",
+      "failed": "Couldn't change the title. Try again."
+    },
+    "delete": {
+      "action": "Delete thread",
+      "confirm": "Delete \"{{title}}\"? This can't be undone. Supported devices stop showing it in the list and the thread view, but devices that already received it may keep its contents.",
+      "failed": "Couldn't delete the thread. Try again."
     },
     "list": {
       "loading": "Loading public threads…",
@@ -646,6 +659,7 @@
       "loadMoreFailed": "Couldn't load more public threads."
     },
     "detailEmpty": "No posts in this thread yet.",
+    "deleted": "This thread was deleted.",
     "titleUnavailable": "Couldn't load the title",
     "card": {
       "loading": "Loading the public thread…",

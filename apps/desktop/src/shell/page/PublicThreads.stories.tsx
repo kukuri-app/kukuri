@@ -77,7 +77,7 @@ const HOSTS: Record<string, AuthorSocialView> = Object.fromEntries(
 );
 
 type StoryProps = {
-  surface: 'list' | 'card' | 'create' | 'lives';
+  surface: 'list' | 'card' | 'create' | 'rename' | 'lives';
   lives?: LiveSessionView[];
   page?: PublicChannelListView;
   order?: ColumnState['publicThreadOrder'];
@@ -95,12 +95,19 @@ function storyApi({ page, pending = false, failed = false, shown = null, firstPo
     getPublicChannel: () => wait(() => shown),
     listThread: () => wait(() => ({ items: firstPost ? [firstPost] : [], next_cursor: null })),
     createPublicChannel: () => Promise.reject(new Error('offline')),
+    updatePublicChannelTitle: () => Promise.reject(new Error('offline')),
   } as unknown as DesktopApi;
 }
 
 function OpenCreateDialog() {
   const actions = useContext(PublicThreadActionsContext);
   useEffect(() => actions?.create(TOPIC), [actions]);
+  return null;
+}
+
+function OpenRenameDialog() {
+  const actions = useContext(PublicThreadActionsContext);
+  useEffect(() => actions?.rename(THREADS[0]!), [actions]);
   return null;
 }
 
@@ -140,6 +147,8 @@ function PublicThreadsStory(props: StoryProps) {
             </article>
           ) : props.surface === 'lives' ? (
             <PublicThreadLiveRows topic={TOPIC} channelId={THREADS[0]!.channel_id} />
+          ) : props.surface === 'rename' ? (
+            <OpenRenameDialog />
           ) : (
             <OpenCreateDialog />
           )}
@@ -203,3 +212,11 @@ export const ThreadLives: Story = { args: { surface: 'lives', lives: LIVES.slice
 
 /** 4 件以上は、新しく始まった 3 件と「すべての配信」。 */
 export const ThreadLivesMore: Story = { args: { surface: 'lives', lives: LIVES } };
+
+/** 作成者が削除したスレッドの card(#1888)。最初の投稿を出さず、削除されたことだけを出す。 */
+export const CardDeleted: Story = {
+  args: { surface: 'card', shown: { ...THREADS[0]!, title: '', deleted: true }, firstPost: FIRST_POST },
+};
+
+/** 作成者のタイトルの変更の Dialog(#1888)。この story の変更は失敗する(失敗の表示の確認)。 */
+export const RenameDialog: Story = { args: { surface: 'rename' } };

@@ -22,12 +22,16 @@ export function PublicThreadLinkCard({ topic, channelId }: { topic: string; chan
   const ref = useRef<HTMLDivElement>(null);
   const onScreen = useOnScreen(ref, channelId);
   const [loaded, setState] = useState<CardState>({ status: 'loading' });
+  // 読めた後は、覚えた最新の値(タイトルの変更と削除。#1888)で出す。
+  const remembered = useDesktopShellStore((store) => store.publicThreadsById[channelId]);
+  const current: CardState = loaded.status === 'available' && remembered ? { ...loaded, thread: remembered } : loaded;
   // 作成者を非表示にしたら(mute・block)、読めたスレッドも出さない(一覧と同じ)。
-  const creator = loaded.status === 'available' ? loaded.thread.creator_pubkey : null;
+  const creator = current.status === 'available' ? current.thread.creator_pubkey : null;
   const creatorHidden = useDesktopShellStore((store) =>
     creator ? isHiddenAuthor(store.knownAuthorsByPubkey[creator]) : false
   );
-  const state: CardState = creatorHidden ? { status: 'unavailable' } : loaded;
+  const state: CardState = creatorHidden ? { status: 'unavailable' } : current;
+  const deleted = state.status === 'available' && state.thread.deleted;
   useEffect(() => {
     if (!api || !load || !onScreen) return;
     let cancelled = false;
@@ -72,10 +76,12 @@ export function PublicThreadLinkCard({ topic, channelId }: { topic: string; chan
           <span className='link-preview-source'>{t('publicThreads.title')}</span>{' '}
           <strong className='link-preview-title'>
             {state.status === 'available'
-              ? state.thread.title
+              ? deleted
+                ? t('publicThreads.deleted')
+                : state.thread.title
               : t(state.status === 'loading' ? 'publicThreads.card.loading' : 'publicThreads.card.unavailable')}
           </strong>{' '}
-          {state.status === 'available' && state.firstPost ? (
+          {state.status === 'available' && state.firstPost && !deleted ? (
             <span className='link-preview-description'>{state.firstPost}</span>
           ) : null}
         </span>
