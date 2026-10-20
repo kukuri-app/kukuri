@@ -17,6 +17,12 @@ export type PublicThreadActions = {
   remember: (threads: PublicChannelView[]) => void;
   /** ID から 1 件読んで覚える。同じスレッドは並行して読まず、読めたものは使い回す(読めなければ次にまた読む)。 */
   load: (topic: string, channelId: string) => Promise<PublicChannelView | null>;
+  /** 使い回さずに ID から読み直して覚える(表示中の詳細が、変更と削除を取り込む。#1888)。 */
+  refresh: (topic: string, channelId: string) => Promise<PublicChannelView | null>;
+  /** 作成者のタイトルの変更の Dialog を開く(#1888)。 */
+  rename: (thread: PublicChannelView) => void;
+  /** 作成者がスレッドを削除する。確かめてから削除し、取り消せない(#1888)。 */
+  remove: (thread: PublicChannelView) => void;
   /** この端末で最後に作ったスレッド。その topic の一覧の列は先頭から読み直す。 */
   lastCreated: PublicChannelView | null;
 };

@@ -482,3 +482,17 @@ test('the detail shows its replies as a tree and replies in place without openin
   expect(columns.map((column) => column.id)).toEqual([timelineId, listId, detailId, devId]);
   expect(columns.find((column) => column.id === detailId)?.parentColumnId).toBe(listId);
 }, 30_000);
+
+// #1888 AC-2: 削除したスレッドの詳細の列は、投稿・投稿欄を出さず、削除されたことだけを出す。
+test('a deleted public thread shows only that it was deleted in its detail column', async () => {
+  const api = createDesktopMockApi({
+    seedPosts: { [TOPIC]: [post('kept', 'Kept post', CHANNEL, 10)] },
+    seedPublicChannels: { [TOPIC]: [{ ...thread(CHANNEL, '', 1, 1), deleted: true }] },
+  });
+  renderAtHash(`#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=${CHANNEL}`, api);
+  const detail = await waitFor(() => getActiveColumn('Public thread'));
+  expect(await within(detail).findByText('This thread was deleted.')).toBeInTheDocument();
+  expect(within(detail).queryByText('Kept post')).not.toBeInTheDocument();
+  expect(within(detail).queryByRole('button', { name: /^Post to / })).not.toBeInTheDocument();
+  expect(within(detail).queryByRole('button', { name: 'Copy link' })).not.toBeInTheDocument();
+});

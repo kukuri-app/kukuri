@@ -54,16 +54,23 @@ type PublicThreadProvidersProps = {
 /** #1840: 公開スレッドの操作と本文のリンクの表示、作成の Dialog を shell に 1 か所で置く。 */
 export function PublicThreadProviders({ api, open, openLive, copyLink, children }: PublicThreadProvidersProps) {
   const storeApi = useDesktopShellStoreApi();
+  const { t } = useTranslation('shell');
   const [creating, setCreating] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<PublicChannelView | null>(null);
   const [lastCreated, setLastCreated] = useState<PublicChannelView | null>(null);
-  const remember = useCallback(
-    (threads: PublicChannelView[]) =>
-      storeApi.getState().setField('publicThreadsById', (current) => rememberPublicThreads(current, threads)),
-    [storeApi]
-  );
   // 読めたスレッドは覚える数と同じだけ使い回す(古いものから外す)。使い回すときも覚え直す(一覧が多くのスレッドを
   // 覚えて、store から外れていても戻す)。読めなかったものは外し、次に表示したときに読む。
   const loads = useRef(new Map<string, Promise<PublicChannelView | null>>());
+  // 新しく覚えた値は、使い回す値も置き換える(変更・削除の前の値で覚え直さない。#1888)。
+  const remember = useCallback(
+    (threads: PublicChannelView[]) => {
+      for (const thread of threads) {
+        if (loads.current.has(thread.channel_id)) loads.current.set(thread.channel_id, Promise.resolve(thread));
+      }
+      storeApi.getState().setField('publicThreadsById', (current) => rememberPublicThreads(current, threads));
+    },
+    [storeApi]
+  );
   const load = useCallback(
     (topic: string, channelId: string) => {
       const remembered = (thread: PublicChannelView | null) => {
@@ -89,6 +96,27 @@ export function PublicThreadProviders({ api, open, openLive, copyLink, children 
     },
     [api, remember]
   );
+  const refresh = useCallback(
+    (topic: string, channelId: string) => {
+      loads.current.delete(channelId);
+      return load(topic, channelId);
+    },
+    [load]
+  );
+  const remove = useCallback(
+    (thread: PublicChannelView) => {
+      if (!window.confirm(t('publicThreads.delete.confirm', { title: thread.title }))) return;
+      const setError = (error: string | null) => storeApi.getState().setField('error', error);
+      void api.deletePublicChannel(thread.topic_id, thread.channel_id).then(
+        (deleted) => {
+          remember([deleted]);
+          setError(null);
+        },
+        () => setError(t('publicThreads.delete.failed'))
+      );
+    },
+    [api, remember, storeApi, t]
+  );
   const actions = useMemo<PublicThreadActions>(
     () => ({
       api,
@@ -98,9 +126,12 @@ export function PublicThreadProviders({ api, open, openLive, copyLink, children 
       openLive,
       remember,
       load,
+      refresh,
+      rename: setRenaming,
+      remove,
       lastCreated,
     }),
-    [api, open, openLive, copyLink, remember, load, lastCreated]
+    [api, open, openLive, copyLink, remember, load, refresh, remove, lastCreated]
   );
   return (
     <PublicThreadActionsContext.Provider value={actions}>
@@ -117,6 +148,18 @@ export function PublicThreadProviders({ api, open, openLive, copyLink, children 
               setLastCreated(thread);
               setCreating(null);
               open(thread.topic_id, thread.channel_id);
+            }}
+          />
+        ) : null}
+        {renaming ? (
+          <RenamePublicThreadDialog
+            key={renaming.channel_id}
+            api={api}
+            thread={renaming}
+            onClose={() => setRenaming(null)}
+            onRenamed={(thread) => {
+              remember([thread]);
+              setRenaming(null);
             }}
           />
         ) : null}
@@ -151,7 +194,8 @@ function PublicThreadTitle({
 }
 
 // 読めた値は chip が持つ(card と同じ)。画面内のリンクが覚える上限より多く、覚えたスレッドから外れても、表示を保ち、
-// 読み直しを繰り返さない(読み込みは chip ごとに最大 1 回)。作成者を非表示にしたら出さない(一覧と同じ)。
+// 読み直しを繰り返さない(読み込みは chip ごとに最大 1 回)。作成者を非表示にしたら、削除されたら(#1888)出さない(一覧と
+// 同じ)。
 function PublicThreadChipTitle({ topic, channelId, fallback }: { topic: string; channelId: string; fallback: string }) {
   const load = useContext(PublicThreadActionsContext)?.load;
   const remembered = useDesktopShellStore((state) => state.publicThreadsById[channelId]);
@@ -169,7 +213,7 @@ function PublicThreadChipTitle({ topic, channelId, fallback }: { topic: string; 
       if (value) setLoaded(value);
     });
   }, [load, onScreen, have, topic, channelId]);
-  return <span ref={ref}>{thread && !hidden ? thread.title : fallback}</span>;
+  return <span ref={ref}>{thread && !hidden && !thread.deleted ? thread.title : fallback}</span>;
 }
 
 /** 一覧の列の「スレッドを作る」。タイトル(1〜200 文字)と最初の投稿(空でもよい)を書く(判断 3)。最初の投稿には
@@ -292,6 +336,65 @@ function CreatePublicThreadDialog({
             {failed ? <p className='error error-inline'>{t('shell:publicThreads.create.failed')}</p> : null}
             <Button type='submit' disabled={pending || !title.trim()}>
               {t('shell:publicThreads.create.submit')}
+            </Button>
+          </form>
+        </DialogBody>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** 作成者のタイトルの変更(#1888)。作成と同じ 1〜200 文字。 */
+function RenamePublicThreadDialog({
+  api,
+  thread,
+  onClose,
+  onRenamed,
+}: {
+  api: DesktopApi;
+  thread: PublicChannelView;
+  onClose: () => void;
+  onRenamed: (thread: PublicChannelView) => void;
+}) {
+  const { t } = useTranslation(['shell', 'common']);
+  const [title, setTitle] = useState(thread.title);
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const changed = title.trim() !== '' && title.trim() !== thread.title;
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (pending || !changed) return;
+    setPending(true);
+    setFailed(false);
+    try {
+      onRenamed(await api.updatePublicChannelTitle(thread.topic_id, thread.channel_id, title.trim()));
+    } catch {
+      setPending(false);
+      setFailed(true);
+    }
+  };
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('shell:publicThreads.rename.title')}</DialogTitle>
+          <DialogDescription>{t('shell:publicThreads.rename.description')}</DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+          <form className='composer composer-compact' onSubmit={(event) => void submit(event)} aria-busy={pending}>
+            <Label>
+              <span>{t('shell:publicThreads.create.titleLabel')}</span>
+              <Input
+                value={title}
+                maxLength={TITLE_MAX_CHARS}
+                required
+                onChange={(event) => setTitle(event.target.value)}
+                disabled={pending}
+              />
+            </Label>
+            {failed ? <p className='error error-inline'>{t('shell:publicThreads.rename.failed')}</p> : null}
+            <Button type='submit' disabled={pending || !changed}>
+              {t('shell:publicThreads.rename.submit')}
             </Button>
           </form>
         </DialogBody>

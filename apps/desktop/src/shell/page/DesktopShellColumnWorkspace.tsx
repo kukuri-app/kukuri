@@ -170,6 +170,12 @@ export function DesktopShellColumnWorkspace({
   const notificationStatus = useDesktopShellStore((state) => state.notificationStatus);
   const knownAuthorsByPubkey = useDesktopShellStore((state) => state.knownAuthorsByPubkey);
   const publicThreadTitles = usePublicThreadColumnTitles();
+  const publicThreadsById = useDesktopShellStore((state) => state.publicThreadsById);
+  // 作成者が削除した公開スレッドの詳細の列(#1888)。投稿・投稿欄・ライブを出さず、削除されたことだけを出す。
+  const isDeletedThread = (column: ColumnState) =>
+    column.kind === 'timeline' &&
+    isPublicChannelId(column.scope?.channelId) &&
+    Boolean(publicThreadsById[column.scope.channelId]?.deleted);
   const mediaObjectUrls = useDesktopShellStore((state) => state.mediaObjectUrls);
   const communityNodeConfig = useDesktopShellStore((state) => state.communityNodeConfig);
   const communityNodeStatuses = useDesktopShellStore((state) => state.communityNodeStatuses);
@@ -382,6 +388,15 @@ export function DesktopShellColumnWorkspace({
     if (column.kind === 'publicThreads') {
       return <PublicThreadList key={column.publicThreadOrder ?? 'last_post'} column={column} />;
     }
+    if (isDeletedThread(column)) {
+      return (
+        <div className='shell-column-content'>
+          <p className='empty' role='status'>
+            {t('publicThreads.deleted')}
+          </p>
+        </div>
+      );
+    }
     return renderPrimarySurface(column);
   };
   const scopeDestinationLabel = (column: ColumnState) => {
@@ -431,6 +446,7 @@ export function DesktopShellColumnWorkspace({
       onRemoveAttachment: onRemoveColumnAttachment,
       onSubmit: onSubmitColumnDraft,
     };
+    if (isDeletedThread(column)) return undefined;
     if (column.kind === 'timeline' && column.scope) {
       return (
         <ColumnComposerFooter
@@ -620,7 +636,7 @@ export function DesktopShellColumnWorkspace({
               scopeControl={renderScopeControl(column)}
               scopeActions={renderScopeActions(column)}
               headerDetails={
-                showsThreadLives(column, developerModeEnabled) && column.scope?.channelId ? (
+                showsThreadLives(column, developerModeEnabled) && column.scope?.channelId && !isDeletedThread(column) ? (
                   <PublicThreadLiveRows topic={column.scope.topicId} channelId={column.scope.channelId} />
                 ) : undefined
               }

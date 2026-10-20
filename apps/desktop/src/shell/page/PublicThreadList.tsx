@@ -1,4 +1,4 @@
-import { CalendarPlus, Check, Link2, MessageSquareText, Radio } from 'lucide-react';
+import { CalendarPlus, Check, Link2, MessageSquareText, MoreHorizontal, Pencil, Radio, Trash2 } from 'lucide-react';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -100,10 +100,15 @@ export function PublicThreadList({ column }: { column: ColumnState }) {
       setState((current) => ({ ...current, loadingMore: false, loadMoreFailed: true }));
     }
   }, [api, remember, topic, order, cursor, loadingMore]);
-  // 作成者を非表示にした行(mute・block)は、次に読んだページが除く前でも出さない(読み込んだ続きの行を含む)。
+  // 作成者を非表示にした行(mute・block)と、削除を知った行(#1888)は、次に読んだページが除く前でも出さない(読み込んだ
+  // 続きの行を含む)。
+  const threadsById = useDesktopShellStore((state) => state.publicThreadsById);
   const rows = useMemo(
-    () => state.rows.filter((row) => !isHiddenAuthor(knownAuthorsByPubkey[row.creator_pubkey])),
-    [state.rows, knownAuthorsByPubkey]
+    () =>
+      state.rows.filter(
+        (row) => !isHiddenAuthor(knownAuthorsByPubkey[row.creator_pubkey]) && !threadsById[row.channel_id]?.deleted
+      ),
+    [state.rows, knownAuthorsByPubkey, threadsById]
   );
   // 行の位置の保持は投稿の一覧の hook を使う(行の id を投稿の id の形で渡す)。
   const anchorRows = useMemo(() => rows.map((row) => ({ post: { object_id: row.channel_id } })), [rows]);
@@ -255,30 +260,42 @@ export function PublicThreadOrderMenu({ column }: { column: ColumnState }) {
 }
 
 /**
- * 公開スレッドの詳細の列の上部。リンクをコピーし(判断 5)、タイトルを知らなければ表示中に ID から読む。読めなければその旨を
- * 出す。「ライブ」はスレッドの「ライブ」の列を開く(判断 15。#1840 AC-4)。
+ * 公開スレッドの詳細の列の上部。リンクをコピーし(判断 5)、表示中は同期の時刻が変わるたびに ID から読み直す(タイトルの変更と
+ * 削除を取り込む。#1888)。タイトルを知らず、読めなければその旨を出す。「ライブ」はスレッドの「ライブ」の列を開く(判断 15。
+ * #1840 AC-4)。作成者には、タイトルの変更と削除の menu を出す(#1888)。削除したスレッドには操作を出さない。
  */
 export function PublicThreadScopeActions({ topic, channelId }: { topic: string; channelId: string }) {
   const { t } = useTranslation(['common', 'shell']);
   const actions = useContext(PublicThreadActionsContext);
   const liveSurfaces = useLiveSurfacesEnabled();
+  const refresh = actions?.refresh;
   const load = actions?.load;
   const { visible } = useColumnRuntime();
+  const lastSync = useDesktopShellStore((state) => state.syncStatus.last_sync_ts);
+  const localPubkey = useDesktopShellStore((state) => state.syncStatus.local_author_pubkey);
+  const thread = useDesktopShellStore((state) => state.publicThreadsById[channelId]);
   const known = useDesktopShellStore(
     (state) => knownPublicThreadTitle(state.publicThreadsById, state.knownAuthorsByPubkey, channelId) !== undefined
   );
   const [unavailable, setUnavailable] = useState(false);
-  useEffect(() => {
-    if (!load || known || !visible) return;
-    let cancelled = false;
-    void load(topic, channelId).then((thread) => {
-      if (!cancelled) setUnavailable(!thread);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [load, known, visible, topic, channelId]);
-  if (!actions) return null;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const read = useCallback(
+    (reader: typeof load) => {
+      if (!reader || !visible) return;
+      let cancelled = false;
+      void reader(topic, channelId).then((value) => {
+        if (!cancelled) setUnavailable(!value);
+      });
+      return () => {
+        cancelled = true;
+      };
+    },
+    [visible, topic, channelId]
+  );
+  // 先に読み直し、知らない(store から外れた)ときは、その読み込みか使い回しの値で覚え直す。
+  useEffect(() => read(refresh), [read, refresh, lastSync]);
+  useEffect(() => (known ? undefined : read(load)), [read, load, known]);
+  if (!actions || thread?.deleted) return null;
   return (
     <div className='shell-column-scope-actions'>
       {unavailable && !known ? (
@@ -306,6 +323,44 @@ export function PublicThreadScopeActions({ topic, channelId }: { topic: string; 
         <Link2 className='size-4' aria-hidden='true' />
         {t('common:actions.copyLink')}
       </Button>
+      {thread && thread.creator_pubkey === localPubkey ? (
+        <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+          <PopoverTrigger asChild>
+            <IconButton
+              variant='ghost'
+              type='button'
+              className='shell-column-scope-action'
+              label={t('shell:publicThreads.manage')}
+              aria-haspopup='menu'
+            >
+              <MoreHorizontal className='size-4' aria-hidden='true' />
+            </IconButton>
+          </PopoverTrigger>
+          <PopoverMenuContent aria-label={t('shell:publicThreads.manage')} align='end' className='space-y-1'>
+            {(
+              [
+                ['rename', Pencil, () => actions.rename(thread)],
+                ['delete', Trash2, () => actions.remove(thread)],
+              ] as const
+            ).map(([key, Icon, run]) => (
+              <Button
+                key={key}
+                variant='ghost'
+                size='sm'
+                type='button'
+                className='w-full justify-start'
+                onClick={() => {
+                  setMenuOpen(false);
+                  run();
+                }}
+              >
+                <Icon className='size-4 shrink-0' aria-hidden='true' />
+                {t(`shell:publicThreads.${key}.action`)}
+              </Button>
+            ))}
+          </PopoverMenuContent>
+        </Popover>
+      ) : null}
     </div>
   );
 }

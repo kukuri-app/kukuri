@@ -35,6 +35,8 @@ type ChannelsMock = Pick<
   | 'listJoinedPrivateChannels'
   | 'createPublicChannel'
   | 'getPublicChannel'
+  | 'updatePublicChannelTitle'
+  | 'deletePublicChannel'
   | 'listPublicChannels'
 >;
 
@@ -60,6 +62,18 @@ export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
           live_now: liveNow(channel),
         }
       : { ...channel, live_now: liveNow(channel) };
+
+  const revise = (topic: string, channelId: string, change: Partial<PublicChannelView>) => {
+    const channels = publicChannelsByTopic[topic] ?? [];
+    const index = channels.findIndex((candidate) => candidate.channel_id === channelId);
+    const channel = channels[index];
+    if (!channel || channel.deleted || channel.creator_pubkey !== syncStatus.local_author_pubkey) {
+      throw new Error('public channel cannot be changed');
+    }
+    const next = { ...channel, ...change };
+    channels[index] = next;
+    return next;
+  };
 
   return {
     // 最初の投稿は投稿の mock（合成した 1 つの api の this）で作る。
@@ -104,10 +118,17 @@ export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
       const channel = (publicChannelsByTopic[topic] ?? []).find((candidate) => candidate.channel_id === channelId);
       return channel ? withCreatorNames(channel) : null;
     },
+    // native と同じく、作成者だけが変え、削除の後は変えられない(#1888)。
+    async updatePublicChannelTitle(topic, channelId, title) {
+      return withCreatorNames(revise(topic, channelId, { title: title.trim() }));
+    },
+    async deletePublicChannel(topic, channelId) {
+      return withCreatorNames(revise(topic, channelId, { title: '', deleted: true }));
+    },
     async listPublicChannels(topic, order, cursor = null, limit = PUBLIC_CHANNEL_PAGE) {
       const at = (channel: PublicChannelView) =>
         order === 'created' ? channel.created_at : channel.last_post_at;
-      const sorted = [...(publicChannelsByTopic[topic] ?? [])].sort(
+      const sorted = [...(publicChannelsByTopic[topic] ?? [])].filter((channel) => !channel.deleted).sort(
         (left, right) => at(right) - at(left) || right.channel_id.localeCompare(left.channel_id)
       );
       const after = cursor

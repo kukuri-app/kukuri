@@ -158,6 +158,7 @@ import type {
   UnsubscribeTopicRequest,
   UpdateGameRoomRequest,
   UpdateMetaverseRoomRequest,
+  UpdatePublicChannelTitleRequest,
   WithdrawDomeConnectionProposalRequest,
   WithdrawPostRequest,
 } from '../types.generated';
@@ -667,6 +668,16 @@ export const runtimeApi: DesktopApi = {
   }),
   getPublicChannel: command('getPublicChannel', async (topic, channelId) => {
     return invokeDesktop<PublicChannelView | null>('get_public_channel', {
+      request: { topic, channel_id: channelId } satisfies GetPublicChannelRequest,
+    });
+  }),
+  updatePublicChannelTitle: command('updatePublicChannelTitle', async (topic, channelId, title) => {
+    return invokeDesktop<PublicChannelView>('update_public_channel_title', {
+      request: { topic, channel_id: channelId, title } satisfies UpdatePublicChannelTitleRequest,
+    });
+  }),
+  deletePublicChannel: command('deletePublicChannel', async (topic, channelId) => {
+    return invokeDesktop<PublicChannelView>('delete_public_channel', {
       request: { topic, channel_id: channelId } satisfies GetPublicChannelRequest,
     });
   }),

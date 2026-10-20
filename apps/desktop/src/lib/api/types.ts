@@ -477,6 +477,9 @@ export interface DesktopApi {
     contentLabels?: string[]
   ): Promise<PublicChannelView>;
   getPublicChannel(topic: string, channelId: string): Promise<PublicChannelView | null>;
+  // 作成者のタイトルの変更と削除(#1888)。変えた後の行を返す。削除は取り消せない。
+  updatePublicChannelTitle(topic: string, channelId: string, title: string): Promise<PublicChannelView>;
+  deletePublicChannel(topic: string, channelId: string): Promise<PublicChannelView>;
   listPublicChannels(
     topic: string,
     order: PublicChannelOrder,
