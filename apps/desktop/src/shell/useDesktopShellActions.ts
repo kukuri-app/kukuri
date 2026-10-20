@@ -717,10 +717,9 @@ export function useDesktopShellActions({
       );
       return;
     }
+    // 公開スレッドの詳細の列は、投稿の入力欄から返信する(#1891)。
     const replyObjectId =
-      target.action === 'reply'
-        ? draft.replyTarget?.object_id ?? target.threadId ?? null
-        : null;
+      draft.replyTarget?.object_id ?? (target.action === 'reply' ? target.threadId : null) ?? null;
     const currentState = storeApi.getState();
     const targetTimeline =
       currentState.timelinesByKey[
