@@ -115,7 +115,7 @@ Prerequisites:
 
 - Git
 - Rust `1.98.1` (pinned by `rust-toolchain.toml`)
-- Node.js `^20.19.0` or `>=22.12.0`
+- Node.js `^22.23.4`, `^24.22.1`, or `>=26.12.1`
 - pnpm `10.16.1` through the commands below
 - The platform dependencies from the [development runbook](./docs/runbooks/dev.md); Windows development also needs the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#windows)
 - Docker only for Community Node integration tests and local Community Node stacks

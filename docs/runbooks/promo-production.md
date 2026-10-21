@@ -8,7 +8,7 @@ LP・Product Hunt・note・X 向けの素材を、撮影（Playwright）とレ�
 
 | 項目 | 値 |
 | --- | --- |
-| Node | `^20.19.0 \|\| >=22.12.0`（検証時 v22.14.0） |
+| Node | `^22.23.4 \|\| ^24.22.1 \|\| >=26.12.1`（#1904） |
 | pnpm | 10.16.1 |
 | Playwright | `@playwright/test` 1.62.1（`apps/desktop` の既存依存をそのまま使う） |
 | Remotion | 4.0.526（`tools/promo` の専用依存） |

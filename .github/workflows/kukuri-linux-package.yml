@@ -110,7 +110,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '^22.23.4'
           # #1180: 配布の run では cache を使わない（空文字で無効）。`A && '' || B` は空文字が偽のため
           # 常に B になる。空文字は必ず `||` の右に置く。
           cache: ${{ !((github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))) && inputs.signing == 'distribution') && 'pnpm' || '' }}
