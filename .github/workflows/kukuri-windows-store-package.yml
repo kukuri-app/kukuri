@@ -70,7 +70,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '^22.23.4'
       # #1413: release 用の MSIX を作る dispatch の run では、PR が書いた cache を使わない。
       # src-tauri の target は updater の lib test、target/microsoft-store は Store 用の build。
       - name: Cache Rust

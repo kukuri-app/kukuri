@@ -115,7 +115,7 @@ kukuri は、興味のある話題から人やコミュニティにつながる�
 
 - Git
 - `rust-toolchain.toml` で固定された Rust `1.98.1`
-- Node.js `^20.19.0` または `>=22.12.0`
+- Node.js `^22.23.4`・`^24.22.1`・`>=26.12.1` のいずれか
 - 以下のコマンドから利用する pnpm `10.16.1`
 - [開発手順書](./docs/runbooks/dev.md)に記載された環境別の依存パッケージ。Windows 開発には [Tauri の事前要件](https://v2.tauri.app/start/prerequisites/#windows) も必要です
 - Docker は Community Node の統合テストとローカル Community Node 構成を使う場合のみ必要です

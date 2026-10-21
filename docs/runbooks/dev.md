@@ -10,7 +10,7 @@ npx pnpm@10.16.1 install --dir apps/desktop
 cargo xtask doctor
 ```
 
-- `apps/desktop` の frontend toolchain は Vite 8 に合わせて Node `^20.19.0 || >=22.12.0` を前提にする
+- `apps/desktop` の frontend toolchain は Node `^22.23.4 || ^24.22.1 || >=26.12.1` を前提にする。各系列の下限は、侵害された eMudhra の中間 CA を TLS で拒否する最初の版（#1904）。CI の setup-node は `^22.23.4` を指定する
 
 ## 日常コマンド
 ```bash

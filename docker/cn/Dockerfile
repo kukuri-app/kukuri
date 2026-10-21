@@ -45,8 +45,11 @@ FROM debian:bookworm-slim AS runtime
 
 ARG TARGET_BIN
 
+# #1904: 侵害された eMudhra の中間 CA へ至る root（emSign ECC Root CA - G3・Comodo AAA Services root）を
+# 外した bookworm-security の版より古い CA を入れない。build cache に残る古い layer も使わない。
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' ca-certificates)" ge 20250419~deb12u2 \
     && if [ "$TARGET_BIN" = "cn-indexer" ] || [ "$TARGET_BIN" = "cn-cli" ]; then \
          apt-get install -y --no-install-recommends ffmpeg \
          && mkdir -p /usr/local/share/kukuri \

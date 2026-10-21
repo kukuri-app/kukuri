@@ -791,7 +791,7 @@ Total packages: 1088
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | https://crates.io/crates/rustls-pki-types |
 | rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 | https://crates.io/crates/rustls-platform-verifier |
 | rustls-platform-verifier-android | 0.2.0 | MIT OR Apache-2.0 | https://crates.io/crates/rustls-platform-verifier-android |
-| rustls-webpki | 0.103.15 | ISC | https://crates.io/crates/rustls-webpki |
+| rustls-webpki | 0.103.16 | ISC | https://crates.io/crates/rustls-webpki |
 | rustversion | 1.0.23 | MIT OR Apache-2.0 | https://crates.io/crates/rustversion |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 | https://crates.io/crates/ryu |
 | safe_arch | 1.2.0 | Zlib OR Apache-2.0 OR MIT | https://crates.io/crates/safe_arch |
@@ -1054,8 +1054,8 @@ Total packages: 1088
 | webkit2gtk | 2.0.2 | MIT | https://crates.io/crates/webkit2gtk |
 | webkit2gtk-sys | 2.0.2 | MIT | https://crates.io/crates/webkit2gtk-sys |
 | webm-iterable | 0.7.1 | MIT | https://crates.io/crates/webm-iterable |
-| webpki-root-certs | 1.0.9 | CDLA-Permissive-2.0 | https://crates.io/crates/webpki-root-certs |
-| webpki-roots | 1.0.9 | CDLA-Permissive-2.0 | https://crates.io/crates/webpki-roots |
+| webpki-root-certs | 1.0.10 | CDLA-Permissive-2.0 | https://crates.io/crates/webpki-root-certs |
+| webpki-roots | 1.0.10 | CDLA-Permissive-2.0 | https://crates.io/crates/webpki-roots |
 | webview2-com | 0.39.1 | MIT | https://crates.io/crates/webview2-com |
 | webview2-com-macros | 0.8.1 | MIT | https://crates.io/crates/webview2-com-macros |
 | webview2-com-sys | 0.39.1 | MIT | https://crates.io/crates/webview2-com-sys |
