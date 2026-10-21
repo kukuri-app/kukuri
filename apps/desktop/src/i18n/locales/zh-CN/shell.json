@@ -656,7 +656,8 @@
       "lastPostAt": "最后发帖 {{time}}",
       "unavailable_one": "此范围内有 {{count}} 个公开帖子尚未获取。获取后，重新加载即可显示。",
       "unavailable_other": "此范围内有 {{count}} 个公开帖子尚未获取。获取后，重新加载即可显示。",
-      "loadMoreFailed": "无法加载更多公开帖子。"
+      "loadMoreFailed": "无法加载更多公开帖子。",
+      "thumbnailGated": "已作为成人内容隐藏的图片"
     },
     "detailEmpty": "这个公开帖子里还没有内容。",
     "deleted": "此公开帖子已被删除。",

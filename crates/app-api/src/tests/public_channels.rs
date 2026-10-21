@@ -621,3 +621,78 @@ async fn a_public_channel_is_created_with_an_attachment_only_first_post() {
     assert_eq!(first.attachments[0].mime, "image/png");
     assert_eq!(first.content_labels, vec![kukuri_core::ADULT_CONTENT_LABEL]);
 }
+
+// #1900: 一覧の行に、手元にある最初の投稿が付く(画面がサムネイルに使う)。手元に無い最初の投稿は一覧が読まず、ID から
+// 読むと付く。取り下げた最初の投稿は付かない。
+#[tokio::test]
+async fn list_rows_carry_the_first_post_once_it_is_local() {
+    let a_docs = MemoryDocsSync::with_docs_author("09".repeat(32));
+    let b_docs = MemoryDocsSync::with_docs_author("0a".repeat(32));
+    let blobs = Arc::new(MemoryBlobService::default());
+    let network = FakeNetwork::default();
+    let a = device("a", &network, a_docs.clone(), b_docs.clone(), blobs.clone());
+    let b = device("b", &network, b_docs, a_docs, blobs);
+    let channel = a
+        .create_public_channel(
+            TOPIC,
+            "画像つき",
+            "本文",
+            vec![pending_image_attachment("image/png", &tiny_png_bytes())],
+            Vec::new(),
+        )
+        .await
+        .expect("create with an image");
+    let first_post_id = channel.first_post_id.clone().expect("the first post");
+    let first = |view: &PublicChannelView| {
+        view.first_post
+            .as_ref()
+            .map(|post| (post.object_id.clone(), post.attachments.len()))
+    };
+    let expected = Some((first_post_id.clone(), 1));
+    async fn listed(app: &AppService) -> Vec<PublicChannelView> {
+        app.list_public_channels(TOPIC, PublicChannelOrder::Created, None, 20)
+            .await
+            .expect("list")
+            .items
+    }
+    assert_eq!(first(&channel), expected);
+    assert_eq!(
+        listed(&a).await.iter().map(first).collect::<Vec<_>>(),
+        vec![expected.clone()]
+    );
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let rows = loop {
+        let rows = listed(&b).await;
+        if !rows.is_empty() || tokio::time::Instant::now() >= deadline {
+            break rows;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
+    assert_eq!(rows.iter().map(first).collect::<Vec<_>>(), vec![None]);
+    let read = b
+        .get_public_channel(TOPIC, &channel.channel_id)
+        .await
+        .expect("get on B")
+        .expect("the channel by id");
+    assert_eq!(first(&read), expected);
+    assert_eq!(
+        listed(&b).await.iter().map(first).collect::<Vec<_>>(),
+        vec![expected]
+    );
+
+    a.withdraw_post(
+        TOPIC,
+        &first_post_id,
+        channel_ref(&channel.channel_id),
+        None,
+        WithdrawalReasonVisibility::Public,
+        Some(PostWithdrawalReason::AuthorRequest),
+    )
+    .await
+    .expect("withdraw the first post");
+    assert_eq!(
+        listed(&a).await.iter().map(first).collect::<Vec<_>>(),
+        vec![None]
+    );
+}

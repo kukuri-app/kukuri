@@ -474,6 +474,31 @@
   overflow-wrap: anywhere;
 }
 
+/* #1900: 最初の投稿のサムネイルは右に 64px の正方形。サムネイルの無い行は今の 1 列のまま。 */
+.public-thread-row:has(.public-thread-row-thumbnail) {
+  grid-template-columns: minmax(0, 1fr) 4rem;
+  column-gap: var(--space-md);
+}
+
+.public-thread-row-thumbnail {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 4rem;
+  height: 4rem;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: var(--surface-skeleton);
+  color: var(--muted-foreground);
+}
+
+.public-thread-row-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* 本文の中の公開スレッドのリンクの card は、外部のリンクの preview の見た目を button で使う。 */
 .public-thread-card {
   width: 100%;

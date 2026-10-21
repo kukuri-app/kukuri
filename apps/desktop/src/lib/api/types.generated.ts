@@ -132,6 +132,10 @@ created_at: number,
  */
 first_post_id?: string, 
 /**
+ * 手元にある最初の投稿(取り下げたものは無い。一覧の行のサムネイル。#1900)。
+ */
+first_post?: PostView, 
+/**
  * この端末が知っている最後の投稿の時刻(ミリ秒)。投稿を知らなければ作成時刻。
  */
 last_post_at: number, 

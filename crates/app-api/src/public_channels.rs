@@ -28,6 +28,10 @@ pub struct PublicChannelView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub first_post_id: Option<String>,
+    /// 手元にある最初の投稿(取り下げたものは無い。一覧の行のサムネイル。#1900)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub first_post: Option<PostView>,
     /// この端末が知っている最後の投稿の時刻(ミリ秒)。投稿を知らなければ作成時刻。
     pub last_post_at: i64,
     /// 作成者の profile の名前(手元に profile が無ければ無い。一覧の行の表示。#1840 AC-3)。
@@ -55,6 +59,7 @@ impl From<PublicChannelRow> for PublicChannelView {
             creator_pubkey: row.creator_pubkey,
             created_at: row.created_at,
             first_post_id: row.first_post_id,
+            first_post: None,
             last_post_at: row.last_post_at,
             creator_name: None,
             creator_display_name: None,
@@ -258,9 +263,10 @@ impl AppService {
             .remove(0))
     }
 
-    /// 行に作成者の名前と配信中の印を付ける。名前は手元の profile から付け、手元に無い profile は、タイムラインの投稿と
-    /// 同じく背景で読む(読めたら次の取得で付く)。配信中の印は、行ごとに手元の配信中の Live の行を上限つきで読む(Live の
-    /// 変化は topic の lease で受け取る。#1840 AC-4)。読むのは渡した行の分だけ。
+    /// 行に作成者の名前と配信中の印と最初の投稿を付ける。名前は手元の profile から付け、手元に無い profile は、タイムライン
+    /// の投稿と同じく背景で読む(読めたら次の取得で付く)。配信中の印は、行ごとに手元の配信中の Live の行を上限つきで読む
+    /// (Live の変化は topic の lease で受け取る。#1840 AC-4)。最初の投稿は手元の行だけを付け、無ければ読まない(画面が ID
+    /// から読み直す。#1900)。読むのは渡した行の分だけ。
     pub(crate) async fn with_row_details(
         &self,
         topic_id: &str,
@@ -282,7 +288,37 @@ impl AppService {
                 .map(|creator| (creator, Some(topic_id.to_owned()))),
         )
         .await;
+        let mut first_posts = Vec::new();
+        for view in views.iter().filter(|view| !view.deleted) {
+            if let Some(first_post_id) = &view.first_post_id
+                && let Some(row) = self
+                    .services
+                    .projection_store
+                    .get_object_projection(&EnvelopeId::from(first_post_id.as_str()))
+                    .await?
+                && row.channel_id == view.channel_id
+            {
+                first_posts.push(row);
+            }
+        }
+        let first_posts = self
+            .page_to_view_with_policy(
+                Page {
+                    items: first_posts,
+                    next_cursor: None,
+                },
+                DocFetchPolicy::LocalOnly,
+            )
+            .await?
+            .items;
         for view in &mut views {
+            view.first_post = first_posts
+                .iter()
+                .find(|post| {
+                    view.first_post_id.as_ref() == Some(&post.object_id)
+                        && post.withdrawal.is_none()
+                })
+                .cloned();
             if let Some(profile) = profiles.get(&view.creator_pubkey) {
                 view.creator_name = profile.name.clone();
                 view.creator_display_name = profile.display_name.clone();
