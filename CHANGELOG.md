@@ -18,6 +18,22 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.4.8-preview.1] - 2026-10-21
+
+### Features
+
+- 公開スレッド一覧の行に最初の投稿のサムネイルを出す（#1900） ([#1903](https://github.com/kukuri-app/kukuri/pull/1903))
+
+### Fixes
+
+- 侵害された eMudhra の中間 CA を拒否する版へ証明書検証・Node・CN の CA を上げる（#1904 AC-1） ([#1905](https://github.com/kukuri-app/kukuri/pull/1905))
+- Service Worker の install の取得で HTTP cache を通さない（#1901 AC-1） ([#1902](https://github.com/kukuri-app/kukuri/pull/1902))
+
+### Other
+
+- リリースの版を 0.4.8 にする ([#1906](https://github.com/kukuri-app/kukuri/pull/1906))
+- 0.4.7 preview の公開と LP・運用記録 ([#1899](https://github.com/kukuri-app/kukuri/pull/1899))
+
 ## [v0.4.7-preview.1] - 2026-10-20
 
 ### Features
