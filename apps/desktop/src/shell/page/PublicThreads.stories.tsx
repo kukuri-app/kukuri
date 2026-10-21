@@ -9,8 +9,10 @@ import type {
   PublicChannelListView,
   PublicChannelView,
 } from '@/lib/api';
+import { isAdultLabeledPost } from '@/shell/media';
 import type { ColumnState } from '@/shell/slices/workspace';
 import { createDesktopShellStore, DesktopShellStoreContext, timelineStorageKeyForChannel } from '@/shell/store';
+import { buildPostMediaView } from '@/shell/viewModels/postMediaView';
 
 import { PublicThreadActionsContext } from './publicThreadActions';
 import { PublicThreadLinkCard } from './PublicThreadLinkCard';
@@ -111,6 +113,29 @@ function OpenRenameDialog() {
   return null;
 }
 
+// #1900: サムネイルの画像(取得済みの object URL の代わりの SVG)と、最初の投稿。
+const svg = (from: string, to: string) =>
+  `data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200"><defs><linearGradient id="g" x2="1" y2="1"><stop offset="0" stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient></defs><rect width="320" height="200" fill="url(#g)"/><circle cx="230" cy="70" r="34" fill="#fff8"/></svg>`
+  )}`;
+const MEDIA_URLS: Record<string, string> = { ['1'.repeat(64)]: svg('#2563eb', '#f59e0b'), ['2'.repeat(64)]: svg('#059669', '#1e293b') };
+const postMedia = (post: PostView) =>
+  buildPostMediaView(post, { mediaObjectUrls: MEDIA_URLS, adultContentGated: isAdultLabeledPost(post), unsupportedVideoManifests: {} });
+function firstPost(id: string, attachments: [string, string, string][], contentLabels: string[] = []): PostView {
+  return {
+    ...FIRST_POST,
+    object_id: id,
+    content_labels: contentLabels,
+    attachments: attachments.map(([hash, mime, role]) => ({ hash: hash.repeat(64), mime, bytes: 1, role, status: 'Available' })),
+  };
+}
+const THUMBNAIL_THREADS: PublicChannelView[] = [
+  { ...THREADS[0]!, first_post: firstPost('first-post', [['1', 'image/png', 'image_original']]) },
+  { ...THREADS[1]!, first_post_id: 'video', first_post: firstPost('video', [['3', 'video/mp4', 'video_manifest'], ['2', 'image/jpeg', 'video_poster']]) },
+  { ...THREADS[2]!, first_post_id: 'adult', first_post: firstPost('adult', [['4', 'image/png', 'image_original']], ['adult']) },
+  THREADS[3]!,
+];
+
 function PublicThreadsStory(props: StoryProps) {
   const [store] = useState(() => {
     const created = createDesktopShellStore();
@@ -139,7 +164,7 @@ function PublicThreadsStory(props: StoryProps) {
           {props.surface === 'list' ? (
             <>
               <PublicThreadOrderMenu column={column} />
-              <PublicThreadList column={column} />
+              <PublicThreadList column={column} postMedia={postMedia} />
             </>
           ) : props.surface === 'card' ? (
             <article className='post-card'>
@@ -181,6 +206,14 @@ export const ListLiveMark: Story = {
     surface: 'list',
     page: { items: [{ ...THREADS[0]!, live_now: true }, ...THREADS.slice(1)], next_cursor: null, unavailable_count: 0 },
   },
+};
+
+/**
+ * 最初の投稿の 1 枚目の画像を行の右に出す(#1900)。画像が無く動画だけなら静止画、成人向けは伏せた印、添付の無い行は
+ * 今のまま。
+ */
+export const ListThumbnails: Story = {
+  args: { surface: 'list', page: { items: THUMBNAIL_THREADS, next_cursor: null, unavailable_count: 0 } },
 };
 
 export const ListCreatedOrder: Story = {

@@ -656,7 +656,8 @@
       "lastPostAt": "最後の投稿 {{time}}",
       "unavailable_one": "この範囲のスレッド{{count}}件は、まだ取得できていません。取得できたスレッドは、読み込み直すと表示されます。",
       "unavailable_other": "この範囲のスレッド{{count}}件は、まだ取得できていません。取得できたスレッドは、読み込み直すと表示されます。",
-      "loadMoreFailed": "続きを読み込めませんでした。"
+      "loadMoreFailed": "続きを読み込めませんでした。",
+      "thumbnailGated": "成人向けとして伏せた画像"
     },
     "detailEmpty": "このスレッドにはまだ投稿がありません。",
     "deleted": "このスレッドは削除されました。",

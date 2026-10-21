@@ -103,6 +103,7 @@ export const selectShellDataSlice = (s: DesktopShellStore) => ({
   gameRoomsByScopeKey: s.gameRoomsByScopeKey,
   liveSessionsByScopeKey: s.liveSessionsByScopeKey,
   liveStageStartPosts: s.liveStageStartPosts,
+  publicThreadsById: s.publicThreadsById,
   joinedChannelsByTopic: s.joinedChannelsByTopic,
   knownAuthorsByPubkey: s.knownAuthorsByPubkey,
   localProfile: s.localProfile,

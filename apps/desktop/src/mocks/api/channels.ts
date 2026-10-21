@@ -53,15 +53,21 @@ export function createChannelsMock(runtime: MockRuntime): ChannelsMock {
         session.channel_id === channel.channel_id && session.status === 'Live' && !muted.has(session.host_pubkey)
     );
   };
+  // native と同じく、手元にある最初の投稿(取り下げたものは除く)を付ける(#1900)。
+  const firstPost = (channel: PublicChannelView) => {
+    const post = runtime.postsByTopic[channel.topic_id]?.find((item) => item.object_id === channel.first_post_id);
+    return post && !post.withdrawal ? { first_post: post } : {};
+  };
   const withCreatorNames = (channel: PublicChannelView): PublicChannelView =>
     channel.creator_pubkey === syncStatus.local_author_pubkey
       ? {
           ...channel,
           ...(runtime.myProfile.name ? { creator_name: runtime.myProfile.name } : {}),
           ...(runtime.myProfile.display_name ? { creator_display_name: runtime.myProfile.display_name } : {}),
+          ...firstPost(channel),
           live_now: liveNow(channel),
         }
-      : { ...channel, live_now: liveNow(channel) };
+      : { ...channel, ...firstPost(channel), live_now: liveNow(channel) };
 
   const revise = (topic: string, channelId: string, change: Partial<PublicChannelView>) => {
     const channels = publicChannelsByTopic[topic] ?? [];

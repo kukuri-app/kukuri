@@ -496,3 +496,49 @@ test('a deleted public thread shows only that it was deleted in its detail colum
   expect(within(detail).queryByRole('button', { name: /^Post to / })).not.toBeInTheDocument();
   expect(within(detail).queryByRole('button', { name: 'Copy link' })).not.toBeInTheDocument();
 });
+
+// #1900: 一覧の行のサムネイルは、タイムラインと同じ取得の経路で画像を読む。表示設定 OFF の成人向けは伏せた印だけで、
+// 画像を取得しない。
+test('list rows fetch the first post’s image like the timeline and keep adult images hidden', async () => {
+  installObjectUrlMocks();
+  const api = createDesktopMockApi();
+  const getBlobMediaPayload = vi.spyOn(api, 'getBlobMediaPayload');
+  const image = (data: string) => ({
+    file_name: 'photo.png',
+    mime: 'image/png',
+    byte_size: 64,
+    data_base64: btoa(data),
+    role: 'image_original',
+  });
+  await api.createPublicChannel(TOPIC, 'Photos', '', [image('photo')], []);
+  // mock のスレッドの ID は作成のミリ秒で決まるので、同じ ID にならないように間を空ける。
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await api.createPublicChannel(TOPIC, 'Adult photos', '', [image('adult')], []);
+  // mock の投稿は自己申告のラベルを残さないので、一覧と ID からの取得の応答の最初の投稿に付ける。
+  const labeled = (row: PublicChannelView) =>
+    row.title === 'Adult photos' && row.first_post
+      ? { ...row, first_post: { ...row.first_post, content_labels: ['adult'] } }
+      : row;
+  const list = api.listPublicChannels.bind(api);
+  const get = api.getPublicChannel.bind(api);
+  vi.spyOn(api, 'listPublicChannels').mockImplementation(async (...args) => {
+    const page = await list(...args);
+    return { ...page, items: page.items.map(labeled) };
+  });
+  vi.spyOn(api, 'getPublicChannel').mockImplementation(async (...args) => {
+    const row = await get(...args);
+    return row && labeled(row);
+  });
+  renderAtHash(LIST_ROUTE, api);
+  const column = await waitFor(() => getActiveColumn('Public threads'));
+  const row = (title: string) => within(column).getByText(title).closest('button')!;
+  const thumbnail = (title: string) => row(title).querySelector('.public-thread-row-thumbnail');
+  await waitFor(() => expect(thumbnail('Photos')?.querySelector('img')?.getAttribute('src')).toMatch(/^blob:mock-/));
+  expect(thumbnail('Adult photos')).toHaveAccessibleName('Image hidden as adult material');
+  expect(thumbnail('Adult photos')?.querySelector('img')).toBeNull();
+  const fetched = getBlobMediaPayload.mock.calls.map(([hash]) => hash);
+  const hashOf = async (title: string) =>
+    (await list(TOPIC, 'created', null, 20)).items.find((item) => item.title === title)!.first_post!.attachments[0]!.hash;
+  expect(fetched).toContain(await hashOf('Photos'));
+  expect(fetched).not.toContain(await hashOf('Adult photos'));
+});

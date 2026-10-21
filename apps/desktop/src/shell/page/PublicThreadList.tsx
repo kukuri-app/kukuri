@@ -1,16 +1,19 @@
-import { CalendarPlus, Check, Link2, MessageSquareText, MoreHorizontal, Pencil, Radio, Trash2 } from 'lucide-react';
+import { CalendarPlus, Check, EyeOff, Link2, MessageSquareText, MoreHorizontal, Pencil, Radio, Trash2 } from 'lucide-react';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { EmptyStateGuidance } from '@/components/core/EmptyStateGuidance';
+import { MediaDemandObserver } from '@/components/core/MediaDemandObserver';
+import type { PostMediaView } from '@/components/core/types';
 import { useInfiniteScrollSentinel } from '@/components/core/useInfiniteScrollSentinel';
+import { useOnScreen } from '@/components/core/useOnScreen';
 import { useWindowScrollAnchor } from '@/components/core/useWindowScrollAnchor';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
 import { Notice } from '@/components/ui/notice';
 import { Popover, PopoverMenuContent, PopoverTrigger } from '@/components/ui/popover';
 import { formatLocalizedDateTime } from '@/i18n/format';
-import type { PublicChannelOrder, PublicChannelView } from '@/lib/api';
+import type { PostView, PublicChannelOrder, PublicChannelView } from '@/lib/api';
 import { useColumnRuntime } from '@/shell/ColumnRuntimeContext';
 import { VISIBLE_TIMELINE_LIMIT } from '@/shell/pagination';
 import { authorDisplayLabel, translateLiveStatus } from '@/shell/presentation';
@@ -26,8 +29,14 @@ const ORDERS = [
   { value: 'created', icon: CalendarPlus },
 ] as const;
 
-/** topic の公開スレッドの一覧の列の本体(#1840)。表示中の間だけ先頭のページを読み直す。並びを変えたら作り直す(key)。 */
-export function PublicThreadList({ column }: { column: ColumnState }) {
+/** 投稿の画像の表示(投稿 card と同じ判定。成人向けとして伏せる間は `gated`)。 */
+type PostMediaBuilder = (post: PostView) => PostMediaView;
+
+/**
+ * topic の公開スレッドの一覧の列の本体(#1840)。表示中の間だけ先頭のページを読み直す。並びを変えたら作り直す(key)。
+ * `postMedia` があれば、行に最初の投稿のサムネイルを出す(#1900)。
+ */
+export function PublicThreadList({ column, postMedia }: { column: ColumnState; postMedia?: PostMediaBuilder }) {
   const { t } = useTranslation(['shell', 'common']);
   const actions = useContext(PublicThreadActionsContext);
   const api = actions?.api;
@@ -118,18 +127,8 @@ export function PublicThreadList({ column }: { column: ColumnState }) {
     loadingMore,
     onLoadMore: loadMore,
   });
-  const liveSurfaces = useLiveSurfacesEnabled();
 
   if (!actions) return null;
-  // 名前は行の作成者の profile(手元に無ければ背景で読まれ、次の読み直しで付く)、無ければ投稿などで知った名前。
-  const creatorLabel = (row: PublicChannelView) => {
-    const author = knownAuthorsByPubkey[row.creator_pubkey];
-    return authorDisplayLabel(
-      row.creator_pubkey,
-      row.creator_display_name ?? author?.display_name,
-      row.creator_name ?? author?.name
-    );
-  };
   return (
     <div className='shell-column-content'>
       {state.status === 'loading' ? <Notice>{t('shell:publicThreads.list.loading')}</Notice> : null}
@@ -158,30 +157,7 @@ export function PublicThreadList({ column }: { column: ColumnState }) {
           </li>
         ) : null}
         {rows.map((row) => (
-          <li key={row.channel_id} data-post-id={row.channel_id}>
-            {/* 文言の間の空白は、読み上げの名前を区切る(grid・flex の中なので見た目は変えない)。 */}
-            <button type='button' className='public-thread-row' onClick={() => actions.open(topic, row.channel_id)}>
-              <strong className='public-thread-row-title'>{row.title}</strong>{' '}
-              <span className='public-thread-row-meta'>
-                <span>{creatorLabel(row)}</span>{' '}
-                <span>
-                  {t(order === 'created' ? 'shell:publicThreads.list.createdAt' : 'shell:publicThreads.list.lastPostAt', {
-                    time: formatLocalizedDateTime(order === 'created' ? row.created_at : row.last_post_at),
-                  })}
-                </span>
-                {/* 配信中の印(判断 2。#1840 AC-4)。 */}
-                {liveSurfaces && row.live_now ? (
-                  <>
-                    {' '}
-                    <span className='public-thread-row-live'>
-                      <Radio className='size-3.5 shrink-0' aria-hidden='true' />
-                      {translateLiveStatus('Live')}
-                    </span>
-                  </>
-                ) : null}
-              </span>
-            </button>
-          </li>
+          <PublicThreadRow key={row.channel_id} topic={topic} order={order} row={row} postMedia={postMedia} />
         ))}
         {state.unavailable > 0 ? (
           <li>
@@ -207,6 +183,97 @@ export function PublicThreadList({ column }: { column: ColumnState }) {
         ) : null}
       </ul>
     </div>
+  );
+}
+
+/**
+ * 一覧の 1 行。名前は行の作成者の profile(手元に無ければ背景で読まれ、次の読み直しで付く)、無ければ投稿などで知った名前。
+ * 右に最初の投稿の 1 枚目の画像(無ければ動画の静止画)を出す。最初の投稿が手元に無い行は、画面に出たら ID から読み、
+ * 読めたら覚えたスレッドから出す(#1900)。
+ */
+function PublicThreadRow({
+  topic,
+  order,
+  row,
+  postMedia,
+}: {
+  topic: string;
+  order: PublicChannelOrder;
+  row: PublicChannelView;
+  postMedia?: PostMediaBuilder;
+}) {
+  const { t } = useTranslation('shell');
+  const actions = useContext(PublicThreadActionsContext);
+  const load = actions?.load;
+  const liveSurfaces = useLiveSurfacesEnabled();
+  const author = useDesktopShellStore((state) => state.knownAuthorsByPubkey[row.creator_pubkey]);
+  const firstPost = useDesktopShellStore((state) => state.publicThreadsById[row.channel_id]?.first_post) ?? row.first_post;
+  const ref = useRef<HTMLLIElement>(null);
+  const onScreen = useOnScreen(ref, row.channel_id);
+  const missing = Boolean(postMedia && row.first_post_id && !firstPost);
+  useEffect(() => {
+    if (load && missing && onScreen) void load(topic, row.channel_id);
+  }, [load, missing, onScreen, topic, row.channel_id]);
+  if (!actions) return null;
+  const media = firstPost && postMedia ? postMedia(firstPost) : null;
+  return (
+    <li ref={ref} data-post-id={row.channel_id}>
+      {/* 文言の間の空白は、読み上げの名前を区切る(grid・flex の中なので見た目は変えない)。 */}
+      <button type='button' className='public-thread-row' onClick={() => actions.open(topic, row.channel_id)}>
+        <strong className='public-thread-row-title'>{row.title}</strong>{' '}
+        <span className='public-thread-row-meta'>
+          <span>
+            {authorDisplayLabel(
+              row.creator_pubkey,
+              row.creator_display_name ?? author?.display_name,
+              row.creator_name ?? author?.name
+            )}
+          </span>{' '}
+          <span>
+            {t(order === 'created' ? 'publicThreads.list.createdAt' : 'publicThreads.list.lastPostAt', {
+              time: formatLocalizedDateTime(order === 'created' ? row.created_at : row.last_post_at),
+            })}
+          </span>
+          {/* 配信中の印(判断 2。#1840 AC-4)。 */}
+          {liveSurfaces && row.live_now ? (
+            <>
+              {' '}
+              <span className='public-thread-row-live'>
+                <Radio className='size-3.5 shrink-0' aria-hidden='true' />
+                {translateLiveStatus('Live')}
+              </span>
+            </>
+          ) : null}
+        </span>
+        {media ? <PublicThreadThumbnail media={media} /> : null}
+      </button>
+    </li>
+  );
+}
+
+/** 行の右のサムネイル。成人向けとして伏せる間は印だけを出し、画像を参照しない(#1900 判断 2)。照会中は枠だけを出す。 */
+function PublicThreadThumbnail({ media }: { media: PostMediaView }) {
+  const { t } = useTranslation('shell');
+  if (media.state === 'gated') {
+    return (
+      <span className='public-thread-row-thumbnail' role='img' aria-label={t('publicThreads.list.thumbnailGated')}>
+        <EyeOff className='size-5' aria-hidden='true' />
+      </span>
+    );
+  }
+  if (media.state === 'pending') return <span className='public-thread-row-thumbnail' aria-hidden='true' />;
+  const shown =
+    media.kind === 'image'
+      ? media.imageGalleryItems?.[0]
+      : media.videoPosterHash
+        ? { hash: media.videoPosterHash, src: media.videoPosterPreviewSrc }
+        : undefined;
+  if (!shown) return null;
+  return (
+    <span className='public-thread-row-thumbnail' aria-hidden='true'>
+      <MediaDemandObserver hash={shown.hash} />
+      {shown.src ? <img src={shown.src} alt='' /> : null}
+    </span>
   );
 }
 

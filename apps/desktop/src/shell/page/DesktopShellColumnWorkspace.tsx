@@ -26,7 +26,8 @@ import {
   TimelineViewIconTabs,
   type TimelineViewId,
 } from '@/components/shell/TimelineViewIconTabs';
-import type { MentionCandidate } from '@/components/core/types';
+import type { MentionCandidate, PostMediaView } from '@/components/core/types';
+import type { PostView } from '@/lib/api';
 import {
   communityIndexNodeLabel,
   eligibleCommunityIndexNodes,
@@ -112,6 +113,8 @@ type DesktopShellColumnWorkspaceProps = {
   renderThreadSurface: (column: ColumnState) => ReactNode;
   timelineViewItems: Array<{ id: TimelineViewId; label: string }>;
   titles: ColumnTitles;
+  /** 公開スレッドの一覧の行のサムネイル(投稿 card と同じ判定。#1900)。 */
+  publicThreadPostMedia: (post: PostView) => PostMediaView;
 };
 
 export function DesktopShellColumnWorkspace({
@@ -149,6 +152,7 @@ export function DesktopShellColumnWorkspace({
   renderThreadSurface,
   timelineViewItems,
   titles,
+  publicThreadPostMedia,
 }: DesktopShellColumnWorkspaceProps) {
   useThreadFocusScroll();
   const { t } = useTranslation('shell');
@@ -386,7 +390,13 @@ export function DesktopShellColumnWorkspace({
     if (column.kind === 'notifications') return renderNotificationsSurface(column);
     // 並びを変えたら、読み込んだ行と続きの位置を捨てて作り直す。
     if (column.kind === 'publicThreads') {
-      return <PublicThreadList key={column.publicThreadOrder ?? 'last_post'} column={column} />;
+      return (
+        <PublicThreadList
+          key={column.publicThreadOrder ?? 'last_post'}
+          column={column}
+          postMedia={publicThreadPostMedia}
+        />
+      );
     }
     if (isDeletedThread(column)) {
       return (

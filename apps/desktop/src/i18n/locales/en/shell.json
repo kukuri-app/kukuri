@@ -656,7 +656,8 @@
       "lastPostAt": "Last post {{time}}",
       "unavailable_one": "{{count}} thread in this range hasn't arrived yet. Once it arrives, it appears when you reload.",
       "unavailable_other": "{{count}} threads in this range haven't arrived yet. Once they arrive, they appear when you reload.",
-      "loadMoreFailed": "Couldn't load more public threads."
+      "loadMoreFailed": "Couldn't load more public threads.",
+      "thumbnailGated": "Image hidden as adult material"
     },
     "detailEmpty": "No posts in this thread yet.",
     "deleted": "This thread was deleted.",

@@ -874,6 +874,7 @@ export function DesktopShellPage({
           column.scope?.channelId
         )
       }
+      publicThreadPostMedia={(post) => viewModels.buildPostCardView(post, 'timeline').media}
       titles={columnTitles}
     />
   );

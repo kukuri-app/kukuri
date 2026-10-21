@@ -4,10 +4,14 @@ import { expect, test, vi } from 'vitest';
 
 import { SmartReferenceText } from '@/components/core/SmartReferenceText';
 import { usePublicThreadColumnTitles } from '@/shell/page/columnTitles';
-import type { AuthorSocialView, DesktopApi, PublicChannelView } from '@/lib/api';
+import type { AttachmentView, AuthorSocialView, DesktopApi, PostView, PublicChannelView } from '@/lib/api';
 import { buildPublicThreadLink } from '@/lib/internalLinks';
 import type { ColumnState } from '@/shell/slices/workspace';
 import { createDesktopShellStore, DesktopShellStoreContext } from '@/shell/store';
+
+import { buildImagePost, buildVideoPost } from '@/shell/DesktopShellPage.testHelpers';
+import { isAdultLabeledPost } from '@/shell/media';
+import { buildPostMediaView } from '@/shell/viewModels/postMediaView';
 
 import { PublicThreadLinkCard } from './PublicThreadLinkCard';
 import { PublicThreadList } from './PublicThreadList';
@@ -110,4 +114,65 @@ test('column titles leave out a hidden creator’s thread', () => {
     store.getState().setField('knownAuthorsByPubkey', (current) => ({ ...current, [MUTED]: author(MUTED, true) }));
   });
   expect(JSON.parse(screen.getByRole('status').textContent ?? '{}')).toEqual({ [SHOWN.channel_id]: 'Shown thread' });
+});
+
+const IMAGE = 'a'.repeat(64);
+const POSTER = 'p'.repeat(64);
+
+// #1900: 行の右に最初の投稿の 1 枚目の画像(無ければ動画の静止画)を出す。添付の無い行には出さない。表示設定 OFF の
+// 成人向けは伏せた印だけを出す。最初の投稿が手元に無い行は、画面に出たら ID から読み、読めたら出す。
+test('rows show the first post’s first image, a video poster or a hidden mark', async () => {
+  const store = createDesktopShellStore();
+  const withPost = (channelId: string, title: string, post: PostView): PublicChannelView => ({
+    ...thread(channelId, title, OTHER),
+    first_post_id: post.object_id,
+    first_post: post,
+  });
+  const second: AttachmentView = { hash: 'b'.repeat(64), mime: 'image/png', bytes: 1, role: 'image_original', status: 'Available' };
+  const image = buildImagePost({ object_id: 'image' });
+  const rows = [
+    withPost('pc-1700000000005-cccccccccccccccc', 'Image', { ...image, attachments: [...image.attachments, second] }),
+    withPost('pc-1700000000004-cccccccccccccccc', 'Video', buildVideoPost({ object_id: 'video' })),
+    withPost('pc-1700000000003-cccccccccccccccc', 'Text', buildImagePost({ object_id: 'text', attachments: [] })),
+    withPost('pc-1700000000002-cccccccccccccccc', 'Adult', buildImagePost({ object_id: 'adult', content_labels: ['adult'] })),
+    { ...thread('pc-1700000000001-cccccccccccccccc', 'Not local', OTHER), first_post_id: 'remote' },
+  ];
+  const api = {
+    listPublicChannels: vi.fn(async () => ({ items: rows, next_cursor: null, unavailable_count: 0 })),
+    getPublicChannel: vi.fn(async (_topic: string, channelId: string) => ({
+      ...rows.find((row) => row.channel_id === channelId)!,
+      first_post: buildImagePost({ object_id: 'remote' }),
+    })),
+  } as unknown as DesktopApi;
+  const postMedia = (post: PostView) =>
+    buildPostMediaView(post, {
+      mediaObjectUrls: { [IMAGE]: 'blob:image', [POSTER]: 'blob:poster' },
+      adultContentGated: isAdultLabeledPost(post),
+      unsupportedVideoManifests: {},
+    });
+  const column: ColumnState = {
+    id: 'list',
+    kind: 'publicThreads',
+    scope: { topicId: TOPIC, channelId: null },
+    pinned: false,
+    preferredDesktopSpan: 1,
+  };
+  render(
+    <DesktopShellStoreContext.Provider value={store}>
+      <PublicThreadProviders api={api} open={() => undefined} openLive={() => undefined} copyLink={() => undefined}>
+        <PublicThreadList column={column} postMedia={postMedia} />
+      </PublicThreadProviders>
+    </DesktopShellStoreContext.Provider>
+  );
+  const thumbnail = (title: string) =>
+    screen.getByText(title).closest('button')?.querySelector('.public-thread-row-thumbnail') ?? null;
+  await waitFor(() => expect(thumbnail('Not local')?.querySelector('img')).toHaveAttribute('src', 'blob:image'));
+  expect(api.getPublicChannel).toHaveBeenCalledTimes(1);
+  expect(api.getPublicChannel).toHaveBeenCalledWith(TOPIC, 'pc-1700000000001-cccccccccccccccc');
+  expect(thumbnail('Image')?.querySelectorAll('img')).toHaveLength(1);
+  expect(thumbnail('Image')?.querySelector('img')).toHaveAttribute('src', 'blob:image');
+  expect(thumbnail('Video')?.querySelector('img')).toHaveAttribute('src', 'blob:poster');
+  expect(thumbnail('Text')).toBeNull();
+  expect(thumbnail('Adult')).toHaveAccessibleName('Image hidden as adult material');
+  expect(thumbnail('Adult')?.querySelector('img')).toBeNull();
 });
