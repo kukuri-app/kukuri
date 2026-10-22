@@ -52,8 +52,8 @@ async fn ok(
     response.data.unwrap_or(Value::Null)
 }
 
-/// 保持の進み具合で、topic の索引ごとに読み終えた最後の object id。
-fn progressed(status: &Value, topic: &str, index: &str) -> Vec<String> {
+/// 保持の進み具合で、topic の索引ごとに読み終えた最後の entry の (時刻, object id)。
+fn progressed(status: &Value, topic: &str, index: &str) -> Vec<(i64, String)> {
     status["topics"]
         .as_array()
         .expect("topics")
@@ -62,12 +62,22 @@ fn progressed(status: &Value, topic: &str, index: &str) -> Vec<String> {
         .flat_map(|retained| retained["progress"].as_array().expect("progress").clone())
         .filter(|progress| progress["index"] == index)
         .map(|progress| {
-            progress["object_id"]
-                .as_str()
-                .expect("object id")
-                .to_string()
+            (
+                progress["created_at"].as_i64().expect("created at"),
+                progress["object_id"]
+                    .as_str()
+                    .expect("object id")
+                    .to_string(),
+            )
         })
         .collect()
+}
+
+/// 読み終えた最後の entry に `id` があるか。
+fn reached(status: &Value, topic: &str, index: &str, id: Option<&str>) -> bool {
+    progressed(status, topic, index)
+        .iter()
+        .any(|(_, read)| Some(read.as_str()) == id)
 }
 
 fn object_ids(page: &Value) -> Vec<String> {
@@ -173,20 +183,39 @@ async fn retained_topics_are_taken_in_without_columns_and_restored_after_restart
         json!({"topic": TEST, "content": "test の投稿"}),
     )
     .await;
-    let channel_activity = format!("{channel_id}.{}", channel_post.as_str().expect("post id"));
+    // 公開スレッドの 2 件の投稿の activity の entry。同じ秒の entry は ID の順に読むので、続きの位置は (時刻, ID) の
+    // 大きい方まで進む。
+    let thread_at_a = ok(
+        &dispatcher,
+        &host_a,
+        "list_timeline",
+        json!({"topic": GENERAL, "scope": {"kind": "public_channel", "channel_id": channel_id}}),
+    )
+    .await;
+    let last_activity = thread_at_a["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| {
+            let post = item["object_id"].as_str().expect("object id");
+            (
+                item["created_at"].as_i64().expect("created at"),
+                format!("{channel_id}.{post}"),
+            )
+        })
+        .max()
+        .expect("thread posts");
 
     // K の取り込みが、索引の続きの位置を A の記録まで進める(設定し直しは次の回を待たずに起こす)。
     tokio::time::timeout(Duration::from_secs(90), async {
         loop {
             let status = ok(&dispatcher, &host_k, "get_topic_retention", json!({})).await;
-            if progressed(&status, GENERAL, "channels/activity/").contains(&channel_activity)
-                && progressed(&status, GENERAL, "channels/list/").contains(&channel_id)
-                && progressed(&status, GENERAL, "indexes/timeline/")
-                    .iter()
-                    .any(|id| Some(id.as_str()) == general_post.as_str())
-                && progressed(&status, TEST, "indexes/timeline/")
-                    .iter()
-                    .any(|id| Some(id.as_str()) == test_post.as_str())
+            if progressed(&status, GENERAL, "channels/activity/")
+                .iter()
+                .any(|read| *read >= last_activity)
+                && reached(&status, GENERAL, "channels/list/", Some(&channel_id))
+                && reached(&status, GENERAL, "indexes/timeline/", general_post.as_str())
+                && reached(&status, TEST, "indexes/timeline/", test_post.as_str())
             {
                 break;
             }

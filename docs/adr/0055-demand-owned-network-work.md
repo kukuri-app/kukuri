@@ -113,7 +113,8 @@ holderは次の5種類だけで、同じkeyを複数のholderが持っても枠�
   holder `retain:<topic>`のleaseを取り直す（上限で取れないtopicはwarnにして起動を続ける）。accountごとに1つのtaskが、1回に
   1つのtopicを選び、現在と前日のbucketの`indexes/timeline/`・`channels/list/`・`channels/activity/`を、topic・索引・bucketごとの
   続きの位置（`topic_retention_cursors`。前日より前のbucketの位置は消す）から古い順に読み、1回32件まで既存の反映の関数で取り込む
-  （読み先はtopicの近隣の最大4台、1回の期限60秒）。読み先のページが埋まったときは、そのページの最後より後ろを次の回へ残し、
+  （読み先はtopicの近隣の最大4台で、近隣がいなければpeerの台帳から選ぶ。読み先ごとの索引の読みと、対象1件の取り込みの
+  期限は、それぞれ既存の30秒）。読み先のページが埋まったときは、そのページの最後より後ろを次の回へ残し、
   `TIME_INDEX_FUTURE_ALLOWANCE_SECS`より未来の時刻のentryで位置を進めない。同じ対象の取り込みが3回続けて失敗したら飛ばす。
   続きが残っていれば1秒後、追いついたら30秒後に次の回を行い、保持するtopicが無くなればtaskは終わる。公開スレッドの投稿は
   `channels/activity/`から見つけるので、公開スレッドの数に比例する購読もtaskも作らない。gossipを止めたtopicは取り込まない。

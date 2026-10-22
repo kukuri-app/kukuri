@@ -16,10 +16,10 @@ use kukuri_docs_sync::{
 };
 use kukuri_store::TopicRetentionCursor;
 
-/// 1 回に取り込む対象の上限。
+/// 1 回に取り込む対象の上限。読み先ごとの索引の読みと、対象 1 件の取り込みには、それぞれ既存の期限
+/// (`REMOTE_READ_DEADLINE`)を持たせる(1 回全体で期限を分け合うと、届かない読み先が期限を使い切り、試していない対象を
+/// 失敗に数える)。
 pub(crate) const RETENTION_STEP_ENTRIES: usize = 32;
-/// 1 回の全体の期限。間に合わなかった対象は、続きの位置を進めずに次の回へ残す。
-const RETENTION_STEP_DEADLINE: Duration = Duration::from_secs(60);
 /// 続きが残っているときの、次の回までの間。
 const RETENTION_BUSY_INTERVAL: Duration = Duration::from_secs(1);
 /// 追いついたときの、次の回までの間。
@@ -73,7 +73,8 @@ impl From<TopicRetentionCursor> for RetentionProgressView {
 /// 取り込みの位置((topic, 索引, bucket))。
 type RetentionSlot = (String, &'static str, u64);
 
-/// 続けて失敗している対象(位置ごとに、対象の（時刻, ID）と回数)。保持する topic の数 × 索引 × 2 bucket まで。
+/// 続けて失敗している対象(位置ごとに、対象の（時刻, ID）と回数)。読む位置(保持する topic × 索引 × 現在と前日の
+/// bucket)の分だけ持ち、読まなくなった位置の分は消す。
 #[derive(Default)]
 pub(crate) struct RetentionFailures(HashMap<RetentionSlot, ((i64, String), u32)>);
 
@@ -101,6 +102,11 @@ impl RetentionFailures {
     fn clear(&mut self, topic: &str, prefix: &'static str, bucket: u64) {
         self.0.remove(&(topic.to_owned(), prefix, bucket));
     }
+
+    /// `reads(topic, bucket)` が偽の位置(保持をやめた topic と、前日より前の bucket)の記録を消す。
+    fn keep_only(&mut self, reads: impl Fn(&str, u64) -> bool) {
+        self.0.retain(|(topic, _, bucket), _| reads(topic, *bucket));
+    }
 }
 
 /// 読み先ごとの索引の 1 ページを、時刻の順に合わせたもの。
@@ -122,14 +128,13 @@ async fn merged_index_page(
     after: Option<&TimeIndexCursor>,
     limit: usize,
     not_after: i64,
-    deadline: n0_future::time::Instant,
 ) -> MergedIndexPage {
     let mut merged: BTreeMap<(i64, String), (TimeIndexEntry, usize)> = BTreeMap::new();
     let mut bound: Option<(i64, String)> = None;
     let mut more = false;
     for (slot, reader) in readers.iter().enumerate() {
-        let Ok(Ok(page)) = crate::timeout_at(
-            deadline,
+        let Ok(Ok(page)) = n0_future::time::timeout(
+            REMOTE_READ_DEADLINE,
             query_time_index_asc(reader.as_ref(), replica, prefix, after, limit),
         )
         .await
@@ -348,6 +353,7 @@ impl AppService {
             return Ok(false);
         }
         busy.retain(|topic| topics.iter().any(|row| row.topic_id == *topic));
+        failures.keep_only(|topic, _| topics.iter().any(|row| row.topic_id == topic));
         let topic = topics[*next % topics.len()].topic_id.clone();
         *next = next.wrapping_add(1);
         // gossip を止めた topic は取り込まない(lease の task も止まっている)。
@@ -371,13 +377,13 @@ impl AppService {
         failures: &mut RetentionFailures,
     ) -> Result<bool> {
         let store = self.topic_retention_store()?;
-        let deadline = n0_future::time::Instant::now() + RETENTION_STEP_DEADLINE;
         let now = Utc::now().timestamp();
         let current = TimeBucket::from_unix_seconds(now)?;
         let previous = current.previous().unwrap_or(current);
         store
             .prune_topic_retention_cursors(topic, previous.index())
             .await?;
+        failures.keep_only(|retained, bucket| retained != topic || bucket >= previous.index());
         let cursors = store
             .topic_retention_cursors(topic, previous.index())
             .await?;
@@ -406,7 +412,7 @@ impl AppService {
                 continue;
             }
             for prefix in RETENTION_INDEXES {
-                if left == 0 || n0_future::time::Instant::now() >= deadline {
+                if left == 0 {
                     return Ok(true);
                 }
                 let after = cursors
@@ -416,31 +422,28 @@ impl AppService {
                         created_at: cursor.created_at,
                         object_id: cursor.object_id.clone(),
                     });
-                let page = merged_index_page(
-                    &readers,
-                    &replica,
-                    prefix,
-                    after.as_ref(),
-                    left,
-                    not_after,
-                    deadline,
-                )
-                .await;
+                let page =
+                    merged_index_page(&readers, &replica, prefix, after.as_ref(), left, not_after)
+                        .await;
                 more |= page.more;
                 for (entry, slot) in page.entries {
                     let reader = readers[slot].clone();
-                    let retained = crate::timeout_at(
-                        deadline,
+                    let retained = n0_future::time::timeout(
+                        REMOTE_READ_DEADLINE,
                         self.retain_index_entry(topic, &replica, prefix, &entry, reader.clone()),
                     )
                     .await;
                     reader.finish_remote_object().await;
+                    // shutdown の途中の対象は反映されないまま返る。続きの位置を進めず、次の起動で読み直す。
+                    if *self.services.content_closed.borrow() {
+                        return Ok(true);
+                    }
                     match retained {
                         Ok(Ok(())) => failures.clear(topic, prefix, bucket.index()),
                         failed => {
                             let error = match failed {
                                 Ok(Err(error)) => error,
-                                _ => anyhow::anyhow!("retention step deadline elapsed"),
+                                _ => anyhow::anyhow!("retention entry deadline elapsed"),
                             };
                             // 次の回に同じ位置から読み直す。続けて失敗した対象だけを飛ばす。
                             if !failures.note(topic, prefix, bucket.index(), &entry) {

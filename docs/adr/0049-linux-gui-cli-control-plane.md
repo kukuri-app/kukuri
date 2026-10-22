@@ -68,8 +68,8 @@ DebにCLIは同梱しない。Deb payloadはfirst-party ELF、desktop／iconとn
 ### 公開topicの保持（#1909）
 
 CLI daemonは、指定した公開topicの内容を画面の列なしに取り込み、保持して、通常peerと同じprotocolで再提供する。CNとは別のprocess・役割で、
-発見・署名検証・読取り・提供は通常peerと同じ経路を使い、この端末を特別に扱う識別子や優先の枠は作らない。取り込みの単位はtopicで、公開スレッド・
-Live・metaverseを含む（範囲と値は#1909の判断）。
+発見・署名検証・読取り・提供は通常peerと同じ経路を使い、この端末を特別に扱う識別子や優先の枠は作らない。取り込みの単位はtopicで、topicの投稿と
+公開スレッド（metadataと投稿）を取り込む（範囲と値は#1909の判断）。
 
 - Feature 名: 公開topicの保持
 - Durable / Transient: 保持するtopicと取り込みの続きの位置はDurable。取り込みのtaskはTransient
@@ -79,7 +79,7 @@ Live・metaverseを含む（範囲と値は#1909の判断）。
 - Rebuildable From: 設定は再構築しない。位置は失っても現在と前日のbucketを読み直して作り直せる
 - Public Replica / Private Replica / Local Only: 設定と位置はLocal Only。保持するのは公開topicのbucketの公開の内容だけで、private channel・DMは取り込まない
 - Gossip Hint 必要有無: 保持するtopicのtopic hintを受ける（holder `retain:<topic>`のlease。ADR 0055 §1.1）。公開スレッドごとのhintは購読しない
-- Blob 必要有無: 既存の投稿・sessionの参照blob
+- Blob 必要有無: 投稿の本文は、既存の反映が取る範囲（手元に無ければ取得の台帳の間隔の内で試す）で取る
 - SQLite projection 必要有無: 取り込んだ投稿・公開スレッドの行は既存のprojection
 - 必須 contract: CLIの`set_topic_retention`・`get_topic_retention`（GUIには無いCLIだけのcommand）、公開でないtopicの拒否、再起動での復元、
   解除・shutdownでの停止、公開スレッドの数に比例しない購読とtask
