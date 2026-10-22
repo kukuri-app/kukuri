@@ -281,6 +281,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         ),
         ("get_sync_status", size0(DesktopRuntime::get_sync_status)),
         (
+            "get_topic_retention",
+            size0(DesktopRuntime::get_topic_retention),
+        ),
+        (
             "has_topic_timeline_doc_index_entry",
             size2(DesktopRuntime::has_topic_timeline_doc_index_entry),
         ),
@@ -597,6 +601,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         (
             "set_topic_gossip_enabled",
             size1(DesktopRuntime::set_topic_gossip_enabled),
+        ),
+        (
+            "set_topic_retention",
+            size1(DesktopRuntime::set_topic_retention),
         ),
         ("shutdown", size0(DesktopRuntime::shutdown)),
         ("shutdown_checked", size0(DesktopRuntime::shutdown_checked)),
