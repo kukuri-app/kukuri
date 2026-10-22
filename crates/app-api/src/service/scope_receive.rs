@@ -749,8 +749,8 @@ impl AppService {
                     ),
                 )
                 .await;
-                if let Ok(Ok(count)) = read {
-                    applied += count;
+                if let Ok(Ok(reactions)) = read {
+                    applied += reactions.len();
                 }
             }
         }

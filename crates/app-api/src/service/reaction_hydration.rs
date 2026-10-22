@@ -30,7 +30,8 @@ pub(crate) async fn hydrate_reaction_cache_from_reaction(
     Ok(true)
 }
 
-/// reaction の key(`state` と `envelope` のどちらでもよい)を 1 つ指定して反映する。replica は走査しない。
+/// reaction の key(`state` と `envelope` のどちらでもよい)を 1 つ指定して反映し、反映した reaction を返す。replica は
+/// 走査しない。
 ///
 /// `topic_id` は、その replica を読む文脈の topic。読む docs の record は、その reaction の envelope の key だけ。
 #[allow(clippy::too_many_arguments)]
@@ -43,9 +44,9 @@ pub(crate) async fn hydrate_reaction_cache_from_key(
     replica: &ReplicaId,
     key: &str,
     policy: DocFetchPolicy,
-) -> Result<bool> {
+) -> Result<Option<VerifiedReaction>> {
     let Some(key) = ReactionKey::from_doc_key(key) else {
-        return Ok(false);
+        return Ok(None);
     };
     // bucket(R5-H)の reaction は作成時の bucket にあり、識別は対象の投稿を置いた replica で行う。
     let identity = if replica.as_str().starts_with("bucket::") {
@@ -54,7 +55,7 @@ pub(crate) async fn hydrate_reaction_cache_from_key(
             .await?
         {
             Some(target) => target.source_replica_id,
-            None => return Ok(false),
+            None => return Ok(None),
         }
     } else {
         replica.clone()
@@ -62,10 +63,10 @@ pub(crate) async fn hydrate_reaction_cache_from_key(
     let Some((reaction, docs_author)) =
         load_verified_reaction(docs_sync, replica, &identity, topic_id, &key, policy).await?
     else {
-        return Ok(false);
+        return Ok(None);
     };
     if !hydrate_reaction_cache_from_reaction(projection_store, changes, &reaction).await? {
-        return Ok(false);
+        return Ok(None);
     }
     // remote から読んで受け入れた版(反映済みより古くない版)だけを保持し、他の参加者へ提供する(#1395)。
     docs_sync
@@ -85,13 +86,13 @@ pub(crate) async fn hydrate_reaction_cache_from_key(
             .learn_content_source(&asset.blob_hash, &provider)
             .await;
     }
-    Ok(true)
+    Ok(Some(reaction))
 }
 
 /// reaction id の先頭の 1 文字ごとの一覧で読む key の数(reaction 4 件ぶん)。
 pub(crate) const REACTION_KEYS_PER_LEAD: usize = 8;
 
-/// 対象の投稿 1 件の reaction を、上限つきで反映する(#1239)。replica は走査しない。
+/// 対象の投稿 1 件の reaction を、上限つきで反映し、反映した reaction を返す(#1239)。replica は走査しない。
 ///
 /// 読むのは、`reactions/<target>/` の key だけの上限つきの一覧(`max_reactions` 件ぶん)と、見つかった reaction ごとの
 /// envelope の key(#1252 の検証)。読む量は対象の reaction の総数に依存しない。上限を超える reaction は、ここでは
@@ -107,7 +108,7 @@ pub(crate) async fn hydrate_reaction_cache_for_target_bounded(
     target_object_id: &EnvelopeId,
     policy: DocFetchPolicy,
     max_reactions: usize,
-) -> Result<usize> {
+) -> Result<Vec<VerifiedReaction>> {
     // reaction 1 件につき、`state` と `envelope` の 2 つの key がある。
     let prefix = stable_key("reactions", &format!("{}/", target_object_id.as_str()));
     let list = |prefix: String, limit: usize| async move {
@@ -161,19 +162,21 @@ pub(crate) async fn hydrate_reaction_cache_for_target_bounded(
         }
         keys = mixed;
     }
-    let mut hydrated = 0usize;
+    let mut hydrated = Vec::new();
     for key in keys.into_iter().take(max_reactions) {
-        hydrated += hydrate_reaction_cache_from_key(
-            docs_sync,
-            projection_store,
-            blob_service,
-            changes,
-            topic_id,
-            replica,
-            key.envelope_key().as_str(),
-            policy,
-        )
-        .await? as usize;
+        hydrated.extend(
+            hydrate_reaction_cache_from_key(
+                docs_sync,
+                projection_store,
+                blob_service,
+                changes,
+                topic_id,
+                replica,
+                key.envelope_key().as_str(),
+                policy,
+            )
+            .await?,
+        );
     }
     Ok(hydrated)
 }

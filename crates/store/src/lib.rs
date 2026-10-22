@@ -71,7 +71,10 @@ pub use sqlite::{
     PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, ProtectedCandidate,
     ProtectedMigrationPage, ProtectedSource, SqliteStore, StoreStartupError,
 };
-pub use topic_retention::{TopicRetentionCursor, TopicRetentionRow, TopicRetentionStore};
+pub use topic_retention::{
+    RETENTION_RETRY_DELAYS_MS, RETENTION_RETRY_LIMIT, TopicRetentionCursor, TopicRetentionRetry,
+    TopicRetentionRow, TopicRetentionStore,
+};
 pub use traits::{
     BOOKMARKED_CUSTOM_REACTION_LIMIT, CONTENT_OBSERVATION_RETENTION_MS, ContentObservationStore,
     DirectMessageStore, LiveGameProjectionStore, MAX_CONTENT_OBSERVATIONS,

@@ -179,6 +179,18 @@ profileとenvelopeの既存主キーで個別に読む。docs authorの既知の
 docs author指定がその名義に一致しなければ空を返し、readerが既存の有界な旧recordの読み出しへ進めるようにする。
 保存・cacheの予算と削除、privateのcapabilityと提供範囲は変えない。
 
+#1909（2026-10-22）で、公開topicを保持する端末（CLI daemon。ADR 0049）は、保持の取り込み（ADR 0055 §1.1）で受け入れた
+公開topicのDomeのsessionごとに、Domeの記録も同じ形で中継する。privateのcontextのDomeは保持しない。
+
+- 保持するもの: `author::<owner>`から読んで検証したInstance（`metaverse/dome-instances/<ID>/state`とそれが指す`envelopes/<id>`）、
+  Presetの版（`metaverse/dome-presets/<ID>/revisions/<版>`と`envelopes/<id>`）、hostingの記録（`metaverse/dome-hosting/<ID>/state`）の
+  recordと、Presetのmanifest・資材のblob。
+- 版の後退をさせない: Instanceとhostingは更新されるので、保持の読みは自分の保持分で打ち切らずproviderに問い、保持分より古い版
+  （Instanceは(generation, updated_at)、hostingは最後のepochとその記録の数）では上書きしない。Presetの版は版ごとのkeyで中身が変わらない。
+- 読み取り候補（全端末）: Domeの公開topicの参加者（`topic_read_candidates`、最大4）を、owner本人の検証済み宛先の次、全体の
+  候補窓の前に置いて、Instance・Preset・hostingを読む（#1419のprofileと同じ形）。
+- 資材: sessionとPresetのmanifestを返したpeerを、manifestが指す資材のhashの取得候補に入れる。
+
 R5-Cでは、authorの現在値（`profile/latest`、`graph/follows|blocks/<相手>`、Dome preset/move）を
 `author::<pubkey>`の制御領域からkey指定で読み、プロフィールの履歴は旧`author::<pubkey>`と
 author bucket（cursorのbucket、その前のbucket、現在bucket）の`indexes/profile/`をcursorから読む。

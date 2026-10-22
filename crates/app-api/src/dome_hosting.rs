@@ -98,7 +98,7 @@ impl AppService {
         )
         .await?;
         let preset = self
-            .fetch_dome_preset_manifest(&instance.preset_ref)
+            .fetch_dome_preset_manifest(&instance.preset_ref, &instance.spatial_context, false)
             .await?
             .ok_or(DomeReadUnavailable::Preset)?;
         let records = self.list_dome_hosting_records(&instance).await?;
@@ -774,7 +774,7 @@ impl AppService {
     ) -> Result<DomeHostingView> {
         let mut view = self.hosting_authority_view(instance, records, now).await?;
         view.preset_manifest_json = self
-            .fetch_dome_preset_manifest(&instance.preset_ref)
+            .fetch_dome_preset_manifest(&instance.preset_ref, &instance.spatial_context, false)
             .await?
             .as_ref()
             .map(serde_json::to_string)
@@ -1016,11 +1016,11 @@ fn current_unique_lease(
 }
 
 /// owner の制御領域の、hosting の記録の現在値の key(#1221 R5-H)。
-fn hosting_state_key(instance_id: &str) -> String {
+pub(crate) fn hosting_state_key(instance_id: &str) -> String {
     stable_key(HOSTING_RECORD_PREFIX, &format!("{instance_id}/state"))
 }
 
-fn hosting_record_identity(record: &DomeHostingRecordV1) -> (u64, &'static str, &str) {
+pub(crate) fn hosting_record_identity(record: &DomeHostingRecordV1) -> (u64, &'static str, &str) {
     match record {
         DomeHostingRecordV1::LeaseIssued(signed) => {
             (signed.lease.epoch, "issued", signed.envelope.id.as_str())

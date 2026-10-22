@@ -547,22 +547,20 @@ pub(crate) async fn store_manifest_blob<T: Serialize>(
     blob_service.put_blob(payload, mime).await
 }
 
-pub(crate) async fn fetch_manifest_blob<T: DeserializeOwned>(
+/// manifest の blob の bytes。期限の内に取れなければ `None`。
+pub(crate) async fn fetch_manifest_blob(
     blob_service: &dyn BlobService,
-    blob_ref: &ManifestBlobRef,
-) -> Result<Option<T>> {
-    let Some(bytes) = (match n0_future::time::timeout(
+    hash: &kukuri_core::BlobHash,
+) -> Option<Vec<u8>> {
+    match n0_future::time::timeout(
         projection_blob_fetch_timeout(),
-        blob_service.fetch_blob(&blob_ref.hash),
+        blob_service.fetch_blob(hash),
     )
     .await
     {
         Ok(Ok(bytes)) => bytes,
         Ok(Err(_)) | Err(_) => None,
-    }) else {
-        return Ok(None);
-    };
-    Ok(Some(serde_json::from_slice(&bytes)?))
+    }
 }
 
 pub(crate) fn projection_blob_fetch_timeout() -> n0_future::time::Duration {

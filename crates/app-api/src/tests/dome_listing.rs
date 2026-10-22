@@ -471,7 +471,7 @@ async fn a_visitor_reads_the_owner_preset_once_for_the_same_reference() {
         .expect("the instance exists");
     // 覚える数は上限つき: 既に上限まで覚えていれば、いちばん古いものを捨てて覚える。
     let manifest = owner
-        .fetch_dome_preset_manifest(&instance.preset_ref)
+        .fetch_dome_preset_manifest(&instance.preset_ref, &context, false)
         .await
         .expect("the owner reads its preset")
         .expect("the preset exists");
@@ -486,7 +486,7 @@ async fn a_visitor_reads_the_owner_preset_once_for_the_same_reference() {
         .extend((0..32).map(|index| (other(index), manifest.clone())));
     let reads_before = owner_docs.queries().await.len();
     let first = visitor
-        .fetch_dome_preset_manifest(&instance.preset_ref)
+        .fetch_dome_preset_manifest(&instance.preset_ref, &context, false)
         .await
         .expect("read the preset");
     assert_eq!(
@@ -504,7 +504,7 @@ async fn a_visitor_reads_the_owner_preset_once_for_the_same_reference() {
         Some(&instance.preset_ref)
     );
     let second = visitor
-        .fetch_dome_preset_manifest(&instance.preset_ref)
+        .fetch_dome_preset_manifest(&instance.preset_ref, &context, false)
         .await
         .expect("read the preset again");
     assert_eq!(second, first);

@@ -1,11 +1,12 @@
-//! #1909 AC-1: 保持する公開 topic を設定すると、画面の列なしに、topic の投稿と、後から作られた公開スレッドの metadata と
-//! 投稿を取り込む。公開スレッドの数を増やしても、lease と task の数は変わらない。解除と停止で取り込みが止まる。
+//! #1909: 保持する公開 topic を設定すると、画面の列なしに、topic の投稿と、後から作られた公開スレッドの metadata と
+//! 投稿を取り込む。公開スレッドの数を増やしても、lease と task の数は変わらない。解除と停止で取り込みが止まる。読めない
+//! 記録は取り直しの予定に入れて先へ進む。
 
 use super::public_channels::{TOPIC, channel_ref, device};
 use super::sync::CountingDocsSync;
 use super::*;
-use crate::topic_retention::RetentionFailures;
-use kukuri_docs_sync::MemoryDocsSync;
+use crate::topic_retention::RetentionState;
+use kukuri_docs_sync::{BucketReplica, BucketScope, MemoryDocsSync, TimeBucket};
 use kukuri_store::{PublicChannelStore, TopicRetentionStore};
 
 const OTHER_TOPIC: &str = "kukuri:topic:retention-other";
@@ -29,7 +30,7 @@ fn retaining_device(
             blobs,
             generate_keys(),
         )
-        .with_topic_retention(store.clone()),
+        .with_topic_retention(store.clone(), std::env::temp_dir()),
     );
     app.switch_writer(1);
     (app, store)
@@ -37,10 +38,10 @@ fn retaining_device(
 
 /// 続きが無くなるまで topic を進める(task の間隔を待たない)。
 async fn catch_up(app: &AppService, topic: &str) {
-    let mut failures = RetentionFailures::default();
+    let mut state = RetentionState::default();
     for _ in 0..20 {
         if !app
-            .step_topic_retention(topic, &mut failures)
+            .step_topic_retention(topic, &mut state)
             .await
             .expect("retention step")
         {
@@ -285,7 +286,7 @@ async fn retained_topics_are_restored_at_start_and_private_names_are_rejected() 
             blobs,
             generate_keys(),
         )
-        .with_topic_retention(store.clone()),
+        .with_topic_retention(store.clone(), std::env::temp_dir()),
     );
     restarted
         .start_topic_retention()
@@ -332,4 +333,65 @@ async fn retained_topics_are_restored_at_start_and_private_names_are_rejected() 
         .expect("retain again");
     assert!(task_running().await);
     restarted.shutdown().await;
+}
+
+// 読み先の索引に載っているのに本体を読めない投稿は、取り直しの予定に入れて先へ進む(2026-10-22 ユーザー判断)。後ろの投稿の
+// 取り込みは止めない。
+#[tokio::test]
+async fn unreadable_records_wait_for_a_retry_without_blocking_later_posts() {
+    let a_docs = MemoryDocsSync::with_docs_author("01".repeat(32));
+    let k_docs = MemoryDocsSync::with_docs_author("03".repeat(32));
+    let blobs = Arc::new(MemoryBlobService::default());
+    let network = FakeNetwork::default();
+    let a = device("a", &network, a_docs.clone(), k_docs.clone(), blobs.clone());
+    let (k, k_store) = retaining_device(&network, k_docs, a_docs.clone(), blobs);
+    k.set_topic_retention(TOPIC, true)
+        .await
+        .expect("retain the topic");
+    let now = Utc::now().timestamp();
+    let missing = EnvelopeId::from("ab".repeat(32));
+    let replica = BucketReplica::new(
+        BucketScope::Topic {
+            topic_id: TOPIC.into(),
+        },
+        TimeBucket::from_unix_seconds(now).expect("bucket"),
+    )
+    .expect("replica")
+    .replica_id();
+    a_docs.open_replica(&replica).await.expect("open");
+    a_docs
+        .apply_doc_op(
+            &replica,
+            DocOp::SetJson {
+                key: format!(
+                    "indexes/timeline/{}/{}",
+                    timeline_sort_key(now - 1, &missing),
+                    missing.as_str()
+                ),
+                value: serde_json::json!({"object_id": missing, "created_at": now - 1}),
+            },
+        )
+        .await
+        .expect("an index entry without its envelope");
+    let post = a
+        .create_post(TOPIC, "後ろの投稿", None)
+        .await
+        .expect("later post");
+
+    catch_up(&k, TOPIC).await;
+
+    assert!(
+        k_store
+            .get_object_projection(&EnvelopeId::from(post.as_str()))
+            .await
+            .expect("projection")
+            .is_some(),
+        "the unreadable record does not block the later post"
+    );
+    let status = k.topic_retention().await.expect("status");
+    assert_eq!(
+        (status.topics[0].pending_retries, status.topics[0].given_up),
+        (1, 0)
+    );
+    k.shutdown().await;
 }

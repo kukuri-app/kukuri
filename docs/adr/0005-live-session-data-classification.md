@@ -106,6 +106,8 @@ post・リアクションの正本、Live の寿命・権限・視聴の共有�
 - #1262: state/envelopeの到着による個別反映、表示中だけのmanifest取得、未取得候補と検証済みsessionの区別はADR 0052「Session の個別反映と表示要求」に従う。timerによる反映retryはしない。
 - #1813: gossipのhintで読めなかったsessionの上限つきの読み直しは、ADR 0052「Session の個別反映と表示要求」の例外（ADR 0054「読み取り候補」）。
 - late joiner と restart 後の復元は `docs state + manifest blob` だけで成立しなければならない。
+- #1909（2026-10-22）: 公開topicを保持する端末は、現在と前日のbucketのsessionのkeyのうち反映していない版を読み、反映の経路と同じく
+  新しい版のstate・署名済みenvelope・manifest blobを保持して返す（ADR 0055 §1.1）。開始・終了・revisionの新旧は既存の規則に従う。
 - 終了済み session は durable state で `Ended` として復元され、新規 join を拒否しなければならない。
 - 過去に署名された revision を置き直しても、終了済み session の表示と操作は過去へ戻らない。
 - viewer count は shared durable state ではなく local projection の TTL 管理で表現される。

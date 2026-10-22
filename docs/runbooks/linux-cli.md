@@ -22,7 +22,8 @@ bin/kukuri-cli --profile work call protocol.commands
 ```
 
 指定した公開topicの内容を画面なしで取り込み、保持して、ほかのpeerへ返すときは、daemonの起動後に保持するtopicを設定する（#1909）。
-設定はprofileに保存し、daemonを起動し直すと戻る。`get_topic_retention`は、保持するtopicと、topicごとに取り込んだ位置を返す。
+設定はprofileに保存し、daemonを起動し直すと戻る。`get_topic_retention`は、保持するtopicと、topicごとに取り込んだ位置、
+取り直しを待つ数（`pending_retries`）と諦めた数（`given_up`）を返す。
 
 ```bash
 echo '{"topic":"kukuri:topic:general","retained":true}' | bin/kukuri-cli --profile work call set_topic_retention --input -

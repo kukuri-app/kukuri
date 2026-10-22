@@ -170,9 +170,12 @@ impl AppService {
 
     /// author replica の対象を、手元の次に author 本人を含む有界な provider から読む(#1221 R5-C)。
     /// remote の読取りは namespace を import・sync しない。自分の replica は手元だけを読む。
+    /// `topic` があれば、author 本人の宛先の次に、その公開 topic の参加者(最大 4)を読み先に入れる。公開 topic の Dome の
+    /// 記録を、owner がオフラインでも、検証して保持した参加者から読む(#1909。#1419 の profile と同じ形)。
     pub(crate) async fn read_author_object<T, Fut>(
         &self,
         author_pubkey: &str,
+        topic: Option<&str>,
         read: impl Fn(Arc<dyn DocsSync>, DocFetchPolicy) -> Fut,
     ) -> Result<Option<T>>
     where
@@ -184,20 +187,41 @@ impl AppService {
             if own {
                 return Vec::new();
             }
-            writer_readers(&self.services, &replica, &[author_pubkey], None, Vec::new()).await
+            let participants = match topic {
+                Some(topic) => self
+                    .hint_transport()
+                    .topic_read_candidates(&TopicId::new(topic))
+                    .await
+                    .unwrap_or_default(),
+                None => Vec::new(),
+            };
+            writer_readers(
+                &self.services,
+                &replica,
+                &[author_pubkey],
+                None,
+                participants,
+            )
+            .await
         };
         read_local_then_remote(self.services.docs_sync.clone(), readers, read).await
     }
 
     /// 他の author の preset は、参照(版と manifest の hash を含む)の中身が変わらないので、一度読んで検証したものを読み
     /// 直さない(画面は Dome の一覧の読み直しのたびに hosting を読み、訪問者は owner の制御領域から読み直していた。
-    /// #1818)。自分の preset は手元から読み、そのたびに検証する。
+    /// #1818)。自分の preset は手元から読み、そのたびに検証する。`context` は Dome の Spatial Context で、公開 topic なら読み先にその
+    /// 参加者を入れる。
+    /// `keep` なら、remote から読んで検証した record と manifest の blob を保持し、他の参加者へ提供する(公開 topic の保持。
+    /// #1909)。覚えた preset で済ませず、読み先から読む。
     pub(crate) async fn fetch_dome_preset_manifest(
         &self,
         preset_ref: &DomePresetRefV1,
+        context: &kukuri_core::SpatialContextV1,
+        keep: bool,
     ) -> Result<Option<DomePresetManifestV1>> {
         let reuse = preset_ref.owner_pubkey.as_str() != self.current_author_pubkey();
         if reuse
+            && !keep
             && let Some((_, manifest)) = self
                 .dome_presets
                 .lock()
@@ -210,8 +234,9 @@ impl AppService {
         let manifest = self
             .read_author_object(
                 preset_ref.owner_pubkey.as_str(),
+                public_dome_topic(context),
                 |docs, policy| async move {
-                    self.read_dome_preset_manifest(docs.as_ref(), policy, preset_ref)
+                    self.read_dome_preset_manifest(docs.as_ref(), policy, preset_ref, keep)
                         .await
                 },
             )
@@ -233,20 +258,18 @@ impl AppService {
         docs: &dyn DocsSync,
         policy: DocFetchPolicy,
         preset_ref: &DomePresetRefV1,
+        keep: bool,
     ) -> Result<Option<DomePresetManifestV1>> {
         let replica = author_replica_id(preset_ref.owner_pubkey.as_str());
+        let state_key = stable_key(
+            "metaverse/dome-presets",
+            &format!(
+                "{}/revisions/{:020}",
+                preset_ref.preset_id, preset_ref.revision
+            ),
+        );
         let state_records = docs
-            .query_replica_with_policy(
-                &replica,
-                DocQuery::Exact(stable_key(
-                    "metaverse/dome-presets",
-                    &format!(
-                        "{}/revisions/{:020}",
-                        preset_ref.preset_id, preset_ref.revision
-                    ),
-                )),
-                policy,
-            )
+            .query_replica_with_policy(&replica, DocQuery::Exact(state_key.clone()), policy)
             .await?;
         let Some(state_record) = state_records.into_iter().next() else {
             return Ok(None);
@@ -261,18 +284,16 @@ impl AppService {
         {
             anyhow::bail!("Dome Preset state does not match its reference");
         }
-        let manifest = fetch_manifest_blob::<DomePresetManifestV1>(
-            self.services.blob_service.as_ref(),
-            &ManifestBlobRef {
-                hash: kukuri_core::BlobHash::new(preset_ref.manifest_blob_hash.clone()),
-                mime: preset_ref.manifest_mime.clone(),
-                bytes: preset_ref.manifest_bytes,
-            },
-        )
-        .await?;
-        let Some(manifest) = manifest else {
+        // preset を返した peer は、その manifest と資材を持つと分かっている(候補の順序の手がかり。#1909)。
+        let blobs = self.services.blob_service.as_ref();
+        let manifest_hash = kukuri_core::BlobHash::new(preset_ref.manifest_blob_hash.clone());
+        if let Some(provider) = docs.remote_reader_id() {
+            let _ = blobs.learn_content_source(&manifest_hash, &provider).await;
+        }
+        let Some(bytes) = fetch_manifest_blob(blobs, &manifest_hash).await else {
             return Ok(None);
         };
+        let manifest: DomePresetManifestV1 = serde_json::from_slice(&bytes)?;
         validate_dome_preset_manifest(&manifest)?;
         if manifest.preset_id != preset_ref.preset_id
             || manifest.owner_pubkey != preset_ref.owner_pubkey
@@ -280,29 +301,56 @@ impl AppService {
         {
             anyhow::bail!("Dome Preset reference does not match its manifest");
         }
-        let signed: DomePresetManifestV1 = match fetch_verified_dome_envelope(
-            docs,
-            &replica,
-            &state.last_envelope_id,
-            "dome-preset",
-            &manifest.owner_pubkey,
-            policy,
-        )
-        .await
-        {
-            Ok(signed) => signed,
-            Err(error)
-                if matches!(
-                    error.downcast_ref::<DomeReadUnavailable>(),
-                    Some(DomeReadUnavailable::Envelope)
-                ) =>
+        let (signed, envelope_author): (DomePresetManifestV1, _) =
+            match fetch_verified_dome_envelope(
+                docs,
+                &replica,
+                &state.last_envelope_id,
+                "dome-preset",
+                &manifest.owner_pubkey,
+                policy,
+            )
+            .await
             {
-                return Ok(None);
-            }
-            Err(error) => return Err(error),
-        };
+                Ok(signed) => signed,
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<DomeReadUnavailable>(),
+                        Some(DomeReadUnavailable::Envelope)
+                    ) =>
+                {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
         if signed != manifest {
             anyhow::bail!("signed Dome Preset content does not match its manifest blob");
+        }
+        learn_asset_sources(docs, blobs, &manifest.asset_refs).await;
+        if keep {
+            docs.persist_verified_record(
+                &replica,
+                &state_key,
+                state_record.docs_author.as_deref(),
+                &[],
+            )
+            .await?;
+            docs.persist_verified_record(
+                &replica,
+                &stable_key("envelopes", state.last_envelope_id.as_str()),
+                envelope_author.as_deref(),
+                &[],
+            )
+            .await?;
+            if blobs.local_blob_status(&manifest_hash).await? == BlobStatus::Missing {
+                let stored = blobs
+                    .put_remote_blob(bytes, &preset_ref.manifest_mime)
+                    .await?;
+                anyhow::ensure!(
+                    stored.hash == manifest_hash,
+                    "Dome Preset manifest hash changed"
+                );
+            }
         }
         Ok(Some(manifest))
     }
@@ -345,7 +393,7 @@ impl AppService {
         move_id: &str,
     ) -> Result<Option<DomeMoveRecordV1>> {
         let replica = &author_replica_id(owner_pubkey);
-        self.read_author_object(owner_pubkey, |docs, policy| async move {
+        self.read_author_object(owner_pubkey, None, |docs, policy| async move {
             let docs = docs.as_ref();
             let records = docs
                 .query_replica_with_policy(
@@ -361,7 +409,7 @@ impl AppService {
                 return Ok(None);
             };
             let state: DomeMoveStateDocV1 = serde_json::from_slice(&state_record.value)?;
-            let signed: DomeMoveRecordV1 = match fetch_verified_dome_envelope(
+            let (signed, _): (DomeMoveRecordV1, _) = match fetch_verified_dome_envelope(
                 docs,
                 replica,
                 &state.last_envelope_id,
@@ -841,6 +889,7 @@ impl AppService {
     }
 }
 
+/// 署名済みの Dome の envelope の content と、その record を書いた docs author。
 pub(crate) async fn fetch_verified_dome_envelope<T: DeserializeOwned>(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
@@ -848,7 +897,7 @@ pub(crate) async fn fetch_verified_dome_envelope<T: DeserializeOwned>(
     expected_kind: &str,
     expected_owner: &Pubkey,
     policy: DocFetchPolicy,
-) -> Result<T> {
+) -> Result<(T, Option<String>)> {
     let records = docs_sync
         .query_replica_with_policy(
             replica,
@@ -856,12 +905,11 @@ pub(crate) async fn fetch_verified_dome_envelope<T: DeserializeOwned>(
             policy,
         )
         .await?;
-    let envelope: KukuriEnvelope = records
+    let record = records
         .into_iter()
         .next()
-        .map(|record| serde_json::from_slice(&record.value))
-        .transpose()?
         .ok_or(DomeReadUnavailable::Envelope)?;
+    let envelope: KukuriEnvelope = serde_json::from_slice(&record.value)?;
     envelope.verify()?;
     if envelope.id != *envelope_id
         || envelope.kind != expected_kind
@@ -869,5 +917,8 @@ pub(crate) async fn fetch_verified_dome_envelope<T: DeserializeOwned>(
     {
         anyhow::bail!("signed Dome envelope identity does not match state");
     }
-    serde_json::from_str(envelope.content.as_str()).map_err(Into::into)
+    Ok((
+        serde_json::from_str(envelope.content.as_str())?,
+        record.docs_author,
+    ))
 }
