@@ -117,6 +117,7 @@ impl IrohGossipTransport {
             env_locked: Arc::new(Mutex::new(false)),
             status_changes: StatusChanges::default(),
             connection_paths,
+            topic_peer_introductions: TopicPeerIntroductions::default(),
             #[cfg(any(test, feature = "test-support"))]
             status_read_steps: Arc::new(AtomicU64::new(0)),
         };
@@ -185,6 +186,7 @@ impl IrohGossipTransport {
             env_locked: Arc::new(Mutex::new(false)),
             status_changes: StatusChanges::default(),
             connection_paths: GossipConnectionPaths::default(),
+            topic_peer_introductions: TopicPeerIntroductions::default(),
             #[cfg(any(test, feature = "test-support"))]
             status_read_steps: Arc::new(AtomicU64::new(0)),
         })

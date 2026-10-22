@@ -168,6 +168,8 @@ pub struct IrohGossipTransport {
     /// 通信状態の変わった部分の印(#1221 R2-D)。
     status_changes: StatusChanges,
     connection_paths: GossipConnectionPaths,
+    /// 紹介に答える handler(#1910)。
+    topic_peer_introductions: TopicPeerIntroductions,
     /// 状態の読取りで見た topic・peer と `remote_info` の数(計測用。#1221 R2-D)。
     #[cfg(any(test, feature = "test-support"))]
     status_read_steps: Arc<AtomicU64>,
