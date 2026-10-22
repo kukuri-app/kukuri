@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
-    RETENTION_RETRY_DELAYS_MS, RETENTION_RETRY_LIMIT, TopicRetentionCursor, TopicRetentionRetry,
+    DEFAULT_RETENTION_CAPACITY_BYTES, DEFAULT_RETENTION_DAYS, RETENTION_RETRY_DELAYS_MS,
+    RETENTION_RETRY_LIMIT, TopicRetentionCursor, TopicRetentionLimits, TopicRetentionRetry,
     TopicRetentionRow, TopicRetentionStore,
 };
 
@@ -25,6 +26,7 @@ impl TopicRetentionStore for MemoryStore {
         retention
             .retries
             .retain(|(topic, _, _), _| topic != topic_id);
+        retention.days.retain(|(topic, _), _| topic != topic_id);
         Ok(())
     }
 
@@ -195,5 +197,133 @@ impl TopicRetentionStore for MemoryStore {
             .get(topic_id)
             .map_or(0, |(_, given_up)| *given_up);
         Ok((u64::try_from(pending)?, given_up))
+    }
+
+    async fn topic_retention_limits(&self) -> Result<TopicRetentionLimits> {
+        let (retention_days, capacity_bytes) = self
+            .topic_retention
+            .read()
+            .await
+            .limits
+            .unwrap_or((DEFAULT_RETENTION_DAYS, DEFAULT_RETENTION_CAPACITY_BYTES));
+        Ok(TopicRetentionLimits {
+            retention_days,
+            capacity_bytes,
+            used_bytes: 0,
+        })
+    }
+
+    async fn set_topic_retention_limits(
+        &self,
+        retention_days: u32,
+        capacity_bytes: u64,
+    ) -> Result<()> {
+        self.topic_retention.write().await.limits = Some((retention_days, capacity_bytes));
+        Ok(())
+    }
+
+    async fn open_topic_retention_days(
+        &self,
+        topic_id: &str,
+        from_bucket: u64,
+        to_bucket: u64,
+    ) -> Result<()> {
+        let mut retention = self.topic_retention.write().await;
+        if !retention.topics.contains_key(topic_id) {
+            return Ok(());
+        }
+        // 日の行は古い側から消えるので、欠けは両端にだけある。
+        let buckets = retention
+            .days
+            .keys()
+            .filter(|(topic, _)| topic == topic_id)
+            .map(|(_, bucket)| *bucket);
+        let oldest = buckets.clone().min().unwrap_or(to_bucket + 1);
+        let newest = buckets.max().unwrap_or(to_bucket);
+        let missing = (from_bucket..oldest.min(to_bucket + 1))
+            .chain(from_bucket.max(newest + 1)..=to_bucket)
+            .collect::<Vec<_>>();
+        // 作った日は最初から読む。
+        for bucket in missing {
+            if retention
+                .days
+                .insert((topic_id.to_string(), bucket), false)
+                .is_none()
+            {
+                retention
+                    .cursors
+                    .retain(|(topic, _, day), _| topic != topic_id || *day != bucket);
+            }
+        }
+        Ok(())
+    }
+
+    async fn protect_topic_retention_day(
+        &self,
+        topic_id: &str,
+        bucket: u64,
+        _scope_key: &str,
+    ) -> Result<bool> {
+        Ok(self
+            .topic_retention
+            .read()
+            .await
+            .days
+            .contains_key(&(topic_id.to_string(), bucket)))
+    }
+
+    async fn next_topic_retention_backfill(
+        &self,
+        topic_id: &str,
+        from_bucket: u64,
+        to_bucket: u64,
+    ) -> Result<Option<u64>> {
+        Ok(self
+            .topic_retention
+            .read()
+            .await
+            .days
+            .iter()
+            .filter(|((topic, bucket), done)| {
+                topic == topic_id && (from_bucket..=to_bucket).contains(bucket) && !**done
+            })
+            .map(|((_, bucket), _)| *bucket)
+            .max())
+    }
+
+    async fn finish_topic_retention_day(&self, topic_id: &str, bucket: u64) -> Result<()> {
+        let mut retention = self.topic_retention.write().await;
+        if let Some(day) = retention.days.get_mut(&(topic_id.to_string(), bucket)) {
+            *day = true;
+        }
+        retention
+            .cursors
+            .retain(|(topic, _, day), _| topic != topic_id || *day != bucket);
+        Ok(())
+    }
+
+    async fn claim_topic_retention_blob(&self, _: &str, _: u64, _: &str) -> Result<()> {
+        Ok(())
+    }
+
+    async fn claim_topic_retention_records(&self, _: &str, _: u64, _: &str, _: &str) -> Result<()> {
+        Ok(())
+    }
+
+    async fn protect_topic_retention_scopes_step(&self, _: usize) -> Result<usize> {
+        Ok(0)
+    }
+
+    async fn reclaim_topic_retention_step(&self, cutoff_bucket: u64, _: usize) -> Result<usize> {
+        self.topic_retention
+            .write()
+            .await
+            .days
+            .retain(|(_, bucket), _| *bucket >= cutoff_bucket);
+        Ok(0)
+    }
+
+    async fn topic_retention_used(&self, _: &str) -> Result<u64> {
+        Ok(0)
     }
 }

@@ -11,6 +11,19 @@ fn blob_hash(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
 
+/// K の cache で、日の保護参照(`retain:<topic>:<bucket>`)が付いた blob(hash)と record(key)の行の数。
+async fn retained_refs(store: &SqliteStore, kind: &str, key: &str) -> Result<i64> {
+    let query = if kind == "blob" {
+        "SELECT COUNT(*) FROM remote_content_cache_protected_ref          WHERE kind = 'blob' AND cache_key = ?1 AND ref_id LIKE 'retain:%'"
+    } else {
+        "SELECT COUNT(*) FROM remote_content_cache_protected_ref r JOIN remote_content_cache c          ON c.kind = r.kind AND c.cache_key = r.cache_key          WHERE r.kind = 'record' AND c.record_key = ?1 AND r.ref_id LIKE 'retain:%'"
+    };
+    Ok(sqlx::query_scalar(query)
+        .bind(key)
+        .fetch_one(store.pool())
+        .await?)
+}
+
 async fn has_payload(
     app: &AppService,
     bytes: &[u8],
@@ -133,11 +146,8 @@ async fn later_reader_reads_retained_topic_content_from_the_retaining_peer() -> 
 
     // K は保持を設定するだけで(画面の読みをしない)、A の内容と参照する blob を取り込む。
     let dir = tempfile::tempdir()?;
-    let k = Relay::with_store(
-        Arc::new(NoopHintTransport),
-        SqliteStore::connect_file(dir.path().join("k.db")).await?,
-    )
-    .await?;
+    let k_store = SqliteStore::connect_file(dir.path().join("k.db")).await?;
+    let k = Relay::with_store(Arc::new(NoopHintTransport), k_store.clone()).await?;
     k.app.import_peer_ticket(&ticket(&author.node)).await?;
     k.app.set_topic_retention(topic.as_str(), true).await?;
     let held = || async {
@@ -210,6 +220,23 @@ async fn later_reader_reads_retained_topic_content_from_the_retaining_peer() -> 
         retained,
         "K retains the topic's content and blobs: {:?}",
         held().await?
+    );
+    // 保持した record と blob には日の保護参照が付き(topic の bucket の record、添付・資材の blob、owner の制御領域の
+    // Instance)、その大きさを topic と全体の合計に数える(AC-3)。
+    for bytes in [&image, &video, &poster, &thread_image, &asset_bytes] {
+        assert!(retained_refs(&k_store, "blob", &blob_hash(bytes)).await? >= 1);
+    }
+    for key in [
+        format!("objects/{post}/envelope"),
+        format!("objects/{thread_post}/envelope"),
+        format!("metaverse/dome-instances/{dome}/state"),
+    ] {
+        assert!(retained_refs(&k_store, "record", &key).await? >= 1, "{key}");
+    }
+    let status = k.app.topic_retention().await?;
+    assert!(
+        status.used_bytes > 0 && status.topics[0].used_bytes == status.used_bytes,
+        "{status:?}"
     );
     a.shutdown().await;
     author.go_offline().await?;

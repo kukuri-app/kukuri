@@ -419,6 +419,18 @@ table topic_retention_cursors
   column cid=2 name=bucket type=INTEGER notnull=1 default=None pk=3
   column cid=3 name=created_at type=INTEGER notnull=1 default=None pk=0
   column cid=4 name=object_id type=TEXT notnull=1 default=None pk=0
+table topic_retention_days
+  column cid=0 name=topic_id type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=bucket type=INTEGER notnull=1 default=None pk=2
+  column cid=2 name=used_bytes type=INTEGER notnull=1 default=Some("0") pk=0
+  column cid=3 name=read_done type=INTEGER notnull=1 default=Some("0") pk=0
+  column cid=4 name=releasing type=INTEGER notnull=1 default=Some("0") pk=0
+table topic_retention_limits
+  column cid=0 name=id type=INTEGER notnull=0 default=None pk=1
+  column cid=1 name=retention_days type=INTEGER notnull=1 default=None pk=0
+  column cid=2 name=capacity_bytes type=INTEGER notnull=1 default=None pk=0
+  column cid=3 name=used_bytes type=INTEGER notnull=1 default=None pk=0
+  column cid=4 name=released_through type=INTEGER notnull=0 default=None pk=0
 table topic_retention_retries
   column cid=0 name=topic_id type=TEXT notnull=1 default=None pk=1
   column cid=1 name=object_kind type=TEXT notnull=1 default=None pk=2
@@ -426,6 +438,11 @@ table topic_retention_retries
   column cid=3 name=bucket type=INTEGER notnull=1 default=None pk=0
   column cid=4 name=attempts type=INTEGER notnull=1 default=None pk=0
   column cid=5 name=next_at type=INTEGER notnull=1 default=None pk=0
+table topic_retention_scopes
+  column cid=0 name=scope_key type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=topic_id type=TEXT notnull=1 default=None pk=0
+  column cid=2 name=bucket type=INTEGER notnull=1 default=None pk=0
+  column cid=3 name=protect_after type=TEXT notnull=0 default=None pk=0
 table ui_state
   column cid=0 name=state_key type=TEXT notnull=0 default=None pk=1
   column cid=1 name=value_json type=TEXT notnull=1 default=None pk=0
@@ -970,10 +987,17 @@ index sqlite_autoindex_topic_retention_cursors_1 table=topic_retention_cursors u
   key seqno=1 cid=1 name=Some("index_prefix")
   key seqno=2 cid=2 name=Some("bucket")
   sql=None
+index sqlite_autoindex_topic_retention_days_1 table=topic_retention_days unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("topic_id")
+  key seqno=1 cid=1 name=Some("bucket")
+  sql=None
 index sqlite_autoindex_topic_retention_retries_1 table=topic_retention_retries unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("topic_id")
   key seqno=1 cid=1 name=Some("object_kind")
   key seqno=2 cid=2 name=Some("object_id")
+  sql=None
+index sqlite_autoindex_topic_retention_scopes_1 table=topic_retention_scopes unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("scope_key")
   sql=None
 index sqlite_autoindex_ui_state_1 table=ui_state unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("state_key")
@@ -982,10 +1006,26 @@ index sqlite_autoindex_withdrawal_write_outbox_1 table=withdrawal_write_outbox u
   key seqno=0 cid=0 name=Some("withdrawal_envelope_id")
   key seqno=1 cid=1 name=Some("replica_id")
   sql=None
+index topic_retention_days_release table=topic_retention_days unique=0 origin=c partial=0
+  key seqno=0 cid=4 name=Some("releasing")
+  key seqno=1 cid=1 name=Some("bucket")
+  key seqno=2 cid=0 name=Some("topic_id")
+  sql=Some("CREATE INDEX topic_retention_days_release ON topic_retention_days (releasing, bucket, topic_id)")
+index topic_retention_days_unread table=topic_retention_days unique=0 origin=c partial=1
+  key seqno=0 cid=0 name=Some("topic_id")
+  key seqno=1 cid=1 name=Some("bucket")
+  sql=Some("CREATE INDEX topic_retention_days_unread ON topic_retention_days (topic_id, bucket) WHERE read_done = 0 AND releasing = 0")
 index topic_retention_retries_due table=topic_retention_retries unique=0 origin=c partial=0
   key seqno=0 cid=0 name=Some("topic_id")
   key seqno=1 cid=5 name=Some("next_at")
   sql=Some("CREATE INDEX topic_retention_retries_due ON topic_retention_retries (topic_id, next_at)")
+index topic_retention_scopes_day table=topic_retention_scopes unique=0 origin=c partial=0
+  key seqno=0 cid=1 name=Some("topic_id")
+  key seqno=1 cid=2 name=Some("bucket")
+  sql=Some("CREATE INDEX topic_retention_scopes_day ON topic_retention_scopes (topic_id, bucket)")
+index topic_retention_scopes_pending table=topic_retention_scopes unique=0 origin=c partial=1
+  key seqno=0 cid=0 name=Some("scope_key")
+  sql=Some("CREATE INDEX topic_retention_scopes_pending ON topic_retention_scopes (scope_key) WHERE protect_after IS NOT NULL")
 trigger notifications_assign_dispatch_seq table=notifications sql="CREATE TRIGGER notifications_assign_dispatch_seq AFTER INSERT ON notifications BEGIN UPDATE notification_dispatch_clock SET last_seq = last_seq + 1 WHERE singleton = 1; UPDATE notifications SET dispatch_seq = (SELECT last_seq FROM notification_dispatch_clock WHERE singleton = 1) WHERE notification_id = NEW.notification_id; END"
 trigger notifications_unread_delete table=notifications sql="CREATE TRIGGER notifications_unread_delete AFTER DELETE ON notifications WHEN OLD.read_at IS NULL AND (OLD.dispatch_seq IS NULL AND (SELECT legacy_read_at FROM notification_inbox_state WHERE singleton = 1) IS NULL OR OLD.dispatch_seq > (SELECT read_through_seq FROM notification_inbox_state WHERE singleton = 1)) BEGIN UPDATE notification_inbox_state SET unread_count = unread_count - 1 WHERE singleton = 1; END"
 trigger notifications_unread_insert table=notifications sql="CREATE TRIGGER notifications_unread_insert AFTER INSERT ON notifications WHEN NEW.read_at IS NULL BEGIN UPDATE notification_inbox_state SET unread_count = unread_count + 1 WHERE singleton = 1; END"

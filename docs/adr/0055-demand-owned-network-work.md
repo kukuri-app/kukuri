@@ -112,7 +112,7 @@ holderは次の5種類だけで、同じkeyを複数のholderが持っても枠�
 - 公開topicの保持（#1909、2026-10-22）: CLI daemonが保持するtopicは、account SQLiteの`topic_retention`に置き、起動時に
   holder `retain:<topic>`のleaseを取り直す（上限で取れないtopicはwarnにして起動を続ける）。accountごとに1つのtaskが、1回に
   1つのtopicを選び、現在と前日のbucketの`indexes/timeline/`・`channels/list/`・`channels/activity/`を、topic・索引・bucketごとの
-  続きの位置（`topic_retention_cursors`。前日より前のbucketの位置は消す）から古い順に読み、1回32件まで既存の反映の関数で取り込む
+  続きの位置（`topic_retention_cursors`。保持の期間より前のbucketの位置と、読み終えた日の位置は消す）から古い順に読み、1回32件まで既存の反映の関数で取り込む
   （読み先はtopicの近隣の最大4台で、近隣がいなければpeerの台帳から選ぶ。読み先ごとの索引の読みと、対象1件の取り込みの
   期限は、それぞれ既存の30秒）。読み先のページが埋まったときは、そのページの最後より後ろを次の回へ残し、
   `TIME_INDEX_FUTURE_ALLOWANCE_SECS`より未来の時刻のentryで位置を進めない。取り込んだ投稿は、本文・添付（画像・動画・
@@ -125,6 +125,24 @@ holderは次の5種類だけで、同じkeyを複数のholderが持っても枠�
   `topic_retention.given_up`に数える）に入れて先へ進む（2026-10-22ユーザー判断）。1回の32件には、取り直しとkeyの反映も数える。
   blob 1件の取得の期限は、60秒と、1MiB/sで間に合う長さの長い方。続きが残っていれば1秒後、追いついたら30秒後に次の回を行い、保持するtopicが無くなればtaskは終わる。公開スレッドの投稿は
   `channels/activity/`から見つけるので、公開スレッドの数に比例する購読もtaskも作らない。gossipを止めたtopicは取り込まない。
+  保持の期間（今日を含めて`retention_days`日。既定30日、1〜365日）と容量（既定10 GiB、1 GiB以上）は`topic_retention_limits`に置き、
+  CLIの`set_topic_retention_limits`で変える（2026-10-22ユーザー判断）。前日より前の日は、期間の内のまだ読み終えていない日のうち
+  最も新しい日を1回に1日だけ、索引と`sessions/live/`・`sessions/game/`のkeyを最後まで読み、読み終えた日にする（初回と停止していた
+  間の日も同じ。`topic_retention_days`）。読む日は、読む前にtopicのbucketのreplicaを保護の登録（`topic_retention_scopes`）に置く。
+  登録した日のbucketのrecordは、cacheへの書込みと同じtransactionで保護参照`retain:<topic>:<bucket>`を付け、登録より前に置かれた
+  recordには1回128件まで付ける。添付とDomeの資材のblobは取得の前に、manifestとリンクプレビューの画像のblobと、Domeのownerの
+  制御領域のrecordは読んだ後に付ける。保護参照の日は、内容の日（bucketの日）。保護参照を付けたrecordとblobの大きさは、
+  付けたとき・書き換わったとき・外したときにtopicと日ごと、全体の合計へ足し引きする（毎回の全件の合計は取らない）。合計は
+  保護参照ごとの和で、同じblobを複数の日やtopicが参照すると、参照ごとに数える。1回の回ごとに、外している途中の日（期間を
+  過ぎた日と保持をやめたtopicの日）を古い日から、無ければ合計が容量を超えている間の最も古い日を、保護参照を1回128件まで
+  外し（外し終えた日も1件と数える）、外した内容は容量の内なら通常のcacheへ戻す。容量を超えて外した最も新しい日と、それより
+  前の日は、前日より前の日としては読まない。容量の設定を変えたときと、保持していたtopicの保持をやめたときは、
+  その日も読む日へ戻し、期間の内を新しい日から読み直す（入りきらなければ、また古い日から外す。2026-10-22ユーザー判断）。
+  そのとき容量で外している途中の日は、外すのをやめる。期間の内の今日と前日は、容量で保護を外した後も保護なしで読み続け、
+  取り込んだ内容は通常のcacheに置く（同）。期間の外の日（期間1日のときの前日）は読まない。日の行は古い側からしか消えないので、
+  期間を延ばしたときと保持し直したときは、既にある日より古い側の日も作って読む。作り直した日と外すのをやめた日は、続きの
+  位置を消して最初から読み、本文と添付のblobにも保護参照を付け直す（押し出されていれば取り直す）。保持した成人向けの添付は、表示設定をOFFにしても、期間を
+  過ぎるか保持をやめるまで残す（OFFの後に新しく取ることはない。同）。保持するtopicが無くても、外す保護参照が残っている間はtaskを続け、起動時にも残っていればtaskを起こす。
 - `unsubscribe_topic`はdesiredのholderだけを外す。列のholderは列（`set_scope_display`）だけが取り・外す
   （開いている列のtopic/channelは、列を閉じるまで購読を続ける）。参加も止めない。live退出は参加のholderだけを外す。
 - endpoint（iroh stack）の世代が変わった時だけ、private channelの秘密を新しいdocsへ登録し直し、leaseのあるkeyのtaskを作り直す。

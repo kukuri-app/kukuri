@@ -125,6 +125,10 @@ struct MemoryTopicRetention {
     cursors: BTreeMap<(String, String, u64), (i64, String)>,
     /// (topic, 種類, object id) → (bucket, 回数, 期限)。
     retries: BTreeMap<(String, String, String), (u64, u32, i64)>,
+    /// 保持の期間と容量(無ければ既定)。memory は cache を持たないので、保護の合計は常に 0。
+    limits: Option<(u32, u64)>,
+    /// (topic, bucket) → 最後まで読んだか。外す保護参照が無いので、期間を過ぎた日と保持をやめた topic の日はすぐ消す。
+    days: BTreeMap<(String, u64), bool>,
 }
 
 impl MemoryStore {

@@ -457,6 +457,9 @@ impl SqliteStore {
         sqlx::query("UPDATE remote_content_cache_usage SET used_bytes = used_bytes WHERE id = 1")
             .execute(&mut **tx)
             .await?;
+        if kind == "record" {
+            Self::claim_retained_scope(tx, key, scope).await?;
+        }
         let protected = sqlx::query_scalar::<_, i64>(
             "SELECT EXISTS(SELECT 1 FROM remote_content_cache_protected_ref WHERE kind = ?1 AND cache_key = ?2)",
         )
@@ -573,6 +576,8 @@ impl SqliteStore {
             .bind(next_used)
             .execute(&mut **tx)
             .await?;
+        let old_charge = old.as_ref().map_or(0, |row| row.get("charged_bytes"));
+        Self::sync_retained_bytes(tx, kind, key, charge - old_charge).await?;
         if kind == "blob" {
             super::public_blobs::refresh_public_blob_announcement(tx, key, now).await?;
         }
@@ -877,58 +882,16 @@ impl SqliteStore {
         .collect::<HashSet<_>>();
         let desired = desired.iter().cloned().collect::<HashSet<_>>();
         for (kind, key) in old.difference(&desired) {
-            sqlx::query(
-                "DELETE FROM remote_content_cache_protected_ref \
-                 WHERE kind = ?1 AND cache_key = ?2 AND ref_id = ?3",
+            Self::remove_remote_protected_ref(
+                tx,
+                kind,
+                key,
+                reference,
+                budget,
+                label_evictions,
+                removed_files,
             )
-            .bind(kind)
-            .bind(key)
-            .bind(reference)
-            .execute(&mut **tx)
             .await?;
-            let remains = sqlx::query_scalar::<_, i64>(
-                "SELECT EXISTS(SELECT 1 FROM remote_content_cache_protected_ref \
-                 WHERE kind = ?1 AND cache_key = ?2)",
-            )
-            .bind(kind)
-            .bind(key)
-            .fetch_one(&mut **tx)
-            .await?;
-            if remains != 0 {
-                continue;
-            }
-            let row = sqlx::query(
-                "SELECT charged_bytes FROM remote_content_cache \
-                 WHERE kind = ?1 AND cache_key = ?2 AND is_protected = 1",
-            )
-            .bind(kind)
-            .bind(key)
-            .fetch_optional(&mut **tx)
-            .await?;
-            let Some(row) = row else { continue };
-            let charge = row.get::<i64, _>("charged_bytes");
-            let used = sqlx::query_scalar::<_, i64>(
-                "SELECT used_bytes FROM remote_content_cache_usage WHERE id = 1",
-            )
-            .fetch_one(&mut **tx)
-            .await?;
-            if used.saturating_add(charge) <= budget {
-                sqlx::query(
-                    "UPDATE remote_content_cache SET is_protected = 0 WHERE kind = ?1 AND cache_key = ?2",
-                )
-                .bind(kind)
-                .bind(key)
-                .execute(&mut **tx)
-                .await?;
-                sqlx::query(
-                    "UPDATE remote_content_cache_usage SET used_bytes = used_bytes + ?1 WHERE id = 1",
-                )
-                .bind(charge)
-                .execute(&mut **tx)
-                .await?;
-            } else {
-                delete_cache_item(tx, kind, key, label_evictions, removed_files).await?;
-            }
         }
         for (kind, key) in desired.difference(&old) {
             Self::add_remote_protected_ref(tx, kind, key, reference).await?;
@@ -973,6 +936,7 @@ mod files;
 mod listing;
 mod owned;
 mod reclaim;
+mod retention;
 
 #[cfg(test)]
 mod tests;

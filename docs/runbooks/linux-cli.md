@@ -22,11 +22,14 @@ bin/kukuri-cli --profile work call protocol.commands
 ```
 
 指定した公開topicの内容を画面なしで取り込み、保持して、ほかのpeerへ返すときは、daemonの起動後に保持するtopicを設定する（#1909）。
-設定はprofileに保存し、daemonを起動し直すと戻る。`get_topic_retention`は、保持するtopicと、topicごとに取り込んだ位置、
-取り直しを待つ数（`pending_retries`）と諦めた数（`given_up`）を返す。
+設定はprofileに保存し、daemonを起動し直すと戻る。保持の期間（日。1〜365、既定30）と容量（bytes。1 GiB以上、既定10 GiB）は
+`set_topic_retention_limits`で変える。期間を過ぎた日と、容量を超えた分の古い日の内容は、保持から外して通常のcacheへ戻す。
+`get_topic_retention`は、期間と容量、保持している内容の大きさの合計（`used_bytes`）と、保持するtopicごとに、取り込んだ位置、
+取り直しを待つ数（`pending_retries`）と諦めた数（`given_up`）、そのtopicの内容の大きさ（`used_bytes`）を返す。
 
 ```bash
 echo '{"topic":"kukuri:topic:general","retained":true}' | bin/kukuri-cli --profile work call set_topic_retention --input -
+echo '{"retention_days":30,"capacity_bytes":10737418240}' | bin/kukuri-cli --profile work call set_topic_retention_limits --input -
 bin/kukuri-cli --profile work call get_topic_retention
 echo '{"topic":"kukuri:topic:general","retained":false}' | bin/kukuri-cli --profile work call set_topic_retention --input -
 ```

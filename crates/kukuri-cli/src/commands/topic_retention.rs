@@ -9,7 +9,7 @@ use crate::{
     registry::{CommandHandler, CommandOutput, CommandRegistration, HandlerContext},
 };
 use async_trait::async_trait;
-use kukuri_desktop_runtime::SetTopicRetentionRequest;
+use kukuri_desktop_runtime::{SetTopicRetentionLimitsRequest, SetTopicRetentionRequest};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -28,6 +28,12 @@ impl CommandHandler for Handler {
             "set_topic_retention" => encode(
                 runtime
                     .set_topic_retention(decode::<SetTopicRetentionRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            "set_topic_retention_limits" => encode(
+                runtime
+                    .set_topic_retention_limits(decode::<SetTopicRetentionLimitsRequest>(payload)?)
                     .await
                     .map_err(command_error)?,
             ),
@@ -57,6 +63,14 @@ fn input(name: &str) -> Value {
             json!({"topic": string(), "retained": {"type": "boolean"}}),
             &["topic", "retained"],
         ),
+        // 期間は 1〜365 日、容量は 1 GiB 以上(判断 1・2)。
+        "set_topic_retention_limits" => object(
+            json!({
+                "retention_days": {"type": "integer", "minimum": 1, "maximum": 365},
+                "capacity_bytes": {"type": "integer", "minimum": 1_u64 << 30},
+            }),
+            &["retention_days", "capacity_bytes"],
+        ),
         "get_topic_retention" => object(json!({}), &[]),
         _ => unreachable!("topic retention input schema"),
     }
@@ -64,9 +78,13 @@ fn input(name: &str) -> Value {
 
 fn output(name: &str) -> Value {
     match name {
-        "set_topic_retention" => json!({"type": "null"}),
+        "set_topic_retention" | "set_topic_retention_limits" => json!({"type": "null"}),
         "get_topic_retention" => object(
-            json!({"topics": array(object(
+            json!({
+                "retention_days": count(),
+                "capacity_bytes": count(),
+                "used_bytes": count(),
+                "topics": array(object(
                 json!({
                     "topic": string(),
                     "retained_at": integer(),
@@ -77,10 +95,11 @@ fn output(name: &str) -> Value {
                     )),
                     "pending_retries": count(),
                     "given_up": count(),
+                    "used_bytes": count(),
                 }),
-                &["topic", "retained_at", "progress", "pending_retries", "given_up"],
+                &["topic", "retained_at", "progress", "pending_retries", "given_up", "used_bytes"],
             ))}),
-            &["topics"],
+            &["retention_days", "capacity_bytes", "used_bytes", "topics"],
         ),
         _ => unreachable!("topic retention output schema"),
     }
@@ -90,6 +109,7 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
     use CommandEffect::{Read, Write};
     [
         ("set_topic_retention", Write),
+        ("set_topic_retention_limits", Write),
         ("get_topic_retention", Read),
     ]
     .into_iter()

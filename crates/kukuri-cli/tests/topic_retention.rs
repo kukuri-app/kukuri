@@ -1,5 +1,6 @@
 //! #1909 AC-1: CLI で保持する公開 topic を設定すると、daemon の runtime は画面の列なしに、topic の投稿と、設定の後に
 //! 作られた公開スレッドの投稿を検証して取り込む。2 つの topic を同時に扱い、設定は host の作り直しで戻り、解除で外れる。
+//! AC-3: 保持の期間と容量を CLI で設定する。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -137,6 +138,35 @@ async fn retained_topics_are_taken_in_without_columns_and_restored_after_restart
     )
     .await;
     assert_eq!(rejected.error.expect("rejected").code, "validation_failed");
+
+    // 保持の期間と容量は既定で 30 日・10 GiB。範囲の外(0 日・366 日・1 GiB 未満)は拒否し、範囲の内は保存して出力に出す。
+    let limits = |status: &Value| {
+        (
+            status["retention_days"].as_u64(),
+            status["capacity_bytes"].as_u64(),
+        )
+    };
+    let status = ok(&dispatcher, &host_k, "get_topic_retention", json!({})).await;
+    assert_eq!(limits(&status), (Some(30), Some(10 << 30)));
+    for (days, bytes) in [(0, 1_u64 << 30), (366, 1 << 30), (30, (1 << 30) - 1)] {
+        let rejected = call(
+            &dispatcher,
+            &host_k,
+            "set_topic_retention_limits",
+            json!({"retention_days": days, "capacity_bytes": bytes}),
+        )
+        .await;
+        assert_eq!(rejected.error.expect("rejected").code, "validation_failed");
+    }
+    ok(
+        &dispatcher,
+        &host_k,
+        "set_topic_retention_limits",
+        json!({"retention_days": 7, "capacity_bytes": 2_u64 << 30}),
+    )
+    .await;
+    let status = ok(&dispatcher, &host_k, "get_topic_retention", json!({})).await;
+    assert_eq!(limits(&status), (Some(7), Some(2 << 30)));
 
     // A は、K の設定の後に公開スレッドを作り(新形式の writer への切替を待つ)、スレッドと 2 つの topic へ投稿する。A は
     // 書き手の fixture なので、公開スレッドは runtime から作る。

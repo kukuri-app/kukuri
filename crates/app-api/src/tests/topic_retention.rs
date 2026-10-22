@@ -36,10 +36,12 @@ fn retaining_device(
     (app, store)
 }
 
-/// 続きが無くなるまで topic を進める(task の間隔を待たない)。
+/// 続きが無くなるまで topic を進める(task の間隔を待たない)。前日より前の日は 1 回に 1 日ずつ読むので、既定の期間(30 日)の
+/// 日数より多く回す。手で回すので、取り込みの task は止める。
 async fn catch_up(app: &AppService, topic: &str) {
+    app.shutdown_topic_retention().await;
     let mut state = RetentionState::default();
-    for _ in 0..20 {
+    for _ in 0..64 {
         if !app
             .step_topic_retention(topic, &mut state)
             .await
@@ -88,6 +90,9 @@ async fn retained_topics_take_topic_and_new_public_channel_posts_without_columns
             .is_some_and(|task| !task.is_finished()),
         "setting a retained topic starts the retention task"
     );
+    // A の書込みの間に task が回ると、同じ秒の後の投稿が続きの位置より前に並んで読まれないことがある(判断 6 で受け入れた
+    // 取りこぼし)。前日より前の日を読む間は task が続けて回るので、ここで止めて手で回す。
+    k.shutdown_topic_retention().await;
 
     // A は、K が保持を始めた後に、topic へ投稿し、公開スレッドを作って投稿し、もう 1 つの topic へも投稿する。
     let topic_post = a
@@ -332,7 +337,16 @@ async fn retained_topics_are_restored_at_start_and_private_names_are_rejected() 
         .await
         .expect("retain again");
     assert!(task_running().await);
+    // 停止すると、動いている取り込みの task も終わる。
     restarted.shutdown().await;
+    assert!(
+        restarted
+            .subscription_registry
+            .topic_retention_task
+            .lock()
+            .await
+            .is_none()
+    );
 }
 
 // 読み先の索引に載っているのに本体を読めない投稿は、取り直しの予定に入れて先へ進む(2026-10-22 ユーザー判断)。後ろの投稿の

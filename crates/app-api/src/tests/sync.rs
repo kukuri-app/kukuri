@@ -456,6 +456,7 @@ mod session_hint_retry;
 mod session_manifest_fetch;
 mod session_newer_provider;
 mod shadowing_docs;
+pub(super) use range_reconcile::put_post_at;
 pub(super) use shadowing_docs::ShadowingDocsSync;
 mod subscription_catch_up;
 mod subscription_restarts;

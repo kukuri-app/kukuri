@@ -72,21 +72,28 @@ CLI daemonは、指定した公開topicの内容を画面の列なしに取り�
 公開スレッド（metadataと投稿）・Live・metaverseを含む（範囲と値は#1909の判断）。
 
 - Feature 名: 公開topicの保持
-- Durable / Transient: 保持するtopicと取り込みの続きの位置はDurable。取り込みのtaskはTransient
+- Durable / Transient: 保持するtopic、保持の期間と容量、取り込みの続きの位置、日ごとの保護の合計はDurable。取り込みのtaskはTransient
 - Canonical Source: account SQLiteの`topic_retention`（topicと保持を始めた時刻、取り直しを諦めた数）、`topic_retention_cursors`
-  （topic・索引・bucketごとの位置）、`topic_retention_retries`（取り直しの予定）。取り込んだ内容の正本は、既存featureの署名済み
-  recordとblob
+  （topic・索引・bucketごとの位置）、`topic_retention_retries`（取り直しの予定）、`topic_retention_limits`（期間と容量、保護の合計、
+  容量を超えて保護を外した最も新しい日）、`topic_retention_days`（topicと日ごとの保護の合計、読み終えたか、保護を外している途中か）、
+  `topic_retention_scopes`（保護する日のtopicのbucketのreplica）。保護そのものはremote cacheの保護参照`retain:<topic>:<bucket>`。
+  取り込んだ内容の正本は、既存featureの署名済みrecordとblob
 - Replicated?: 設定と位置はNo。取り込んだ公開の内容は、既存の再提供（ADR 0054 §4、#1395）でほかのpeerへ返す
-- Rebuildable From: 設定は再構築しない。位置は失っても現在と前日のbucketを読み直して作り直せる。取り直しの予定は失うと、
+- Rebuildable From: 設定は再構築しない。位置は失っても期間の内のbucketを読み直して作り直せる。取り直しの予定は失うと、
   その対象を次に読んだときまで取り直さない
 - Public Replica / Private Replica / Local Only: 設定と位置はLocal Only。保持するのは公開topicのbucketの公開の内容だけで、private channel・DMは取り込まない
 - Gossip Hint 必要有無: 保持するtopicのtopic hintを受ける（holder `retain:<topic>`のlease。ADR 0055 §1.1）。公開スレッドごとのhintは購読しない
 - Blob 必要有無: 投稿の本文・添付（画像・動画・poster。成人向けは表示設定に従う）、リンクプレビューとcustomリアクションの画像、
-  LiveとDomeのmanifest、Domeの資材。大きなblobはprofileの`<DB名>.retention-staging`で受け取ってから、同じvolumeのcacheへ置く
+  LiveとDomeのmanifest、Domeの資材。大きなblobはprofileの`<DB名>.retention-staging`で受け取ってから、同じvolumeのcacheへ置く。
+  保持したrecordとblobには、内容の日（bucketの日）の保護参照を付け、cacheの容量（3 GiB）の計数と7日の回収の外に置く。期間を過ぎた日、
+  容量を超えた分の古い日、保持をやめたtopicの日は保護参照を外し、通常のcacheへ戻す（ADR 0055）
 - SQLite projection 必要有無: 取り込んだ投稿・公開スレッドの行は既存のprojection
-- 必須 contract: CLIの`set_topic_retention`・`get_topic_retention`（GUIには無いCLIだけのcommand）、公開でないtopicの拒否、再起動での復元、
-  解除・shutdownでの停止、公開スレッドの数に比例しない購読とtask、読めない記録を取り直しの予定に入れて後ろの記録の取り込みを
-  止めないこと
+- 必須 contract: CLIの`set_topic_retention`・`set_topic_retention_limits`・`get_topic_retention`（GUIには無いCLIだけのcommand）、
+  公開でないtopicの拒否、再起動での復元、解除・shutdownでの停止、公開スレッドの数に比例しない購読とtask、読めない記録を
+  取り直しの予定に入れて後ろの記録の取り込みを止めないこと。前日より前の日を新しい日から古い日へ1日ずつ読み、3ページを超える
+  日の取り込みを途中で止めて作り直しても続きから全件がそろうこと、期間の端とbucketの境界、無関係な履歴・公開スレッド・topicを
+  10倍にしても1回の読み取りの数と取り込みの件数が変わらないこと（`crates/app-api/src/tests/topic_retention_days.rs`）。
+  保護参照を付けたrecordとblobの大きさの足し引きと、期間を過ぎた日・容量を超えた分の古い日からの回収（`crates/store/src/tests/topic_retention.rs`）
 - 必須 scenario: 2つの実runtimeで、書き手の投稿と設定の後に作られた公開スレッドの投稿を、保持する端末が列なしに取り込み、書き手を止めた後も
   手元から読めること（`crates/kukuri-cli/tests/topic_retention.rs`）。3つの実iroh端末で、書き手を止めた後に来た読み手が、保持する端末
   だけから投稿（本文・画像・動画・リアクション）、公開スレッドの新しい版と投稿、終えたLive、Domeの一覧の行と資材を読めること
