@@ -903,3 +903,82 @@ async fn own_record_failures_are_explicit_without_a_public_fallback() {
     session.stop().await.expect("stop");
     delete_database(&account).await.expect("delete");
 }
+
+/// #1910 AC-3: browser の読み先の近隣（native）は保持者を持たないが、その近隣に保持者がいる。browser は native の紹介で
+/// 保持者を候補に入れ、既存の docs の読取り（relay の経路）で公開 channel の metadata を読み、署名を確かめる。
+#[wasm_bindgen_test]
+async fn a_public_channel_is_read_from_a_holder_introduced_by_the_native_neighbor() {
+    use kukuri_transport::{IrohGossipTransport, SeedPeer, TransportNetworkConfig};
+
+    let native = native().await.expect("native peer");
+    let info = signaling_fixture::post("/holder-info", "")
+        .await
+        .expect("holder info");
+    let mut lines = info.lines();
+    let topic = kukuri_core::TopicId::new(lines.next().expect("topic"));
+    let channel_id = lines.next().expect("channel id").to_string();
+    let holder_id = lines.next().expect("holder id").to_string();
+    let replica = ReplicaId::new(lines.next().expect("replica"));
+    let key = lines.next().expect("key").to_string();
+    let session = start(&native, &account("introduced-holder"), false)
+        .await
+        .expect("start");
+    let transport = IrohGossipTransport::from_shared_parts(
+        session.node.endpoint().clone(),
+        session.node.gossip().clone(),
+        session.node.discovery(),
+        TransportNetworkConfig::default(),
+        TransportRelayConfig {
+            iroh_relay_urls: vec![native.relay.to_string()],
+        },
+    )
+    .expect("transport")
+    .with_topic_peer_introductions(session.node.topic_peer_introductions());
+    let _hints = kukuri_transport::HintTransport::subscribe_hints(&transport, &topic)
+        .await
+        .expect("subscribe");
+    // browser は gossip で合流せず、native だけを近隣に置く（試験の hook）。
+    transport
+        .place_topic_neighbor_for_tests(&topic, native.addr.clone())
+        .await
+        .expect("place the native neighbor");
+    n0_future::time::timeout(Duration::from_secs(30), async {
+        while !transport
+            .introduced_topic_peers_for_tests(&topic)
+            .await
+            .contains(&holder_id)
+        {
+            n0_future::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the native neighbor introduces the holder");
+    // 紹介で入った保持者（relay で届く）から、既存の docs の読取りで metadata を読む。
+    let readers = session
+        .docs
+        .remote_readers(
+            &replica,
+            None,
+            vec![SeedPeer {
+                endpoint_id: holder_id.clone(),
+                addr_hint: None,
+            }],
+        )
+        .await
+        .expect("readers");
+    let reader = readers.first().expect("a reader for the holder");
+    let records = reader
+        .query_replica_with_policy(
+            &replica,
+            kukuri_docs_sync::DocQuery::Exact(key),
+            DocFetchPolicy::LocalThenRemote,
+        )
+        .await
+        .expect("read the metadata from the holder");
+    let envelope: kukuri_core::KukuriEnvelope =
+        serde_json::from_slice(&records.first().expect("a record").value).expect("envelope");
+    let content = kukuri_core::verify_public_channel(&envelope).expect("verified metadata");
+    assert_eq!(content.channel_id.as_str(), channel_id);
+    assert_eq!(content.topic_id.as_str(), topic.as_str());
+    session.stop().await.expect("stop");
+}
