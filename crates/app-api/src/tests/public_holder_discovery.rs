@@ -474,7 +474,7 @@ async fn a_holder_that_appears_later_is_reached_through_periodic_introductions()
                     .filter(|diag| diag.topic == hint_topic)
                     .map(|diag| diag.peer_count)
                     .sum::<usize>();
-                settled &= count <= bridges.len() - 1;
+                settled &= count < bridges.len();
             }
             if settled {
                 return;
