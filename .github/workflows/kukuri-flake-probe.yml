@@ -74,7 +74,7 @@ jobs:
           patchelf
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
 
       - name: Install nextest
         uses: taiki-e/install-action@nextest
@@ -116,7 +116,7 @@ jobs:
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
 
       - name: Install desktop dependencies
         working-directory: apps/desktop
@@ -174,7 +174,7 @@ jobs:
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
 
       - name: Install desktop dependencies
         working-directory: apps/desktop

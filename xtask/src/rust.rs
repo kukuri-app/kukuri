@@ -13,7 +13,7 @@ pub(crate) fn check() -> Result<()> {
 }
 
 pub(crate) fn test() -> Result<()> {
-    rust_test()?;
+    rust_test(std::iter::empty())?;
     desktop_test()
 }
 
@@ -31,13 +31,15 @@ pub(crate) fn rust_check() -> Result<()> {
     run("cargo", clippy_args, &root_dir())
 }
 
-pub(crate) fn rust_test() -> Result<()> {
+/// `extra` は `cargo nextest run` へそのまま渡す（CI の shard は `--partition hash:N/M`）。
+pub(crate) fn rust_test(extra: impl Iterator<Item = String>) -> Result<()> {
     let cn_packages = cn_packages()?;
+    let extra: Vec<String> = extra.collect();
     if nextest_available() {
-        rust_test_with_nextest(&cn_packages)
+        rust_test_with_nextest(&cn_packages, extra)
     } else {
-        if is_ci() {
-            bail!("cargo-nextest is required in CI");
+        if is_ci() || !extra.is_empty() {
+            bail!("cargo-nextest is required in CI and for nextest args");
         }
         eprintln!(
             "[xtask] warning: cargo-nextest was not found; falling back to cargo test for rust-test"
@@ -61,7 +63,7 @@ pub(crate) fn app_api_slow_test() -> Result<()> {
     )
 }
 
-pub(crate) fn rust_test_with_nextest(cn_packages: &[String]) -> Result<()> {
+pub(crate) fn rust_test_with_nextest(cn_packages: &[String], extra: Vec<String>) -> Result<()> {
     let stack_env = rust_test_stack_envs();
     let stack_env_refs = env_refs(&stack_env);
 
@@ -74,6 +76,7 @@ pub(crate) fn rust_test_with_nextest(cn_packages: &[String]) -> Result<()> {
         "--workspace".to_string(),
     ];
     nextest_args.extend(cargo_exclude_args(cn_packages));
+    nextest_args.extend(extra);
     run_with_env("cargo", nextest_args, &root_dir(), &stack_env_refs)?;
 
     let mut doc_args = vec![

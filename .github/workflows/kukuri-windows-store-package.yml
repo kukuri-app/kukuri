@@ -75,7 +75,7 @@ jobs:
       # src-tauri の target は updater の lib test、target/microsoft-store は Store 用の build。
       - name: Cache Rust
         if: ${{ github.event_name != 'workflow_dispatch' }}
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: |

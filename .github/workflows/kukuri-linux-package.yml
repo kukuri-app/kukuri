@@ -118,7 +118,7 @@ jobs:
       # root の target は xtask、src-tauri の target は配布物の build と lib test。
       - name: Cache Rust
         if: ${{ !((github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))) && inputs.signing == 'distribution') }}
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: |

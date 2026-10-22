@@ -59,7 +59,7 @@ cargo xtask desktop-visual-test
 - `cargo xtask desktop-lint` / `desktop-test` / `desktop-storybook` / `desktop-browser-test` / `desktop-visual-test` は targeted rerun 用。workflow とローカル rerun のどちらでも同じ entrypoint を使う。
 - `cargo xtask cn-check` / `cargo xtask cn-test` は `cn-*` server slice の compile/test 用。
 - `cargo xtask-lite <command>` は xtask を `harness` feature なしで build して実行する alias（`.cargo/config.toml`）。`e2e-smoke` / `scenario` 以外の command は `cargo xtask` と同じ動作で、xtask 自体の build が軽い。CI の harness を使わない job はこちらを使う（#1120）。
-- `Kukuri Fast` / `Kukuri Nightly` / `Kukuri Flake Probe` は GitHub-hosted の標準 runner（`ubuntu-24.04` / `windows-2022`）で動き、Rust の依存を `Swatinem/rust-cache` で GitHub Actions cache に置く（#1413）。key は job id・toolchain・`Cargo.lock` / `Cargo.toml`・`CARGO_*` 等の環境で分かれ、同じ job id の Fast と Nightly は同じ cache を使う。workspace crate の成果物は保存前に除かれる。`Kukuri Fast` は PR の run では保存せず、main push などの run が保存した cache を復元するだけにする。PR の検証の run を持つ `Kukuri Linux Package` / `Kukuri Windows Store Package` も同じで、main push の run が cache を保存する。署名付きの配布物を build する run（release、Linux Package の distribution、Store の dispatch）は cache を使わない（`docs/runbooks/release.md`）。cache の総量は repository の設定で 100GB（保持 7 日）。
+- `Kukuri Fast` / `Kukuri Nightly` / `Kukuri Flake Probe` は GitHub-hosted の標準 runner（`ubuntu-24.04` / `windows-2022`）で動き、Rust の依存を `Swatinem/rust-cache` で GitHub Actions cache に置く（#1413）。呼び出しは `.github/actions/cache-rust` にまとめ、Lindera の辞書の cache と、runner image が同梱する使わない toolchain の削除を含む（rust-cache 2.9 以降は入っている全 toolchain を key に含めるため、image の更新で key が割れて依存を毎回 compile し、cache の総量も 2 倍になっていた。#1911）。key は job id・toolchain・`Cargo.lock` / `Cargo.toml`・`CARGO_*` 等の環境で分かれ、同じ job id の Fast と Nightly は同じ cache を使う。workspace crate の成果物は保存前に除かれる。`Kukuri Fast` は PR の run では保存せず、main push などの run が保存した cache を復元するだけにする。PR の検証の run を持つ `Kukuri Linux Package` / `Kukuri Windows Store Package` も同じで、main push の run が cache を保存する。署名付きの配布物を build する run（release、Linux Package の distribution、Store の dispatch）は cache を使わない（`docs/runbooks/release.md`）。cache の総量は repository の設定で 100GB（保持 7 日）。
 - `Kukuri Flake Probe`（`.github/workflows/kukuri-flake-probe.yml`、手動起動のみ）は、同じ suite を繰り返し実行して失敗率を測る。lane（`rust` / `vitest` / `playwright` / `all`）と 1 shard あたりの回数を指定し、2 shard を並行させる（既定は 2 × 10 = 20 回）。test の並列度を上げる変更の前後で使う（#1121）。実体は `scripts/ci/flake_probe.sh` で、失敗しても最後まで回し、失敗回数と各回の所要秒を step summary に出す。rust-cache の key は job id（`rust` / `vitest` / `playwright`）で分かれ、CI 本体の cache を上書きしない。
 - `cargo xtask cn-test` は `docker-compose.community-node.yml` の `cn-postgres` を自動起動し、`KUKURI_CN_RUN_INTEGRATION_TESTS=1` を付けて contract/integration test を流す。
 - `cargo xtask scenario community_node_public_connectivity` も `cn-postgres` を自動起動し、in-process の `cn-user-api` / `cn-iroh-relay` を立てて 2 desktop scenario を流す。
@@ -436,7 +436,7 @@ Ubuntu 22.04のx86_64 hostで `cargo xtask desktop-package` を実行する。Li
 
 ## 実際のアプリを複数動かす自動の試験（#1800）
 
-配布と同じ build（`--features tauri/custom-protocol` の release）を同じ PC で複数起動し、画面の JS を評価して操作・観測する。CI は Linux package と Fast の windows-fast で、package の build の後に動く（毎晩も動く）。
+配布と同じ build（`--features tauri/custom-protocol` の release）を同じ PC で複数起動し、画面の JS を評価して操作・観測する。CI は Linux package と Fast の windows-package で、package の build の後に動く（毎晩も動く）。
 
 ```bash
 cd apps/desktop
