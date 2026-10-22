@@ -131,7 +131,7 @@ fn bookmark() -> Value {
     view(json!({"bookmarked_at": integer(), "post": post()}))
 }
 
-fn post() -> Value {
+pub(super) fn post() -> Value {
     view(
         json!({"object_id": string(), "envelope_id": string(), "author_pubkey": string(),
         "author_name": optional_string(), "author_display_name": optional_string(),
