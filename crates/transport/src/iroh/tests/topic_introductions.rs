@@ -154,3 +154,40 @@ async fn introductions_cover_only_subscribed_public_topics() {
     bridge.shutdown().await;
     reader.shutdown().await;
 }
+
+/// 本番の購読の経路(bootstrap の peer と join し、`joined()` が最初の NeighborUp を消費する)でも、最初の近隣が
+/// 成立したときに 1 回だけ紹介を求める(2 人目の近隣を待たない)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_first_neighbor_of_a_bootstrapped_topic_is_asked_once() {
+    let bridge = IrohGossipTransport::bind_local().await.expect("bridge");
+    let reader = IrohGossipTransport::bind_local().await.expect("reader");
+    let bridge_ticket = bridge
+        .export_ticket()
+        .await
+        .expect("ticket")
+        .expect("ticket value");
+    reader
+        .configure_discovery(
+            DiscoveryMode::StaticPeer,
+            false,
+            vec![seed_peer_from_ticket(&bridge_ticket)],
+            Vec::new(),
+        )
+        .await
+        .expect("seed the bridge");
+    let topic = TopicId::new("kukuri:topic:introductions-bootstrap");
+    let _bridge_hints = bridge.subscribe_hints(&topic).await.expect("bridge");
+    let _reader_hints = reader.subscribe_hints(&topic).await.expect("reader");
+    wait_for_neighbor(&reader, "hint/kukuri:topic:introductions-bootstrap").await;
+    timeout(Duration::from_secs(10), async {
+        while reader.introduction_request_count_for_tests(&topic).await == 0 {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the first neighbor is asked for introductions");
+    sleep(Duration::from_millis(500)).await;
+    assert_eq!(reader.introduction_request_count_for_tests(&topic).await, 1);
+    bridge.shutdown().await;
+    reader.shutdown().await;
+}

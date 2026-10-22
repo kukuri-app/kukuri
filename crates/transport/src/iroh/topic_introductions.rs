@@ -2,8 +2,9 @@
 //! まだ知らない通常の peer（近隣の近隣）から既存の docs の読取りで読めるようにする。紹介は保持の証明ではない。
 //!
 //! 要求するのは公開 topic と公開スレッドの hint topic だけで、private channel・DM・account 同期の hint topic では
-//! 求めず、求められても答えない。応答で渡すのは近隣の endpoint ID と到達情報（gossip が参加者の間で既に交換する
-//! 範囲）で、送る先は同じ topic の参加者だけ。
+//! 求めず、求められても答えない。応答で渡すのは、購読している公開の hint topic の近隣の endpoint ID と到達情報
+//! （gossip が参加者の間で既に交換する範囲）だけ。要求元がその topic の参加者かは確かめない（公開 topic は誰でも
+//! 合流でき、合流すれば gossip で同じ情報を得る）。
 use super::peer_state::BootstrapCandidates;
 use super::*;
 use iroh::TransportAddr;
@@ -118,6 +119,8 @@ impl IntroducedPeers {
 #[derive(Default)]
 struct IntroductionRun {
     last_at: Option<Instant>,
+    /// 求めた回数(試験の観測用)。
+    requests: u64,
     /// 進行中の要求。topic の購読の解除で落ちる。
     _in_flight: Option<AbortOnDropHandle<()>>,
 }
@@ -209,6 +212,7 @@ impl TopicIntroductions {
             return;
         }
         run.last_at = Some(now);
+        run.requests += 1;
         let parts = self.parts.clone();
         run._in_flight = Some(AbortOnDropHandle::new(n0_future::task::spawn(async move {
             parts.request_from(peer).await
@@ -432,6 +436,22 @@ impl IrohGossipTransport {
         neighbors.write().await.insert(peer.id.to_string());
         introductions.ask(peer.id).await;
         Ok(())
+    }
+
+    /// 試験用: この topic で紹介を求めた回数。
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn introduction_request_count_for_tests(&self, topic: &TopicId) -> u64 {
+        let hint_topic = kukuri_core::wire::hint_topic_id(topic);
+        let Some(introductions) = self
+            .topic_states
+            .lock()
+            .await
+            .get(hint_topic.as_str())
+            .map(|state| state.introductions.clone())
+        else {
+            return 0;
+        };
+        introductions.run.lock().await.requests
     }
 
     /// 試験用: 紹介で覚えている、この topic の候補の endpoint ID。

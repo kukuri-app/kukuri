@@ -324,13 +324,18 @@ async fn a_reader_fetches_public_records_from_a_holder_introduced_by_a_non_holdi
     })
     .await;
     assert_eq!(live.title, "保持者の Live");
-    // 読み先の窓は P と紹介された H だけで、H は R の近隣でも台帳の peer でもない。
-    assert_eq!(
-        stack_r
-            .transport
-            .introduced_topic_peers_for_tests(&TopicId::new(topic))
-            .await,
-        [endpoint_addr_from_ticket(&ticket_h).id.to_string()]
+    // H は紹介で入った候補で、R の近隣でも台帳の peer でもない。P(要求先)は紹介に含まれない。
+    let introduced = stack_r
+        .transport
+        .introduced_topic_peers_for_tests(&TopicId::new(topic))
+        .await;
+    assert!(
+        introduced.contains(&endpoint_addr_from_ticket(&ticket_h).id.to_string()),
+        "{introduced:?}"
+    );
+    assert!(
+        !introduced.contains(&endpoint_addr_from_ticket(&ticket_p).id.to_string()),
+        "{introduced:?}"
     );
 
     app_h.shutdown().await;

@@ -637,6 +637,11 @@ impl IrohGossipTransport {
                         .map(|peer| peer.to_string())
                         .collect::<BTreeSet<_>>();
                     *neighbors_task.write().await = current_neighbors;
+                    // `joined()` は最初の NeighborUp を消費する。成立した近隣に、この topic での近隣を紹介して
+                    // もらう(#1910)。
+                    if let Some(peer) = receiver.neighbors().next() {
+                        introductions_task.ask(peer).await;
+                    }
                 } else {
                     for peer in &attempted_peers {
                         gossip_health
