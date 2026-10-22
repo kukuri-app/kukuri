@@ -344,6 +344,7 @@ async fn external_relay_endpoint_only_seed_peers_backfill_desktop_public_timelin
         )],
     };
     seed_local_community_node_consents(&runtime_a, base_url, 1).await;
+    mark_community_node_session_ready_for_test(&runtime_a, base_url).await;
     *runtime_b.community_node_config.lock().await = CommunityNodeConfig {
         trust_node_priority: Vec::new(),
         nodes: vec![CommunityNodeNodeConfig::new(
@@ -361,6 +362,7 @@ async fn external_relay_endpoint_only_seed_peers_backfill_desktop_public_timelin
         )],
     };
     seed_local_community_node_consents(&runtime_b, base_url, 1).await;
+    mark_community_node_session_ready_for_test(&runtime_b, base_url).await;
 
     timeout(
         Duration::from_secs(30),
