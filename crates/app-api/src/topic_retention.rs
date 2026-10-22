@@ -610,6 +610,8 @@ impl AppService {
         let mut more = false;
         let mut days = vec![previous, current];
         days.dedup();
+        // 期間の外の日(期間 1 日のときの前日)は読まない。
+        days.retain(|day| day.index() >= cutoff);
         days.extend(backfill.map(TimeBucket::from_index).transpose()?);
         for bucket in days {
             let live = bucket >= previous;

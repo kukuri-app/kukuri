@@ -243,11 +243,17 @@ impl TopicRetentionStore for MemoryStore {
         let missing = (from_bucket..oldest.min(to_bucket + 1))
             .chain(from_bucket.max(newest + 1)..=to_bucket)
             .collect::<Vec<_>>();
+        // 作った日は最初から読む。
         for bucket in missing {
-            retention
+            if retention
                 .days
-                .entry((topic_id.to_string(), bucket))
-                .or_insert(false);
+                .insert((topic_id.to_string(), bucket), false)
+                .is_none()
+            {
+                retention
+                    .cursors
+                    .retain(|(topic, _, day), _| topic != topic_id || *day != bucket);
+            }
         }
         Ok(())
     }

@@ -41,14 +41,18 @@ impl TopicRetentionStore for SqliteStore {
             "DELETE FROM topic_retention_retries WHERE topic_id = ?1",
             "DELETE FROM topic_retention_scopes WHERE topic_id = ?1",
             "UPDATE topic_retention_days SET releasing = 1 WHERE topic_id = ?1",
-            "DELETE FROM topic_retention WHERE topic_id = ?1",
         ] {
             sqlx::query(query).bind(topic_id).execute(&mut *tx).await?;
         }
-        // 空きができるので、容量で保護を外したほかの topic の日も、また読む。
-        sqlx::query("UPDATE topic_retention_limits SET released_through = NULL WHERE id = 1")
+        let released = sqlx::query("DELETE FROM topic_retention WHERE topic_id = ?1")
+            .bind(topic_id)
             .execute(&mut *tx)
-            .await?;
+            .await?
+            .rows_affected();
+        // 保持していた topic なら空きができるので、容量で保護を外したほかの topic の日も、また読む。
+        if released != 0 {
+            Self::reopen_capacity_released_days(&mut tx).await?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -290,15 +294,16 @@ impl TopicRetentionStore for SqliteStore {
         retention_days: u32,
         capacity_bytes: u64,
     ) -> Result<()> {
-        // 容量で保護を外した日も、また読む(入りきらなければ、また古い日から外す)。
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query(
-            "UPDATE topic_retention_limits \
-             SET retention_days = ?1, capacity_bytes = ?2, released_through = NULL WHERE id = 1",
+            "UPDATE topic_retention_limits SET retention_days = ?1, capacity_bytes = ?2 WHERE id = 1",
         )
         .bind(i64::from(retention_days))
         .bind(i64::try_from(capacity_bytes)?)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        Self::reopen_capacity_released_days(&mut tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -331,13 +336,25 @@ impl TopicRetentionStore for SqliteStore {
         let oldest = bucket("oldest")?.unwrap_or(to_bucket + 1);
         let newest = bucket("newest")?.unwrap_or(to_bucket);
         for bucket in (start..oldest.min(to_bucket + 1)).chain(start.max(newest + 1)..=to_bucket) {
-            sqlx::query(
+            let bucket = i64::try_from(bucket)?;
+            let created = sqlx::query(
                 "INSERT OR IGNORE INTO topic_retention_days (topic_id, bucket) VALUES (?1, ?2)",
             )
             .bind(topic_id)
-            .bind(i64::try_from(bucket)?)
+            .bind(bucket)
             .execute(&mut *tx)
-            .await?;
+            .await?
+            .rows_affected();
+            // 作った日は最初から読む(容量で保護を外した後に保護なしで読んだ日の位置を残さない)。
+            if created != 0 {
+                sqlx::query(
+                    "DELETE FROM topic_retention_cursors WHERE topic_id = ?1 AND bucket = ?2",
+                )
+                .bind(topic_id)
+                .bind(bucket)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
         tx.commit().await?;
         Ok(())
@@ -486,5 +503,44 @@ impl TopicRetentionStore for SqliteStore {
         .fetch_one(&self.pool)
         .await?;
         Ok(u64::try_from(used.max(0))?)
+    }
+}
+
+impl SqliteStore {
+    /// 容量で保護を外した日を、また読む日へ戻す(容量の設定を変えたときと、保持していた topic の保持をやめたとき。
+    /// 2026-10-22 ユーザー判断)。外している途中の日(容量で外した最も新しい日の、保持している topic の日)は、外すのを
+    /// やめて最初から読み直す。外し終えた日の行は、`open_topic_retention_days` が作り直す。
+    async fn reopen_capacity_released_days(tx: &mut sqlx::Transaction<'_, Sqlite>) -> Result<()> {
+        let floor = sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT released_through FROM topic_retention_limits WHERE id = 1",
+        )
+        .fetch_one(&mut **tx)
+        .await?;
+        let Some(floor) = floor else { return Ok(()) };
+        let topics = sqlx::query_scalar::<_, String>(
+            "SELECT d.topic_id FROM topic_retention_days d \
+             JOIN topic_retention t ON t.topic_id = d.topic_id \
+             WHERE d.releasing = 1 AND d.bucket = ?1",
+        )
+        .bind(floor)
+        .fetch_all(&mut **tx)
+        .await?;
+        for topic_id in topics {
+            for query in [
+                "UPDATE topic_retention_days SET releasing = 0, read_done = 0 \
+                 WHERE topic_id = ?1 AND bucket = ?2",
+                "DELETE FROM topic_retention_cursors WHERE topic_id = ?1 AND bucket = ?2",
+            ] {
+                sqlx::query(query)
+                    .bind(&topic_id)
+                    .bind(floor)
+                    .execute(&mut **tx)
+                    .await?;
+            }
+        }
+        sqlx::query("UPDATE topic_retention_limits SET released_through = NULL WHERE id = 1")
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
     }
 }

@@ -253,16 +253,23 @@ impl AppService {
         {
             return Ok(true);
         }
-        // 本文の blob には、取る前に日の保護参照を付ける(手元に本文があっても付ける)。
-        if let PayloadRef::BlobText { hash, .. } = &row.payload_ref {
-            self.claim_retained_blob(topic, bucket, hash.as_str())
-                .await?;
-        }
-        let body = match &row.content {
-            Some(text) => Some(text.clone()),
-            None => self.retain_post_body(&row).await?,
+        // 本文の blob には、取る前に日の保護参照を付ける。手元に本文があっても blob を保持し、押し出されていれば取り直す
+        // (他の参加者へ本文の blob を返す)。
+        let mut complete = true;
+        let body = match (&row.content, &row.payload_ref) {
+            (Some(text), PayloadRef::BlobText { hash, bytes, .. }) => {
+                complete &= self.retain_blob(topic, bucket, hash, *bytes).await?;
+                Some(text.clone())
+            }
+            (Some(text), _) => Some(text.clone()),
+            (None, PayloadRef::BlobText { hash, .. }) => {
+                self.claim_retained_blob(topic, bucket, hash.as_str())
+                    .await?;
+                self.retain_post_body(&row).await?
+            }
+            (None, _) => None,
         };
-        let mut complete = body.is_some();
+        complete &= body.is_some();
         for asset in &row.attachments {
             complete &= self
                 .retain_attachment(topic, bucket, object_id, asset)

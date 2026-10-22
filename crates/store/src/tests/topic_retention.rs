@@ -701,3 +701,98 @@ async fn capacity_released_days_are_read_again_once_space_is_freed() {
     store.release_topic("topic-b").await.expect("release b");
     assert!(day_10_read().await, "the day is read again after a release");
 }
+
+/// #1909 AC-3: 容量で外している途中の日がある間に、容量の設定を変えるか、保持していた topic の保持をやめると、その日は
+/// 外すのをやめて最初から読む日に戻る(日の行の間に欠けを作らない)。保持していない topic の解除では戻さない。
+#[tokio::test]
+async fn a_day_being_released_for_capacity_returns_when_space_is_freed() {
+    for trigger in ["limits", "release", "not retained"] {
+        let store = SqliteStore::connect_memory().await.expect("sqlite store");
+        store.retain_topic("topic-a", 1).await.expect("retain");
+        store
+            .open_topic_retention_days("topic-a", 10, 14)
+            .await
+            .expect("open");
+        // 10・11 日目は読み終え、12 日目は途中まで読んでいる。
+        for bucket in [11, 10] {
+            store
+                .finish_topic_retention_day("topic-a", bucket)
+                .await
+                .expect("finish");
+        }
+        store
+            .put_topic_retention_cursor("topic-a", &cursor("indexes/timeline/", 12, 5, "p5"))
+            .await
+            .expect("cursor of day 12");
+        for (bucket, count) in [(10, 1), (11, 1), (12, 5)] {
+            for index in 0..count {
+                let hash = format!("{bucket:032x}{index:032x}");
+                store
+                    .claim_topic_retention_blob("topic-a", bucket, &hash)
+                    .await
+                    .expect("claim");
+                assert!(
+                    store
+                        .put_remote_content("blob", &hash, "blob", &[1; 100])
+                        .await
+                        .expect("put blob")
+                );
+            }
+        }
+        // 10・11 日目を外しても足りず、12 日目を外し始める。
+        let one = (100 + "blob".len() * 2 + 64 + 64) as u64;
+        store
+            .set_topic_retention_limits(30, used(&store).await - 2 * one - 1)
+            .await
+            .expect("shrink capacity");
+        assert_eq!(
+            store
+                .reclaim_topic_retention_step(10, 3)
+                .await
+                .expect("reclaim"),
+            3
+        );
+        assert!(
+            protected_days(&store, 10..=14).await == [13, 14],
+            "{trigger}"
+        );
+        match trigger {
+            "limits" => store
+                .set_topic_retention_limits(30, 1 << 40)
+                .await
+                .expect("raise capacity"),
+            "release" => {
+                store.retain_topic("topic-b", 1).await.expect("retain b");
+                store.release_topic("topic-b").await.expect("release b");
+            }
+            _ => store.release_topic("topic-x").await.expect("release x"),
+        }
+        store
+            .open_topic_retention_days("topic-a", 10, 14)
+            .await
+            .expect("reopen");
+        let day12 = store
+            .topic_retention_cursors("topic-a", 12)
+            .await
+            .expect("cursors")
+            .into_iter()
+            .filter(|cursor| cursor.bucket == 12)
+            .count();
+        if trigger == "not retained" {
+            assert_eq!(protected_days(&store, 10..=14).await, [13, 14]);
+            assert_eq!(
+                day12, 1,
+                "the position of the day stays while it is released"
+            );
+            continue;
+        }
+        // 12 日目は外すのをやめて最初から読み、外し終えた 10・11 日目は作り直して読む。
+        assert_eq!(
+            protected_days(&store, 10..=14).await,
+            [10, 11, 12, 13, 14],
+            "{trigger}"
+        );
+        assert_eq!(day12, 0, "{trigger}");
+        assert_eq!(read_days(&store, 10, 12).await, [12, 11, 10], "{trigger}");
+    }
+}

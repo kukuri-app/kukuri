@@ -71,7 +71,8 @@ pub struct TopicRetentionCursor {
 pub trait TopicRetentionStore: Send + Sync {
     /// 保持する topic を足す。既にあれば何もしない。
     async fn retain_topic(&self, topic_id: &str, retained_at: i64) -> Result<()>;
-    /// 保持をやめ、その topic の続きの位置と取り直しの予定も消す。容量で保護を外した日も、また読む日にする。
+    /// 保持をやめ、その topic の続きの位置と取り直しの予定も消す。保持していた topic なら、容量で保護を外した日も、また
+    /// 読む日にする。
     async fn release_topic(&self, topic_id: &str) -> Result<()>;
     /// 保持する topic を topic の順に `limit` 件まで返す。
     async fn retained_topics(&self, limit: usize) -> Result<Vec<TopicRetentionRow>>;
@@ -127,7 +128,8 @@ pub trait TopicRetentionStore: Send + Sync {
     ) -> Result<()>;
     /// topic の `from_bucket`〜`to_bucket` の日のうち、行の無い日の行を作る。日の行は古い側からしか消えないので、既にある
     /// 日より古い側と新しい側だけを作る(容量で保護を外した日とそれより前の日は作らない)。保持していない topic なら作らない。
-    /// 停止していた間の日と、期間を延ばして新しく期間に入った日も、ここで最後まで読む日になる。
+    /// 停止していた間の日と、期間を延ばして新しく期間に入った日も、ここで最後まで読む日になる。作った日の続きの位置は消し、
+    /// 最初から読む。
     async fn open_topic_retention_days(
         &self,
         topic_id: &str,

@@ -347,3 +347,174 @@ async fn today_is_still_read_after_its_protection_is_released_for_capacity() {
     );
     k.shutdown().await;
 }
+
+/// #1909 AC-3: 期間 1 日では前日は期間の外なので読まず、1 回で今日まで読み終える(前日の索引が 1 回の上限を超えていても、
+/// 前日を最初から読み直し続けない)。
+#[tokio::test]
+async fn a_one_day_period_reads_today_and_not_yesterday() {
+    let a_docs = MemoryDocsSync::with_docs_author("01".repeat(32));
+    let keys = generate_keys();
+    let topic = TopicId::new(TOPIC);
+    let today = today();
+    let (replica, start) = day(today - 1);
+    for index in 0..40 {
+        put_post_at(
+            &a_docs,
+            &replica,
+            &keys,
+            &topic,
+            start + index,
+            &format!("前日 {index}"),
+            None,
+        )
+        .await;
+    }
+    let (replica, start) = day(today);
+    let at = (Utc::now().timestamp() - 5).max(start);
+    let post = put_post_at(&a_docs, &replica, &keys, &topic, at, "今日", None)
+        .await
+        .object_id
+        .clone();
+    let store = Arc::new(MemoryStore::default());
+    store
+        .set_topic_retention_limits(1, 1 << 30)
+        .await
+        .expect("a one-day period");
+    let k = retaining(store.clone(), Arc::new(a_docs)).await;
+    assert!(
+        !k.step_topic_retention(TOPIC, &mut RetentionState::default())
+            .await
+            .expect("step"),
+        "one step reads today to the end"
+    );
+    assert_eq!(retained(&store, &[post]).await, 1);
+    k.shutdown().await;
+}
+
+/// 投稿ごとの、本文の blob に付いた日の保護参照の数。
+async fn body_refs(retention: &SqliteStore, store: &MemoryStore, posts: &[String]) -> Vec<i64> {
+    let mut refs = Vec::new();
+    for post in posts {
+        refs.push(body_ref(retention, store, post).await);
+    }
+    refs
+}
+
+async fn body_ref(retention: &SqliteStore, store: &MemoryStore, post: &str) -> i64 {
+    let PayloadRef::BlobText { hash, .. } = store
+        .get_object_projection(&EnvelopeId::from(post))
+        .await
+        .expect("projection")
+        .expect("retained post")
+        .payload_ref
+    else {
+        panic!("a blob body");
+    };
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM remote_content_cache_protected_ref \
+         WHERE kind = 'blob' AND cache_key = ?1 AND ref_id LIKE 'retain:%'",
+    )
+    .bind(hash.as_str())
+    .fetch_one(retention.pool())
+    .await
+    .expect("refs")
+}
+
+/// #1909 AC-3(2026-10-22 ユーザー判断): 今日の内容だけで容量を超えて今日の保護を外した後に容量を上げると、今日を
+/// 最初から読み直し、外す前と外した後の投稿の本文の blob に、また日の保護参照を付ける。
+#[tokio::test]
+async fn raising_the_capacity_protects_today_again_from_its_first_post() {
+    let a_docs = MemoryDocsSync::with_docs_author("01".repeat(32));
+    let blobs = Arc::new(MemoryBlobService::default());
+    let a = device(
+        "a",
+        &FakeNetwork::default(),
+        a_docs.clone(),
+        MemoryDocsSync::default(),
+        blobs.clone(),
+    );
+    let retention = SqliteStore::connect_memory().await.expect("sqlite store");
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(FakeTransport::new("k", FakeNetwork::default()));
+    let k = AppService::from_handles(
+        ServiceHandles::new(
+            store.clone(),
+            store.clone(),
+            transport.clone(),
+            transport,
+            Arc::new(CountingDocsSync::reading_with(
+                MemoryDocsSync::default(),
+                Arc::new(a_docs),
+            )),
+            blobs,
+            generate_keys(),
+        )
+        .with_topic_retention(Arc::new(retention.clone()), std::env::temp_dir()),
+    );
+    k.switch_writer(1);
+    k.set_topic_retention(TOPIC, true)
+        .await
+        .expect("retain the topic");
+    k.shutdown_topic_retention().await;
+    let mut posts = Vec::new();
+    for index in 0..2 {
+        posts.push(
+            a.create_post(TOPIC, &format!("今日の投稿 {index}"), None)
+                .await
+                .expect("post"),
+        );
+    }
+    catch_up(&k).await;
+    assert_eq!(body_refs(&retention, &store, &posts).await, [1, 1]);
+    // 今日の内容だけで容量を超えさせ、今日の保護を外す。外した後の投稿も、保護なしで取り込む。
+    let today = today();
+    retention
+        .set_topic_retention_limits(30, 10)
+        .await
+        .expect("a tiny capacity");
+    let big = "e".repeat(64);
+    retention
+        .claim_topic_retention_blob(TOPIC, today, &big)
+        .await
+        .expect("claim");
+    assert!(
+        retention
+            .put_remote_content("blob", &big, "blob", &[1; 100])
+            .await
+            .expect("put blob")
+    );
+    for _ in 0..4 {
+        retention
+            .reclaim_topic_retention_step(today - 29, 128)
+            .await
+            .expect("reclaim");
+    }
+    assert_eq!(body_refs(&retention, &store, &posts).await, [0, 0]);
+    // 外した後の投稿は、続きの位置(先の投稿の秒)より後ろの秒に置く(同じ秒で後に並ぶ投稿は判断 6 で受け入れた取りこぼし)。
+    let position = retention
+        .topic_retention_cursors(TOPIC, today)
+        .await
+        .expect("cursors")
+        .into_iter()
+        .filter(|cursor| cursor.index_prefix == "indexes/timeline/" && cursor.bucket == today)
+        .map(|cursor| cursor.created_at)
+        .max()
+        .expect("today's position");
+    while Utc::now().timestamp() <= position {
+        sleep(Duration::from_millis(50)).await;
+    }
+    posts.push(
+        a.create_post(TOPIC, "外した後の今日の投稿", None)
+            .await
+            .expect("post"),
+    );
+    catch_up(&k).await;
+    assert_eq!(body_refs(&retention, &store, &posts).await, [0, 0, 0]);
+    // 容量を上げると、今日を最初から読み直して、どの投稿の本文の blob にも保護参照を付ける。
+    k.set_topic_retention_limits(30, 1 << 40)
+        .await
+        .expect("raise capacity");
+    catch_up(&k).await;
+    assert_eq!(body_refs(&retention, &store, &posts).await, [1, 1, 1]);
+    k.shutdown().await;
+}
