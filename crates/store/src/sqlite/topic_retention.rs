@@ -304,23 +304,27 @@ impl TopicRetentionStore for SqliteStore {
     ) -> Result<()> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let row = sqlx::query(
-            "SELECT (SELECT MAX(bucket) FROM topic_retention_days WHERE topic_id = ?1) AS newest, \
+            "SELECT (SELECT MIN(bucket) FROM topic_retention_days WHERE topic_id = ?1) AS oldest, \
+             (SELECT MAX(bucket) FROM topic_retention_days WHERE topic_id = ?1) AS newest, \
              (SELECT released_through FROM topic_retention_limits WHERE id = 1) AS floor \
              FROM topic_retention WHERE topic_id = ?1",
         )
         .bind(topic_id)
         .fetch_optional(&mut *tx)
         .await?;
-        // 保持していない topic には作らない。既にある日と、容量で保護を外した日より前の日も作らない。
+        // 保持していない topic には作らない。容量で保護を外した日とそれより前の日も作らない。
         let Some(row) = row else { return Ok(()) };
-        let mut start = from_bucket;
-        for bucket in [row.get::<Option<i64>, _>("newest"), row.get("floor")]
-            .into_iter()
-            .flatten()
-        {
-            start = start.max(u64::try_from(bucket)? + 1);
-        }
-        for bucket in start..=to_bucket {
+        let bucket = |name| -> Result<Option<u64>> {
+            Ok(row
+                .get::<Option<i64>, _>(name)
+                .map(u64::try_from)
+                .transpose()?)
+        };
+        let start = bucket("floor")?.map_or(from_bucket, |floor| from_bucket.max(floor + 1));
+        // 日の行は古い側から消えるので、欠けは両端にだけある(期間を延ばしたときと保持し直したときの古い側と、新しい日)。
+        let oldest = bucket("oldest")?.unwrap_or(to_bucket + 1);
+        let newest = bucket("newest")?.unwrap_or(to_bucket);
+        for bucket in (start..oldest.min(to_bucket + 1)).chain(start.max(newest + 1)..=to_bucket) {
             sqlx::query(
                 "INSERT OR IGNORE INTO topic_retention_days (topic_id, bucket) VALUES (?1, ?2)",
             )

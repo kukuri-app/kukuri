@@ -85,7 +85,7 @@ CLI daemonは、指定した公開topicの内容を画面の列なしに取り�
 - Gossip Hint 必要有無: 保持するtopicのtopic hintを受ける（holder `retain:<topic>`のlease。ADR 0055 §1.1）。公開スレッドごとのhintは購読しない
 - Blob 必要有無: 投稿の本文・添付（画像・動画・poster。成人向けは表示設定に従う）、リンクプレビューとcustomリアクションの画像、
   LiveとDomeのmanifest、Domeの資材。大きなblobはprofileの`<DB名>.retention-staging`で受け取ってから、同じvolumeのcacheへ置く。
-  保持したrecordとblobには、取り込んだ日の保護参照を付け、cacheの容量（3 GiB）の計数と7日の回収の外に置く。期間を過ぎた日、
+  保持したrecordとblobには、内容の日（bucketの日）の保護参照を付け、cacheの容量（3 GiB）の計数と7日の回収の外に置く。期間を過ぎた日、
   容量を超えた分の古い日、保持をやめたtopicの日は保護参照を外し、通常のcacheへ戻す（ADR 0055）
 - SQLite projection 必要有無: 取り込んだ投稿・公開スレッドの行は既存のprojection
 - 必須 contract: CLIの`set_topic_retention`・`set_topic_retention_limits`・`get_topic_retention`（GUIには無いCLIだけのcommand）、

@@ -232,14 +232,18 @@ impl TopicRetentionStore for MemoryStore {
         if !retention.topics.contains_key(topic_id) {
             return Ok(());
         }
-        let newest = retention
+        // 日の行は古い側から消えるので、欠けは両端にだけある。
+        let buckets = retention
             .days
             .keys()
             .filter(|(topic, _)| topic == topic_id)
-            .map(|(_, bucket)| *bucket)
-            .max();
-        let start = newest.map_or(from_bucket, |newest| (newest + 1).max(from_bucket));
-        for bucket in start..=to_bucket {
+            .map(|(_, bucket)| *bucket);
+        let oldest = buckets.clone().min().unwrap_or(to_bucket + 1);
+        let newest = buckets.max().unwrap_or(to_bucket);
+        let missing = (from_bucket..oldest.min(to_bucket + 1))
+            .chain(from_bucket.max(newest + 1)..=to_bucket)
+            .collect::<Vec<_>>();
+        for bucket in missing {
             retention
                 .days
                 .entry((topic_id.to_string(), bucket))

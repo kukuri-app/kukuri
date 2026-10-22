@@ -337,7 +337,16 @@ async fn retained_topics_are_restored_at_start_and_private_names_are_rejected() 
         .await
         .expect("retain again");
     assert!(task_running().await);
+    // 停止すると、動いている取り込みの task も終わる。
     restarted.shutdown().await;
+    assert!(
+        restarted
+            .subscription_registry
+            .topic_retention_task
+            .lock()
+            .await
+            .is_none()
+    );
 }
 
 // 読み先の索引に載っているのに本体を読めない投稿は、取り直しの予定に入れて先へ進む(2026-10-22 ユーザー判断)。後ろの投稿の

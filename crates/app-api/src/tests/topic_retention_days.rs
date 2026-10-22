@@ -1,6 +1,7 @@
 //! #1909 AC-3: 前日より前の日は、保持の期間の内を新しい日から古い日へ 1 日ずつ最後まで読む。3 ページを超える日の取り込みを
-//! 1 回で止めて端末を作り直しても、続きの位置から再開して全件がそろう。期間の端と bucket の境界の投稿を取り違えない。
-//! 無関係な履歴・公開スレッド・topic を 10 倍にしても、1 回の読み取りの数と取り込みの件数は変わらない。
+//! 1 回で止めて端末を作り直しても、続きの位置から再開して全件がそろう。期間の端と bucket の境界の投稿を取り違えない。期間を
+//! 延ばすと、新しく期間に入った日も読む。無関係な履歴・公開スレッド・topic を 10 倍にしても、1 回の読み取りの数と取り込みの
+//! 件数は変わらない。
 
 use super::public_channels::device;
 use super::sync::{CountingDocsSync, put_post_at};
@@ -57,6 +58,31 @@ async fn retaining(store: Arc<MemoryStore>, peer: Arc<dyn DocsSync>) -> AppServi
     app
 }
 
+/// 保持する topic の `bucket` の日の、topic のタイムラインの索引を読み終えた最後の entry の時刻(秒)。
+async fn timeline_position(store: &MemoryStore, bucket: u64) -> Option<i64> {
+    store
+        .topic_retention_cursors(TOPIC, bucket)
+        .await
+        .expect("cursors")
+        .into_iter()
+        .find(|cursor| cursor.index_prefix == "indexes/timeline/" && cursor.bucket == bucket)
+        .map(|cursor| cursor.created_at)
+}
+
+/// 続きが無くなるまで進める。
+async fn catch_up(app: &AppService) {
+    let mut state = RetentionState::default();
+    let mut steps = 0;
+    while app
+        .step_topic_retention(TOPIC, &mut state)
+        .await
+        .expect("step")
+    {
+        steps += 1;
+        assert!(steps < 64, "retention catches up");
+    }
+}
+
 /// `posts` のうち、取り込んだ行がある数。
 async fn retained(store: &MemoryStore, posts: &[EnvelopeId]) -> usize {
     let mut count = 0;
@@ -81,7 +107,7 @@ async fn older_days_are_read_newest_first_and_resume_after_a_restart() {
     let today = today();
     // 期間 5 日の内で前日より前の日は、2・3・4 日前。2 日前に 3 ページ(1 回 32 件)を超える 100 件、期間の端の 4 日前に
     // その日の最初と最後の秒の投稿、期間の外の 5 日前に最後の秒の投稿を置く。
-    let (replica, start) = day(today - 2);
+    let (replica, newer_start) = day(today - 2);
     let mut newer = Vec::new();
     for index in 0..100 {
         let post = put_post_at(
@@ -89,7 +115,7 @@ async fn older_days_are_read_newest_first_and_resume_after_a_restart() {
             &replica,
             &keys,
             &topic,
-            start + index,
+            newer_start + index,
             &format!("新しい日 {index}"),
             None,
         )
@@ -124,33 +150,46 @@ async fn older_days_are_read_newest_first_and_resume_after_a_restart() {
         .await
         .expect("limits");
 
-    // 1 回で止める。新しい日の続きが残り、古い日はまだ読んでいない。
+    // 1 回(32 件)で止める。新しい日の続きが残り、古い日はまだ読んでいない。
     let k = retaining(store.clone(), Arc::new(a_docs.clone())).await;
     assert!(
         k.step_topic_retention(TOPIC, &mut RetentionState::default())
             .await
             .expect("first step")
     );
-    let first = retained(&store, &newer).await;
-    assert!((1..100).contains(&first), "{first}");
+    assert_eq!(retained(&store, &newer).await, 32);
+    assert_eq!(
+        timeline_position(&store, today - 2).await,
+        Some(newer_start + 31)
+    );
     assert_eq!(retained(&store, &edge).await, 0);
     k.shutdown().await;
 
-    // 同じ保存先で作り直した端末は、続きの位置から再開し、全件がそろう。期間の外の日は読まない。
+    // 同じ保存先で作り直した端末は、最初から読み直さずに続きの位置から再開し、全件がそろう。期間の外の日は読まない。
     let restarted = retaining(store.clone(), Arc::new(a_docs)).await;
-    let mut state = RetentionState::default();
-    let mut steps = 0;
-    while restarted
-        .step_topic_retention(TOPIC, &mut state)
-        .await
-        .expect("step")
-    {
-        steps += 1;
-        assert!(steps < 64, "retention catches up");
-    }
+    assert!(
+        restarted
+            .step_topic_retention(TOPIC, &mut RetentionState::default())
+            .await
+            .expect("first step after the restart")
+    );
+    assert_eq!(retained(&store, &newer).await, 64);
+    assert_eq!(
+        timeline_position(&store, today - 2).await,
+        Some(newer_start + 63)
+    );
+    catch_up(&restarted).await;
     assert_eq!(retained(&store, &newer).await, 100);
     assert_eq!(retained(&store, &edge).await, 2);
-    assert_eq!(retained(&store, &[outside]).await, 0);
+    assert_eq!(retained(&store, std::slice::from_ref(&outside)).await, 0);
+
+    // 期間を延ばすと、新しく期間に入った日も読む。
+    restarted
+        .set_topic_retention_limits(7, 1 << 30)
+        .await
+        .expect("a longer period");
+    catch_up(&restarted).await;
+    assert_eq!(retained(&store, &[outside]).await, 1);
     restarted.shutdown().await;
 }
 

@@ -344,6 +344,12 @@ async fn days_scenario(store: &dyn TopicRetentionStore) -> Vec<String> {
         .await
         .expect("retain again");
     observed.push(format!("retain again {:?}", read_days(store, 10, 14).await));
+    // 期間を延ばすと、既にある日より古い側の日も作り、新しい日から読む。
+    store
+        .open_topic_retention_days("topic-a", 7, 14)
+        .await
+        .expect("open a longer period");
+    observed.push(format!("longer {:?}", read_days(store, 7, 14).await));
     // 期間を過ぎた日は回収で消え、保護しない。
     store
         .reclaim_topic_retention_step(13, 128)
@@ -361,6 +367,16 @@ async fn days_scenario(store: &dyn TopicRetentionStore) -> Vec<String> {
     observed.push(format!(
         "released {:?}",
         protected_days(store, 12..=14).await
+    ));
+    // 保持し直すと、期間の内の日をまた読む。
+    store.retain_topic("topic-a", 3).await.expect("retain anew");
+    store
+        .open_topic_retention_days("topic-a", 13, 14)
+        .await
+        .expect("open after retaining anew");
+    observed.push(format!(
+        "retained anew {:?}",
+        read_days(store, 13, 14).await
     ));
     observed
 }
@@ -420,8 +436,10 @@ async fn topic_retention_days_match_between_backends() {
             "cursors after reading []".to_string(),
             "restart [14, 13]".to_string(),
             "retain again []".to_string(),
+            "longer [9, 8, 7]".to_string(),
             "expired [13, 14]".to_string(),
             "released []".to_string(),
+            "retained anew [14, 13]".to_string(),
         ]
     );
 }
