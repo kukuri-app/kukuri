@@ -285,6 +285,14 @@ pub struct SetTopicGossipEnabledRequest {
     pub enabled: bool,
 }
 
+/// 公開 topic の保持の設定と解除(#1909。CLI だけの command)。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetTopicRetentionRequest {
+    pub topic: String,
+    pub retained: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]

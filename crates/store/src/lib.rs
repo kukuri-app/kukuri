@@ -21,6 +21,7 @@ mod public_channels;
 mod row_mapping;
 #[cfg(not(target_family = "wasm"))]
 mod sqlite;
+mod topic_retention;
 mod traits;
 
 #[cfg(test)]
@@ -70,6 +71,7 @@ pub use sqlite::{
     PROTECTED_MIGRATION_KINDS, PROTECTED_MIGRATION_PAGE, ProtectedCandidate,
     ProtectedMigrationPage, ProtectedSource, SqliteStore, StoreStartupError,
 };
+pub use topic_retention::{TopicRetentionCursor, TopicRetentionRow, TopicRetentionStore};
 pub use traits::{
     BOOKMARKED_CUSTOM_REACTION_LIMIT, CONTENT_OBSERVATION_RETENTION_MS, ContentObservationStore,
     DirectMessageStore, LiveGameProjectionStore, MAX_CONTENT_OBSERVATIONS,

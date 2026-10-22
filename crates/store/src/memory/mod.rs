@@ -113,6 +113,15 @@ pub struct MemoryStore {
     link_preview_images: Arc<RwLock<HashMap<String, String>>>,
     /// 公開 channel の一覧の行（channel ID → 行。#1840）。
     public_channels: Arc<RwLock<HashMap<String, crate::PublicChannelRow>>>,
+    /// 保持する公開 topic（topic → 保持を始めた時刻）と、取り込みの続きの位置（#1909）。
+    topic_retention: Arc<RwLock<MemoryTopicRetention>>,
+}
+
+#[derive(Default)]
+struct MemoryTopicRetention {
+    topics: BTreeMap<String, i64>,
+    /// (topic, 索引, bucket) → (時刻, object id)。
+    cursors: BTreeMap<(String, String, u64), (i64, String)>,
 }
 
 impl MemoryStore {
@@ -157,6 +166,7 @@ mod private_channel_keys;
 mod projections;
 mod public_channels;
 mod social;
+mod topic_retention;
 mod withdrawals;
 
 #[async_trait]

@@ -6,6 +6,15 @@ use syn::{Token, parse::Parser, punctuated::Punctuated, visit::Visit};
 
 const TAURI_SOURCE: &str = include_str!("../../../apps/desktop/src-tauri/src/lib.rs");
 const MANIFEST: &str = include_str!("../command-parity.json");
+/// GUI の入口に対応しない CLI の command。daemon の制御と、CLI daemon だけの機能(#1909 の公開 topic の保持)。
+const CLI_ONLY: [&str; 6] = [
+    "client.status",
+    "events.watch",
+    "protocol.commands",
+    "protocol.schema",
+    "get_topic_retention",
+    "set_topic_retention",
+];
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -190,15 +199,7 @@ fn check_registry(entries: &[Entry], names: &BTreeSet<String>) -> Result<(), Str
     if mapped.len() != mapped_set.len() {
         return Err("CLI対応が重複".into());
     }
-    let control: BTreeSet<_> = [
-        "client.status",
-        "events.watch",
-        "protocol.commands",
-        "protocol.schema",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    let control: BTreeSet<_> = CLI_ONLY.into_iter().map(String::from).collect();
     let expected: BTreeSet<_> = mapped_set.union(&control).cloned().collect();
     if &expected != names {
         return Err(format!(
@@ -262,15 +263,7 @@ fn detects_missing_cli_command_and_invalid_exclusions() {
         .iter()
         .filter_map(|entry| entry.cli.clone())
         .collect();
-    names.extend(
-        [
-            "client.status",
-            "events.watch",
-            "protocol.commands",
-            "protocol.schema",
-        ]
-        .map(String::from),
-    );
+    names.extend(CLI_ONLY.map(String::from));
     check_registry(&entries, &names).expect("正しい対応表fixture");
     names.remove("create_post");
     assert!(check_registry(&entries, &names).is_err());

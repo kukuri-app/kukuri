@@ -54,6 +54,7 @@ mod public_blobs;
 pub(crate) mod public_channels;
 mod remote_cache;
 pub(crate) mod social;
+mod topic_retention;
 mod trust_observations;
 mod withdrawals;
 

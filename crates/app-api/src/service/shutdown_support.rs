@@ -7,6 +7,7 @@ impl AppService {
             self.services.content_closed.send_replace(true);
         }
         self.shutdown_direct_message_outbox_retry().await;
+        self.shutdown_topic_retention().await;
         self.shutdown_account_receive_offers().await;
         self.subscription_registry
             .missing_profiles
