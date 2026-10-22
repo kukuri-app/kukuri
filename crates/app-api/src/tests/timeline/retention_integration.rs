@@ -298,6 +298,45 @@ async fn held_instance(app: &AppService, replica: &ReplicaId, key: &str) -> Resu
         .map(|state| state.current_manifest.hash.as_str().to_string()))
 }
 
+/// 端末が Dome の Preset の record と、manifest と資材の blob を保持しているか。
+async fn dome_held(app: &AppService, topic: &TopicId, room: &str) -> Result<bool> {
+    let Some(metaverse) = app
+        .services
+        .projection_store
+        .get_game_room(topic.as_str(), room)
+        .await?
+        .and_then(|row| row.metaverse)
+    else {
+        return Ok(false);
+    };
+    let preset = &metaverse.preset_ref;
+    let mut held = !app
+        .services
+        .docs_sync
+        .query_local_source(
+            &kukuri_docs_sync::author_replica_id(preset.owner_pubkey.as_str()),
+            &kukuri_docs_sync::stable_key(
+                "metaverse/dome-presets",
+                &format!("{}/revisions/{:020}", preset.preset_id, preset.revision),
+            ),
+            None,
+            8,
+        )
+        .await?
+        .is_empty();
+    let hashes = std::iter::once(&preset.manifest_blob_hash)
+        .chain(metaverse.asset_refs.iter().map(|asset| &asset.blob_hash));
+    for hash in hashes {
+        held &= app
+            .services
+            .blob_service
+            .local_blob_status(&BlobHash::new(hash.clone()))
+            .await?
+            != BlobStatus::Missing;
+    }
+    Ok(held)
+}
+
 /// #1909 AC-2: 保持する K2 は、手元に保持した新しい版の Dome Instance を、古い版を持つ参加者 K1 から読んだ版で上書き
 /// しない。保持した Preset は手元から読むので、owner が止まっていても取り直しを待たない。K2 だけを知る B は新しい版を読む。
 #[tokio::test]
@@ -363,7 +402,7 @@ async fn a_retained_dome_is_not_rolled_back_by_a_participant_with_an_older_versi
     a.import_metaverse_room_asset(
         topic.as_str(),
         ImportMetaverseRoomAssetInput {
-            room_id: dome,
+            room_id: dome.clone(),
             kind: kukuri_core::MetaverseAssetKind::Vrm,
             mime_type: "model/vrm".into(),
             name: Some("avatar.vrm".into()),
@@ -392,14 +431,19 @@ async fn a_retained_dome_is_not_rolled_back_by_a_participant_with_an_older_versi
                 .collect::<Vec<_>>(),
         )
     };
+    // Instance を保持した後に Preset と資材を取るので、それらの保持まで待つ。
     let k2_held = eventually(|| async {
         Ok(
             held_instance(&k2.app, &replica, &key).await? == Some(v2.clone())
-                && counts().await? == [(0, 0)],
+                && counts().await? == [(0, 0)]
+                && dome_held(&k2.app, &topic, &dome).await?,
         )
     })
     .await?;
-    assert!(k2_held, "K2 holds the version 2 with no retries");
+    assert!(
+        k2_held,
+        "K2 holds the version 2, its Preset and assets with no retries"
+    );
 
     // A が止まり、K2 の topic の参加者に K1 が現れる。K2 の作り直しの後の最初の回(反映した版の記録が空)を回す。
     a.shutdown().await;
