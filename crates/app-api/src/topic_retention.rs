@@ -614,10 +614,12 @@ impl AppService {
         for bucket in days {
             let live = bucket >= previous;
             let replica = topic_bucket(topic, bucket)?;
-            // 容量を超えて保護を外した日は読まない。読む日は、置かれる record に保護参照を付ける登録をする。
+            // 読む日は、置かれる record に保護参照を付ける登録をする。容量を超えて保護を外した日は、今日と前日なら保護なしで
+            // 読み続け(内容は通常の cache に置く)、前日より前なら読まない(2026-10-22 ユーザー判断)。
             if !store
                 .protect_topic_retention_day(topic, bucket.index(), replica.as_str())
                 .await?
+                && !live
             {
                 continue;
             }

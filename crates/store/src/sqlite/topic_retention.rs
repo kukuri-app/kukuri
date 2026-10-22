@@ -45,6 +45,10 @@ impl TopicRetentionStore for SqliteStore {
         ] {
             sqlx::query(query).bind(topic_id).execute(&mut *tx).await?;
         }
+        // 空きができるので、容量で保護を外したほかの topic の日も、また読む。
+        sqlx::query("UPDATE topic_retention_limits SET released_through = NULL WHERE id = 1")
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -286,8 +290,10 @@ impl TopicRetentionStore for SqliteStore {
         retention_days: u32,
         capacity_bytes: u64,
     ) -> Result<()> {
+        // 容量で保護を外した日も、また読む(入りきらなければ、また古い日から外す)。
         sqlx::query(
-            "UPDATE topic_retention_limits SET retention_days = ?1, capacity_bytes = ?2 WHERE id = 1",
+            "UPDATE topic_retention_limits \
+             SET retention_days = ?1, capacity_bytes = ?2, released_through = NULL WHERE id = 1",
         )
         .bind(i64::from(retention_days))
         .bind(i64::try_from(capacity_bytes)?)

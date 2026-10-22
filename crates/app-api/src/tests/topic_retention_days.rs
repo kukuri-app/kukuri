@@ -263,3 +263,87 @@ async fn unrelated_history_threads_and_topics_do_not_change_the_reads_of_a_step(
     assert_eq!(base.3, 3, "the step retains the topic's posts");
     assert_eq!(first_step(10).await, base);
 }
+
+/// #1909 AC-3(2026-10-22 ユーザー判断): 今日の内容だけで容量を超えて今日の保護を外しても、今日の投稿は取り込み続ける
+/// (保護なしで、通常の cache に置く)。
+#[tokio::test]
+async fn today_is_still_read_after_its_protection_is_released_for_capacity() {
+    let a_docs = MemoryDocsSync::with_docs_author("01".repeat(32));
+    let a = device(
+        "a",
+        &FakeNetwork::default(),
+        a_docs.clone(),
+        MemoryDocsSync::default(),
+        Arc::new(MemoryBlobService::default()),
+    );
+    let retention = SqliteStore::connect_memory().await.expect("sqlite store");
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(FakeTransport::new("k", FakeNetwork::default()));
+    let k = AppService::from_handles(
+        ServiceHandles::new(
+            store.clone(),
+            store.clone(),
+            transport.clone(),
+            transport,
+            Arc::new(CountingDocsSync::reading_with(
+                MemoryDocsSync::default(),
+                Arc::new(a_docs),
+            )),
+            Arc::new(MemoryBlobService::default()),
+            generate_keys(),
+        )
+        .with_topic_retention(Arc::new(retention.clone()), std::env::temp_dir()),
+    );
+    k.switch_writer(1);
+    k.set_topic_retention(TOPIC, true)
+        .await
+        .expect("retain the topic");
+    k.shutdown_topic_retention().await;
+    // 期間 1 日(今日だけ)で、今日の blob だけで容量を超え、今日の保護を外す。
+    let today = today();
+    retention
+        .set_topic_retention_limits(1, 10)
+        .await
+        .expect("a tiny capacity");
+    retention
+        .open_topic_retention_days(TOPIC, today, today)
+        .await
+        .expect("open today");
+    let hash = "c".repeat(64);
+    retention
+        .claim_topic_retention_blob(TOPIC, today, &hash)
+        .await
+        .expect("claim");
+    assert!(
+        retention
+            .put_remote_content("blob", &hash, "blob", &[1; 100])
+            .await
+            .expect("put blob")
+    );
+    for _ in 0..4 {
+        retention
+            .reclaim_topic_retention_step(today, 128)
+            .await
+            .expect("reclaim");
+    }
+    assert!(
+        !retention
+            .protect_topic_retention_day(TOPIC, today, "scope-today")
+            .await
+            .expect("protect"),
+        "today is released for capacity"
+    );
+    // A が今日投稿すると、K は今日を読み続けて取り込む。
+    let post = a
+        .create_post(TOPIC, "容量を超えた日の投稿", None)
+        .await
+        .expect("post");
+    k.step_topic_retention(TOPIC, &mut RetentionState::default())
+        .await
+        .expect("step");
+    assert_eq!(
+        retained(&store, &[EnvelopeId::from(post.as_str())]).await,
+        1
+    );
+    k.shutdown().await;
+}

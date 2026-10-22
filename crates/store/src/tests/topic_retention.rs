@@ -634,3 +634,70 @@ async fn used(store: &SqliteStore) -> u64 {
         .expect("limits")
         .used_bytes
 }
+
+/// #1909 AC-3(2026-10-22 ユーザー判断): 容量を超えて外した日は、前日より前の日としては作り直さず読まない。容量の設定を
+/// 変えたときと、topic の保持をやめたときは、その日もまた読む日に戻す。
+#[tokio::test]
+async fn capacity_released_days_are_read_again_once_space_is_freed() {
+    let store = SqliteStore::connect_memory().await.expect("sqlite store");
+    let hash = "d".repeat(64);
+    store.retain_topic("topic-a", 1).await.expect("retain");
+    // 10 日目の blob で容量を超え、10 日目を外す。
+    let release_day_10 = || async {
+        store
+            .open_topic_retention_days("topic-a", 10, 12)
+            .await
+            .expect("open");
+        store
+            .claim_topic_retention_blob("topic-a", 10, &hash)
+            .await
+            .expect("claim");
+        assert!(
+            store
+                .put_remote_content("blob", &hash, "blob", &[1; 100])
+                .await
+                .expect("put blob")
+        );
+        store
+            .set_topic_retention_limits(30, used(&store).await - 1)
+            .await
+            .expect("shrink capacity");
+        for _ in 0..8 {
+            store
+                .reclaim_topic_retention_step(10, 128)
+                .await
+                .expect("reclaim");
+        }
+        assert_eq!(used(&store).await, 0);
+    };
+    let day_10_read = || async {
+        store
+            .open_topic_retention_days("topic-a", 10, 12)
+            .await
+            .expect("reopen");
+        store
+            .protect_topic_retention_day("topic-a", 10, "scope-a-10")
+            .await
+            .expect("protect")
+    };
+    release_day_10().await;
+    assert!(
+        !day_10_read().await,
+        "a day released for capacity is not read"
+    );
+    // 容量の設定を変えると、また読む。
+    store
+        .set_topic_retention_limits(30, 1 << 30)
+        .await
+        .expect("raise capacity");
+    assert!(
+        day_10_read().await,
+        "the day is read again after the change"
+    );
+    // ほかの topic の保持をやめても、また読む。
+    release_day_10().await;
+    assert!(!day_10_read().await);
+    store.retain_topic("topic-b", 1).await.expect("retain b");
+    store.release_topic("topic-b").await.expect("release b");
+    assert!(day_10_read().await, "the day is read again after a release");
+}

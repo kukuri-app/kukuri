@@ -71,7 +71,7 @@ pub struct TopicRetentionCursor {
 pub trait TopicRetentionStore: Send + Sync {
     /// 保持する topic を足す。既にあれば何もしない。
     async fn retain_topic(&self, topic_id: &str, retained_at: i64) -> Result<()>;
-    /// 保持をやめ、その topic の続きの位置と取り直しの予定も消す。
+    /// 保持をやめ、その topic の続きの位置と取り直しの予定も消す。容量で保護を外した日も、また読む日にする。
     async fn release_topic(&self, topic_id: &str) -> Result<()>;
     /// 保持する topic を topic の順に `limit` 件まで返す。
     async fn retained_topics(&self, limit: usize) -> Result<Vec<TopicRetentionRow>>;
@@ -119,7 +119,7 @@ pub trait TopicRetentionStore: Send + Sync {
     async fn topic_retention_retry_counts(&self, topic_id: &str) -> Result<(u64, u64)>;
     /// 保持の期間と容量と、保護の合計。
     async fn topic_retention_limits(&self) -> Result<TopicRetentionLimits>;
-    /// 保持の期間と容量を変える。
+    /// 保持の期間と容量を変える。容量で保護を外した日も、また読む日にする。
     async fn set_topic_retention_limits(
         &self,
         retention_days: u32,
