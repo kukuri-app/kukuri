@@ -297,8 +297,9 @@ jobs:
     # 増やさない（4 CPU に 4 worker を載せると metaverse の 3D test が timeout で落ちた）。
     # baseline を作る kukuri-visual-baseline.yml も同じ runner image で動かす。
     # 395 test（合計 1747 秒）を 2 worker で流すと 15 分かかるので、test を 2 つの job に分ける。--shard は
-    # 件数で分けるため、3D の metaverse の spec（26 test で 822 秒）が片側に寄る。file で分ける（grep は file path も
-    # 対象に含む）。
+    # 件数で分けるため、3D の metaverse の spec（26 test で 822 秒）が片側に寄る。file で分ける（grep は testDir からの
+    # file 名も対象に含む）。
+    name: linux-desktop-browser (${{ matrix.shard }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -306,9 +307,9 @@ jobs:
       matrix:
         include:
           - shard: 1
-            tests: --grep playwright/metaverse-
+            tests: --grep 'metaverse-[a-z-]*\.spec\.ts'
           - shard: 2
-            tests: --grep-invert playwright/metaverse-
+            tests: --grep-invert 'metaverse-[a-z-]*\.spec\.ts'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
