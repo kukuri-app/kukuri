@@ -1,5 +1,6 @@
 //! #1910 AC-1: 公開の record・page が手元と最初の読み先に無いとき、直接の近隣が非保持者でも、近隣に紹介して
 //! もらった非近隣の通常 peer（保持者）から既存の docs の読取りで取得する。
+#[cfg(feature = "iroh-integration-tests")]
 use super::*;
 #[cfg(feature = "iroh-integration-tests")]
 use iroh::EndpointAddr;
