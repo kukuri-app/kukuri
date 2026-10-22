@@ -146,8 +146,9 @@ author bucketとprivate bucketは、従来どおりローカルkey索引だけ�
   - #1910（2026-10-23）: 直接のneighborが対象を持たなくても取得を打ち切らないため、候補はneighborと、neighborに紹介して
     もらったその topic の peer（近隣の近隣。transportの`/kukuri/topic-peers/1`で、要求元を除く最大4件のendpoint IDと到達情報を
     受け取る）を1つの集合として既存のcursorで回す（1窓は最大4、1要求の予算は変えない）。紹介で得た候補はtopicごとに8件・
-    10分で失効し、neighborになれば外す。紹介を求めるのはneighborが成立したとき（公開topicと公開スレッドのhint topicだけ。
-    private channel・DM・account同期では求めず、答えない）。紹介は保持の証明ではなく、読んだrecordは既存の検証を通す。
+    10分で失効し、neighborになれば外す。紹介を求めるのはneighborが成立したときと、以後60秒ごとにneighbor∪台帳からID順の次の
+    1相手（紹介で得たpeerにも順に求めるので、neighborの近隣より先へも届く。AC-2）。公開topicと公開スレッドのhint topicだけで、
+    private channel・DM・account同期では求めず、答えない。紹介は保持の証明ではなく、読んだrecordは既存の検証を通す。
     保持する端末を稼働時間・運営者・CLI/GUI・CN所属で優遇しない。
   - sessionのhintで読めなかったsession（候補の近隣にまだ持つ端末が無かった）は、leaseのtaskが前の読みから2・4・8秒後に読み直す（#1813）。
     読み直しは1件につき3回まで、待たせるのはtaskごとに16件までで、読めたら止める。

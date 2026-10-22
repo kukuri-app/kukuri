@@ -116,13 +116,38 @@ impl IntroducedPeers {
     }
 }
 
-#[derive(Default)]
 struct IntroductionRun {
     last_at: Option<Instant>,
+    /// 紹介の要求の間隔(既定は [`INTRODUCTION_INTERVAL`]。試験では縮める)。
+    interval: Duration,
+    /// 最後に求めた相手。次は近隣∪台帳の ID 順でその次の相手に求める(AC-2)。
+    last_asked: Option<String>,
     /// 求めた回数(試験の観測用)。
     requests: u64,
+    /// 定期の tick の回数(試験の観測用。相手がいない tick も数える)。
+    #[cfg(any(test, feature = "test-support"))]
+    ticks: u64,
+    /// 求めた相手の順(試験の観測用)。
+    #[cfg(any(test, feature = "test-support"))]
+    asked: Vec<String>,
     /// 進行中の要求。topic の購読の解除で落ちる。
     _in_flight: Option<AbortOnDropHandle<()>>,
+}
+
+impl Default for IntroductionRun {
+    fn default() -> Self {
+        Self {
+            last_at: None,
+            interval: INTRODUCTION_INTERVAL,
+            last_asked: None,
+            requests: 0,
+            #[cfg(any(test, feature = "test-support"))]
+            ticks: 0,
+            #[cfg(any(test, feature = "test-support"))]
+            asked: Vec::new(),
+            _in_flight: None,
+        }
+    }
 }
 
 /// 1 回の紹介の要求が使う部品（要求の task へ渡す）。
@@ -173,6 +198,8 @@ impl IntroductionParts {
 pub(super) struct TopicIntroductions {
     parts: IntroductionParts,
     run: Arc<Mutex<IntroductionRun>>,
+    /// 次の定期の紹介の時刻を計り直す知らせ(試験で間隔を変えたとき)。
+    wake: Arc<Notify>,
 }
 
 impl TopicIntroductions {
@@ -191,11 +218,63 @@ impl TopicIntroductions {
                 introduced: Arc::default(),
             },
             run: Arc::default(),
+            wake: Arc::default(),
         }
     }
 
     pub(super) fn introduced(&self) -> Arc<Mutex<IntroducedPeers>> {
         Arc::clone(&self.parts.introduced)
+    }
+
+    pub(super) fn wake(&self) -> &Notify {
+        &self.wake
+    }
+
+    pub(super) async fn interval(&self) -> Duration {
+        self.run.lock().await.interval
+    }
+
+    /// 定期の紹介(AC-2): 近隣∪台帳(失効前)から、最後に求めた相手の次の 1 相手に求める(ID 順で回る。紹介で得た
+    /// peer にも順に求めるので、近隣の近隣より先へも届く)。戻り値は次の定期の時刻。
+    pub(super) async fn ask_next(&self) -> Instant {
+        let now = Instant::now();
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.run.lock().await.ticks += 1;
+        }
+        if !introduces_topic_peers(&self.parts.topic) {
+            return now + self.run.lock().await.interval;
+        }
+        let neighbors = self.parts.neighbors.read().await.clone();
+        let mut pool = neighbors.clone();
+        pool.extend(
+            self.parts
+                .introduced
+                .lock()
+                .await
+                .live(&neighbors, now)
+                .into_iter()
+                .map(|peer| peer.endpoint_id),
+        );
+        let last_asked = self.run.lock().await.last_asked.clone();
+        let next = match last_asked.as_deref() {
+            Some(last) => pool
+                .range::<str, _>((Excluded(last), Unbounded))
+                .next()
+                .or_else(|| pool.iter().next()),
+            None => pool.iter().next(),
+        }
+        .and_then(|id| id.parse::<EndpointId>().ok());
+        if let Some(peer) = next {
+            self.ask(peer).await;
+        }
+        // 求めた(または間隔で間引いた)なら最後に求めた時刻から間隔ぶん後、相手がいなくて求めなかったなら今から
+        // 間隔ぶん後。過ぎた時刻を返すと、相手がいない間 task が待たずに回り続ける。
+        let run = self.run.lock().await;
+        run.last_at
+            .map(|at| at + run.interval)
+            .filter(|at| *at > now)
+            .unwrap_or(now + run.interval)
     }
 
     /// `peer`（この topic の近隣）に紹介を求める。topic ごとに同時 1 件で、間隔は [`INTRODUCTION_INTERVAL`]。
@@ -207,12 +286,15 @@ impl TopicIntroductions {
         let now = Instant::now();
         if run
             .last_at
-            .is_some_and(|at| now.saturating_duration_since(at) < INTRODUCTION_INTERVAL)
+            .is_some_and(|at| now.saturating_duration_since(at) < run.interval)
         {
             return;
         }
         run.last_at = Some(now);
+        run.last_asked = Some(peer.to_string());
         run.requests += 1;
+        #[cfg(any(test, feature = "test-support"))]
+        run.asked.push(peer.to_string());
         let parts = self.parts.clone();
         run._in_flight = Some(AbortOnDropHandle::new(n0_future::task::spawn(async move {
             parts.request_from(peer).await
@@ -286,6 +368,8 @@ struct Installed {
 pub struct TopicPeerIntroductions {
     installed: Arc<StdRwLock<Option<Installed>>>,
     permits: Arc<Semaphore>,
+    /// 答えた回数(試験の観測用)。
+    served: Arc<AtomicU64>,
 }
 
 impl Default for TopicPeerIntroductions {
@@ -293,6 +377,7 @@ impl Default for TopicPeerIntroductions {
         Self {
             installed: Arc::default(),
             permits: Arc::new(Semaphore::new(INTRODUCTION_CONCURRENT_REQUESTS)),
+            served: Arc::default(),
         }
     }
 }
@@ -319,6 +404,12 @@ impl TopicPeerIntroductions {
         });
     }
 
+    /// 試験用: 答えた回数。
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn served_count_for_tests(&self) -> u64 {
+        self.served.load(Ordering::Relaxed)
+    }
+
     /// node の停止で外す。以後の要求には答えない。
     pub fn clear(&self) {
         *self
@@ -337,6 +428,7 @@ impl TopicPeerIntroductions {
             return Ok(());
         };
         let requester = connection.remote_id().to_string();
+        self.served.fetch_add(1, Ordering::Relaxed);
         let (mut send, mut recv) = connection.accept_bi().await?;
         let request: IntroductionRequest =
             serde_json::from_slice(&recv.read_to_end(MAX_REQUEST_BYTES).await?)?;
@@ -412,9 +504,67 @@ impl ProtocolHandler for TopicPeerIntroductions {
 
 impl IrohGossipTransport {
     /// 紹介に答える handler（iroh-node の Router に登録済み）へ、この transport の購読の状態を入れる。
-    pub fn with_topic_peer_introductions(self, introductions: TopicPeerIntroductions) -> Self {
+    pub fn with_topic_peer_introductions(mut self, introductions: TopicPeerIntroductions) -> Self {
         introductions.install(self.endpoint.clone(), Arc::clone(&self.topic_states));
+        self.topic_peer_introductions = introductions;
         self
+    }
+
+    /// 紹介に答える handler(この transport の購読の状態を入れたもの)。
+    pub fn topic_peer_introductions(&self) -> &TopicPeerIntroductions {
+        &self.topic_peer_introductions
+    }
+
+    /// 試験用: この topic の定期の紹介の間隔を変え、次の時刻を計り直させる。
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn set_introduction_interval_for_tests(
+        &self,
+        topic: &TopicId,
+        interval: Duration,
+    ) -> Result<()> {
+        let hint_topic = kukuri_core::wire::hint_topic_id(topic);
+        let introductions = self
+            .topic_states
+            .lock()
+            .await
+            .get(hint_topic.as_str())
+            .map(|state| state.introductions.clone())
+            .context("the topic is not subscribed")?;
+        introductions.run.lock().await.interval = interval;
+        introductions.wake.notify_one();
+        Ok(())
+    }
+
+    /// 試験用: この topic の定期の tick の回数(相手がいない tick も数える)。
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn introduction_tick_count_for_tests(&self, topic: &TopicId) -> u64 {
+        let hint_topic = kukuri_core::wire::hint_topic_id(topic);
+        let Some(introductions) = self
+            .topic_states
+            .lock()
+            .await
+            .get(hint_topic.as_str())
+            .map(|state| state.introductions.clone())
+        else {
+            return 0;
+        };
+        introductions.run.lock().await.ticks
+    }
+
+    /// 試験用: この topic で紹介を求めた相手の順。
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn asked_peers_for_tests(&self, topic: &TopicId) -> Vec<String> {
+        let hint_topic = kukuri_core::wire::hint_topic_id(topic);
+        let Some(introductions) = self
+            .topic_states
+            .lock()
+            .await
+            .get(hint_topic.as_str())
+            .map(|state| state.introductions.clone())
+        else {
+            return Vec::new();
+        };
+        introductions.run.lock().await.asked.clone()
     }
 
     /// 試験用: gossip で合流せずに `peer` をこの topic の近隣に置き、近隣の成立と同じく紹介を求める。

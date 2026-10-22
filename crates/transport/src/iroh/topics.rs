@@ -659,6 +659,9 @@ impl IrohGossipTransport {
             // seed の適用の成功や別の protocol の成功では判定しない(ADR 0055 §3、#1221 R2-B)。
             let mut rejoin_step = 0u32;
             let mut rejoin_at = n0_future::time::Instant::now() + topic_rejoin_delay(0);
+            // 定期の紹介(#1910 AC-2): 間隔ごとに近隣∪台帳の次の 1 相手へ求める。
+            let mut introduce_at =
+                n0_future::time::Instant::now() + introductions_task.interval().await;
             let mut _rejoin_warmup: Option<AbortWarmupOnDrop> = None;
             // gossip の actor からの手渡し(容量 256)が溢れて落ちた回数。次の hint に畳んで渡す(#1567 AC-1)。
             let mut gossip_lagged = 0u64;
@@ -698,6 +701,14 @@ impl IrohGossipTransport {
                             break;
                         }
                         rejoin_at = n0_future::time::Instant::now();
+                        continue;
+                    }
+                    () = introductions_task.wake().notified() => {
+                        introduce_at = n0_future::time::Instant::now();
+                        continue;
+                    }
+                    () = n0_future::time::sleep_until(introduce_at) => {
+                        introduce_at = introductions_task.ask_next().await;
                         continue;
                     }
                     () = n0_future::time::sleep_until(rejoin_at), if idle => {
