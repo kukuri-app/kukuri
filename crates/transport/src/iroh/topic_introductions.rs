@@ -124,6 +124,9 @@ struct IntroductionRun {
     last_asked: Option<String>,
     /// 求めた回数(試験の観測用)。
     requests: u64,
+    /// 定期の tick の回数(試験の観測用。相手がいない tick も数える)。
+    #[cfg(any(test, feature = "test-support"))]
+    ticks: u64,
     /// 求めた相手の順(試験の観測用)。
     #[cfg(any(test, feature = "test-support"))]
     asked: Vec<String>,
@@ -138,6 +141,8 @@ impl Default for IntroductionRun {
             interval: INTRODUCTION_INTERVAL,
             last_asked: None,
             requests: 0,
+            #[cfg(any(test, feature = "test-support"))]
+            ticks: 0,
             #[cfg(any(test, feature = "test-support"))]
             asked: Vec::new(),
             _in_flight: None,
@@ -233,6 +238,10 @@ impl TopicIntroductions {
     /// peer にも順に求めるので、近隣の近隣より先へも届く)。戻り値は次の定期の時刻。
     pub(super) async fn ask_next(&self) -> Instant {
         let now = Instant::now();
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.run.lock().await.ticks += 1;
+        }
         if !introduces_topic_peers(&self.parts.topic) {
             return now + self.run.lock().await.interval;
         }
@@ -259,8 +268,13 @@ impl TopicIntroductions {
         if let Some(peer) = next {
             self.ask(peer).await;
         }
+        // 求めた(または間隔で間引いた)なら最後に求めた時刻から間隔ぶん後、相手がいなくて求めなかったなら今から
+        // 間隔ぶん後。過ぎた時刻を返すと、相手がいない間 task が待たずに回り続ける。
         let run = self.run.lock().await;
-        run.last_at.map_or(now, |at| at + run.interval).max(now)
+        run.last_at
+            .map(|at| at + run.interval)
+            .filter(|at| *at > now)
+            .unwrap_or(now + run.interval)
     }
 
     /// `peer`（この topic の近隣）に紹介を求める。topic ごとに同時 1 件で、間隔は [`INTRODUCTION_INTERVAL`]。
@@ -519,6 +533,22 @@ impl IrohGossipTransport {
         introductions.run.lock().await.interval = interval;
         introductions.wake.notify_one();
         Ok(())
+    }
+
+    /// 試験用: この topic の定期の tick の回数(相手がいない tick も数える)。
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn introduction_tick_count_for_tests(&self, topic: &TopicId) -> u64 {
+        let hint_topic = kukuri_core::wire::hint_topic_id(topic);
+        let Some(introductions) = self
+            .topic_states
+            .lock()
+            .await
+            .get(hint_topic.as_str())
+            .map(|state| state.introductions.clone())
+        else {
+            return 0;
+        };
+        introductions.run.lock().await.ticks
     }
 
     /// 試験用: この topic で紹介を求めた相手の順。

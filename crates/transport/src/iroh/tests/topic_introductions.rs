@@ -306,3 +306,28 @@ async fn a_released_topic_stops_asking_for_introductions() {
     bridge.shutdown().await;
     reader.shutdown().await;
 }
+
+/// AC-2: 近隣も台帳も無い間の定期の tick は、間隔ごとに 1 回だけ回る(待たずに回り続けない)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_empty_topic_ticks_once_per_interval() {
+    let reader = IrohGossipTransport::bind_local().await.expect("reader");
+    let topic = TopicId::new("kukuri:topic:introductions-empty");
+    let _reader_hints = reader.subscribe_hints(&topic).await.expect("reader");
+    let interval = Duration::from_millis(100);
+    let started = n0_future::time::Instant::now();
+    reader
+        .set_introduction_interval_for_tests(&topic, interval)
+        .await
+        .expect("interval");
+    sleep(Duration::from_secs(1)).await;
+    let ticks = reader.introduction_tick_count_for_tests(&topic).await;
+    let elapsed = started.elapsed();
+    let bound = elapsed.as_millis() / interval.as_millis() + 2;
+    assert!(ticks >= 1, "the periodic tick runs");
+    assert!(
+        (ticks as u128) <= bound,
+        "{ticks} ticks in {elapsed:?} (bound {bound})"
+    );
+    assert_eq!(reader.introduction_request_count_for_tests(&topic).await, 0);
+    reader.shutdown().await;
+}
