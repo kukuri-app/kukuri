@@ -395,3 +395,65 @@ async fn media_round_trip_uses_explicit_files_without_base64_json_or_overwrite()
     dispatcher.finish_operations().await;
     host.shutdown().await;
 }
+
+#[tokio::test]
+async fn public_channel_outputs_match_their_registered_schema() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = Arc::new(
+        DesktopRuntime::new(root.path().join("kukuri.db"))
+            .await
+            .unwrap(),
+    );
+    // 公開スレッドは新形式の writer への切替の後に作れる。起動の背景で進む移行を終端まで進めて切り替える。
+    runtime.finish_protected_migration().await.unwrap();
+    let host = ClientHost::from_runtime(root.path().to_path_buf(), runtime)
+        .await
+        .unwrap();
+    let dispatcher = Dispatcher::builtin();
+    let topic = "kukuri:topic:cli-public-channel-contract";
+    // 作成者の名前の欄も出力に入るように、先に profile を置く。
+    let profile = call(
+        &dispatcher,
+        &host,
+        "set_my_profile",
+        json!({"name": "creator", "display_name": "作成者"}),
+    )
+    .await;
+    assert!(profile.ok, "{:?}", profile.error);
+    let created = call(
+        &dispatcher,
+        &host,
+        "create_public_channel",
+        json!({"topic": topic, "title": "スレッド", "first_post": "最初の投稿"}),
+    )
+    .await;
+    assert!(created.ok, "{:?}", created.error);
+    let created = created.data.unwrap();
+    assert_eq!(created["first_post"]["object_id"], created["first_post_id"]);
+    assert_eq!(created["creator_display_name"], "作成者");
+    assert_eq!(created["live_now"], false);
+    let id = created["channel_id"].clone();
+    let channel = json!({"topic": topic, "channel_id": id});
+    for (command, payload, pointer, expected) in [
+        ("get_public_channel", channel.clone(), "/channel_id", &id),
+        (
+            "list_public_channels",
+            json!({"topic": topic}),
+            "/items/0/channel_id",
+            &id,
+        ),
+        (
+            "update_public_channel_title",
+            json!({"topic": topic, "channel_id": id, "title": "新しいタイトル"}),
+            "/title",
+            &json!("新しいタイトル"),
+        ),
+        ("delete_public_channel", channel, "/deleted", &json!(true)),
+    ] {
+        let response = call(&dispatcher, &host, command, payload).await;
+        assert!(response.ok, "{command}: {:?}", response.error);
+        assert_eq!(response.data.unwrap().pointer(pointer), Some(expected));
+    }
+    dispatcher.finish_operations().await;
+    host.shutdown().await;
+}

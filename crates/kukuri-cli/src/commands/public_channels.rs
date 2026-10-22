@@ -7,7 +7,9 @@ use kukuri_desktop_runtime::{
 };
 use serde_json::{Value, json};
 
-use super::{command, command_error, decode, encode, host_guards, media, runtime, schema};
+use super::{
+    command, command_error, content_views, decode, encode, host_guards, media, runtime, schema,
+};
 use crate::{
     protocol::{CommandEffect, ProtocolError, SecretInput},
     registry::{CommandHandler, CommandOutput, CommandRegistration, HandlerContext},
@@ -157,12 +159,15 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
     .collect()
 }
 
+/// 共有 DTO の `PublicChannelView`。値の無い `Option` の欄と false の `deleted` は出力に入らない。
 fn public_channel_schema() -> Value {
     schema::object(
         json!({"channel_id": {"type": "string"}, "topic_id": {"type": "string"},
         "title": {"type": "string"}, "creator_pubkey": {"type": "string"},
         "created_at": {"type": "integer"}, "first_post_id": {"type": "string"},
-        "last_post_at": {"type": "integer"}, "deleted": {"type": "boolean"}}),
+        "first_post": content_views::post(), "last_post_at": {"type": "integer"},
+        "creator_name": {"type": "string"}, "creator_display_name": {"type": "string"},
+        "live_now": {"type": "boolean"}, "deleted": {"type": "boolean"}}),
         &[
             "channel_id",
             "topic_id",
@@ -170,6 +175,7 @@ fn public_channel_schema() -> Value {
             "creator_pubkey",
             "created_at",
             "last_post_at",
+            "live_now",
         ],
     )
 }
