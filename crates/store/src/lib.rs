@@ -72,8 +72,10 @@ pub use sqlite::{
     ProtectedMigrationPage, ProtectedSource, SqliteStore, StoreStartupError,
 };
 pub use topic_retention::{
-    RETENTION_RETRY_DELAYS_MS, RETENTION_RETRY_LIMIT, TopicRetentionCursor, TopicRetentionRetry,
-    TopicRetentionRow, TopicRetentionStore,
+    DEFAULT_RETENTION_CAPACITY_BYTES, DEFAULT_RETENTION_DAYS, MAX_RETENTION_DAYS,
+    MIN_RETENTION_CAPACITY_BYTES, RETENTION_RETRY_DELAYS_MS, RETENTION_RETRY_LIMIT,
+    TopicRetentionCursor, TopicRetentionLimits, TopicRetentionRetry, TopicRetentionRow,
+    TopicRetentionStore, retain_reference,
 };
 pub use traits::{
     BOOKMARKED_CUSTOM_REACTION_LIMIT, CONTENT_OBSERVATION_RETENTION_MS, ContentObservationStore,

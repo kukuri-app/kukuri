@@ -282,3 +282,337 @@ async fn topic_retention_retries_match_between_backends() {
         ]
     );
 }
+
+/// #1909 AC-3: 日の行は新しい日から古い日へ 1 回ずつ読み、期間を過ぎた日と保持をやめた topic の日は回収で消える。
+async fn days_scenario(store: &dyn TopicRetentionStore) -> Vec<String> {
+    let mut observed = Vec::new();
+    observed.push(format!(
+        "default {:?}",
+        store.topic_retention_limits().await.expect("limits")
+    ));
+    store
+        .set_topic_retention_limits(3, 1 << 30)
+        .await
+        .expect("set limits");
+    observed.push(format!(
+        "set {:?}",
+        store.topic_retention_limits().await.expect("limits")
+    ));
+    // 保持していない topic には日の行を作らない。
+    store
+        .open_topic_retention_days("topic-x", 10, 12)
+        .await
+        .expect("open not retained");
+    observed.push(format!(
+        "not retained {:?} {}",
+        store
+            .next_topic_retention_backfill("topic-x", 10, 12)
+            .await
+            .expect("backfill"),
+        store
+            .protect_topic_retention_day("topic-x", 12, "scope-x-12")
+            .await
+            .expect("protect")
+    ));
+    store.retain_topic("topic-a", 1).await.expect("retain");
+    store
+        .open_topic_retention_days("topic-a", 10, 12)
+        .await
+        .expect("open");
+    store
+        .put_topic_retention_cursor("topic-a", &cursor("indexes/timeline/", 11, 5, "a5"))
+        .await
+        .expect("cursor of a day");
+    observed.push(format!("first {:?}", read_days(store, 10, 12).await));
+    // 読み終えた日の続きの位置は消える。
+    observed.push(format!(
+        "cursors after reading {:?}",
+        store
+            .topic_retention_cursors("topic-a", 0)
+            .await
+            .expect("cursors")
+    ));
+    // 次に起動したとき、停止していた間の日を足す。読み終えた日は読み直さない。
+    store
+        .open_topic_retention_days("topic-a", 11, 14)
+        .await
+        .expect("open after restart");
+    observed.push(format!("restart {:?}", read_days(store, 11, 14).await));
+    // 保持している topic を設定し直しても、読み終えた日は読み直さない。
+    store
+        .retain_topic("topic-a", 2)
+        .await
+        .expect("retain again");
+    observed.push(format!("retain again {:?}", read_days(store, 10, 14).await));
+    // 期間を過ぎた日は回収で消え、保護しない。
+    store
+        .reclaim_topic_retention_step(13, 128)
+        .await
+        .expect("reclaim expired");
+    observed.push(format!(
+        "expired {:?}",
+        protected_days(store, 12..=14).await
+    ));
+    store.release_topic("topic-a").await.expect("release");
+    store
+        .reclaim_topic_retention_step(13, 128)
+        .await
+        .expect("reclaim released");
+    observed.push(format!(
+        "released {:?}",
+        protected_days(store, 12..=14).await
+    ));
+    observed
+}
+
+/// まだ読んでいない日を、読む順に最後まで読んだことにする。
+async fn read_days(store: &dyn TopicRetentionStore, from: u64, to: u64) -> Vec<u64> {
+    let mut order = Vec::new();
+    while let Some(bucket) = store
+        .next_topic_retention_backfill("topic-a", from, to)
+        .await
+        .expect("backfill")
+    {
+        order.push(bucket);
+        store
+            .finish_topic_retention_day("topic-a", bucket)
+            .await
+            .expect("finish");
+    }
+    order
+}
+
+async fn protected_days(
+    store: &dyn TopicRetentionStore,
+    buckets: std::ops::RangeInclusive<u64>,
+) -> Vec<u64> {
+    let mut protected = Vec::new();
+    for bucket in buckets {
+        if store
+            .protect_topic_retention_day("topic-a", bucket, &format!("scope-a-{bucket}"))
+            .await
+            .expect("protect")
+        {
+            protected.push(bucket);
+        }
+    }
+    protected
+}
+
+#[tokio::test]
+async fn topic_retention_days_match_between_backends() {
+    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+    let memory = MemoryStore::default();
+    let from_sqlite = days_scenario(&sqlite).await;
+    assert_eq!(from_sqlite, days_scenario(&memory).await);
+    let limits = |retention_days, capacity_bytes| crate::TopicRetentionLimits {
+        retention_days,
+        capacity_bytes,
+        used_bytes: 0,
+    };
+    assert_eq!(
+        from_sqlite,
+        vec![
+            format!("default {:?}", limits(30, 10 << 30)),
+            format!("set {:?}", limits(3, 1 << 30)),
+            "not retained None false".to_string(),
+            "first [12, 11, 10]".to_string(),
+            "cursors after reading []".to_string(),
+            "restart [14, 13]".to_string(),
+            "retain again []".to_string(),
+            "expired [13, 14]".to_string(),
+            "released []".to_string(),
+        ]
+    );
+}
+
+/// record の cache の行の大きさ(`put_remote_content_in_tx` と同じ数え方)。
+fn record_charge(replica: &str, key: &str, len: usize) -> u64 {
+    let cache_key = SqliteStore::remote_record_cache_key(replica, key, "author");
+    (len + "record".len() + cache_key.len() + replica.len() + 64) as u64
+}
+
+async fn protected(store: &SqliteStore, kind: &str, key: &str) -> bool {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT is_protected FROM remote_content_cache WHERE kind = ?1 AND cache_key = ?2",
+    )
+    .bind(kind)
+    .bind(key)
+    .fetch_one(store.pool())
+    .await
+    .expect("cache row")
+        == 1
+}
+
+/// #1909 AC-3: 保持する日の record と blob に保護参照を付けて大きさを足し、期間を過ぎた日・容量を超えた分の古い日・保持を
+/// やめた topic の日から、1 回 `limit` 件まで外して引く。外した内容は通常の cache に戻る。
+#[tokio::test]
+async fn retained_days_protect_cache_content_and_release_the_oldest_first() {
+    let store = SqliteStore::connect_memory().await.expect("sqlite store");
+    let replica = |bucket: u64| format!("bucket::v1::topic::61::{bucket}");
+    let record_key = |bucket: u64, key: &str| {
+        SqliteStore::remote_record_cache_key(&replica(bucket), key, "author")
+    };
+    store.retain_topic("topic-a", 1).await.expect("retain");
+    store
+        .open_topic_retention_days("topic-a", 10, 12)
+        .await
+        .expect("open");
+    // 登録より前に置かれた record は、登録の後の段で `limit` 件ずつ保護する。
+    for key in ["k1", "k2", "k3"] {
+        store
+            .put_remote_record(&replica(10), key, "author", &[1; 100])
+            .await
+            .expect("put early record");
+    }
+    store
+        .put_remote_record(&replica(9), "other", "author", &[1; 100])
+        .await
+        .expect("put record of another day");
+    assert!(
+        store
+            .protect_topic_retention_day("topic-a", 10, &replica(10))
+            .await
+            .expect("protect day 10")
+    );
+    let mut steps = Vec::new();
+    for _ in 0..3 {
+        steps.push(
+            store
+                .protect_topic_retention_scopes_step(2)
+                .await
+                .expect("scope step"),
+        );
+    }
+    assert_eq!(steps, [2, 1, 0]);
+    assert!(!protected(&store, "record", &record_key(9, "other")).await);
+    // 登録の後に置かれた record は、書込みと同じ transaction で保護する。書き換えは差分を足す。
+    assert!(
+        store
+            .protect_topic_retention_day("topic-a", 11, &replica(11))
+            .await
+            .expect("protect day 11")
+    );
+    store
+        .put_remote_record(&replica(11), "k4", "author", &[2; 200])
+        .await
+        .expect("put record");
+    store
+        .put_remote_record(&replica(11), "k4", "author", &[2; 250])
+        .await
+        .expect("rewrite record");
+    // blob は内容より先に保護参照を付け、届いた内容の大きさを足す。
+    let hash = "c".repeat(64);
+    store
+        .claim_topic_retention_blob("topic-a", 12, &hash)
+        .await
+        .expect("claim blob");
+    assert!(
+        store
+            .put_remote_content("blob", &hash, "blob", &[3; 300])
+            .await
+            .expect("put blob")
+    );
+    let day10 = 3 * record_charge(&replica(10), "k1", 100);
+    let day11 = record_charge(&replica(11), "k4", 250);
+    let day12 = (300 + "blob".len() + hash.len() + "blob".len() + 64) as u64;
+    assert_eq!(used(&store).await, day10 + day11 + day12);
+    assert_eq!(
+        store.topic_retention_used("topic-a").await.expect("used"),
+        day10 + day11 + day12
+    );
+    for (kind, key) in [
+        ("record", record_key(10, "k1")),
+        ("record", record_key(11, "k4")),
+        ("blob", hash.clone()),
+    ] {
+        assert!(protected(&store, kind, &key).await, "{kind} {key:?}");
+    }
+
+    // 容量を超えたら、最も古い日から `limit` 件ずつ外し、合計が容量の内に戻ったら止める。
+    store
+        .set_topic_retention_limits(30, day11 + day12)
+        .await
+        .expect("shrink capacity");
+    let mut steps = Vec::new();
+    for _ in 0..3 {
+        steps.push(
+            store
+                .reclaim_topic_retention_step(10, 2)
+                .await
+                .expect("reclaim over capacity"),
+        );
+    }
+    assert_eq!(steps, [2, 1, 0]);
+    assert_eq!(used(&store).await, day11 + day12);
+    assert!(!protected(&store, "record", &record_key(10, "k1")).await);
+    assert!(
+        store
+            .get_remote_content("record", &record_key(10, "k1"))
+            .await
+            .expect("read released record")
+            .is_some(),
+        "外した record は通常の cache に残る"
+    );
+    // 容量を超えて外した日と、それより前の日は、保護せず、作り直さず、読まない。
+    assert!(
+        !store
+            .protect_topic_retention_day("topic-a", 10, &replica(10))
+            .await
+            .expect("released day")
+    );
+    store
+        .open_topic_retention_days("topic-a", 8, 12)
+        .await
+        .expect("reopen");
+    for bucket in [11, 12] {
+        store
+            .finish_topic_retention_day("topic-a", bucket)
+            .await
+            .expect("finish");
+    }
+    assert_eq!(
+        store
+            .next_topic_retention_backfill("topic-a", 8, 12)
+            .await
+            .expect("backfill"),
+        None
+    );
+
+    // 期間を過ぎた日を外す。
+    assert_eq!(
+        store
+            .reclaim_topic_retention_step(12, 128)
+            .await
+            .expect("reclaim expired"),
+        1
+    );
+    assert_eq!(used(&store).await, day12);
+    assert!(!protected(&store, "record", &record_key(11, "k4")).await);
+    // 保持をやめた topic の日を外す。
+    store.release_topic("topic-a").await.expect("release");
+    assert_eq!(
+        store
+            .reclaim_topic_retention_step(12, 128)
+            .await
+            .expect("reclaim released topic"),
+        1
+    );
+    assert_eq!(used(&store).await, 0);
+    assert!(!protected(&store, "blob", &hash).await);
+    assert_eq!(
+        store
+            .reclaim_topic_retention_step(12, 128)
+            .await
+            .expect("nothing left"),
+        0
+    );
+}
+
+async fn used(store: &SqliteStore) -> u64 {
+    store
+        .topic_retention_limits()
+        .await
+        .expect("limits")
+        .used_bytes
+}

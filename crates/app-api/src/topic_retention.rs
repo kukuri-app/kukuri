@@ -10,6 +10,10 @@
 //!   取り下げ・リアクション・session の key は、反映していない版だけを読む。Dome の session は、owner の制御領域の
 //!   Instance・hosting・Preset と資材も保持する。
 //! - 読めなかった記録と、取れなかった blob を持つ対象は保存済みと数えず、取り直しの予定(SQLite)に入れて先へ進む。
+//! - 前日より前の日は、保持の期間の内を新しい日から古い日へ 1 日ずつ、索引と session の key を最後まで 1 回読む。読む日は、
+//!   読む前に topic の bucket の replica を保護の登録に置き、取り込んだ record と blob に日の保護参照
+//!   (`retain:<topic>:<bucket>`)を付ける。期間を過ぎた日・容量を超えた分の古い日・保持をやめた topic の日の保護参照は、
+//!   1 回 128 件まで外す(ADR 0055)。
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::atomic::Ordering;
@@ -20,7 +24,9 @@ use kukuri_docs_sync::{
     BucketReplica, BucketScope, DocKeyEntry, DocKeyOrder, DocKeyQuery, TimeBucket, TimeIndexCursor,
     TimeIndexEntry, query_time_index_asc,
 };
-use kukuri_store::{TopicRetentionCursor, TopicRetentionRetry};
+use kukuri_store::{
+    MAX_RETENTION_DAYS, MIN_RETENTION_CAPACITY_BYTES, TopicRetentionCursor, TopicRetentionRetry,
+};
 
 mod content;
 
@@ -32,6 +38,8 @@ pub(crate) const RETENTION_STEP_ENTRIES: usize = 32;
 const RETENTION_BUSY_INTERVAL: Duration = Duration::from_secs(1);
 /// 追いついたときの、次の回までの間。
 const RETENTION_IDLE_INTERVAL: Duration = Duration::from_secs(30);
+/// 1 回に外す保護参照と、登録より前に置かれた record に付ける保護参照の、それぞれの上限。
+const RETENTION_RECLAIM_STEP: usize = 128;
 /// topic のタイムラインの索引。
 const TOPIC_TIMELINE_INDEX: &str = "indexes/timeline/";
 /// 読む索引(topic の投稿、公開スレッドの作成、公開スレッドの投稿)。
@@ -41,7 +49,7 @@ const RETENTION_INDEXES: [&str; 3] = [
     PUBLIC_CHANNEL_ACTIVITY_PREFIX,
 ];
 /// 現在と前日の bucket で、反映していない版を読む key(prefix、1 回の上限、順)。取り下げとリアクションは 512 件、
-/// session は種類ごとに新しい側から 64 件(判断 6)。
+/// session は種類ごとに新しい側から 64 件(判断 6)。前日より前の日は session(後ろの 2 つ)だけを読む。
 const RETENTION_SCANS: [(&str, usize, DocKeyOrder); 4] = [
     ("withdrawals/", 512, DocKeyOrder::Ascending),
     ("reactions/", 512, DocKeyOrder::Ascending),
@@ -83,6 +91,11 @@ impl ServiceHandles {
 /// 保持の設定と進み具合。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TopicRetentionView {
+    /// 保持の期間(日)と容量(bytes)。
+    pub retention_days: u32,
+    pub capacity_bytes: u64,
+    /// 保護参照を付けた record と blob の大きさの合計。
+    pub used_bytes: u64,
     pub topics: Vec<RetainedTopicView>,
 }
 
@@ -97,6 +110,8 @@ pub struct RetainedTopicView {
     pub pending_retries: u64,
     /// 取り直しを諦めた対象の数。
     pub given_up: u64,
+    /// この topic の日の保護参照を付けた record と blob の大きさの合計。
+    pub used_bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -154,6 +169,8 @@ struct MergedIndexPage {
     entries: Vec<(TimeIndexEntry, usize)>,
     /// 読み残しがある(次の回を早める)。
     more: bool,
+    /// どれかの読み先が答えた(前日より前の日を読み終えたかの判定に使う)。
+    answered: bool,
 }
 
 /// 読み先ごとに、続きの位置より新しい側を古い順に `limit` 件まで読み、時刻の順に合わせる。ページが埋まった読み先は、
@@ -170,7 +187,7 @@ async fn merged_index_page(
 ) -> MergedIndexPage {
     let mut merged: BTreeMap<(i64, String), (TimeIndexEntry, usize)> = BTreeMap::new();
     let mut bound: Option<(i64, String)> = None;
-    let mut more = false;
+    let (mut more, mut answered) = (false, false);
     for (slot, reader) in readers.iter().enumerate() {
         let Ok(Ok(page)) = n0_future::time::timeout(
             REMOTE_READ_DEADLINE,
@@ -180,6 +197,7 @@ async fn merged_index_page(
         else {
             continue;
         };
+        answered = true;
         if page.entries.len() >= limit
             && let Some(last) = page.entries.last()
         {
@@ -206,7 +224,18 @@ async fn merged_index_page(
         }
         entries.push(value);
     }
-    MergedIndexPage { entries, more }
+    MergedIndexPage {
+        entries,
+        more,
+        answered,
+    }
+}
+
+/// 保持の期間の内の最も古い bucket。期間は今日を含めて `retention_days` 日。
+fn retention_cutoff(current: TimeBucket, retention_days: u32) -> u64 {
+    current
+        .index()
+        .saturating_sub(u64::from(retention_days.max(1)) - 1)
 }
 
 /// 保持できる topic の名前。公開の topic だけ(private channel・DM・account 同期・公開スレッドの hint の topic と、
@@ -302,9 +331,30 @@ impl AppService {
         Ok(())
     }
 
-    /// 保持する topic と、topic ごとの現在と前日の bucket の続きの位置、取り直しを待つ数と諦めた数。
+    /// 保持の期間(日。1〜365)と容量(bytes。1 GiB 以上)を変える。
+    pub async fn set_topic_retention_limits(
+        &self,
+        retention_days: u32,
+        capacity_bytes: u64,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            (1..=MAX_RETENTION_DAYS).contains(&retention_days)
+                && capacity_bytes >= MIN_RETENTION_CAPACITY_BYTES,
+            "retention limits are out of range"
+        );
+        self.topic_retention_handles()?
+            .store
+            .set_topic_retention_limits(retention_days, capacity_bytes)
+            .await?;
+        self.subscription_registry.topic_retention_wake.notify_one();
+        Ok(())
+    }
+
+    /// 保持の期間と容量と保護の合計、保持する topic と、topic ごとの現在と前日の bucket の続きの位置、取り直しを待つ数と
+    /// 諦めた数、保護の合計。
     pub async fn topic_retention(&self) -> Result<TopicRetentionView> {
         let store = &self.topic_retention_handles()?.store;
+        let limits = store.topic_retention_limits().await?;
         let current = TimeBucket::from_unix_seconds(Utc::now().timestamp())?;
         let from = current.previous().unwrap_or(current).index();
         let mut topics = Vec::new();
@@ -317,25 +367,33 @@ impl AppService {
                 .collect();
             let (pending_retries, given_up) =
                 store.topic_retention_retry_counts(&row.topic_id).await?;
+            let used_bytes = store.topic_retention_used(&row.topic_id).await?;
             topics.push(RetainedTopicView {
                 topic: row.topic_id,
                 retained_at: row.retained_at,
                 progress,
                 pending_retries,
                 given_up,
+                used_bytes,
             });
         }
-        Ok(TopicRetentionView { topics })
+        Ok(TopicRetentionView {
+            retention_days: limits.retention_days,
+            capacity_bytes: limits.capacity_bytes,
+            used_bytes: limits.used_bytes,
+            topics,
+        })
     }
 
     /// 起動時に、保存した topic の lease を取り直し、取り込みの task を起こす。lease の上限で取れない topic は warn に
-    /// して起動を続ける(desired の復元と同じ)。保持する topic が無ければ何もしない。
+    /// して起動を続ける(desired の復元と同じ)。保持する topic が無ければ、保持をやめた日の保護参照が残っているときだけ、
+    /// 外し終えるまで task を起こす。
     pub async fn start_topic_retention(&self) -> Result<()> {
         let Some(handles) = &self.services.topic_retention else {
             return Ok(());
         };
         let topics = handles.store.retained_topics(MAX_ACTIVE_SCOPES).await?;
-        if topics.is_empty() {
+        if topics.is_empty() && self.reclaim_topic_retention().await? == 0 {
             return Ok(());
         }
         for row in topics {
@@ -381,7 +439,24 @@ impl AppService {
         }
     }
 
-    /// 取り込みの task の本体。保持する topic を順に 1 つずつ進め、保持する topic が無くなったら終わる。
+    /// 期間を過ぎた日・容量を超えた分の古い日・保持をやめた topic の日の保護参照を外し、登録より前に置かれた record に
+    /// 保護参照を付ける(それぞれ 1 回 128 件まで)。戻り値は、進めた件数。
+    async fn reclaim_topic_retention(&self) -> Result<usize> {
+        let store = &self.topic_retention_handles()?.store;
+        let current = TimeBucket::from_unix_seconds(Utc::now().timestamp())?;
+        let cutoff = retention_cutoff(
+            current,
+            store.topic_retention_limits().await?.retention_days,
+        );
+        Ok(store
+            .reclaim_topic_retention_step(cutoff, RETENTION_RECLAIM_STEP)
+            .await?
+            + store
+                .protect_topic_retention_scopes_step(RETENTION_RECLAIM_STEP)
+                .await?)
+    }
+
+    /// 取り込みの task の本体。保持する topic を順に 1 つずつ進め、保持する topic も外す保護参照も無くなったら終わる。
     async fn run_topic_retention(&self) {
         let registry = &self.subscription_registry;
         let mut next = 0usize;
@@ -391,11 +466,12 @@ impl AppService {
             if registry.topic_retention_closed.load(Ordering::Acquire) {
                 return;
             }
+            let mut reclaiming = false;
             match self
                 .topic_retention_round(&mut next, &mut busy, &mut state)
                 .await
             {
-                Ok(false) => {
+                Ok(None) => {
                     // 保持する topic が無ければ終わる。設定と同じ lock の下で読み直し、同時に足された topic を取りこぼさない
                     // (設定は行を置いてから lock を取り、動いている task を見たら起こさない)。
                     let mut owner = registry.topic_retention_task.lock().await;
@@ -413,10 +489,10 @@ impl AppService {
                         return;
                     }
                 }
-                Ok(true) => {}
+                Ok(Some(reclaimed)) => reclaiming = reclaimed,
                 Err(error) => warn!(%error, "topic retention step deferred"),
             }
-            let wait = if busy.is_empty() {
+            let wait = if busy.is_empty() && !reclaiming {
                 RETENTION_IDLE_INTERVAL
             } else {
                 RETENTION_BUSY_INTERVAL
@@ -428,20 +504,22 @@ impl AppService {
         }
     }
 
-    /// 保持する topic を順に 1 つ選んで 1 回進める。`busy` は続きが残っている topic。保持する topic が無ければ `false`。
+    /// 保護参照を外して付ける段を 1 回進め、保持する topic を順に 1 つ選んで 1 回進める。`busy` は続きが残っている topic。
+    /// 保持する topic が無く、保護参照の段も進まなければ `None`。それ以外は、保護参照の段を進めたか。
     async fn topic_retention_round(
         &self,
         next: &mut usize,
         busy: &mut BTreeSet<String>,
         state: &mut RetentionState,
-    ) -> Result<bool> {
+    ) -> Result<Option<bool>> {
+        let reclaimed = self.reclaim_topic_retention().await? > 0;
         let topics = self
             .topic_retention_handles()?
             .store
             .retained_topics(MAX_ACTIVE_SCOPES)
             .await?;
         if topics.is_empty() {
-            return Ok(false);
+            return Ok(reclaimed.then_some(true));
         }
         busy.retain(|topic| topics.iter().any(|row| row.topic_id == *topic));
         state.keep_only(|topic, _| topics.iter().any(|row| row.topic_id == topic));
@@ -450,18 +528,19 @@ impl AppService {
         // gossip を止めた topic は取り込まない(lease の task も止まっている)。
         if self.is_topic_gossip_disabled(&topic).await {
             busy.remove(&topic);
-            return Ok(true);
+            return Ok(Some(reclaimed));
         }
         if self.step_topic_retention(&topic, state).await? {
             busy.insert(topic);
         } else {
             busy.remove(&topic);
         }
-        Ok(true)
+        Ok(Some(reclaimed))
     }
 
-    /// topic を 1 回進める。時刻の来た取り直しを先に行い、現在と前日の bucket の索引ごとに、続きの位置から新しい対象を
-    /// 古い順に取り込んで位置を進め、取り下げ・リアクション・session の key の反映していない版を反映する。戻り値は、
+    /// topic を 1 回進める。時刻の来た取り直しを先に行い、現在と前日の bucket と、前日より前でまだ読み終えていない最も
+    /// 新しい日の索引ごとに、続きの位置から新しい対象を古い順に取り込んで位置を進め、key の反映していない版を反映する
+    /// (前日より前の日は session だけ)。前日より前の日は、索引と session を最後まで読んだら読み終えた日にする。戻り値は、
     /// 読み残しがあるか。
     pub(crate) async fn step_topic_retention(
         &self,
@@ -472,10 +551,26 @@ impl AppService {
         let now = Utc::now();
         let current = TimeBucket::from_unix_seconds(now.timestamp())?;
         let previous = current.previous().unwrap_or(current);
+        let cutoff = retention_cutoff(
+            current,
+            store.topic_retention_limits().await?.retention_days,
+        );
+        // 停止していた間の日を含めて期間の内の日の行を作り、期間を過ぎた日の続きの位置を消す。
         store
-            .prune_topic_retention_cursors(topic, previous.index())
+            .open_topic_retention_days(topic, cutoff, current.index())
             .await?;
-        state.keep_only(|retained, bucket| retained != topic || bucket >= previous.index());
+        store.prune_topic_retention_cursors(topic, cutoff).await?;
+        let backfill = match previous.index().checked_sub(1) {
+            Some(before) => {
+                store
+                    .next_topic_retention_backfill(topic, cutoff, before)
+                    .await?
+            }
+            None => None,
+        };
+        state.keep_only(|retained, bucket| {
+            retained != topic || bucket >= previous.index() || Some(bucket) == backfill
+        });
         let mut left = RETENTION_STEP_ENTRIES;
         for retry in store
             .due_topic_retention_retries(topic, now.timestamp_millis(), left)
@@ -508,20 +603,24 @@ impl AppService {
                     .await?;
             }
         }
-        let cursors = store
-            .topic_retention_cursors(topic, previous.index())
-            .await?;
+        let cursors = store.topic_retention_cursors(topic, cutoff).await?;
         let not_after = now
             .timestamp()
             .saturating_add(TIME_INDEX_FUTURE_ALLOWANCE_SECS);
         let mut more = false;
-        let buckets: &[TimeBucket] = if previous == current {
-            &[current]
-        } else {
-            &[previous, current]
-        };
-        for bucket in buckets {
-            let replica = topic_bucket(topic, *bucket)?;
+        let mut days = vec![previous, current];
+        days.dedup();
+        days.extend(backfill.map(TimeBucket::from_index).transpose()?);
+        for bucket in days {
+            let live = bucket >= previous;
+            let replica = topic_bucket(topic, bucket)?;
+            // 容量を超えて保護を外した日は読まない。読む日は、置かれる record に保護参照を付ける登録をする。
+            if !store
+                .protect_topic_retention_day(topic, bucket.index(), replica.as_str())
+                .await?
+            {
+                continue;
+            }
             let readers = self
                 .remote_post_readers(topic, None, &replica, None)
                 .await
@@ -530,6 +629,7 @@ impl AppService {
             let Some(first) = readers.first().cloned() else {
                 continue;
             };
+            let mut read_to_end = true;
             for prefix in RETENTION_INDEXES {
                 if left == 0 {
                     return Ok(true);
@@ -545,6 +645,7 @@ impl AppService {
                     merged_index_page(&readers, &replica, prefix, after.as_ref(), left, not_after)
                         .await;
                 more |= page.more;
+                read_to_end &= page.answered && !page.more;
                 for (entry, slot) in page.entries {
                     if let Some((kind, id)) = index_target(prefix, &entry) {
                         let reader = readers[slot].clone();
@@ -566,7 +667,9 @@ impl AppService {
                             return Ok(true);
                         }
                         let complete = match read {
-                            Ok(Ok(true)) => self.retain_content(topic, kind, &id).await,
+                            Ok(Ok(true)) => {
+                                self.retain_content(topic, bucket.index(), kind, &id).await
+                            }
                             Ok(Err(error)) => {
                                 warn!(topic, %error, "retention will retry a record later");
                                 false
@@ -599,15 +702,29 @@ impl AppService {
                     left -= 1;
                 }
             }
-            more |= self
-                .scan_retention_keys(topic, *bucket, &replica, &first, state, &mut left)
+            let scans = if live {
+                &RETENTION_SCANS[..]
+            } else {
+                &RETENTION_SCANS[2..]
+            };
+            let (scanned_more, scanned) = self
+                .scan_retention_keys(topic, bucket, &replica, &first, state, &mut left, scans)
                 .await?;
+            more |= scanned_more;
+            if !live && read_to_end && scanned && !scanned_more {
+                store
+                    .finish_topic_retention_day(topic, bucket.index())
+                    .await?;
+                // 次の回で、次に古い日を読む。
+                more = true;
+            }
         }
         Ok(more)
     }
 
-    /// 現在と前日の bucket の取り下げ・リアクション・session の key を 1 つの読み先から読み、反映していない版を反映する。
-    /// 取り下げとリアクションは、保持している投稿へのものだけを反映する。戻り値は、上限で読み残したか。
+    /// bucket の `scans` の key を 1 つの読み先から読み、反映していない版を反映する。取り下げとリアクションは、保持して
+    /// いる投稿へのものだけを反映する。戻り値は、上限で読み残したかと、すべて読めたか。
+    #[allow(clippy::too_many_arguments)]
     async fn scan_retention_keys(
         &self,
         topic: &str,
@@ -616,10 +733,11 @@ impl AppService {
         reader: &Arc<dyn DocsSync>,
         state: &mut RetentionState,
         left: &mut usize,
-    ) -> Result<bool> {
+        scans: &[(&'static str, usize, DocKeyOrder)],
+    ) -> Result<(bool, bool)> {
         let store = self.topic_retention_handles()?.store.clone();
-        let mut more = false;
-        for (prefix, limit, order) in RETENTION_SCANS {
+        let (mut more, mut complete) = (false, true);
+        for &(prefix, limit, order) in scans {
             let page = n0_future::time::timeout(
                 REMOTE_READ_DEADLINE,
                 reader.query_replica_keys(
@@ -634,6 +752,7 @@ impl AppService {
             .await;
             reader.finish_remote_object().await;
             let Ok(Ok(page)) = page else {
+                complete = false;
                 continue;
             };
             let slot = (topic.to_owned(), bucket.index(), prefix);
@@ -651,10 +770,18 @@ impl AppService {
                     continue;
                 }
                 let scanned = self
-                    .retain_scanned(topic, replica, prefix, entry, reader, &mut sessions)
+                    .retain_scanned(
+                        topic,
+                        bucket.index(),
+                        replica,
+                        prefix,
+                        entry,
+                        reader,
+                        &mut sessions,
+                    )
                     .await;
                 if *self.services.content_closed.borrow() {
-                    return Ok(true);
+                    return Ok((true, false));
                 }
                 match scanned {
                     Ok(Scanned::Pending) => continue,
@@ -673,6 +800,7 @@ impl AppService {
                     // 次の回に同じ版を読み直す。
                     Err(error) => {
                         warn!(topic, %error, "retention will read a key again");
+                        complete = false;
                         *left -= 1;
                         continue;
                     }
@@ -682,6 +810,6 @@ impl AppService {
             }
             state.0.insert(slot, kept);
         }
-        Ok(more)
+        Ok((more, complete))
     }
 }

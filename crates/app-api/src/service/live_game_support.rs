@@ -272,13 +272,7 @@ impl AppService {
         } else {
             docs
         };
-        let state_key = stable_key(
-            "metaverse/dome-presets",
-            &format!(
-                "{}/revisions/{:020}",
-                preset_ref.preset_id, preset_ref.revision
-            ),
-        );
+        let state_key = dome_preset_state_key(preset_ref);
         let state_records = docs
             .query_replica_with_policy(&replica, DocQuery::Exact(state_key.clone()), policy)
             .await?;
@@ -932,4 +926,15 @@ pub(crate) async fn fetch_verified_dome_envelope<T: DeserializeOwned>(
         serde_json::from_str(envelope.content.as_str())?,
         record.docs_author,
     ))
+}
+
+/// author replica の、Dome Preset の版の state の key。
+pub(crate) fn dome_preset_state_key(preset_ref: &DomePresetRefV1) -> String {
+    stable_key(
+        "metaverse/dome-presets",
+        &format!(
+            "{}/revisions/{:020}",
+            preset_ref.preset_id, preset_ref.revision
+        ),
+    )
 }

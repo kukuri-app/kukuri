@@ -8,6 +8,15 @@ impl DesktopRuntime {
             .await
     }
 
+    pub async fn set_topic_retention_limits(
+        &self,
+        request: SetTopicRetentionLimitsRequest,
+    ) -> Result<()> {
+        self.app_service
+            .set_topic_retention_limits(request.retention_days, request.capacity_bytes)
+            .await
+    }
+
     pub async fn get_topic_retention(&self) -> Result<kukuri_app_api::TopicRetentionView> {
         self.app_service.topic_retention().await
     }

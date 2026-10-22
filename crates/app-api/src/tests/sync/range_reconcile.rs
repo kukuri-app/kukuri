@@ -6,7 +6,7 @@ use super::*;
 pub(super) const BASE_TIME: i64 = 1_700_000_000;
 
 /// test の投稿。行と cursor は、署名つき envelope から作った header と同じ値になる。
-pub(super) struct TestPost {
+pub(in crate::service::tests) struct TestPost {
     header: CanonicalPostHeader,
     pub(super) envelope: KukuriEnvelope,
 }
@@ -80,7 +80,7 @@ pub(super) async fn range_fixture(
 
 /// `created_at` を指定して署名した投稿を docs に書く(索引の key も同じ時刻になる)。
 /// 反映は署名つき envelope から行を作るので(#1248)、時刻は envelope に入れて署名する。
-pub(super) async fn put_post_at(
+pub(in crate::service::tests) async fn put_post_at(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
     keys: &KukuriKeys,

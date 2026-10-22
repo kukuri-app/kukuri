@@ -293,6 +293,14 @@ pub struct SetTopicRetentionRequest {
     pub retained: bool,
 }
 
+/// 公開 topic の保持の期間(日)と容量(bytes)(#1909。CLI だけの command)。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetTopicRetentionLimitsRequest {
+    pub retention_days: u32,
+    pub capacity_bytes: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields = nullable))]

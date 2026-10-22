@@ -65,6 +65,10 @@
       "path": "crates/harness/src/scenarios/desktop_smoke.rs"
     },
     {
+      "lines": 1039,
+      "path": "crates/store/fixtures/schema/store_schema_full.txt"
+    },
+    {
       "lines": 1030,
       "path": "crates/app-api/src/service/replica_window.rs"
     },

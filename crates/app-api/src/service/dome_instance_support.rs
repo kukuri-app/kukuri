@@ -23,7 +23,7 @@ pub(crate) fn public_dome_topic(context: &SpatialContextV1) -> Option<&str> {
 }
 
 /// owner の制御領域の、Dome Instance の現在値の key。instance の id は context と owner から決まる(#1221 R5-H)。
-fn dome_instance_state_key(instance_id: &str) -> String {
+pub(crate) fn dome_instance_state_key(instance_id: &str) -> String {
     stable_key("metaverse/dome-instances", &format!("{instance_id}/state"))
 }
 

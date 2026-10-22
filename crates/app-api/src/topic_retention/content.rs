@@ -1,15 +1,18 @@
 //! 保持する topic の対象ごとの取り込み(#1909)。記録、投稿の本文・添付・リンクプレビュー・リアクション、session と Dome、
-//! 取り直しの予定の読み直し。
+//! 取り直しの予定の読み直し。保持した blob と、topic の bucket の外の record(Dome の owner の制御領域)には、対象を見つけた
+//! 日(`bucket`)の保護参照を付ける。
 
 use super::*;
-use kukuri_core::DomeHostingRecordV1;
+use kukuri_core::{DomeHostingRecordV1, DomePresetStateDocV1};
 
 impl AppService {
     /// 現在と前日の bucket で見つけた key 1 件を `reader` から反映する。`sessions` は、この一覧で読んだ session(state と
     /// locator の key で同じ session を 2 度読まない)。
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn retain_scanned(
         &self,
         topic: &str,
+        bucket: u64,
         replica: &ReplicaId,
         prefix: &str,
         entry: &DocKeyEntry,
@@ -70,11 +73,16 @@ impl AppService {
                     return Ok(Scanned::Pending);
                 }
                 let reaction = self.read_reaction(topic, replica, key, reader).await?;
-                Ok(if self.retain_reaction_images(reaction.as_slice()).await {
-                    Scanned::Done
-                } else {
-                    Scanned::Retry(RETAIN_REACTION, key.to_owned())
-                })
+                Ok(
+                    if self
+                        .retain_reaction_images(topic, bucket, reaction.as_slice())
+                        .await
+                    {
+                        Scanned::Done
+                    } else {
+                        Scanned::Retry(RETAIN_REACTION, key.to_owned())
+                    },
+                )
             }
             _ => {
                 let kind = if prefix == "sessions/live/" {
@@ -88,7 +96,7 @@ impl AppService {
                 if !sessions.insert(id.to_owned()) {
                     return Ok(Scanned::Done);
                 }
-                Ok(if self.retain_session(topic, kind, id).await? {
+                Ok(if self.retain_session(topic, bucket, kind, id).await? {
                     Scanned::Done
                 } else {
                     Scanned::Retry(kind, id.to_owned())
@@ -125,7 +133,7 @@ impl AppService {
                         }
                     }
                 }
-                Ok(present && self.retain_content(topic, kind, id).await)
+                Ok(present && self.retain_content(topic, retry.bucket, kind, id).await)
             }
             RETAIN_REACTION => {
                 for reader in self
@@ -133,12 +141,14 @@ impl AppService {
                     .await?
                 {
                     if let Ok(reaction) = self.read_reaction(topic, &replica, id, &reader).await {
-                        return Ok(self.retain_reaction_images(reaction.as_slice()).await);
+                        return Ok(self
+                            .retain_reaction_images(topic, retry.bucket, reaction.as_slice())
+                            .await);
                     }
                 }
                 Ok(false)
             }
-            _ => self.retain_session(topic, kind, id).await,
+            _ => self.retain_session(topic, retry.bucket, kind, id).await,
         }
     }
 
@@ -206,11 +216,17 @@ impl AppService {
     }
 
     /// 取り込んだ対象が参照する blob などを保持する(投稿だけ)。戻り値は、すべて取れたか。
-    pub(super) async fn retain_content(&self, topic: &str, kind: &str, id: &str) -> bool {
+    pub(super) async fn retain_content(
+        &self,
+        topic: &str,
+        bucket: u64,
+        kind: &str,
+        id: &str,
+    ) -> bool {
         if kind != RETAIN_POST {
             return true;
         }
-        self.retain_post_content(topic, &EnvelopeId::from(id))
+        self.retain_post_content(topic, bucket, &EnvelopeId::from(id))
             .await
             .unwrap_or_else(|error| {
                 warn!(topic, %error, "retention will retry a post's content later");
@@ -220,7 +236,12 @@ impl AppService {
 
     /// 投稿の本文・添付・リンクプレビュー・リアクション(custom の画像)を取って保持する。取り下げた投稿は何も取らない。
     /// 戻り値は、参照する blob をすべて取れたか。
-    async fn retain_post_content(&self, topic: &str, object_id: &EnvelopeId) -> Result<bool> {
+    async fn retain_post_content(
+        &self,
+        topic: &str,
+        bucket: u64,
+        object_id: &EnvelopeId,
+    ) -> Result<bool> {
         let projection_store = self.services.projection_store.as_ref();
         let Some(row) = projection_store.get_object_projection(object_id).await? else {
             return Ok(false);
@@ -232,13 +253,20 @@ impl AppService {
         {
             return Ok(true);
         }
+        // 本文の blob には、取る前に日の保護参照を付ける(手元に本文があっても付ける)。
+        if let PayloadRef::BlobText { hash, .. } = &row.payload_ref {
+            self.claim_retained_blob(topic, bucket, hash.as_str())
+                .await?;
+        }
         let body = match &row.content {
             Some(text) => Some(text.clone()),
             None => self.retain_post_body(&row).await?,
         };
         let mut complete = body.is_some();
         for asset in &row.attachments {
-            complete &= self.retain_attachment(object_id, asset).await?;
+            complete &= self
+                .retain_attachment(topic, bucket, object_id, asset)
+                .await?;
         }
         // リンクプレビューの record は、本文にある URL についてだけ書かれる。
         if body
@@ -246,10 +274,17 @@ impl AppService {
             .is_some_and(|body| body.contains("http://") || body.contains("https://"))
         {
             let preview = self.read_link_preview(object_id, None).await?;
+            if let Some(image) = preview
+                .as_ref()
+                .and_then(|(content, _)| content.image.as_ref())
+            {
+                self.claim_retained_blob(topic, bucket, image.hash.as_str())
+                    .await?;
+            }
             complete &=
                 preview.is_none_or(|(content, image)| content.image.is_none() || image.is_some());
         }
-        complete &= self.retain_post_reactions(topic, &row).await?;
+        complete &= self.retain_post_reactions(topic, bucket, &row).await?;
         Ok(complete)
     }
 
@@ -287,18 +322,26 @@ impl AppService {
     /// 同じ volume の dir で file として受け取る(native だけ。Web は保持しない)。戻り値は、取らない添付を含めて済んだか。
     async fn retain_attachment(
         &self,
+        topic: &str,
+        bucket: u64,
         object_id: &EnvelopeId,
         asset: &kukuri_core::AssetRef,
     ) -> Result<bool> {
+        if self
+            .post_media_withheld(&asset.hash, object_id.as_str())
+            .await?
+        {
+            return Ok(true);
+        }
+        // 取る前に日の保護参照を付ける(動画のような大きな blob も、cache の容量の計数の外に置く)。
+        self.claim_retained_blob(topic, bucket, asset.hash.as_str())
+            .await?;
         if self
             .services
             .blob_service
             .local_blob_status(&asset.hash)
             .await?
             != BlobStatus::Missing
-            || self
-                .post_media_withheld(&asset.hash, object_id.as_str())
-                .await?
         {
             return Ok(true);
         }
@@ -321,7 +364,12 @@ impl AppService {
 
     /// 投稿の日と翌日の bucket から、投稿へのリアクションを上限つきで反映し、custom の画像を保持する。戻り値は、画像を
     /// すべて取れたか。
-    async fn retain_post_reactions(&self, topic: &str, row: &ObjectProjectionRow) -> Result<bool> {
+    async fn retain_post_reactions(
+        &self,
+        topic: &str,
+        bucket: u64,
+        row: &ObjectProjectionRow,
+    ) -> Result<bool> {
         let Ok(posted) =
             BucketReplica::parse(&row.source_replica_id).map(|replica| replica.bucket())
         else {
@@ -359,7 +407,7 @@ impl AppService {
                 .await;
                 reader.finish_remote_object().await;
                 if let Ok(Ok(reactions)) = read {
-                    complete &= self.retain_reaction_images(&reactions).await;
+                    complete &= self.retain_reaction_images(topic, bucket, &reactions).await;
                     break;
                 }
             }
@@ -394,12 +442,17 @@ impl AppService {
     }
 
     /// reaction の custom の画像を保持する。戻り値は、すべて取れたか。
-    async fn retain_reaction_images(&self, reactions: &[VerifiedReaction]) -> bool {
+    async fn retain_reaction_images(
+        &self,
+        topic: &str,
+        bucket: u64,
+        reactions: &[VerifiedReaction],
+    ) -> bool {
         let mut complete = true;
         for reaction in reactions {
             if let Some(asset) = &reaction.doc().custom_asset_snapshot {
                 complete &= self
-                    .retain_blob(&asset.blob_hash, asset.bytes)
+                    .retain_blob(topic, bucket, &asset.blob_hash, asset.bytes)
                     .await
                     .unwrap_or(false);
             }
@@ -409,7 +462,7 @@ impl AppService {
 
     /// session を読んで保持する(読み直しと同じ読み。新しい版だけを保持する)。Dome の session は、Instance・hosting・
     /// Preset と資材も保持する。戻り値は、session と参照する blob をすべて取れたか。
-    async fn retain_session(&self, topic: &str, kind: &str, id: &str) -> Result<bool> {
+    async fn retain_session(&self, topic: &str, bucket: u64, kind: &str, id: &str) -> Result<bool> {
         if !self
             .read_session(topic, &TimelineScope::Public, id, kind)
             .await?
@@ -417,14 +470,25 @@ impl AppService {
             return Ok(false);
         }
         if kind != "game-session" {
+            // session の manifest の blob に日の保護参照を付ける(Dome は `retain_dome` で付ける)。
+            if let Some(row) = self
+                .services
+                .projection_store
+                .get_live_session(topic, id)
+                .await?
+            {
+                self.claim_retained_blob(topic, bucket, row.manifest_blob_hash.as_str())
+                    .await?;
+            }
             return Ok(true);
         }
-        self.retain_dome(topic, id).await
+        self.retain_dome(topic, bucket, id).await
     }
 
-    /// Dome の session が指す、owner の制御領域の Instance・hosting・Preset と資材を保持する。private の context の Dome は
-    /// 保持しない。戻り値は、Preset と資材を取れたか。
-    async fn retain_dome(&self, topic: &str, room_id: &str) -> Result<bool> {
+    /// Dome の session が指す、owner の制御領域の Instance・hosting・Preset と資材を保持する。session と Preset の
+    /// manifest、資材の blob と、owner の制御領域の record に日の保護参照を付ける。private の context の Dome は保持しない。
+    /// 戻り値は、Preset と資材を取れたか。
+    async fn retain_dome(&self, topic: &str, bucket: u64, room_id: &str) -> Result<bool> {
         let Some(row) = self
             .services
             .projection_store
@@ -433,6 +497,8 @@ impl AppService {
         else {
             return Ok(true);
         };
+        self.claim_retained_blob(topic, bucket, row.manifest_blob_hash.as_str())
+            .await?;
         let Some(metaverse) = row.metaverse else {
             return Ok(true);
         };
@@ -440,23 +506,58 @@ impl AppService {
         if public_dome_topic(context).is_none() {
             return Ok(true);
         }
+        // room の ID は Dome の Instance の ID。
         let owner = Pubkey::from(row.host_pubkey.as_str());
-        if let Some((_, instance)) = self
+        let mut owner_keys = vec![
+            dome_instance_state_key(room_id),
+            crate::dome_hosting::hosting_state_key(room_id),
+        ];
+        if let Some((state, instance)) = self
             .fetch_dome_instance_manifest_kept(context, &owner, true)
             .await?
-            && instance.status == kukuri_core::DomeInstanceStatusV1::Active
-            && instance.relationship_detach.is_none()
         {
-            self.retain_dome_hosting(&instance).await?;
+            owner_keys.push(stable_key("envelopes", state.last_envelope_id.as_str()));
+            if instance.status == kukuri_core::DomeInstanceStatusV1::Active
+                && instance.relationship_detach.is_none()
+            {
+                self.retain_dome_hosting(&instance).await?;
+            }
         }
+        self.claim_retained_records(
+            topic,
+            bucket,
+            &author_replica_id(owner.as_str()),
+            &owner_keys,
+        )
+        .await?;
+        let preset = &metaverse.preset_ref;
         let mut complete = self
-            .fetch_dome_preset_manifest(&metaverse.preset_ref, context, true)
+            .fetch_dome_preset_manifest(preset, context, true)
             .await?
             .is_some();
+        // Preset の envelope の key は、保持した版の state から読む。
+        let preset_replica = author_replica_id(preset.owner_pubkey.as_str());
+        let preset_key = dome_preset_state_key(preset);
+        let envelope = self
+            .services
+            .docs_sync
+            .query_local_source(&preset_replica, &preset_key, None, 8)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .find_map(|record| serde_json::from_slice::<DomePresetStateDocV1>(&record.value).ok())
+            .map(|state| stable_key("envelopes", state.last_envelope_id.as_str()));
+        let preset_keys = std::iter::once(preset_key)
+            .chain(envelope)
+            .collect::<Vec<_>>();
+        self.claim_retained_records(topic, bucket, &preset_replica, &preset_keys)
+            .await?;
+        self.claim_retained_blob(topic, bucket, &preset.manifest_blob_hash)
+            .await?;
         for asset in &metaverse.asset_refs {
             let hash = kukuri_core::BlobHash::new(asset.blob_hash.clone());
             complete &= self
-                .retain_blob(&hash, asset.size_bytes.unwrap_or(0))
+                .retain_blob(topic, bucket, &hash, asset.size_bytes.unwrap_or(0))
                 .await?;
         }
         Ok(complete)
@@ -516,8 +617,42 @@ impl AppService {
         Ok(())
     }
 
-    /// blob を取って cache に置く(他の参加者へ提供する)。手元にあれば取らない。戻り値は、手元にあるか。
-    async fn retain_blob(&self, hash: &kukuri_core::BlobHash, bytes: u64) -> Result<bool> {
+    /// 保持する日の保護参照を blob に付ける。取る前に付けると、届いた内容は cache の容量の計数と回収の外に置かれる。
+    async fn claim_retained_blob(&self, topic: &str, bucket: u64, hash: &str) -> Result<()> {
+        self.topic_retention_handles()?
+            .store
+            .claim_topic_retention_blob(topic, bucket, hash)
+            .await
+    }
+
+    /// 保持する日の保護参照を、`replica` の `keys` の record(すべての名義)に付ける。
+    async fn claim_retained_records(
+        &self,
+        topic: &str,
+        bucket: u64,
+        replica: &ReplicaId,
+        keys: &[String],
+    ) -> Result<()> {
+        let store = &self.topic_retention_handles()?.store;
+        for key in keys {
+            store
+                .claim_topic_retention_records(topic, bucket, replica.as_str(), key)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// blob に日の保護参照を付け、取って cache に置く(他の参加者へ提供する)。手元にあれば取らない。戻り値は、手元に
+    /// あるか。
+    async fn retain_blob(
+        &self,
+        topic: &str,
+        bucket: u64,
+        hash: &kukuri_core::BlobHash,
+        bytes: u64,
+    ) -> Result<bool> {
+        self.claim_retained_blob(topic, bucket, hash.as_str())
+            .await?;
         let blobs = self.services.blob_service.as_ref();
         if blobs.local_blob_status(hash).await? != BlobStatus::Missing {
             return Ok(true);

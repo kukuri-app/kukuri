@@ -7,13 +7,14 @@ use syn::{Token, parse::Parser, punctuated::Punctuated, visit::Visit};
 const TAURI_SOURCE: &str = include_str!("../../../apps/desktop/src-tauri/src/lib.rs");
 const MANIFEST: &str = include_str!("../command-parity.json");
 /// GUI の入口に対応しない CLI の command。daemon の制御と、CLI daemon だけの機能(#1909 の公開 topic の保持)。
-const CLI_ONLY: [&str; 6] = [
+const CLI_ONLY: [&str; 7] = [
     "client.status",
     "events.watch",
     "protocol.commands",
     "protocol.schema",
     "get_topic_retention",
     "set_topic_retention",
+    "set_topic_retention_limits",
 ];
 
 #[derive(Clone, Deserialize)]

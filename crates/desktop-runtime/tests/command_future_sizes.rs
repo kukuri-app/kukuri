@@ -606,6 +606,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             "set_topic_retention",
             size1(DesktopRuntime::set_topic_retention),
         ),
+        (
+            "set_topic_retention_limits",
+            size1(DesktopRuntime::set_topic_retention_limits),
+        ),
         ("shutdown", size0(DesktopRuntime::shutdown)),
         ("shutdown_checked", size0(DesktopRuntime::shutdown_checked)),
         (

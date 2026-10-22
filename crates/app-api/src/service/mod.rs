@@ -136,7 +136,7 @@ mod dome_connection_store;
 mod dome_connection_support;
 mod dome_host_ownership;
 mod dome_instance_support;
-pub(crate) use dome_instance_support::public_dome_topic;
+pub(crate) use dome_instance_support::{dome_instance_state_key, public_dome_topic};
 mod epoch_control_support;
 pub(crate) use epoch_control_support::{
     EPOCH_CONTROL_OUTBOX_PREFIX, PRIVATE_CHANNEL_PARTICIPANT_PAGE,
@@ -155,7 +155,7 @@ use game_projection_support::GameRoomProjectionLocks;
 #[cfg(test)]
 pub(crate) use hydration_support::hydrate_game_room_from_key;
 mod live_game_support;
-pub(crate) use live_game_support::DomeReadUnavailable;
+pub(crate) use live_game_support::{DomeReadUnavailable, dome_preset_state_key};
 mod account_sync_fetch;
 mod channel_sync_merge;
 mod metaverse_room_event_support;
