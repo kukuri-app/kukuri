@@ -143,6 +143,12 @@ author bucketとprivate bucketは、従来どおりローカルkey索引だけ�
   - 取り下げを反映した投稿は一覧に載せたまま、取り下げのrecordをExactで返す（一覧から除くと、既に投稿を持つ参加者が取り下げを知る手段がなくなる）。
 - 読み取り候補:
   - 公開topicの候補は、同じtopicのgossip neighbor（`topic_read_candidates`）とする。neighborが無いときだけ、全体の台帳から選ぶ。
+  - #1910（2026-10-23）: 直接のneighborが対象を持たなくても取得を打ち切らないため、候補はneighborと、neighborに紹介して
+    もらったその topic の peer（近隣の近隣。transportの`/kukuri/topic-peers/1`で、要求元を除く最大4件のendpoint IDと到達情報を
+    受け取る）を1つの集合として既存のcursorで回す（1窓は最大4、1要求の予算は変えない）。紹介で得た候補はtopicごとに8件・
+    10分で失効し、neighborになれば外す。紹介を求めるのはneighborが成立したとき（公開topicと公開スレッドのhint topicだけ。
+    private channel・DM・account同期では求めず、答えない）。紹介は保持の証明ではなく、読んだrecordは既存の検証を通す。
+    保持する端末を稼働時間・運営者・CLI/GUI・CN所属で優遇しない。
   - sessionのhintで読めなかったsession（候補の近隣にまだ持つ端末が無かった）は、leaseのtaskが前の読みから2・4・8秒後に読み直す（#1813）。
     読み直しは1件につき3回まで、待たせるのはtaskごとに16件までで、読めたら止める。
   - sessionの1回の読みは、locatorと各replicaを同じ候補に聞く（候補は読みごとに次の組へ回るので、読み直しは前の読みが外した近隣にも聞き、作った端末か先に読めた参加者に届く）。

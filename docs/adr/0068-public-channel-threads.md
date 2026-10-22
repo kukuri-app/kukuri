@@ -57,7 +57,7 @@ kukuri の channel は、招待や相互フォローで参加する private chan
 - channel の中の投稿・リアクション・取り下げの hint は、channel ごとの hint の topic（`hint/public-channel/<channel ID>`）に送る。rendezvous には公開の鍵を使う。この topic は topic の一覧・診断・CN の公開 topic の索引に出さない（`wire::is_non_public_topic`）。
 - 作成者は、作成を topic の hint の `SessionChanged`（種類 `public-channel`、`session_id` に channel ID）で知らせる。topic の lease を持つ端末は metadata を 1 件読んで一覧の行に置く（§6）。旧版は未知の種類として読まない。
 - 公開 channel の列は `Topic(topic)` と `PublicChannel(topic, channel)` の 2 つの lease を取る（[ADR 0055](0055-demand-owned-network-work.md) §1.1）。`PublicChannel` の task は channel の hint だけを購読し、topic の gossip の停止に従う。topic の lease だけの端末は channel の投稿を受け取らない。
-- channel のページと対象の取得は、channel の hint の近隣を先に、足りない分を topic の近隣で埋めて有界に読む（最大 4）。他の参加者が検証して保持した内容の提供（ADR 0054 §4、#1395）は topic の bucket に働くので、提供側の変更は要らない。保持する側は、書き手と同じ関数で §2 の索引を導く。
+- channel のページと対象の取得は、channel の hint の近隣を先に、足りない分を topic の近隣で埋めて有界に読む（最大 4）。どちらの近隣も、近隣に紹介してもらった同じ hint topic の peer を含む（#1910。[ADR 0054](0054-time-bucketed-docs-replicas.md) §4 の読み取り候補）。他の参加者が検証して保持した内容の提供（ADR 0054 §4、#1395）は topic の bucket に働くので、提供側の変更は要らない。保持する側は、書き手と同じ関数で §2 の索引を導く。
 
 ### 5. API
 

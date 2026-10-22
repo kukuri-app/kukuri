@@ -30,7 +30,7 @@ ts-rs = { workspace = true, optional = true }
 [features]
 # IPC 型の TypeScript 生成専用(codegen 時のみ有効。production ビルドは無影響)。
 ts = ["dep:ts-rs", "kukuri-core/ts", "kukuri-store/ts", "kukuri-transport/ts"]
-iroh-integration-tests = []
+iroh-integration-tests = ["kukuri-transport/test-support"]
 
 [dev-dependencies]
 sqlx.workspace = true

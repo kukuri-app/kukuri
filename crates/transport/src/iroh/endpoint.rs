@@ -66,11 +66,13 @@ impl IrohGossipTransport {
         connection_paths: GossipConnectionPaths,
     ) -> Self {
         let gossip = Gossip::builder().spawn(endpoint.clone());
+        let introductions = TopicPeerIntroductions::default();
         let router = Router::builder(endpoint.clone())
             .accept(GOSSIP_ALPN, gossip.clone())
+            .accept(TOPIC_PEERS_ALPN, introductions.clone())
             .spawn();
 
-        Self {
+        let transport = Self {
             receive_offer_instance: NEXT_RECEIVE_OFFER_TRANSPORT_INSTANCE
                 .fetch_add(1, Ordering::Relaxed),
             endpoint,
@@ -117,7 +119,8 @@ impl IrohGossipTransport {
             connection_paths,
             #[cfg(any(test, feature = "test-support"))]
             status_read_steps: Arc::new(AtomicU64::new(0)),
-        }
+        };
+        transport.with_topic_peer_introductions(introductions)
     }
 
     pub async fn bind_with_discovery(

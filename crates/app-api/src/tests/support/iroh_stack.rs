@@ -42,6 +42,33 @@ impl TestIrohStack {
         .await
     }
 
+    /// 取得した内容を remote cache に持つ端末(本番と同じ `with_account_store` の構成。#1395 の保持者)。
+    pub(crate) async fn new_with_remote_cache(
+        root: &std::path::Path,
+        store: Arc<SqliteStore>,
+    ) -> Self {
+        let stack = Self::new(root).await;
+        stack
+            ._node
+            .install_remote_cache(store.clone())
+            .expect("install the remote cache");
+        let docs_sync = Arc::new(IrohDocsSync::with_account_store(
+            stack._node.clone(),
+            store.clone(),
+            store.clone(),
+        ));
+        let blob_service = Arc::new(IrohBlobService::with_account_store(
+            stack._node.clone(),
+            store.clone(),
+            store,
+        ));
+        Self {
+            docs_sync,
+            blob_service,
+            ..stack
+        }
+    }
+
     pub(crate) async fn new_with_network_options(
         root: &std::path::Path,
         network_config: kukuri_transport::TransportNetworkConfig,
@@ -67,7 +94,8 @@ impl TestIrohStack {
                 relay_config.clone(),
             )
             .expect("transport")
-            .with_connection_paths(node.gossip_connection_paths()),
+            .with_connection_paths(node.gossip_connection_paths())
+            .with_topic_peer_introductions(node.topic_peer_introductions()),
         );
         let docs_sync = Arc::new(IrohDocsSync::new(node.clone()));
         let blob_service = Arc::new(IrohBlobService::new(node.clone()));

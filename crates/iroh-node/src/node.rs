@@ -212,6 +212,8 @@ pub struct IrohDocsNode {
     private_capabilities: PrivateCapabilities,
     fetch_peer_health: Arc<kukuri_transport::BlobPeerHealth>,
     receive_binding: ReceiveBindingSlot,
+    /// topic の近隣の紹介に答える handler（#1910）。transport が購読の状態を入れ、停止で外す。
+    topic_peer_introductions: kukuri_transport::TopicPeerIntroductions,
     account_transfer: AccountTransfer,
     pub(crate) dome_session: DomeSessionSlot,
     pub(crate) dome_session_connections: DomeSessionConnections,
@@ -566,6 +568,7 @@ impl IrohDocsNode {
             ))
         });
         let receive_binding = ReceiveBindingSlot::new(endpoint.id());
+        let topic_peer_introductions = kukuri_transport::TopicPeerIntroductions::default();
         let account_transfer = AccountTransfer::new(endpoint.clone());
         let remote_cache = Arc::new(OnceLock::new());
         let private_capabilities = PrivateCapabilities::default();
@@ -597,6 +600,10 @@ impl IrohDocsNode {
             .accept(iroh_docs::ALPN, docs.protocol.clone())
             .accept(iroh_gossip::ALPN, gossip.clone())
             .accept(RECEIVE_BINDING_ALPN, receive_binding.clone())
+            .accept(
+                kukuri_transport::TOPIC_PEERS_ALPN,
+                topic_peer_introductions.clone(),
+            )
             .accept(DOC_READ_ALPN, page_read)
             .accept(REMOTE_BLOB_ALPN, remote_blob)
             .accept(ACCOUNT_TRANSFER_ALPN, account_transfer.clone())
@@ -622,6 +629,7 @@ impl IrohDocsNode {
             private_capabilities,
             fetch_peer_health: Arc::new(kukuri_transport::BlobPeerHealth::default()),
             receive_binding,
+            topic_peer_introductions,
             account_transfer,
             dome_session,
             dome_session_connections: DomeSessionConnections::default(),
@@ -716,6 +724,11 @@ impl IrohDocsNode {
 
     pub fn gossip_connection_paths(&self) -> kukuri_transport::GossipConnectionPaths {
         self.gossip_connection_paths.clone()
+    }
+
+    /// topic の近隣の紹介に答える handler（#1910）。transport の組み立てで購読の状態を入れる。
+    pub fn topic_peer_introductions(&self) -> kukuri_transport::TopicPeerIntroductions {
+        self.topic_peer_introductions.clone()
     }
 
     pub fn discovery(&self) -> Arc<MemoryLookup> {
@@ -859,6 +872,7 @@ impl IrohDocsNode {
             .take();
         self.account_transfer.cancel();
         self.receive_binding.clear().await;
+        self.topic_peer_introductions.clear();
         self.dome_session.install(None);
         self.media.install(None);
         // Flush before the router invokes BlobsProtocol::shutdown. A later
