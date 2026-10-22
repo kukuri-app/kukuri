@@ -380,7 +380,6 @@ impl AppService {
                     attempt.fail();
                     return;
                 };
-                let text = String::from_utf8_lossy(&bytes).to_string();
                 let _save_access = services.content_save_access.lock().await;
                 if !services
                     .content_scope_is_current(&topic_id, &channel_id, scope_generation)
@@ -389,37 +388,7 @@ impl AppService {
                     attempt.defer();
                     return;
                 }
-                let stored = async {
-                    let projection_store = services.projection_store.as_ref();
-                    // 取得を待つ間に取り下げや更新が入った行は書き戻さない。
-                    if projection_store
-                        .get_post_withdrawal(&object_id)
-                        .await?
-                        .is_some()
-                    {
-                        return Ok::<_, anyhow::Error>(());
-                    }
-                    let Some(mut current) =
-                        projection_store.get_object_projection(&object_id).await?
-                    else {
-                        return Ok(());
-                    };
-                    let same_body = matches!(
-                        &current.payload_ref,
-                        PayloadRef::BlobText { hash: current_hash, .. } if *current_hash == hash
-                    );
-                    if current.content.is_none() && same_body {
-                        let stored = services
-                            .blob_service
-                            .put_remote_blob(bytes, "text/plain")
-                            .await?;
-                        anyhow::ensure!(stored.hash == hash, "recovered body hash changed");
-                        current.content = Some(text);
-                        services.put_post_projection(current).await?;
-                    }
-                    Ok(())
-                }
-                .await;
+                let stored = store_recovered_body(&services, &object_id, &hash, bytes).await;
                 match stored {
                     Ok(()) => attempt.succeed(),
                     Err(error) => {
@@ -724,4 +693,40 @@ pub(crate) fn session_replica_channel(replica: &ReplicaId) -> Option<String> {
         return None;
     }
     kukuri_docs_sync::private_channel_epoch_of(replica).map(|(channel, _)| channel)
+}
+
+/// 取り直した本文を、行がまだ同じ本文を欠いているときだけ cache へ置いて行へ反映する(#1225)。取得を待つ間に取り下げや
+/// 更新が入った行は書き戻さない。呼び出し側は、保存の lock と scope の世代を確かめてから呼ぶ。
+pub(crate) async fn store_recovered_body(
+    services: &ServiceHandles,
+    object_id: &EnvelopeId,
+    hash: &kukuri_core::BlobHash,
+    bytes: Vec<u8>,
+) -> Result<()> {
+    let projection_store = services.projection_store.as_ref();
+    if projection_store
+        .get_post_withdrawal(object_id)
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let Some(mut current) = projection_store.get_object_projection(object_id).await? else {
+        return Ok(());
+    };
+    let same_body = matches!(
+        &current.payload_ref,
+        PayloadRef::BlobText { hash: current_hash, .. } if current_hash == hash
+    );
+    if current.content.is_none() && same_body {
+        let text = String::from_utf8_lossy(&bytes).to_string();
+        let stored = services
+            .blob_service
+            .put_remote_blob(bytes, "text/plain")
+            .await?;
+        anyhow::ensure!(stored.hash == *hash, "recovered body hash changed");
+        current.content = Some(text);
+        services.put_post_projection(current).await?;
+    }
+    Ok(())
 }

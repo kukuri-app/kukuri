@@ -119,9 +119,12 @@ pub struct MemoryStore {
 
 #[derive(Default)]
 struct MemoryTopicRetention {
-    topics: BTreeMap<String, i64>,
+    /// topic → (保持を始めた時刻, 諦めた数)。
+    topics: BTreeMap<String, (i64, u64)>,
     /// (topic, 索引, bucket) → (時刻, object id)。
     cursors: BTreeMap<(String, String, u64), (i64, String)>,
+    /// (topic, 種類, object id) → (bucket, 回数, 期限)。
+    retries: BTreeMap<(String, String, String), (u64, u32, i64)>,
 }
 
 impl MemoryStore {

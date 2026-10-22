@@ -186,6 +186,18 @@ impl AppService {
         Ok(Some(length))
     }
 
+    /// 投稿の添付を取らないか(成人向けで表示設定が OFF、取り下げた投稿、行に無い添付)。公開 topic の保持(#1909)が使う。
+    pub(crate) async fn post_media_withheld(
+        &self,
+        hash: &kukuri_core::BlobHash,
+        object_id: &str,
+    ) -> Result<bool> {
+        Ok(self
+            .media_access_for_post(hash, Some(object_id))
+            .await?
+            .is_none())
+    }
+
     async fn media_access_for_post(
         &self,
         hash: &kukuri_core::BlobHash,

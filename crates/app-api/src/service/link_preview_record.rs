@@ -167,11 +167,31 @@ impl AppService {
         object_id: &str,
         url: &str,
     ) -> Result<Option<LinkPreviewRecordView>> {
-        let object_id = EnvelopeId::from(object_id);
+        let found = self
+            .read_link_preview(&EnvelopeId::from(object_id), Some(url))
+            .await?;
+        Ok(
+            found.map(|(content, image_data_url)| LinkPreviewRecordView {
+                url: content.url,
+                source_label: content.site_name,
+                title: content.title,
+                description: content.description,
+                image_data_url,
+            }),
+        )
+    }
+
+    /// `link_preview_record` の本体。検証した record と、取れた画像の data URL を返す。`url` が無ければ(公開 topic の保持。
+    /// #1909)、投稿の本文にある URL の record だけを受け入れる。
+    pub(crate) async fn read_link_preview(
+        &self,
+        object_id: &EnvelopeId,
+        url: Option<&str>,
+    ) -> Result<Option<(KukuriLinkPreviewContentV1, Option<String>)>> {
         let Some(row) = self
             .services
             .projection_store
-            .get_object_projection(&object_id)
+            .get_object_projection(object_id)
             .await?
         else {
             return Ok(None);
@@ -186,7 +206,7 @@ impl AppService {
         let _pending = reads.admit().context("link preview reads are busy")?;
         let _permit = reads.permits.acquire().await?;
         let replica = row.source_replica_id.clone();
-        let key = link_preview_key(&object_id);
+        let key = link_preview_key(object_id);
         let author = Pubkey::from(row.author_pubkey.as_str());
         let peers = self
             .hint_transport()
@@ -205,7 +225,8 @@ impl AppService {
             |source: Arc<dyn DocsSync>, policy| {
                 let (replica, docs_author, key) =
                     (replica.clone(), docs_author.clone(), key.clone());
-                let (object_id, author, url) = (object_id.clone(), author.clone(), url.to_string());
+                let (object_id, author) = (object_id.clone(), author.clone());
+                let (url, body) = (url.map(str::to_owned), row.content.clone());
                 async move {
                     let Some(record) = source
                         .query_replica_by_author(&replica, &docs_author, &key, policy)
@@ -216,6 +237,18 @@ impl AppService {
                     match serde_json::from_slice::<KukuriEnvelope>(&record.value)
                         .map_err(anyhow::Error::from)
                         .and_then(|envelope| {
+                            let url = match url {
+                                Some(url) => url,
+                                None => {
+                                    let content: KukuriLinkPreviewContentV1 =
+                                        serde_json::from_str(&envelope.content)?;
+                                    anyhow::ensure!(
+                                        body.is_some_and(|body| body.contains(&content.url)),
+                                        "link preview url is not in the post"
+                                    );
+                                    content.url
+                                }
+                            };
                             verify_link_preview(&envelope, &object_id, &author, &url)
                         }) {
                         Ok(content) => {
@@ -255,13 +288,7 @@ impl AppService {
             }
             None => None,
         };
-        Ok(Some(LinkPreviewRecordView {
-            url: content.url,
-            source_label: content.site_name,
-            title: content.title,
-            description: content.description,
-            image_data_url,
-        }))
+        Ok(Some((content, image_data_url)))
     }
 
     /// record が指す画像を、手元に保持していればそれを使い、無ければ record の bytes 数までだけ取得する。bytes 数と形式が

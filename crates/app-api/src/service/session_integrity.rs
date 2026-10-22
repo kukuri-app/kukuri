@@ -61,6 +61,20 @@ async fn learn_manifest_source(
     }
 }
 
+/// manifest を返した peer は、manifest が指す Dome の資材も持つと分かっている(候補の順序の手がかりだけ。#1909)。
+pub(crate) async fn learn_asset_sources(
+    docs_sync: &dyn DocsSync,
+    blob_service: &dyn BlobService,
+    assets: &[MetaverseAssetRef],
+) {
+    if let Some(provider) = docs_sync.remote_reader_id() {
+        for asset in assets {
+            let hash = kukuri_core::BlobHash::new(asset.blob_hash.clone());
+            let _ = blob_service.learn_content_source(&hash, &provider).await;
+        }
+    }
+}
+
 /// 新しく作る session id の末尾に置く、owner の pubkey の先頭の桁数(64 bit)。
 const OWNER_BOUND_ID_SUFFIX_LEN: usize = 16;
 /// 読む側が受け付ける最小の桁数。修正前の id(`short_id_suffix` の 8 桁)を通すための下限。
@@ -647,6 +661,9 @@ pub(crate) async fn inspect_game_room_record(
             }
             verified.relay = Some(relay);
             learn_manifest_source(docs_sync, blob_service, &current_manifest).await;
+            if let Some(metaverse) = &verified.manifest.metaverse {
+                learn_asset_sources(docs_sync, blob_service, &metaverse.asset_refs).await;
+            }
             match read_session_blob::<GameRoomManifestBlobV1>(
                 blob_service,
                 &current_manifest,

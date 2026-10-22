@@ -144,7 +144,7 @@ impl AppService {
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("source Dome instance not found"))?;
             let preset = self
-                .fetch_dome_preset_manifest(&record.preset_ref)
+                .fetch_dome_preset_manifest(&record.preset_ref, &record.target_context, false)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Dome Preset manifest is unavailable"))?;
             validate_dome_preset_manifest(&preset)?;

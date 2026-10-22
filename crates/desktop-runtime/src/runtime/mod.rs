@@ -661,9 +661,10 @@ impl DesktopRuntime {
             iroh_stack.blob_service.clone(),
             keys,
         );
-        // #1909: 公開 topic の保持は native の SQLite に置く(Web は保持しない)。
+        // #1909: 公開 topic の保持は native の SQLite に置く(Web は保持しない)。大きな blob は cache と同じ volume で受け取る。
         #[cfg(not(target_family = "wasm"))]
-        let services = services.with_topic_retention(sqlite.clone());
+        let services = services
+            .with_topic_retention(sqlite.clone(), db_path.with_extension("retention-staging"));
         let metaverse_budget = kukuri_core::MetaverseResourceBudgetConfig::from_json_override(
             std::env::var("KUKURI_METAVERSE_RESOURCE_BUDGET_JSON")
                 .ok()

@@ -115,8 +115,15 @@ holderは次の5種類だけで、同じkeyを複数のholderが持っても枠�
   続きの位置（`topic_retention_cursors`。前日より前のbucketの位置は消す）から古い順に読み、1回32件まで既存の反映の関数で取り込む
   （読み先はtopicの近隣の最大4台で、近隣がいなければpeerの台帳から選ぶ。読み先ごとの索引の読みと、対象1件の取り込みの
   期限は、それぞれ既存の30秒）。読み先のページが埋まったときは、そのページの最後より後ろを次の回へ残し、
-  `TIME_INDEX_FUTURE_ALLOWANCE_SECS`より未来の時刻のentryで位置を進めない。同じ対象の取り込みが3回続けて失敗したら飛ばす。
-  続きが残っていれば1秒後、追いついたら30秒後に次の回を行い、保持するtopicが無くなればtaskは終わる。公開スレッドの投稿は
+  `TIME_INDEX_FUTURE_ALLOWANCE_SECS`より未来の時刻のentryで位置を進めない。取り込んだ投稿は、本文・添付（画像・動画・
+  poster。成人向けは表示設定に従う）・リンクプレビュー・リアクション（投稿の日と翌日のbucketから32件と、customの画像）も取る。
+  現在と前日のbucketの`withdrawals/`・`reactions/`（1回512件）と`sessions/live/`・`sessions/game/`（種類ごとに新しい側から64件）の
+  keyは、反映していない版（keyとcontent hashの組。topic・bucket・prefixごとに、最後に読んだ一覧にある分だけ覚える）だけを読み、
+  保持している投稿への取り下げ・リアクションとsessionを反映する。Domeのsessionは、ownerの制御領域のInstance・hosting・Presetと
+  資材も保持する（ADR 0054 §4）。読めなかった記録と、取れなかったblobを持つ対象は保存済みと数えず、取り直しの予定
+  （`topic_retention_retries`。保持するすべてのtopicで合計4,096件、1分・10分・1時間・6時間・24時間の後に取り直し、5回で諦めて
+  `topic_retention.given_up`に数える）に入れて先へ進む（2026-10-22ユーザー判断）。1回の32件には、取り直しとkeyの反映も数える。
+  blob 1件の取得の期限は、60秒と、1MiB/sで間に合う長さの長い方。続きが残っていれば1秒後、追いついたら30秒後に次の回を行い、保持するtopicが無くなればtaskは終わる。公開スレッドの投稿は
   `channels/activity/`から見つけるので、公開スレッドの数に比例する購読もtaskも作らない。gossipを止めたtopicは取り込まない。
 - `unsubscribe_topic`はdesiredのholderだけを外す。列のholderは列（`set_scope_display`）だけが取り・外す
   （開いている列のtopic/channelは、列を閉じるまで購読を続ける）。参加も止めない。live退出は参加のholderだけを外す。

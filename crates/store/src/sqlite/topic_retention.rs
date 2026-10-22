@@ -1,7 +1,10 @@
 //! 保持する公開 topic と、取り込みの続きの位置（#1909）。どの読み書きも topic の主キーの範囲だけを読む。
 
 use super::*;
-use crate::{TopicRetentionCursor, TopicRetentionRow, TopicRetentionStore};
+use crate::{
+    RETENTION_RETRY_DELAYS_MS, RETENTION_RETRY_LIMIT, TopicRetentionCursor, TopicRetentionRetry,
+    TopicRetentionRow, TopicRetentionStore,
+};
 
 #[async_trait]
 impl TopicRetentionStore for SqliteStore {
@@ -19,14 +22,13 @@ impl TopicRetentionStore for SqliteStore {
 
     async fn release_topic(&self, topic_id: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query("DELETE FROM topic_retention_cursors WHERE topic_id = ?1")
-            .bind(topic_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM topic_retention WHERE topic_id = ?1")
-            .bind(topic_id)
-            .execute(&mut *tx)
-            .await?;
+        for query in [
+            "DELETE FROM topic_retention_cursors WHERE topic_id = ?1",
+            "DELETE FROM topic_retention_retries WHERE topic_id = ?1",
+            "DELETE FROM topic_retention WHERE topic_id = ?1",
+        ] {
+            sqlx::query(query).bind(topic_id).execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -105,5 +107,148 @@ impl TopicRetentionStore for SqliteStore {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    async fn schedule_topic_retention_retry(
+        &self,
+        topic_id: &str,
+        object_kind: &str,
+        object_id: &str,
+        bucket: u64,
+        now_ms: i64,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let retained = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM topic_retention WHERE topic_id = ?1",
+        )
+        .bind(topic_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if retained == 0 {
+            return Ok(());
+        }
+        let attempts = sqlx::query_scalar::<_, i64>(
+            "SELECT attempts FROM topic_retention_retries \
+             WHERE topic_id = ?1 AND object_kind = ?2 AND object_id = ?3",
+        )
+        .bind(topic_id)
+        .bind(object_kind)
+        .bind(object_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let next = match attempts {
+            Some(attempts) => Some(usize::try_from(attempts)?),
+            // 予定の合計は上限つきなので、数え上げの手間も上限つき。
+            None if usize::try_from(
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM topic_retention_retries")
+                    .fetch_one(&mut *tx)
+                    .await?,
+            )? >= RETENTION_RETRY_LIMIT =>
+            {
+                None
+            }
+            None => Some(0),
+        }
+        .filter(|done| *done < RETENTION_RETRY_DELAYS_MS.len());
+        match next {
+            Some(done) => {
+                sqlx::query(
+                    "INSERT INTO topic_retention_retries \
+                     (topic_id, object_kind, object_id, bucket, attempts, next_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                     ON CONFLICT(topic_id, object_kind, object_id) DO UPDATE SET \
+                     bucket = excluded.bucket, attempts = excluded.attempts, next_at = excluded.next_at",
+                )
+                .bind(topic_id)
+                .bind(object_kind)
+                .bind(object_id)
+                .bind(i64::try_from(bucket)?)
+                .bind(i64::try_from(done + 1)?)
+                .bind(now_ms.saturating_add(RETENTION_RETRY_DELAYS_MS[done]))
+                .execute(&mut *tx)
+                .await?;
+            }
+            None => {
+                sqlx::query(
+                    "DELETE FROM topic_retention_retries \
+                     WHERE topic_id = ?1 AND object_kind = ?2 AND object_id = ?3",
+                )
+                .bind(topic_id)
+                .bind(object_kind)
+                .bind(object_id)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query(
+                    "UPDATE topic_retention SET given_up = given_up + 1 WHERE topic_id = ?1",
+                )
+                .bind(topic_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn due_topic_retention_retries(
+        &self,
+        topic_id: &str,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<TopicRetentionRetry>> {
+        let rows = sqlx::query(
+            "SELECT object_kind, object_id, bucket, attempts FROM topic_retention_retries \
+             WHERE topic_id = ?1 AND next_at <= ?2 ORDER BY next_at LIMIT ?3",
+        )
+        .bind(topic_id)
+        .bind(now_ms)
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|row| {
+                Ok(TopicRetentionRetry {
+                    object_kind: row.try_get("object_kind")?,
+                    object_id: row.try_get("object_id")?,
+                    bucket: u64::try_from(row.try_get::<i64, _>("bucket")?)?,
+                    attempts: u32::try_from(row.try_get::<i64, _>("attempts")?)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn finish_topic_retention_retry(
+        &self,
+        topic_id: &str,
+        object_kind: &str,
+        object_id: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "DELETE FROM topic_retention_retries \
+             WHERE topic_id = ?1 AND object_kind = ?2 AND object_id = ?3",
+        )
+        .bind(topic_id)
+        .bind(object_kind)
+        .bind(object_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn topic_retention_retry_counts(&self, topic_id: &str) -> Result<(u64, u64)> {
+        let pending = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM topic_retention_retries WHERE topic_id = ?1",
+        )
+        .bind(topic_id)
+        .fetch_one(&self.pool)
+        .await?;
+        let given_up = sqlx::query_scalar::<_, i64>(
+            "SELECT given_up FROM topic_retention WHERE topic_id = ?1",
+        )
+        .bind(topic_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .unwrap_or(0);
+        Ok((u64::try_from(pending)?, u64::try_from(given_up)?))
     }
 }

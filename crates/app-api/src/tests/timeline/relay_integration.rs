@@ -4,7 +4,7 @@ use super::remote_reader_integration::ScopedReadHints;
 use kukuri_core::AssetRef;
 use kukuri_docs_sync::{BucketReplica, BucketScope, TimeBucket};
 
-fn seed(node: &kukuri_iroh_node::IrohDocsNode) -> SeedPeer {
+pub(super) fn seed(node: &kukuri_iroh_node::IrohDocsNode) -> SeedPeer {
     let socket = node
         .endpoint()
         .bound_sockets()
@@ -17,22 +17,22 @@ fn seed(node: &kukuri_iroh_node::IrohDocsNode) -> SeedPeer {
     }
 }
 
-fn ticket(node: &kukuri_iroh_node::IrohDocsNode) -> String {
+pub(super) fn ticket(node: &kukuri_iroh_node::IrohDocsNode) -> String {
     let peer = seed(node);
     format!("{}@{}", peer.endpoint_id, peer.addr_hint.expect("socket"))
 }
 
 /// 投稿者 A。自分の bucket へ書き、後でオフラインになる。
-struct Author {
-    node: Arc<kukuri_iroh_node::IrohDocsNode>,
-    docs: kukuri_docs_sync::IrohDocsSync,
-    blobs: IrohBlobService,
-    keys: KukuriKeys,
+pub(super) struct Author {
+    pub(super) node: Arc<kukuri_iroh_node::IrohDocsNode>,
+    pub(super) docs: kukuri_docs_sync::IrohDocsSync,
+    pub(super) blobs: IrohBlobService,
+    pub(super) keys: KukuriKeys,
     docs_author: String,
 }
 
 impl Author {
-    async fn new() -> Result<Self> {
+    pub(super) async fn new() -> Result<Self> {
         let node = kukuri_iroh_node::IrohDocsNode::memory().await?;
         let docs = kukuri_docs_sync::IrohDocsSync::new(node.clone());
         let keys = generate_keys();
@@ -181,23 +181,31 @@ impl Author {
             .await
     }
 
-    async fn go_offline(self) -> Result<()> {
+    pub(super) async fn go_offline(self) -> Result<()> {
         self.docs.shutdown().await;
         self.node.shutdown().await
     }
 }
 
-/// 取得した内容を remote cache に持つ参加者(本番と同じ `with_account_store` の構成)。
-struct Relay {
-    node: Arc<kukuri_iroh_node::IrohDocsNode>,
+/// 取得した内容を remote cache に持つ参加者(本番と同じ `with_account_store` の構成。公開 topic の保持も設定できる)。
+pub(super) struct Relay {
+    pub(super) node: Arc<kukuri_iroh_node::IrohDocsNode>,
     docs: Arc<kukuri_docs_sync::IrohDocsSync>,
-    app: AppService,
+    pub(super) app: AppService,
 }
 
 impl Relay {
-    async fn new(hints: Arc<dyn HintTransport>) -> Result<Self> {
+    pub(super) async fn new(hints: Arc<dyn HintTransport>) -> Result<Self> {
+        Self::with_store(hints, SqliteStore::connect_memory().await?).await
+    }
+
+    /// `store` を保存先にする参加者(file の SQLite なら、大きな blob を file の cache に置ける)。
+    pub(super) async fn with_store(
+        hints: Arc<dyn HintTransport>,
+        store: SqliteStore,
+    ) -> Result<Self> {
         let node = kukuri_iroh_node::IrohDocsNode::memory().await?;
-        let store = Arc::new(SqliteStore::connect_memory().await?);
+        let store = Arc::new(store);
         node.install_remote_cache(store.clone())?;
         let docs = Arc::new(kukuri_docs_sync::IrohDocsSync::with_account_store(
             node.clone(),
@@ -213,19 +221,24 @@ impl Relay {
         let keys = generate_keys();
         docs.use_account_docs_author(&keys.derive_docs_author_seed(), &keys.public_key_hex())
             .await?;
-        let app = app_service_from_dependencies(
-            store.clone(),
-            store,
-            Arc::new(StaticTransport::new(PeerSnapshot::default())),
-            hints,
-            docs.clone(),
-            blobs,
-            keys,
+        let staging =
+            std::env::temp_dir().join(format!("kukuri-retention-{}", keys.public_key_hex()));
+        let app = AppService::from_handles(
+            ServiceHandles::new(
+                store.clone(),
+                store.clone(),
+                Arc::new(StaticTransport::new(PeerSnapshot::default())),
+                hints,
+                docs.clone(),
+                blobs,
+                keys,
+            )
+            .with_topic_retention(store, staging),
         );
         Ok(Self { node, docs, app })
     }
 
-    async fn finish(self) -> Result<()> {
+    pub(super) async fn finish(self) -> Result<()> {
         self.app.shutdown().await;
         self.docs.shutdown().await;
         self.node.shutdown().await
@@ -273,7 +286,7 @@ async fn later_reader_lists_an_offline_authors_posts_from_a_topic_peer() -> Resu
 
 /// 条件が成り立つまで待つ。本文の取り直しは背景で進み、照合済みの範囲の読み直しは同じ提供者に対して
 /// `RANGE_CHECK_INTERVAL_MS`(30 秒)の間隔を置くので、その 2 倍まで待つ。
-async fn eventually<F, Fut>(mut check: F) -> Result<bool>
+pub(super) async fn eventually<F, Fut>(mut check: F) -> Result<bool>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<bool>>,
@@ -790,7 +803,7 @@ async fn a_visitor_keeps_its_own_dome_chat_history() -> Result<()> {
 }
 
 /// 同じ topic の neighbor を途中で入れ替えられる hint(neighbor は時間とともに変わる)。
-struct ChangingNeighbors(std::sync::Mutex<Vec<SeedPeer>>);
+pub(super) struct ChangingNeighbors(pub(super) std::sync::Mutex<Vec<SeedPeer>>);
 
 #[async_trait]
 impl HintTransport for ChangingNeighbors {

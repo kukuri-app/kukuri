@@ -17,19 +17,31 @@ use kukuri_docs_sync::{BucketReplica, BucketScope, TimeBucket};
 const DOME_LOCATOR_PREFIX: &str = "metaverse/dome-locators";
 const LAYOUT_COMMIT_PREFIX: &str = "metaverse/dome-layout-commits";
 
+/// 公開 topic の Dome なら、その topic。Dome の記録の読み先に topic の参加者を入れる(#1909)。
+pub(crate) fn public_dome_topic(context: &SpatialContextV1) -> Option<&str> {
+    matches!(context, SpatialContextV1::Topic { .. }).then(|| context.topic_id().as_str())
+}
+
 /// owner の制御領域の、Dome Instance の現在値の key。instance の id は context と owner から決まる(#1221 R5-H)。
 fn dome_instance_state_key(instance_id: &str) -> String {
     stable_key("metaverse/dome-instances", &format!("{instance_id}/state"))
 }
 
-/// 署名済み envelope の Dome Instance と、署名された content(manifest blob と同じ bytes)の hash。
+/// 署名済み envelope の Dome Instance と、署名された content(manifest blob と同じ bytes)の hash と、envelope の
+/// record を書いた docs author。
 async fn load_signed_dome_instance_manifest(
     docs_sync: &dyn DocsSync,
     replica: &ReplicaId,
     envelope_id: &EnvelopeId,
     owner_pubkey: &Pubkey,
     policy: DocFetchPolicy,
-) -> Result<Option<(DomeInstanceManifestV1, kukuri_core::BlobHash)>> {
+) -> Result<
+    Option<(
+        DomeInstanceManifestV1,
+        kukuri_core::BlobHash,
+        Option<String>,
+    )>,
+> {
     let key = stable_key("envelopes", envelope_id.as_str());
     let records = docs_sync
         .query_replica_exact_bounded(
@@ -60,6 +72,7 @@ async fn load_signed_dome_instance_manifest(
                 return Ok(Some((
                     manifest,
                     kukuri_core::blob_hash(envelope.content.as_bytes()),
+                    record.docs_author,
                 )));
             }
             Err(error) => {
@@ -68,6 +81,84 @@ async fn load_signed_dome_instance_manifest(
         }
     }
     Ok(None)
+}
+
+/// 1 つの読み先が返す Dome Instance のうち検証に通る最も新しい版と、その state と envelope の record を書いた docs author。
+type ReadDomeInstance = (
+    DomeInstanceStateDocV1,
+    DomeInstanceManifestV1,
+    Option<String>,
+    Option<String>,
+);
+
+async fn newest_dome_instance(
+    docs: &dyn DocsSync,
+    replica: &ReplicaId,
+    key: &str,
+    owner_pubkey: &Pubkey,
+    policy: DocFetchPolicy,
+) -> Result<Option<ReadDomeInstance>> {
+    let records = docs
+        .query_replica_exact_bounded(replica, key, MAX_ENVELOPE_RECORDS_PER_OBJECT, policy)
+        .await?;
+    let mut newest: Option<ReadDomeInstance> = None;
+    let mut unavailable = None;
+    for record in records {
+        let state = match serde_json::from_slice::<DomeInstanceStateDocV1>(&record.value) {
+            Ok(state) => state,
+            Err(error) => {
+                warn!(replica = %replica.as_str(), key, %error, "ignored an unreadable Dome Instance state");
+                continue;
+            }
+        };
+        if state.owner_pubkey != *owner_pubkey {
+            warn!(replica = %replica.as_str(), key, "ignored a Dome Instance state with a mismatched owner");
+            continue;
+        }
+        // manifest は owner が署名した envelope の content から読む(manifest blob と同じ bytes。hash で照合する)。
+        // blob を別の経路で取りに行かない(#1221 R5-H: 取得の失敗・cooldown で、読めた Instance を欠けさせない)。
+        let Some((manifest, signed_hash, envelope_author)) = load_signed_dome_instance_manifest(
+            docs,
+            replica,
+            &state.last_envelope_id,
+            &state.owner_pubkey,
+            policy,
+        )
+        .await?
+        else {
+            unavailable = Some(DomeReadUnavailable::Envelope);
+            continue;
+        };
+        if signed_hash != state.current_manifest.hash {
+            warn!(replica = %replica.as_str(), key, "ignored a Dome Instance state that does not match its signed manifest");
+            continue;
+        }
+        if let Err(error) = kukuri_core::validate_dome_instance_manifest(&manifest) {
+            warn!(replica = %replica.as_str(), key, %error, "ignored an invalid Dome Instance manifest");
+            continue;
+        }
+        if state.instance_id != manifest.instance_id
+            || state.owner_pubkey != manifest.owner_pubkey
+            || state.spatial_context != manifest.spatial_context
+            || state.generation != manifest.generation
+            || state.status != manifest.status
+        {
+            warn!(replica = %replica.as_str(), key, "ignored a Dome Instance state that does not match its manifest");
+            continue;
+        }
+        if newest.as_ref().is_none_or(|(_, current, _, _)| {
+            (manifest.generation, manifest.updated_at) > (current.generation, current.updated_at)
+        }) {
+            newest = Some((state, manifest, record.docs_author, envelope_author));
+        }
+    }
+    match newest {
+        Some(value) => Ok(Some(value)),
+        None => match unavailable {
+            Some(reason) => Err(reason.into()),
+            None => Ok(None),
+        },
+    }
 }
 
 impl AppService {
@@ -142,11 +233,23 @@ impl AppService {
         spatial_context: &SpatialContextV1,
         owner_pubkey: &Pubkey,
     ) -> Result<Option<(DomeInstanceStateDocV1, DomeInstanceManifestV1)>> {
+        self.fetch_dome_instance_manifest_kept(spatial_context, owner_pubkey, false)
+            .await
+    }
+
+    /// `keep` なら、remote から読んで検証した Instance の state と署名済み envelope の record を保持し、他の参加者へ
+    /// 提供する(公開 topic の保持。#1909)。
+    pub(crate) async fn fetch_dome_instance_manifest_kept(
+        &self,
+        spatial_context: &SpatialContextV1,
+        owner_pubkey: &Pubkey,
+        keep: bool,
+    ) -> Result<Option<(DomeInstanceStateDocV1, DomeInstanceManifestV1)>> {
         let key = dome_instance_state_key(&dome_instance_id(spatial_context, owner_pubkey));
         self.read_dome_record(spatial_context, owner_pubkey, |docs, replica, policy| {
             let key = &key;
             async move {
-                self.read_dome_instance(docs.as_ref(), &replica, key, owner_pubkey, policy)
+                self.read_dome_instance(docs.as_ref(), &replica, key, owner_pubkey, policy, keep)
                     .await
             }
         })
@@ -160,69 +263,48 @@ impl AppService {
         key: &str,
         owner_pubkey: &Pubkey,
         policy: DocFetchPolicy,
+        keep: bool,
     ) -> Result<Option<(DomeInstanceStateDocV1, DomeInstanceManifestV1)>> {
-        let records = docs
-            .query_replica_exact_bounded(replica, key, MAX_ENVELOPE_RECORDS_PER_OBJECT, policy)
-            .await?;
-        let mut newest: Option<(DomeInstanceStateDocV1, DomeInstanceManifestV1)> = None;
-        let mut unavailable = None;
-        for record in records {
-            let state = match serde_json::from_slice::<DomeInstanceStateDocV1>(&record.value) {
-                Ok(state) => state,
-                Err(error) => {
-                    warn!(replica = %replica.as_str(), key, %error, "ignored an unreadable Dome Instance state");
-                    continue;
-                }
-            };
-            if state.owner_pubkey != *owner_pubkey {
-                warn!(replica = %replica.as_str(), key, "ignored a Dome Instance state with a mismatched owner");
-                continue;
-            }
-            // manifest は owner が署名した envelope の content から読む(manifest blob と同じ bytes。hash で照合する)。
-            // blob を別の経路で取りに行かない(#1221 R5-H: 取得の失敗・cooldown で、読めた Instance を欠けさせない)。
-            let Some((manifest, signed_hash)) = load_signed_dome_instance_manifest(
-                docs,
+        // 保持の読み(#1909)は、手元に保持した版で済ませず読み先から読む。
+        if keep && policy == DocFetchPolicy::LocalOnly {
+            return Ok(None);
+        }
+        let Some((state, manifest, state_author, envelope_author)) =
+            newest_dome_instance(docs, replica, key, owner_pubkey, policy).await?
+        else {
+            return Ok(None);
+        };
+        if keep {
+            // 手元に保持した版(他の名義の record を含む)より古い版で上書きしない。保持した版を返す。
+            let held = newest_dome_instance(
+                &LocalSourceReader {
+                    docs: self.services.docs_sync.clone(),
+                    replica: replica.clone(),
+                },
                 replica,
-                &state.last_envelope_id,
-                &state.owner_pubkey,
-                policy,
+                key,
+                owner_pubkey,
+                DocFetchPolicy::LocalOnly,
             )
-            .await?
-            else {
-                unavailable = Some(DomeReadUnavailable::Envelope);
-                continue;
-            };
-            if signed_hash != state.current_manifest.hash {
-                warn!(replica = %replica.as_str(), key, "ignored a Dome Instance state that does not match its signed manifest");
-                continue;
-            }
-            if let Err(error) = kukuri_core::validate_dome_instance_manifest(&manifest) {
-                warn!(replica = %replica.as_str(), key, %error, "ignored an invalid Dome Instance manifest");
-                continue;
-            }
-            if state.instance_id != manifest.instance_id
-                || state.owner_pubkey != manifest.owner_pubkey
-                || state.spatial_context != manifest.spatial_context
-                || state.generation != manifest.generation
-                || state.status != manifest.status
+            .await
+            .ok()
+            .flatten();
+            if let Some((held_state, held, _, _)) = held
+                && (held.generation, held.updated_at) > (manifest.generation, manifest.updated_at)
             {
-                warn!(replica = %replica.as_str(), key, "ignored a Dome Instance state that does not match its manifest");
-                continue;
+                return Ok(Some((held_state, held)));
             }
-            if newest.as_ref().is_none_or(|(_, current)| {
-                (manifest.generation, manifest.updated_at)
-                    > (current.generation, current.updated_at)
-            }) {
-                newest = Some((state, manifest));
-            }
+            docs.persist_verified_record(replica, key, state_author.as_deref(), &[])
+                .await?;
+            docs.persist_verified_record(
+                replica,
+                &stable_key("envelopes", state.last_envelope_id.as_str()),
+                envelope_author.as_deref(),
+                &[],
+            )
+            .await?;
         }
-        match newest {
-            Some(value) => Ok(Some(value)),
-            None => match unavailable {
-                Some(reason) => Err(reason.into()),
-                None => Ok(None),
-            },
-        }
+        Ok(Some((state, manifest)))
     }
 
     /// instance の id の Dome Instance。owner は `dome_instance_owner` で導く(旧 replica の session は読まない。
@@ -366,10 +448,10 @@ impl AppService {
             (None, SpatialContextV1::Topic { .. }) => {
                 let author = author_replica_id(owner.as_str());
                 let key = dome_instance_state_key(instance_id);
-                self.read_author_object(owner.as_str(), |docs, policy| {
+                self.read_author_object(owner.as_str(), Some(topic), |docs, policy| {
                     let (author, key) = (&author, &key);
                     async move {
-                        self.read_dome_instance(docs.as_ref(), author, key, owner, policy)
+                        self.read_dome_instance(docs.as_ref(), author, key, owner, policy, false)
                             .await
                     }
                 })
@@ -460,9 +542,11 @@ impl AppService {
         else {
             let author = author_replica_id(owner.as_str());
             return self
-                .read_author_object(owner.as_str(), |docs, policy| {
-                    read(docs, author.clone(), policy)
-                })
+                .read_author_object(
+                    owner.as_str(),
+                    Some(context.topic_id().as_str()),
+                    |docs, policy| read(docs, author.clone(), policy),
+                )
                 .await;
         };
         for anchor in self

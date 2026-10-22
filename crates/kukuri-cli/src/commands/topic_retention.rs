@@ -47,6 +47,10 @@ fn integer() -> Value {
     json!({"type": "integer"})
 }
 
+fn count() -> Value {
+    json!({"type": "integer", "minimum": 0})
+}
+
 fn input(name: &str) -> Value {
     match name {
         "set_topic_retention" => object(
@@ -67,12 +71,14 @@ fn output(name: &str) -> Value {
                     "topic": string(),
                     "retained_at": integer(),
                     "progress": array(object(
-                        json!({"index": string(), "bucket": {"type": "integer", "minimum": 0},
+                        json!({"index": string(), "bucket": count(),
                             "created_at": integer(), "object_id": string()}),
                         &["index", "bucket", "created_at", "object_id"],
                     )),
+                    "pending_retries": count(),
+                    "given_up": count(),
                 }),
-                &["topic", "retained_at", "progress"],
+                &["topic", "retained_at", "progress", "pending_retries", "given_up"],
             ))}),
             &["topics"],
         ),

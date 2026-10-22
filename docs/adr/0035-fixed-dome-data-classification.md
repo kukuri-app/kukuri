@@ -62,3 +62,6 @@ Metaverseは実験機能であるため、既存の`world_version = 1` / `2`形�
 - fixed geometryは`fixed_dome_v1` resolverから再構築し、manifestへmeshや寸法を複製しない。
 - 既存の実験用Metaverse roomは読み込み対象外となり、再作成が必要になる。
 - room一覧projectionは既存のgame room read modelを継続利用するが、Preset / Instance authorityとowner slot一意性はADR 0036の専用stateで判定する。
+- #1909（2026-10-22）: 公開topicのDomeのInstance・Preset・hostingの記録は、ownerの署名を検証した同じtopicの参加者（公開topicを保持する
+  端末など）も保持して返す。読む側は、owner本人の宛先の次にtopicの参加者を読み先に入れ、manifestを返したpeerを資材の取得候補に入れる
+  （ADR 0054 §4）。ownerがオフラインでも、Domeの一覧の行と資材を読める。privateのcontextのDomeは保持しない。

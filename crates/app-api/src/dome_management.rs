@@ -89,7 +89,7 @@ impl AppService {
             return Ok(None);
         }
         let preset = self
-            .fetch_dome_preset_manifest(&instance.preset_ref)
+            .fetch_dome_preset_manifest(&instance.preset_ref, context, false)
             .await?;
         // 自分の Dome は Preset が読めなくても管理のために出す。他人の Dome は Preset が読めるときだけ出す。
         if preset.is_none() && *owner != self.services.keys.public_key() {

@@ -136,6 +136,7 @@ mod dome_connection_store;
 mod dome_connection_support;
 mod dome_host_ownership;
 mod dome_instance_support;
+pub(crate) use dome_instance_support::public_dome_topic;
 mod epoch_control_support;
 pub(crate) use epoch_control_support::{
     EPOCH_CONTROL_OUTBOX_PREFIX, PRIVATE_CHANNEL_PARTICIPANT_PAGE,
@@ -209,7 +210,7 @@ pub(crate) use scope_leases::{
 mod shutdown_support;
 mod subscription_registry;
 mod timeline_subscription_support;
-pub(crate) use timeline_subscription_support::session_replica_channel;
+pub(crate) use timeline_subscription_support::{session_replica_channel, store_recovered_body};
 mod timeline_view_support;
 
 pub use errors::PrivateChannelControllerPending;
@@ -286,8 +287,8 @@ pub(crate) use public_notification_offer_support::PublicNotificationSource;
 pub(crate) use reaction_integrity::{ReactionKey, VerifiedReaction, load_verified_reaction};
 pub(crate) use session_integrity::dome_instance_id;
 pub(crate) use session_integrity::{
-    SessionRelay, VerifiedGameRoom, VerifiedLiveSession, load_verified_game_room,
-    load_verified_live_session, owner_bound_id_suffix,
+    SessionRelay, VerifiedGameRoom, VerifiedLiveSession, learn_asset_sources,
+    load_verified_game_room, load_verified_live_session, owner_bound_id_suffix,
 };
 #[cfg(test)]
 pub(crate) use session_integrity::{verify_game_room_record, verify_live_session_record};
@@ -411,7 +412,7 @@ pub struct ServiceHandles {
     /// 検証済みのリアクションを手元へ反映したときの、新しい版の行(#1841)。同じ版の置き直しと古い版は送らない。
     pub(crate) reaction_changes: ReactionChanges,
     /// 保持する公開 topic と取り込みの続きの位置(#1909)。native の runtime が入れる。無ければ保持の操作は失敗する。
-    pub(crate) topic_retention: Option<Arc<dyn TopicRetentionStore>>,
+    pub(crate) topic_retention: Option<crate::topic_retention::TopicRetentionHandles>,
 }
 
 pub(crate) type ReactionChanges = tokio::sync::broadcast::Sender<ReactionProjectionRow>;
@@ -594,12 +595,6 @@ impl ServiceHandles {
             reaction_changes: tokio::sync::broadcast::channel(64).0,
             topic_retention: None,
         }
-    }
-
-    /// 公開 topic の保持(#1909)の設定と続きの位置を置く store。CLI daemon の native の runtime が入れる。
-    pub fn with_topic_retention(mut self, store: Arc<dyn TopicRetentionStore>) -> Self {
-        self.topic_retention = Some(store);
-        self
     }
 }
 
