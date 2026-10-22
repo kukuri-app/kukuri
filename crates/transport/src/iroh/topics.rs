@@ -247,7 +247,7 @@ impl IrohGossipTransport {
     ) -> Result<Vec<SeedPeer>> {
         // 購読(`subscribe_hints`)と同じ hint topic の状態を読む(#1221 R5-H)。
         let hint_topic = kukuri_core::wire::hint_topic_id(topic);
-        let Some((neighbors, cursor, closed)) = self
+        let Some((neighbors, cursor, closed, introduced)) = self
             .topic_states
             .lock()
             .await
@@ -257,6 +257,7 @@ impl IrohGossipTransport {
                     Arc::clone(&state.neighbors),
                     Arc::clone(&state.read_cursor),
                     Arc::clone(&state.closed),
+                    state.introductions.introduced(),
                 )
             })
         else {
@@ -265,14 +266,24 @@ impl IrohGossipTransport {
         if closed.load(Ordering::Acquire) {
             return Ok(Vec::new());
         }
+        // 直接の近隣と、近隣に紹介してもらった候補を 1 つの集合として回す(#1910)。
         let neighbors = neighbors.read().await;
+        let introduced = introduced
+            .lock()
+            .await
+            .live(&neighbors, n0_future::time::Instant::now());
+        let mut pool = neighbors.clone();
+        pool.extend(introduced.iter().map(|peer| peer.endpoint_id.clone()));
         let mut cursor = cursor.lock().await;
-        let ids = topic_read_window(&neighbors, &mut cursor);
+        let ids = topic_read_window(&pool, &mut cursor);
         Ok(ids
             .into_iter()
             .map(|endpoint_id| SeedPeer {
+                addr_hint: introduced
+                    .iter()
+                    .find(|peer| peer.endpoint_id == endpoint_id)
+                    .and_then(|peer| peer.addr_hint.clone()),
                 endpoint_id,
-                addr_hint: None,
             })
             .collect())
     }
@@ -547,6 +558,13 @@ impl IrohGossipTransport {
         let joined_task_notify = Arc::clone(&joined_notify);
         let neighbors = Arc::new(RwLock::new(BTreeSet::new()));
         let neighbors_task = Arc::clone(&neighbors);
+        let introductions = super::topic_introductions::TopicIntroductions::new(
+            self.endpoint.clone(),
+            self.bootstrap_candidates(),
+            topic.as_str().to_string(),
+            Arc::clone(&neighbors),
+        );
+        let introductions_task = introductions.clone();
         let last_received_at = Arc::new(Mutex::new(None));
         let last_received_at_task = Arc::clone(&last_received_at);
         let last_error = Arc::new(Mutex::new(None));
@@ -772,6 +790,8 @@ impl IrohGossipTransport {
                         *last_error_task.lock().await = None;
                         *transport_last_error.lock().await = None;
                         drop(guard);
+                        // 成立した近隣に、この topic での近隣を紹介してもらう(#1910)。
+                        introductions_task.ask(peer_id).await;
                         if let Some(store) = &candidate_store
                             && let Err(error) =
                                 remember_connected_peer(store.as_ref(), peer_id).await
@@ -828,6 +848,7 @@ impl IrohGossipTransport {
                 invalid_hint_count,
                 rendezvous,
                 joins,
+                introductions,
                 closed,
                 closed_notify,
                 update_warmup_task: None,

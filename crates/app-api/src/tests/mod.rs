@@ -79,6 +79,7 @@ mod public_channel_list;
 mod public_channel_live;
 mod public_channel_revisions;
 mod public_channels;
+mod public_holder_discovery;
 mod reaction_events;
 mod reaction_sets;
 mod reactions;

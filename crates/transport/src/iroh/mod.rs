@@ -75,6 +75,8 @@ struct HintTopicState {
     rendezvous: Arc<Mutex<Vec<(String, EndpointAddr)>>>,
     /// この topic へ `join_peers` した回数(候補の更新による分、再 join の分)。#1221 R2-B の観測用。
     joins: Arc<[AtomicU64; 2]>,
+    /// 近隣に紹介してもらった、この topic の候補(#1910)。
+    introductions: topic_introductions::TopicIntroductions,
     closed: Arc<AtomicBool>,
     closed_notify: Arc<Notify>,
     update_warmup_task: Option<JoinHandle<()>>,
@@ -180,6 +182,7 @@ mod receive_destination;
 mod relay;
 #[cfg(test)]
 mod tests;
+mod topic_introductions;
 mod topic_rendezvous;
 mod topics;
 
@@ -187,6 +190,7 @@ pub use connection_paths::GossipConnectionPaths;
 #[cfg(test)]
 pub(crate) use endpoint::bind_endpoint_with_options;
 pub use relay::{build_endpoint_builder, sync_endpoint_relay_config};
+pub use topic_introductions::{TOPIC_PEERS_ALPN, TopicPeerIntroductions};
 #[cfg(test)]
 pub(crate) use topics::{initial_topic_join_timeout, topic_to_gossip_id};
 

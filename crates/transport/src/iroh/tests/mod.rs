@@ -851,4 +851,5 @@ mod receive_offer_rebind;
 mod relay_connectivity;
 mod relay_overload;
 mod status_diff;
+mod topic_introductions;
 mod topic_rejoin;

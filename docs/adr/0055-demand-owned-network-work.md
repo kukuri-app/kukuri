@@ -67,6 +67,10 @@ holderは次の5種類だけで、同じkeyを複数のholderが持っても枠�
 - 最後のholderが外れたら、taskをabortし、hint topicを抜ける。private channelのepochが変わった時は、taskを現epochへ
   作り直す（hint topicは同じなので抜けない）。R2-Cで直前のepochのreplicaを開いたままにしていた保持は、handoffのgrantを
   旧syncで受けるためのものだったのでR5-Hで撤去した（grantの配送はaccount経路、R5-HのAC-5）。
+- 公開topicの近隣の紹介（#1910、2026-10-23）: 公開topicと公開スレッドのhint topicのtaskは、neighborが成立したときにその
+  neighborへ`/kukuri/topic-peers/1`で紹介を求め（topicごとに同時1件・60秒に1回・5秒で打ち切り）、返った最大4件を
+  読み先の候補の台帳（topicごと8件・10分）に置く。読み先の窓はneighborと台帳を1つの集合として回す（ADR 0054 §4）。
+  答える側は購読している公開のhint topicのneighborだけを、要求元を除いて最大4件返す。taskの停止で台帳と進行中の要求を捨てる。
 - 受信（R5-H）: taskはgossip hintが指す対象だけを手元→有界なprovider（R5-B/CのQUIC reader）の順にexactに読む。
   投稿・返信はobject id、reactionは現在と直前のbucketの対象ごとの上限つき一覧、取り下げは元投稿の位置、live/gameは
   idの時刻のbucket。content hint（LivePresence・DomeHostHeartbeat・MetaverseRoomEvent以外）の受付はleaseごとに

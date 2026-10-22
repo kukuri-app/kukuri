@@ -941,6 +941,7 @@ impl BoundIrohStack {
                 relay_config.clone(),
             )?
             .with_connection_paths(node.gossip_connection_paths())
+            .with_topic_peer_introductions(node.topic_peer_introductions())
             .with_account_store(candidate_store.clone())
             .with_status_changes(status_changes),
         );
