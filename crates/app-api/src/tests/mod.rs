@@ -88,6 +88,7 @@ mod social;
 mod sync;
 mod timeline;
 mod topic_normalization;
+mod topic_retention;
 mod views_wire_snapshot;
 
 mod support;

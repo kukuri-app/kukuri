@@ -78,7 +78,7 @@ pub(crate) use kukuri_store::{
     DomeHostingProjectionRow, GameRoomProjectionRow, LiveSessionProjectionRow, MutedAuthorRow,
     NotificationKind, NotificationRow, ObjectProjectionRow, ObjectProjectionStore, Page,
     PostWithdrawalRow, ProjectionStore, ReactionProjectionRow, Store, TimelineCursor,
-    WithdrawalWriteRow,
+    TopicRetentionStore, WithdrawalWriteRow,
 };
 pub(crate) use kukuri_transport::{
     ConnectivityPeerKind, DiscoveryMode, DiscoverySnapshot, HintTransport, PeerPage, PeerSnapshot,
@@ -203,7 +203,8 @@ pub(crate) mod scope_receive;
 pub use scope_leases::{MAX_ACTIVE_SCOPES, ScopeLimitReached};
 pub(crate) use scope_leases::{
     ScopeKey, ScopeLeases, ScopeTask, desired_holder, display_holder, dome_holder, live_holder,
-    participation_keys, private_channel_holder, release_scope_holder, stop_scope_task,
+    participation_keys, private_channel_holder, release_scope_holder, retain_holder,
+    stop_scope_task,
 };
 mod shutdown_support;
 mod subscription_registry;
@@ -409,6 +410,8 @@ pub struct ServiceHandles {
     pub(crate) author_relationship_changes: tokio::sync::broadcast::Sender<String>,
     /// 検証済みのリアクションを手元へ反映したときの、新しい版の行(#1841)。同じ版の置き直しと古い版は送らない。
     pub(crate) reaction_changes: ReactionChanges,
+    /// 保持する公開 topic と取り込みの続きの位置(#1909)。native の runtime が入れる。無ければ保持の操作は失敗する。
+    pub(crate) topic_retention: Option<Arc<dyn TopicRetentionStore>>,
 }
 
 pub(crate) type ReactionChanges = tokio::sync::broadcast::Sender<ReactionProjectionRow>;
@@ -589,7 +592,14 @@ impl ServiceHandles {
             link_preview_reads: Arc::default(),
             author_relationship_changes: tokio::sync::broadcast::channel(64).0,
             reaction_changes: tokio::sync::broadcast::channel(64).0,
+            topic_retention: None,
         }
+    }
+
+    /// 公開 topic の保持(#1909)の設定と続きの位置を置く store。CLI daemon の native の runtime が入れる。
+    pub fn with_topic_retention(mut self, store: Arc<dyn TopicRetentionStore>) -> Self {
+        self.topic_retention = Some(store);
+        self
     }
 }
 

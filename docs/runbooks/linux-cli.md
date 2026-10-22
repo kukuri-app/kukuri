@@ -21,6 +21,15 @@ bin/kukuri-cli --profile work call protocol.schema
 bin/kukuri-cli --profile work call protocol.commands
 ```
 
+指定した公開topicの内容を画面なしで取り込み、保持して、ほかのpeerへ返すときは、daemonの起動後に保持するtopicを設定する（#1909）。
+設定はprofileに保存し、daemonを起動し直すと戻る。`get_topic_retention`は、保持するtopicと、topicごとに取り込んだ位置を返す。
+
+```bash
+echo '{"topic":"kukuri:topic:general","retained":true}' | bin/kukuri-cli --profile work call set_topic_retention --input -
+bin/kukuri-cli --profile work call get_topic_retention
+echo '{"topic":"kukuri:topic:general","retained":false}' | bin/kukuri-cli --profile work call set_topic_retention --input -
+```
+
 foreground端末のCtrl+Cまたは当該processへのSIGTERMで正常終了する。
 `daemon start/status/stop`は既存systemd user instance用で、CIのforeground smokeとは区別する。
 systemdの利用は任意で、新しいサービス管理機能を配布の前提にしない。

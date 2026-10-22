@@ -55,6 +55,8 @@ mod service;
 mod social;
 mod sync;
 mod timeline;
+mod topic_retention;
+pub use topic_retention::{RetainedTopicView, RetentionProgressView, TopicRetentionView};
 mod views;
 
 pub use kukuri_store::{NOTIFICATION_DISPATCH_PAGE_SIZE, NotificationKind};

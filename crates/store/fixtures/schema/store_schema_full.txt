@@ -409,6 +409,15 @@ table topic_objects
   column cid=1 name=object_id type=TEXT notnull=1 default=None pk=2
   column cid=2 name=created_at type=INTEGER notnull=1 default=None pk=0
   fk id=0 seq=0 table=envelopes from=object_id to=Some("envelope_id") on_update=NO ACTION on_delete=NO ACTION match=NONE
+table topic_retention
+  column cid=0 name=topic_id type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=retained_at type=INTEGER notnull=1 default=None pk=0
+table topic_retention_cursors
+  column cid=0 name=topic_id type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=index_prefix type=TEXT notnull=1 default=None pk=2
+  column cid=2 name=bucket type=INTEGER notnull=1 default=None pk=3
+  column cid=3 name=created_at type=INTEGER notnull=1 default=None pk=0
+  column cid=4 name=object_id type=TEXT notnull=1 default=None pk=0
 table ui_state
   column cid=0 name=state_key type=TEXT notnull=0 default=None pk=1
   column cid=1 name=value_json type=TEXT notnull=1 default=None pk=0
@@ -944,6 +953,14 @@ index sqlite_autoindex_replica_cursors_1 table=replica_cursors unique=1 origin=p
 index sqlite_autoindex_topic_objects_1 table=topic_objects unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("topic_id")
   key seqno=1 cid=1 name=Some("object_id")
+  sql=None
+index sqlite_autoindex_topic_retention_1 table=topic_retention unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("topic_id")
+  sql=None
+index sqlite_autoindex_topic_retention_cursors_1 table=topic_retention_cursors unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("topic_id")
+  key seqno=1 cid=1 name=Some("index_prefix")
+  key seqno=2 cid=2 name=Some("bucket")
   sql=None
 index sqlite_autoindex_ui_state_1 table=ui_state unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("state_key")

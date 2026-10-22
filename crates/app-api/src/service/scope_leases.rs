@@ -206,6 +206,11 @@ pub(crate) fn desired_holder(topic: &str, scope: &TimelineScope) -> String {
     }
 }
 
+/// 公開 topic の保持(#1909)の holder。
+pub(crate) fn retain_holder(topic: &str) -> String {
+    format!("retain:{topic}")
+}
+
 pub(crate) fn private_channel_holder(topic: &str, channel: &str) -> String {
     format!("private:{topic}::{channel}")
 }

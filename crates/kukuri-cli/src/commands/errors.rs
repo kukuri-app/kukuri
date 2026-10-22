@@ -76,6 +76,11 @@ pub(super) fn command_error(error: anyhow::Error) -> ProtocolError {
         "direct message reply target was not found" => {
             ProtocolError::new(error_code::NOT_FOUND, "返信先のDMが見つかりません")
         }
+        // #1909: 保持できるのは公開の topic だけ。
+        "topic is not a public topic" => ProtocolError::new(
+            error_code::VALIDATION_FAILED,
+            "公開のtopicの名前ではありません",
+        ),
         _ => {
             write_internal_error_diagnostic(
                 std::env::var_os(DEBUG_INTERNAL_ERRORS_ENV).is_some(),

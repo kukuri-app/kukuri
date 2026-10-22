@@ -65,6 +65,27 @@ DebにCLIは同梱しない。Deb payloadはfirst-party ELF、desktop／iconとn
 - 必須 contract: GUI profileとのpath／identity非共有、一profile一所有者、同profileの二重起動拒否、別profile同時起動、restart後のidentity／購読期待状態復元、同意前network I/O 0件
 - 必須 scenario: 新規profile、同意待ち、通常起動、restart、signal、同一profileの競合、別profileの同時実行、Secret Service不在
 
+### 公開topicの保持（#1909）
+
+CLI daemonは、指定した公開topicの内容を画面の列なしに取り込み、保持して、通常peerと同じprotocolで再提供する。CNとは別のprocess・役割で、
+発見・署名検証・読取り・提供は通常peerと同じ経路を使い、この端末を特別に扱う識別子や優先の枠は作らない。取り込みの単位はtopicで、topicの投稿と
+公開スレッド（metadataと投稿）を取り込む（範囲と値は#1909の判断）。
+
+- Feature 名: 公開topicの保持
+- Durable / Transient: 保持するtopicと取り込みの続きの位置はDurable。取り込みのtaskはTransient
+- Canonical Source: account SQLiteの`topic_retention`（topicと保持を始めた時刻）と`topic_retention_cursors`（topic・索引・bucketごとの位置）。
+  取り込んだ内容の正本は、既存featureの署名済みrecordとblob
+- Replicated?: 設定と位置はNo。取り込んだ公開の内容は、既存の再提供（ADR 0054 §4、#1395）でほかのpeerへ返す
+- Rebuildable From: 設定は再構築しない。位置は失っても現在と前日のbucketを読み直して作り直せる
+- Public Replica / Private Replica / Local Only: 設定と位置はLocal Only。保持するのは公開topicのbucketの公開の内容だけで、private channel・DMは取り込まない
+- Gossip Hint 必要有無: 保持するtopicのtopic hintを受ける（holder `retain:<topic>`のlease。ADR 0055 §1.1）。公開スレッドごとのhintは購読しない
+- Blob 必要有無: 投稿の本文は、既存の反映が取る範囲（手元に無ければ取得の台帳の間隔の内で試す）で取る
+- SQLite projection 必要有無: 取り込んだ投稿・公開スレッドの行は既存のprojection
+- 必須 contract: CLIの`set_topic_retention`・`get_topic_retention`（GUIには無いCLIだけのcommand）、公開でないtopicの拒否、再起動での復元、
+  解除・shutdownでの停止、公開スレッドの数に比例しない購読とtask
+- 必須 scenario: 2つの実runtimeで、書き手の投稿と設定の後に作られた公開スレッドの投稿を、保持する端末が列なしに取り込み、書き手を止めた後も
+  手元から読めること（`crates/kukuri-cli/tests/topic_retention.rs`）
+
 ### ローカルsocketの要求／event stream
 
 - Feature 名: 常駐プロセスのローカル制御protocol

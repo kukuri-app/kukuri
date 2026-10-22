@@ -100,6 +100,7 @@ mod protected_migration;
 mod public_channels_api;
 mod sync_live_api;
 mod sync_status_observer;
+mod topic_retention_api;
 
 pub(crate) const PRIVATE_CHANNEL_CAPABILITIES_PURPOSE: &str = "private-channel-capabilities";
 pub(crate) const PRIVATE_CHANNEL_CAPABILITIES_KEY: &str = "registry";
@@ -660,6 +661,9 @@ impl DesktopRuntime {
             iroh_stack.blob_service.clone(),
             keys,
         );
+        // #1909: 公開 topic の保持は native の SQLite に置く(Web は保持しない)。
+        #[cfg(not(target_family = "wasm"))]
+        let services = services.with_topic_retention(sqlite.clone());
         let metaverse_budget = kukuri_core::MetaverseResourceBudgetConfig::from_json_override(
             std::env::var("KUKURI_METAVERSE_RESOURCE_BUDGET_JSON")
                 .ok()
@@ -733,6 +737,10 @@ impl DesktopRuntime {
             tracing::warn!(%error, "account receive route could not start; legacy receivers remain active");
         }
         app_service.resume_direct_message_state().await?;
+        // #1909: 保存した保持の topic の lease を取り直し、取り込みを再開する(gossip の停止の設定を戻した後)。
+        if let Err(error) = app_service.start_topic_retention().await {
+            tracing::warn!(%error, "retained topics were not restored");
+        }
         // 所有者の端末で稼働中の Dome へ、別の端末の participant が入る受け口(ADR 0038 #1527)。初期化の後に付ける。
         iroh_stack
             .use_dome_session_handler(dome_session_api::dome_session_handler(Arc::downgrade(

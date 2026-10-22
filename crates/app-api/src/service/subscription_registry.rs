@@ -15,6 +15,11 @@ pub(crate) struct SubscriptionRegistry {
     pub(crate) dm_outbox_retry_closed: Arc<std::sync::atomic::AtomicBool>,
     /// 復帰の契機（ADR 0059 §5）で、次の間隔を待たずに 1 回分を行わせる。
     pub(crate) dm_outbox_retry_wake: Arc<tokio::sync::Notify>,
+    /// 保持する公開 topic の取り込みの task（account ごとに 1 つ。#1909）。
+    pub(crate) topic_retention_task: Arc<Mutex<Option<AbortOnDropTask>>>,
+    pub(crate) topic_retention_closed: Arc<std::sync::atomic::AtomicBool>,
+    /// 保持の設定で、次の間隔を待たずに 1 回分を行わせる。
+    pub(crate) topic_retention_wake: Arc<tokio::sync::Notify>,
     #[cfg(test)]
     pub(crate) dm_outbox_retry_starts: Arc<std::sync::atomic::AtomicUsize>,
     /// 購読する scope の lease と、その task(上限 64。#1221 R2-C)。

@@ -50,7 +50,7 @@ ownerは秘密鍵や投稿本文を持たず、capabilityの識別子と世代�
 clientの購読task・gossip hint購読は、leaseを持つkeyだけに置く。R5-H（2026-09-26）からtaskはdocsのreplicaを
 開かず購読もしない（下記「受信」）。
 keyは`Topic(topic)`・`Channel(topic, channel)`・`PublicChannel(topic, channel)`・`Author(pubkey)`で、accountあたり同時に最大64件（§2の意味上の同期対象64）。`PublicChannel`は公開channel（#1840）のhintだけを購読する（[ADR 0068](0068-public-channel-threads.md) §4）。
-holderは次の4種類だけで、同じkeyを複数のholderが持っても枠は1つ。
+holderは次の5種類だけで、同じkeyを複数のholderが持っても枠は1つ。
 
 | holder | 取るkey | 外れる時 |
 | --- | --- | --- |
@@ -58,6 +58,7 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
 | 参加中のprivate channel | 現epochの`Channel`だけ（過去epochは購読しない） | 退出 |
 | 参加中のlive・自分の端末のDome hosting | `Topic`（channelなら`Channel`も） | live退出・終了、hostingの終了・移譲・Dome削除、accountのshutdown |
 | CLI daemonのdesired | 保存したscope（保存は64件まで。超えるfileは先頭64件だけを使う） | desiredの解除（`unsubscribe_topic`） |
+| CLI daemonの保持（#1909） | 保持する公開topicの`Topic`だけ（公開スレッドの`PublicChannel`は取らない） | 保持の解除（`set_topic_retention`の`retained: false`）、accountのshutdown |
 
 - 64件を超える取得は`ScopeLimitReached`（Tauriのcodeは`SCOPE_LIMIT_REACHED`）で拒否し、どのkeyも取らない。
   列の追加は取り消して画面で説明し、live参加・Dome hosting・private channel参加は状態を保存せずに拒否する。
@@ -108,6 +109,15 @@ holderは次の4種類だけで、同じkeyを複数のholderが持っても枠�
   自分を指す相手のfollowのedgeを手元に新しく保存したとき（followのofferの取込みとauthorのleaseの読み直し）は、
   runtimeのevent（`author_relationship_changed`、相手のpubkeyつき）で、その相手の開いているprofileと会話の列だけを
   読み直す（#1521 AC-1b、2026-10-04ユーザー決定）。知らせが溢れたとき（pubkeyなし）は、開いている列を1回ずつ読み直す。
+- 公開topicの保持（#1909、2026-10-22）: CLI daemonが保持するtopicは、account SQLiteの`topic_retention`に置き、起動時に
+  holder `retain:<topic>`のleaseを取り直す（上限で取れないtopicはwarnにして起動を続ける）。accountごとに1つのtaskが、1回に
+  1つのtopicを選び、現在と前日のbucketの`indexes/timeline/`・`channels/list/`・`channels/activity/`を、topic・索引・bucketごとの
+  続きの位置（`topic_retention_cursors`。前日より前のbucketの位置は消す）から古い順に読み、1回32件まで既存の反映の関数で取り込む
+  （読み先はtopicの近隣の最大4台で、近隣がいなければpeerの台帳から選ぶ。読み先ごとの索引の読みと、対象1件の取り込みの
+  期限は、それぞれ既存の30秒）。読み先のページが埋まったときは、そのページの最後より後ろを次の回へ残し、
+  `TIME_INDEX_FUTURE_ALLOWANCE_SECS`より未来の時刻のentryで位置を進めない。同じ対象の取り込みが3回続けて失敗したら飛ばす。
+  続きが残っていれば1秒後、追いついたら30秒後に次の回を行い、保持するtopicが無くなればtaskは終わる。公開スレッドの投稿は
+  `channels/activity/`から見つけるので、公開スレッドの数に比例する購読もtaskも作らない。gossipを止めたtopicは取り込まない。
 - `unsubscribe_topic`はdesiredのholderだけを外す。列のholderは列（`set_scope_display`）だけが取り・外す
   （開いている列のtopic/channelは、列を閉じるまで購読を続ける）。参加も止めない。live退出は参加のholderだけを外す。
 - endpoint（iroh stack）の世代が変わった時だけ、private channelの秘密を新しいdocsへ登録し直し、leaseのあるkeyのtaskを作り直す。

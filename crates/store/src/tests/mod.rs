@@ -34,6 +34,7 @@ mod row_mapping_roundtrip_live_game;
 mod row_mapping_roundtrip_social;
 mod sqlite_projection;
 mod sqlite_store;
+mod topic_retention;
 
 #[tokio::test]
 async fn sqlite_matches_memory_in_every_parity_scenario() {

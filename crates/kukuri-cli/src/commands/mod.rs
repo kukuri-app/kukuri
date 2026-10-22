@@ -21,6 +21,7 @@ mod network_schema;
 mod private_channels;
 mod public_channels;
 mod schema;
+mod topic_retention;
 
 use std::sync::Arc;
 
@@ -48,6 +49,7 @@ pub(crate) fn registrations(
     entries.extend(live_metaverse::registrations());
     entries.extend(network_community_node::registrations());
     entries.extend(community_node::registrations());
+    entries.extend(topic_retention::registrations());
     entries.extend(lifecycle::registrations(session));
     entries
 }
