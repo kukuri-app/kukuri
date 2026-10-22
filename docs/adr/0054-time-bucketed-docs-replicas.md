@@ -186,7 +186,9 @@ docs author指定がその名義に一致しなければ空を返し、readerが
   Presetの版（`metaverse/dome-presets/<ID>/revisions/<版>`と`envelopes/<id>`）、hostingの記録（`metaverse/dome-hosting/<ID>/state`）の
   recordと、Presetのmanifest・資材のblob。
 - 版の後退をさせない: Instanceとhostingは更新されるので、保持の読みは自分の保持分で打ち切らずproviderに問い、保持分より古い版
-  （Instanceは(generation, updated_at)、hostingは最後のepochとその記録の数）では上書きしない。Presetの版は版ごとのkeyで中身が変わらない。
+  （Instanceは(generation, updated_at)、hostingは最後のepochとその記録の数）では上書きしない。保持分は、他の名義のrecordも返す
+  手元の読み（`query_local_source`）で読む（公開replicaの`LocalOnly`の読みは自分のrecordだけを返す。ADR 0058 §7）。Presetの版は
+  版ごとのkeyで中身が変わらないので、手元に保持した版があればそれを使う。
 - 読み取り候補（全端末）: Domeの公開topicの参加者（`topic_read_candidates`、最大4）を、owner本人の検証済み宛先の次、全体の
   候補窓の前に置いて、Instance・Preset・hostingを読む（#1419のprofileと同じ形）。
 - 資材: sessionとPresetのmanifestを返したpeerを、manifestが指す資材のhashの取得候補に入れる。

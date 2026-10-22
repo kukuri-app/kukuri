@@ -3,7 +3,7 @@
 //! Preset・資材)を取り込む。A を止めた後に来た B は、K を同じ topic の参加者として知るだけ(K 専用の識別子も優先の設定も
 //! 持たない)で、K から同じ内容の新しい版を読む。
 use super::super::*;
-use super::relay_integration::{Author, Relay, eventually, seed, ticket};
+use super::relay_integration::{Author, ChangingNeighbors, Relay, eventually, seed, ticket};
 use super::remote_reader_integration::ScopedReadHints;
 use kukuri_core::{BlobHash, MetaverseAssetKind};
 
@@ -282,4 +282,155 @@ async fn later_reader_reads_retained_topic_content_from_the_retaining_peer() -> 
 
     b.finish().await?;
     k.finish().await
+}
+
+/// 端末が保持する(record cache の、他の名義を含む)Dome Instance の state が指す manifest の hash。
+async fn held_instance(app: &AppService, replica: &ReplicaId, key: &str) -> Result<Option<String>> {
+    Ok(app
+        .services
+        .docs_sync
+        .query_local_source(replica, key, None, 8)
+        .await?
+        .iter()
+        .find_map(|record| {
+            serde_json::from_slice::<kukuri_core::DomeInstanceStateDocV1>(&record.value).ok()
+        })
+        .map(|state| state.current_manifest.hash.as_str().to_string()))
+}
+
+/// #1909 AC-2: 保持する K2 は、手元に保持した新しい版の Dome Instance を、古い版を持つ参加者 K1 から読んだ版で上書き
+/// しない。保持した Preset は手元から読むので、owner が止まっていても取り直しを待たない。K2 だけを知る B は新しい版を読む。
+#[tokio::test]
+async fn a_retained_dome_is_not_rolled_back_by_a_participant_with_an_older_version() -> Result<()> {
+    let topic = TopicId::new("kukuri:topic:retention-rollback");
+    let author = Author::new().await?;
+    let store = Arc::new(MemoryStore::default());
+    let a = app_service_from_dependencies(
+        store.clone(),
+        store,
+        Arc::new(StaticTransport::new(PeerSnapshot::default())),
+        Arc::new(NoopHintTransport),
+        Arc::new(author.docs.clone()),
+        Arc::new(author.blobs.clone()),
+        author.keys.clone(),
+    );
+    a.switch_writer(1);
+    let dome = a
+        .create_metaverse_room(
+            topic.as_str(),
+            CreateMetaverseRoomInput {
+                title: "版の後退の確認".into(),
+                description: String::new(),
+                max_peers: Some(4),
+            },
+        )
+        .await?;
+    let owner = Pubkey::from(a.current_author_pubkey().as_str());
+    let context = kukuri_core::SpatialContextV1::Topic {
+        topic_id: topic.clone(),
+    };
+    let replica = kukuri_docs_sync::author_replica_id(owner.as_str());
+    let key = kukuri_docs_sync::stable_key(
+        "metaverse/dome-instances",
+        &format!("{}/state", dome_instance_id(&context, &owner)),
+    );
+    let version = || async {
+        let (state, _) = a
+            .fetch_dome_instance_manifest(&context, &owner)
+            .await?
+            .expect("Dome Instance");
+        Ok::<_, anyhow::Error>(state.current_manifest.hash.as_str().to_string())
+    };
+    let v1 = version().await?;
+
+    // K1 は版 1 を保持してから保持をやめる(cache の行は残り、他の参加者へ返す)。
+    let dir = tempfile::tempdir()?;
+    let k1 = Relay::with_store(
+        Arc::new(NoopHintTransport),
+        SqliteStore::connect_file(dir.path().join("k1.db")).await?,
+    )
+    .await?;
+    k1.app.import_peer_ticket(&ticket(&author.node)).await?;
+    k1.app.set_topic_retention(topic.as_str(), true).await?;
+    let k1_held = eventually(|| async {
+        Ok(held_instance(&k1.app, &replica, &key).await? == Some(v1.clone()))
+    })
+    .await?;
+    assert!(k1_held, "K1 holds the version 1");
+    k1.app.set_topic_retention(topic.as_str(), false).await?;
+
+    // A は資材を足して版 2 にする。K2 は版 2 と Preset を、取り直しを残さずに保持する。
+    a.import_metaverse_room_asset(
+        topic.as_str(),
+        ImportMetaverseRoomAssetInput {
+            room_id: dome,
+            kind: kukuri_core::MetaverseAssetKind::Vrm,
+            mime_type: "model/vrm".into(),
+            name: Some("avatar.vrm".into()),
+            bytes: minimal_metaverse_glb_bytes(),
+        },
+    )
+    .await?;
+    let v2 = version().await?;
+    assert_ne!(v1, v2, "the Instance changed");
+    let neighbors = Arc::new(ChangingNeighbors(std::sync::Mutex::new(Vec::new())));
+    let k2 = Relay::with_store(
+        neighbors.clone(),
+        SqliteStore::connect_file(dir.path().join("k2.db")).await?,
+    )
+    .await?;
+    k2.app.import_peer_ticket(&ticket(&author.node)).await?;
+    k2.app.set_topic_retention(topic.as_str(), true).await?;
+    let counts = || async {
+        Ok::<_, anyhow::Error>(
+            k2.app
+                .topic_retention()
+                .await?
+                .topics
+                .iter()
+                .map(|topic| (topic.pending_retries, topic.given_up))
+                .collect::<Vec<_>>(),
+        )
+    };
+    let k2_held = eventually(|| async {
+        Ok(
+            held_instance(&k2.app, &replica, &key).await? == Some(v2.clone())
+                && counts().await? == [(0, 0)],
+        )
+    })
+    .await?;
+    assert!(k2_held, "K2 holds the version 2 with no retries");
+
+    // A が止まり、K2 の topic の参加者に K1 が現れる。K2 の作り直しの後の最初の回(反映した版の記録が空)を回す。
+    a.shutdown().await;
+    author.go_offline().await?;
+    *neighbors.0.lock().expect("neighbors") = vec![seed(&k1.node)];
+    k2.app
+        .step_topic_retention(
+            topic.as_str(),
+            &mut crate::topic_retention::RetentionState::default(),
+        )
+        .await?;
+    assert_eq!(
+        held_instance(&k2.app, &replica, &key).await?,
+        Some(v2.clone()),
+        "K2 keeps the version 2"
+    );
+    assert_eq!(
+        counts().await?,
+        [(0, 0)],
+        "K2 reads its held Preset without a retry"
+    );
+
+    // K2 だけを知る B は版 2 を読む。
+    let b = Relay::new(Arc::new(ScopedReadHints(seed(&k2.node)))).await?;
+    let read = b
+        .app
+        .fetch_dome_instance_manifest(&context, &owner)
+        .await?
+        .map(|(state, _)| state.current_manifest.hash.as_str().to_string());
+    assert_eq!(read, Some(v2), "B reads the version 2 from K2");
+    b.finish().await?;
+    k2.finish().await?;
+    k1.finish().await
 }

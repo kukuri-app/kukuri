@@ -261,6 +261,17 @@ impl AppService {
         keep: bool,
     ) -> Result<Option<DomePresetManifestV1>> {
         let replica = author_replica_id(preset_ref.owner_pubkey.as_str());
+        // 保持の読み(#1909)の手元の読みは、保持した record(他の名義)も読む。版ごとの key なので中身は変わらない。
+        let held;
+        let docs = if keep && policy == DocFetchPolicy::LocalOnly {
+            held = LocalSourceReader {
+                docs: self.services.docs_sync.clone(),
+                replica: replica.clone(),
+            };
+            &held as &dyn DocsSync
+        } else {
+            docs
+        };
         let state_key = stable_key(
             "metaverse/dome-presets",
             &format!(

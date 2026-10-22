@@ -803,7 +803,7 @@ async fn a_visitor_keeps_its_own_dome_chat_history() -> Result<()> {
 }
 
 /// 同じ topic の neighbor を途中で入れ替えられる hint(neighbor は時間とともに変わる)。
-struct ChangingNeighbors(std::sync::Mutex<Vec<SeedPeer>>);
+pub(super) struct ChangingNeighbors(pub(super) std::sync::Mutex<Vec<SeedPeer>>);
 
 #[async_trait]
 impl HintTransport for ChangingNeighbors {

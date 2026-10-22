@@ -441,9 +441,9 @@ impl AppService {
             return Ok(true);
         }
         let owner = Pubkey::from(row.host_pubkey.as_str());
-        self.fetch_dome_instance_manifest_kept(context, &owner, true)
-            .await?;
-        if let Some((_, instance)) = self.fetch_dome_instance_manifest(context, &owner).await?
+        if let Some((_, instance)) = self
+            .fetch_dome_instance_manifest_kept(context, &owner, true)
+            .await?
             && instance.status == kukuri_core::DomeInstanceStatusV1::Active
             && instance.relationship_detach.is_none()
         {
@@ -486,21 +486,19 @@ impl AppService {
                     let records: Vec<DomeHostingRecordV1> = serde_json::from_slice(&record.value)?;
                     let now = Utc::now().timestamp_millis();
                     kukuri_core::resolve_dome_hosting_state(instance, &records, now, Some(now))?;
+                    // 手元に保持した記録(他の名義の record を含む)と比べる。
                     let kept = self
                         .services
                         .docs_sync
-                        .query_replica_with_policy(
-                            &replica,
-                            DocQuery::Exact(key.clone()),
-                            DocFetchPolicy::LocalOnly,
-                        )
+                        .query_local_source(&replica, &key, None, 8)
                         .await?
-                        .into_iter()
-                        .find_map(|record| {
+                        .iter()
+                        .filter_map(|record| {
                             serde_json::from_slice::<Vec<DomeHostingRecordV1>>(&record.value).ok()
-                        });
-                    if kept.is_some_and(|kept| hosting_progress(&kept) > hosting_progress(&records))
-                    {
+                        })
+                        .map(|kept| hosting_progress(&kept))
+                        .max();
+                    if kept.is_some_and(|kept| kept > hosting_progress(&records)) {
                         return Ok(None);
                     }
                     docs.persist_verified_record(

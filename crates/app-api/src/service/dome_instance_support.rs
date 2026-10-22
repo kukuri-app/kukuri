@@ -275,9 +275,12 @@ impl AppService {
             return Ok(None);
         };
         if keep {
-            // 手元に保持した版より古い版で上書きしない(次の読み先を読む)。
-            let kept = newest_dome_instance(
-                self.services.docs_sync.as_ref(),
+            // 手元に保持した版(他の名義の record を含む)より古い版で上書きしない。保持した版を返す。
+            let held = newest_dome_instance(
+                &LocalSourceReader {
+                    docs: self.services.docs_sync.clone(),
+                    replica: replica.clone(),
+                },
                 replica,
                 key,
                 owner_pubkey,
@@ -286,10 +289,10 @@ impl AppService {
             .await
             .ok()
             .flatten();
-            if kept.is_some_and(|(_, kept, _, _)| {
-                (kept.generation, kept.updated_at) > (manifest.generation, manifest.updated_at)
-            }) {
-                return Ok(None);
+            if let Some((held_state, held, _, _)) = held
+                && (held.generation, held.updated_at) > (manifest.generation, manifest.updated_at)
+            {
+                return Ok(Some((held_state, held)));
             }
             docs.persist_verified_record(replica, key, state_author.as_deref(), &[])
                 .await?;
