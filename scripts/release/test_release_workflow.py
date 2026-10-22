@@ -120,7 +120,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(job["runs-on"], distribution + " && '" + LINUX_RELEASE_RUNNER + "' || 'ubuntu-24.04' }}")
         not_distribution = "${{ !(" + distribution.removeprefix("${{ ") + ") }}"
         cached = [step for step in job["steps"] if "cache" in step.get("uses", "")]
-        self.assertEqual([step["uses"] for step in cached], ["Swatinem/rust-cache@v2"])
+        self.assertEqual([step["uses"] for step in cached], ["./.github/actions/cache-rust"])
         self.assertEqual(cached[0]["if"], not_distribution)
         # `A && '' || B` は空文字が偽のため常に B になる。配布の run で空文字になる形だけを許す。
         node = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/setup-node@"))

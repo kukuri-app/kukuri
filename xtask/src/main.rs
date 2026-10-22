@@ -43,14 +43,14 @@ fn main() -> Result<()> {
         "check" => check(),
         "test" => test(),
         "rust-check" => rust_check(),
-        "rust-test" => rust_test(),
+        "rust-test" => rust_test(args),
         "app-api-slow-test" => app_api_slow_test(),
         "tauri-check" => tauri_check(),
         "tauri-test" => tauri_test::tauri_test(args),
         "desktop-lint" => desktop_lint(),
         "desktop-test" => desktop_test(),
         "desktop-storybook" => desktop_storybook(),
-        "desktop-browser-test" => desktop_browser_test(),
+        "desktop-browser-test" => desktop_browser_test(args),
         "desktop-visual-test" => desktop_visual_test(),
         "desktop-ui-check" => desktop_ui_check(),
         "cn-check" => cn_check(),
@@ -130,6 +130,6 @@ fn doctor() -> Result<()> {
 
 fn print_usage() {
     eprintln!(
-        "usage: cargo xtask <doctor|check|test|rust-check|rust-test|app-api-slow-test|tauri-check|tauri-test [--package-build] [-- <test args>]|desktop-lint|desktop-test|desktop-storybook|desktop-browser-test|desktop-visual-test|desktop-ui-check|cn-check|cn-test|cn-e2e|web-build|web-e2e [--build-only|--no-build] [--no-compose] [<scenario>...]|desktop-package|windows-store-package [--allow-dirty] [--output <path>]|asset-check|release-check [tag]|oversized-files [--update-baseline]|operator-neutrality-check|refactoring-audit-check [--help]|ipc-types [--check]|e2e-smoke|scenario <name>>"
+        "usage: cargo xtask <doctor|check|test|rust-check|rust-test [<nextest args>]|app-api-slow-test|tauri-check|tauri-test [--package-build] [-- <test args>]|desktop-lint|desktop-test|desktop-storybook|desktop-browser-test [<playwright args>]|desktop-visual-test|desktop-ui-check|cn-check|cn-test|cn-e2e|web-build|web-e2e [--build-only|--no-build] [--no-compose] [<scenario>...]|desktop-package|windows-store-package [--allow-dirty] [--output <path>]|asset-check|release-check [tag]|oversized-files [--update-baseline]|operator-neutrality-check|refactoring-audit-check [--help]|ipc-types [--check]|e2e-smoke|scenario <name>>"
     );
 }

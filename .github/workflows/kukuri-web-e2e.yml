@@ -76,7 +76,7 @@ jobs:
 
       # #1413: key は job id ごと（kukuri-fast.yml 参照）。build の内容は browser に依らないので共有する。
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
 
@@ -194,7 +194,7 @@ jobs:
           toolchain: 1.98.1
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
 

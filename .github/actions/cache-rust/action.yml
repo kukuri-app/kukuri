@@ -1,0 +1,36 @@
+name: Cache Rust
+description: >-
+  Rust の依存の build 成果物を rust-cache で GitHub Actions cache に置き、Lindera の辞書も同じ cache に置く。
+  rust-cache 2.9 以降は runner に入っている全 toolchain を key に含めるため、runner image が同梱する
+  使わない toolchain を先に消し、image の更新で key が割れないようにする。
+inputs:
+  save-if:
+    description: rust-cache の save-if（PR の run では保存しない）
+    default: 'true'
+  workspaces:
+    description: rust-cache の workspaces
+    default: '.'
+  shared-key:
+    description: rust-cache の shared-key（job id の代わりに使う）
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Cache Lindera dictionary
+      if: env.LINDERA_BUILD_DICTIONARY_CACHE_DIR != ''
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.LINDERA_BUILD_DICTIONARY_CACHE_DIR }}/5.3.0-fmt2/lindera-ipadic-neologd
+        key: lindera-ipadic-neologd-5.3.0-fmt2-${{ runner.os }}
+
+    - name: Remove the toolchains this job does not use
+      shell: bash
+      run: |
+        active="$(rustup show active-toolchain | cut -d' ' -f1)"
+        rustup toolchain list --quiet | grep -vx "$active" | xargs -r -n1 rustup toolchain uninstall
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        save-if: ${{ inputs.save-if }}
+        workspaces: ${{ inputs.workspaces }}
+        shared-key: ${{ inputs.shared-key }}

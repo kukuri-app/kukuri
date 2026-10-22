@@ -66,7 +66,7 @@ jobs:
         with:
           toolchain: 1.98.1
           components: rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/cache-rust
         with:
           workspaces: scripts/community-node/retire-legacy-docs
       - run: cargo fmt --manifest-path scripts/community-node/retire-legacy-docs/Cargo.toml --check

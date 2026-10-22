@@ -25,11 +25,8 @@ jobs:
         with:
           toolchain: 1.98.1
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
 
       - name: App API slow iroh integration tests
         run: cargo xtask-lite app-api-slow-test
@@ -62,11 +59,8 @@ jobs:
           librsvg2-dev
           patchelf
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
 
       - name: Run scenario
         run: cargo xtask scenario desktop_smoke_metaverse_dome_delete
@@ -111,11 +105,8 @@ jobs:
         with:
           node-version: '^22.23.4'
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           workspaces: |
             .
@@ -159,11 +150,8 @@ jobs:
           librsvg2-dev
           patchelf
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
 
       - name: Install nextest
         uses: taiki-e/install-action@nextest
@@ -218,11 +206,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
 
       - name: Install desktop dependencies
         working-directory: apps/desktop
@@ -273,11 +258,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
 
       - name: Install desktop dependencies
         working-directory: apps/desktop
@@ -320,11 +302,8 @@ jobs:
           librsvg2-dev
           patchelf
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
 
       - name: Community-node checks
         run: cargo xtask-lite cn-check
@@ -358,11 +337,8 @@ jobs:
           librsvg2-dev
           patchelf
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
 
       - name: Community-node connectivity scenario
         env:
@@ -404,11 +380,8 @@ jobs:
           librsvg2-dev
           patchelf
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
 
       - name: Community-node multi-device scenario
         env:

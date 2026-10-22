@@ -13,7 +13,7 @@ on:
       - 'apps/**'
       - 'harness/**'
       - 'tools/check_iroh_resource_contract.py'
-      - '.github/actions/cn-test-images/**'
+      - '.github/actions/**'
       - '.github/workflows/kukuri-fast.yml'
       - '.github/workflows/kukuri-nightly.yml'
       - '.github/workflows/kukuri-web-e2e.yml'
@@ -31,7 +31,7 @@ on:
       - 'apps/**'
       - 'harness/**'
       - 'tools/check_iroh_resource_contract.py'
-      - '.github/actions/cn-test-images/**'
+      - '.github/actions/**'
       - '.github/workflows/kukuri-fast.yml'
       - '.github/workflows/kukuri-nightly.yml'
       - '.github/workflows/kukuri-web-e2e.yml'
@@ -53,10 +53,11 @@ env:
   # #1120: CI の dev / test build は行番号だけの debuginfo にし、link 時間と cache の容量を減らす。
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
-# #1413: Rust の依存の build 成果物は rust-cache で GitHub Actions cache に置く。key は job id・
-# toolchain・Cargo.lock / Cargo.toml・CARGO_* の環境で分かれ、同じ job id の Nightly と共有する。
-# workspace crate は保存前に除かれる。保存は PR 以外（main push・dispatch）の run だけにし、
-# PR は main の cache を復元するだけにする（PR ごとの cache で容量を使い切らないため）。
+# #1413: Rust の依存の build 成果物は rust-cache（.github/actions/cache-rust）で GitHub Actions cache に
+# 置く。key は job id・toolchain・Cargo.lock / Cargo.toml・CARGO_* の環境で分かれ、同じ job id の Nightly と
+# 共有する。runner image が同梱する使わない toolchain は key に入れない。workspace crate は保存前に除かれる。
+# 保存は PR 以外（main push・dispatch）の run だけにし、PR は main の cache を復元するだけにする
+# （PR ごとの cache で容量を使い切らないため）。
 jobs:
   linux-rust-static:
     runs-on: ubuntu-24.04
@@ -91,11 +92,8 @@ jobs:
           node-version: '^22.23.4'
 
       # tauri-check は root workspace の外にある src-tauri を、その target へ build する。
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: |
@@ -120,9 +118,15 @@ jobs:
       - name: Tauri compile check
         run: cargo xtask-lite tauri-check
 
+  # nextest の test を hash で 2 つに分け、test build は両方で行う（build 5 分、test 7〜10 分の内訳で、
+  # 待ちの長い test の実行だけを分ける）。
   linux-rust-tests:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -146,11 +150,8 @@ jobs:
           librsvg2-dev
           patchelf
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
 
@@ -158,14 +159,16 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Rust tests
-        run: cargo xtask-lite rust-test
+        run: cargo xtask-lite rust-test --partition hash:${{ matrix.shard }}/2
 
       - name: Setup Python for upstream resource contract
+        if: matrix.shard == 1
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
       - name: Pinned iroh resource contract
+        if: matrix.shard == 1
         run: python tools/check_iroh_resource_contract.py
 
   # #1421: QUIC over WebRTC DataChannel の transport を headless の Chrome で試す（ADR 0057 §8 の E1〜E4）。
@@ -186,11 +189,8 @@ jobs:
       - name: Install LLVM tools for the wasm C build
         run: sudo apt-get update && sudo apt-get install -y clang llvm
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
 
@@ -277,11 +277,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
 
@@ -299,8 +296,20 @@ jobs:
     # #1121 / #1413: Playwright は CPU を使い切る。4 CPU では既定の 2 worker で動かし、worker を
     # 増やさない（4 CPU に 4 worker を載せると metaverse の 3D test が timeout で落ちた）。
     # baseline を作る kukuri-visual-baseline.yml も同じ runner image で動かす。
+    # 395 test（合計 1747 秒）を 2 worker で流すと 15 分かかるので、test を 2 つの job に分ける。--shard は
+    # 件数で分けるため、3D の metaverse の spec（26 test で 822 秒）が片側に寄る。file で分ける（grep は testDir からの
+    # file 名も対象に含む）。
+    name: linux-desktop-browser (${{ matrix.shard }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: 1
+            tests: --grep 'metaverse-[a-z-]*\.spec\.ts'
+          - shard: 2
+            tests: --grep-invert 'metaverse-[a-z-]*\.spec\.ts'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -338,11 +347,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
 
@@ -358,16 +364,17 @@ jobs:
         run: cargo xtask-lite desktop-storybook
 
       - name: Desktop browser tests
-        run: cargo xtask-lite desktop-browser-test
+        run: cargo xtask-lite desktop-browser-test ${{ matrix.tests }}
 
       - name: Desktop visual regression tests
+        if: matrix.shard == 1
         run: cargo xtask-lite desktop-visual-test
 
       - name: Upload visual regression diff
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kukuri-desktop-visual-diff
+          name: kukuri-desktop-visual-diff-${{ matrix.shard }}
           path: apps/desktop/test-results/
           if-no-files-found: ignore
 
@@ -398,11 +405,8 @@ jobs:
           librsvg2-dev
           patchelf
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
 
@@ -448,11 +452,8 @@ jobs:
           librsvg2-dev
           patchelf
 
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
 
@@ -483,7 +484,7 @@ jobs:
 
   windows-fast:
     runs-on: windows-2022
-    timeout-minutes: 75
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -507,12 +508,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
 
-      # root の target は harness 入りの xtask、src-tauri の target は tauri-check と配布物の build。
-      - name: Cache Lindera dictionary
-        uses: ./.github/actions/cache-lindera
-
+      # root の target は harness 入りの xtask、src-tauri の target は tauri-check。
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: ./.github/actions/cache-rust
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
           workspaces: |
@@ -537,10 +535,57 @@ jobs:
         timeout-minutes: 15
         run: cargo xtask e2e-smoke
 
+      - name: Upload kukuri artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kukuri-windows-fast-artifacts
+          path: test-results/kukuri/
+          if-no-files-found: warn
+
+  # 配布と同じ release build（10〜13 分）と実アプリの試験は、check 系の windows-fast と並行に動かす。
+  # xtask は harness なしで足りる。
+  windows-package:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.16.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '^22.23.4'
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - name: Cache Rust
+        uses: ./.github/actions/cache-rust
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
+          workspaces: |
+            .
+            apps/desktop/src-tauri
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: pnpm install --frozen-lockfile
+
       - name: Windows package
         # #1063: cache なしの実測 23〜25 分に対し、70% が 31.5 分となる値。
         timeout-minutes: 45
-        run: cargo xtask desktop-package
+        run: cargo xtask-lite desktop-package
 
       # #1800: 配布と同じ build を同じ PC で複数起動し、画面と Rust のやり取りを含めて確かめる。音声は仮想の線
       # (VB-CABLE)を既定の入出力にして確かめる(全 instance が共有する)。
@@ -564,14 +609,6 @@ jobs:
           name: kukuri-real-app-windows
           path: ${{ runner.temp }}/real-app
           if-no-files-found: ignore
-
-      - name: Upload kukuri artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kukuri-windows-fast-artifacts
-          path: test-results/kukuri/
-          if-no-files-found: warn
 
       - name: Upload NSIS installer
         if: always()
