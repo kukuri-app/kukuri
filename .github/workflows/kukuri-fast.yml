@@ -296,13 +296,19 @@ jobs:
     # #1121 / #1413: Playwright は CPU を使い切る。4 CPU では既定の 2 worker で動かし、worker を
     # 増やさない（4 CPU に 4 worker を載せると metaverse の 3D test が timeout で落ちた）。
     # baseline を作る kukuri-visual-baseline.yml も同じ runner image で動かす。
-    # 395 test × 平均 4.5 秒を 2 worker で流すと 15 分かかるので、test を 2 つの job に分ける。
+    # 395 test（合計 1747 秒）を 2 worker で流すと 15 分かかるので、test を 2 つの job に分ける。--shard は
+    # 件数で分けるため、3D の metaverse の spec（26 test で 822 秒）が片側に寄る。file で分ける（grep は file path も
+    # 対象に含む）。
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        include:
+          - shard: 1
+            tests: --grep playwright/metaverse-
+          - shard: 2
+            tests: --grep-invert playwright/metaverse-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -357,7 +363,7 @@ jobs:
         run: cargo xtask-lite desktop-storybook
 
       - name: Desktop browser tests
-        run: cargo xtask-lite desktop-browser-test --shard=${{ matrix.shard }}/2
+        run: cargo xtask-lite desktop-browser-test ${{ matrix.tests }}
 
       - name: Desktop visual regression tests
         if: matrix.shard == 1
