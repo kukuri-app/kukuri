@@ -1,3 +1,5 @@
+// Linux の netlink を含む通信依存の Send 判定に必要な深さ（#1921）。
+#![recursion_limit = "256"]
 // ブラウザでも動く共用 crate（ADR 0056 §3）。tokio・std の時刻と task を直接使わない（native では
 // n0_future・web_time がそれらの再公開なので、wasm32 の clippy で確かめる）。
 #![cfg_attr(

@@ -124,7 +124,7 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 - 依存の owner: iroh の fork rev は W10 AC-1（#4565 を載せる）が更新する。iroh-blobs・iroh-docs は fork しない（#1213 D-3、2026-09-30 改訂）。本 crate はそれらに依存しない。
   #1032 の版更新は #1450 で先行したので、本 crate の依存の owner にしない。
 - fork の独自差分: 上の custom path を閉じる変更（#1482）と、外された custom path を選ばず、それだけが残った接続を閉じる変更（#1571）、別の path が確立してから閉じる変更（#1654）は、上流へ PR を出さず fork だけで持つ（2026-10-04・2026-10-05・2026-10-07 ユーザー判断、#1213 D-2 の例外）。
-  branch `kukuri/close-after-another-path-v1.3.0` の rev `eef6af69`（`c47e860f` の上の 6 commit）。fork の rev を上げるときは、この 6 commit を載せ直し、上の 4 つの試験と fork の単体試験を通す。
+  branch `kukuri/close-after-another-path-v1.3.0` の rev `eef6af69`（`c47e860f` の上の 6 commit）。2026-10-23 に上流 v1.4.1 へ載せ替え、branch `kukuri/close-after-another-path-v1.4.1` の rev `d479731d`（v1.4.1 の上に #4447・#4565 と同じ 6 commit。+/- の行は v1.3.0 起点の差分と同一）にした。fork の rev を上げるときは、この 6 commit を載せ直し、上の 4 つの試験と fork の単体試験を通す。
 
 ### 6. STUN
 

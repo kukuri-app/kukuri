@@ -6,6 +6,9 @@
 //! 8 MiB に広げた）で、実測の使用量は約 32 KiB + 28 × 最大の future。既定の 1 MiB では
 //! 33,760 B の `list_metaverse_room_events` で落ちた。command の future は `DesktopRuntime` の
 //! async fn がほぼ全てなので、ここで大きさを測って上限を固定する。
+// Linux の通信依存を含む future の layout 計算に必要な深さ（#1921）。
+#![recursion_limit = "256"]
+
 use std::collections::BTreeSet;
 use std::mem::size_of;
 use std::path::PathBuf;

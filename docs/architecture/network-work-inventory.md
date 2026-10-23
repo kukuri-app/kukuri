@@ -89,7 +89,8 @@ iroh-docs 0.101.0（pin `e7233d14853cb4db9966e30050bac1e689cdeec8`）。
 採用候補を固定して再現・回帰を確認した。irohは`adf5b0e0a5f36f73f11934bcbf2f4ce04ccd4155`
 （上流#4447）。#1450でiroh 1.3.0へ上げる際、#4447をv1.3.0へ載せ直し`KingYoSun/iroh`の
 `4d7b079c124fae615c456c97a592a3c067ef8a27`へ移した（crateのsourceはv1.3.0＋#4447と同一、
-fork側の`.github/workflows`だけ既存のまま）。gossipは`KingYoSun/iroh-gossip`の`23cd6cc76d51582b3678b3b743db72d51ce296d4`
+fork側の`.github/workflows`だけ既存のまま）。2026-10-23にv1.4.1へ載せ替え、`d479731d85fb33f6e4a24a80026bd6500cfc8fdc`
+（v1.4.1＋#4447＋#4565＋#1482/#1571/#1654。branch `kukuri/close-after-another-path-v1.4.1`）にした。gossipは`KingYoSun/iroh-gossip`の`23cd6cc76d51582b3678b3b743db72d51ce296d4`
 （#161を含む#162の`c42f40a1`に、#1376と#1549の修正各1件を加えたもの）。
 rootとstandalone Tauriの5packageを同じsourceへ揃え、型の二重化を避ける。
 package version、MSRV、wire、永続形式を変更せず、両lockの無関係な依存edgeも維持する。

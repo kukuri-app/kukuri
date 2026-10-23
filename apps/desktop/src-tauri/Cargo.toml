@@ -13,7 +13,8 @@ default = []
 microsoft-store = []
 
 [build-dependencies]
-tauri-build = { version = "2.7.0", features = [] }
+# Keep the Rust crates paired with the unchanged Tauri JS packages during cargo update (#1921).
+tauri-build = { version = "=2.7.0", features = [] }
 
 [dependencies]
 anyhow = "1.0.104"
@@ -23,20 +24,20 @@ kukuri-app-api = { path = "../../../crates/app-api" }
 kukuri-core = { path = "../../../crates/core" }
 kukuri-desktop-runtime = { path = "../../../crates/desktop-runtime", features = ["audio-devices"] }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
-tauri = { version = "2.12.0", features = ["tray-icon", "protocol-asset"] }
-tauri-plugin-deep-link = "2.6.0"
-tauri-plugin-dialog = "2.8.0"
-tauri-plugin-single-instance = { version = "2.5.1", features = ["deep-link"] }
-tauri-plugin-updater = "2.13.1"
+serde_json = "1.0.154"
+tauri = { version = "=2.12.0", features = ["tray-icon", "protocol-asset"] }
+tauri-plugin-deep-link = "=2.6.0"
+tauri-plugin-dialog = "=2.8.0"
+tauri-plugin-single-instance = { version = "=2.5.1", features = ["deep-link"] }
+tauri-plugin-updater = "=2.13.1"
 tokio = { version = "1", features = ["time", "signal", "sync", "net", "macros", "rt"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-uuid = { version = "1.26.1", features = ["v4"] }
+uuid = { version = "1.28.0", features = ["v4"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 
 [target.'cfg(windows)'.dependencies]
-open = { version = "5.4.4", features = ["shellexecute-on-windows"] }
+open = { version = "5.4.5", features = ["shellexecute-on-windows"] }
 windows = { version = "0.62.2", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_Globalization", "Win32_Storage_FileSystem"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
@@ -53,17 +54,17 @@ zbus = "5"
 
 [dev-dependencies]
 minisign-verify = "0.3"
-tauri = { version = "2.12.0", features = ["test"] }
+tauri = { version = "=2.12.0", features = ["test"] }
 tempfile = "3.27.0"
 
 [patch.crates-io]
 # Keep the standalone Tauri workspace on the same docs error-path fix as the root.
 iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", rev = "e7233d14853cb4db9966e30050bac1e689cdeec8" }
 # Match the root workspace's inactive address/connection reclamation fixes.
-iroh = { git = "https://github.com/KingYoSun/iroh", rev = "eef6af69364b5df1aa33c30e4c5731aad9d32046" }
-iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "eef6af69364b5df1aa33c30e4c5731aad9d32046" }
-iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "eef6af69364b5df1aa33c30e4c5731aad9d32046" }
-iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "eef6af69364b5df1aa33c30e4c5731aad9d32046" }
+iroh = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
+iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
+iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
+iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
 iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "23cd6cc76d51582b3678b3b743db72d51ce296d4" }
 # Match the root workspace's Mainline forks (#1632).
 n0-mainline = { git = "https://github.com/KingYoSun/n0-mainline", rev = "7571f18f69ef03d9ec97ca8d1171e17c8ce4f0c6" }
