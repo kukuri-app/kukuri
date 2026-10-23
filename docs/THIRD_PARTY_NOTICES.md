@@ -69,7 +69,7 @@ Community Node images include these files under `/usr/local/share/kukuri/license
 
 ## Rust crates
 
-Total packages: 1086
+Total packages: 1085
 
 | Package | Version | License | Source |
 | --- | --- | --- | --- |
@@ -539,6 +539,7 @@ Total packages: 1086
 | mime_guess | 2.0.5 | MIT | https://crates.io/crates/mime_guess |
 | minicov | 0.3.8 | Apache-2.0/MIT | https://crates.io/crates/minicov |
 | minimal-lexical | 0.2.1 | MIT/Apache-2.0 | https://crates.io/crates/minimal-lexical |
+| minisign-verify | 0.2.5 | MIT | https://crates.io/crates/minisign-verify |
 | minisign-verify | 0.3.0 | MIT | https://crates.io/crates/minisign-verify |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | https://crates.io/crates/miniz_oxide |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | https://crates.io/crates/miniz_oxide |
@@ -887,7 +888,6 @@ Total packages: 1086
 | sqlx-sqlite | 0.9.0 | MIT OR Apache-2.0 | https://crates.io/crates/sqlx-sqlite |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 | https://crates.io/crates/stable_deref_trait |
 | static_assertions | 1.1.0 | MIT OR Apache-2.0 | https://crates.io/crates/static_assertions |
-| static_vcruntime | 3.0.0 | MIT OR Apache-2.0 OR Zlib | https://crates.io/crates/static_vcruntime |
 | str0m | 0.24.1 | MIT OR Apache-2.0 | https://crates.io/crates/str0m |
 | str0m-proto | 0.7.0 | MIT OR Apache-2.0 | https://crates.io/crates/str0m-proto |
 | str0m-rust-crypto | 0.6.0 | MIT OR Apache-2.0 | https://crates.io/crates/str0m-rust-crypto |
@@ -903,7 +903,6 @@ Total packages: 1086
 | swift-rs | 1.0.9 | MIT OR Apache-2.0 | https://crates.io/crates/swift-rs |
 | syn | 1.0.109 | MIT OR Apache-2.0 | https://crates.io/crates/syn |
 | syn | 2.0.119 | MIT OR Apache-2.0 | https://crates.io/crates/syn |
-| syn | 3.0.6 | MIT OR Apache-2.0 | https://crates.io/crates/syn |
 | syn | 3.0.9 | MIT OR Apache-2.0 | https://crates.io/crates/syn |
 | syn-mid | 0.5.4 | Apache-2.0 OR MIT | https://crates.io/crates/syn-mid |
 | sync_wrapper | 1.0.2 | Apache-2.0 | https://crates.io/crates/sync_wrapper |
@@ -926,16 +925,16 @@ Total packages: 1086
 | tao-macros | 0.1.4 | MIT OR Apache-2.0 | https://crates.io/crates/tao-macros |
 | tar | 0.4.46 | MIT OR Apache-2.0 | https://crates.io/crates/tar |
 | target-lexicon | 0.12.16 | Apache-2.0 WITH LLVM-exception | https://crates.io/crates/target-lexicon |
-| tauri | 2.12.5 | Apache-2.0 OR MIT | https://crates.io/crates/tauri |
-| tauri-build | 2.7.4 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-build |
+| tauri | 2.12.0 | Apache-2.0 OR MIT | https://crates.io/crates/tauri |
+| tauri-build | 2.7.0 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-build |
 | tauri-codegen | 2.7.4 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-codegen |
 | tauri-macros | 2.7.4 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-macros |
 | tauri-plugin | 2.7.2 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-plugin |
-| tauri-plugin-deep-link | 2.6.2 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-plugin-deep-link |
-| tauri-plugin-dialog | 2.8.3 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-plugin-dialog |
-| tauri-plugin-fs | 2.7.1 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-plugin-fs |
-| tauri-plugin-single-instance | 2.5.4 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-plugin-single-instance |
-| tauri-plugin-updater | 2.14.0 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-plugin-updater |
+| tauri-plugin-deep-link | 2.6.0 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-plugin-deep-link |
+| tauri-plugin-dialog | 2.8.0 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-plugin-dialog |
+| tauri-plugin-fs | 2.6.0 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-plugin-fs |
+| tauri-plugin-single-instance | 2.5.1 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-plugin-single-instance |
+| tauri-plugin-updater | 2.13.1 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-plugin-updater |
 | tauri-runtime | 2.12.2 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-runtime |
 | tauri-runtime-wry | 2.12.3 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-runtime-wry |
 | tauri-utils | 2.10.2 | Apache-2.0 OR MIT | https://crates.io/crates/tauri-utils |
