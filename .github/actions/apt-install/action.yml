@@ -1,0 +1,72 @@
+name: Install APT dependencies
+description: Install runner packages with bounded attempts and one Ubuntu mirror fallback.
+inputs:
+  packages:
+    description: Space-separated package list (defaults to the desktop build dependencies).
+    default: >-
+      pkg-config libdbus-1-dev libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+      libasound2-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+  extra-packages:
+    description: Additional packages for this job.
+    default: ''
+  upgrade:
+    description: Refresh preinstalled packages to their APT candidates before bundling.
+    default: 'false'
+  mirror:
+    description: Initial Ubuntu mirror URL (only overridden by Flake Probe).
+    default: ''
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        APT_PACKAGES: ${{ inputs.packages }} ${{ inputs.extra-packages }}
+        APT_UPGRADE: ${{ inputs.upgrade }}
+        APT_MIRROR: ${{ inputs.mirror }}
+      run: |
+        set -euo pipefail
+        read -r -a packages <<< "${APT_PACKAGES//$'\n'/ }"
+
+        set_mirror() {
+          sudo python3 - "$1" <<'PY'
+        from pathlib import Path
+        import re
+        import sys
+
+        # GitHub images use mirror+file URIs pointing to apt-mirrors.txt on both Ubuntu versions.
+        for path in (Path('/etc/apt/sources.list'), Path('/etc/apt/sources.list.d/ubuntu.sources'),
+                     Path('/etc/apt/apt-mirrors.txt')):
+            if path.exists():
+                path.write_text(re.sub(r'https?://[^\s]+/ubuntu/?',
+                                       lambda _: sys.argv[1].rstrip('/') + '/', path.read_text()))
+                print(f'Ubuntu mirror: {path} -> {sys.argv[1]}')
+        PY
+        }
+
+        install_packages() {
+          # Bound the whole attempt too: per-request timeouts alone do not bound a slow mirror.
+          sudo env DEBIAN_FRONTEND=noninteractive timeout --kill-after=10s 240s \
+            bash -euo pipefail -c '
+              upgrade="$1"; shift
+              options=(-o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15
+                       -o Acquire::Retries=1 -o APT::Update::Error-Mode=any)
+              apt-get "${options[@]}" update
+              if [[ "$upgrade" == true ]]; then
+                apt-get "${options[@]}" upgrade -y -o Dpkg::Options::=--force-confold \
+                  -o APT::Get::Always-Include-Phased-Updates=true
+              fi
+              apt-get "${options[@]}" install -y "$@"
+            ' bash "$APT_UPGRADE" "${packages[@]}"
+        }
+
+        if [[ -n "$APT_MIRROR" ]]; then set_mirror "$APT_MIRROR"; fi
+        echo 'APT attempt 1/2 (limit: 240 seconds)'
+        if install_packages; then exit 0; fi
+
+        echo '::warning::APT attempt 1 failed; switching Ubuntu sources to archive.ubuntu.com for the final attempt.'
+        set_mirror http://archive.ubuntu.com/ubuntu
+        echo 'APT attempt 2/2 (limit: 240 seconds)'
+        if ! install_packages; then
+          echo '::error::APT dependencies could not be installed within two bounded attempts.'
+          exit 1
+        fi

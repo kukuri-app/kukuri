@@ -11,6 +11,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 # 配布物を build する runner。Linux は配布物の glibc の下限の Ubuntu 22.04（#1180 / #1413）。
 LINUX_RELEASE_RUNNER = "ubuntu-22.04"
 WINDOWS_RELEASE_RUNNER = "windows-2022"
+APT_INSTALL = yaml.load((ROOT / ".github/actions/apt-install/action.yml").read_text(encoding="utf-8"),
+                        Loader=yaml.BaseLoader)
 
 
 def workflow(name):
@@ -35,21 +37,26 @@ class WorkflowTests(unittest.TestCase):
         dependencies = next(step for step in steps if step.get("name") == "Linux build dependencies")
         bundle = next(step for step in steps if step.get("name") == "Build and verify AppImage and Deb")
         self.assertLess(steps.index(dependencies), steps.index(bundle))
-        commands = [shlex.split(command) for command in dependencies["run"].replace("\\\n", " ").splitlines()]
+        self.assertEqual(dependencies["uses"], "./.github/actions/apt-install")
+        self.assertEqual(dependencies["with"]["upgrade"], "true")
+        install = APT_INSTALL["runs"]["steps"][0]
+        self.assertEqual(install["env"]["APT_UPGRADE"], "${{ inputs.upgrade }}")
+        commands = [shlex.split(command) for command in install["run"].replace("\\\n", " ").splitlines()
+                    if command.strip().startswith("apt-get ")]
         # Runner images keep superseded versions whose exact source leaves the APT index
         # (#907, #1094, #1384), so every preinstalled package is refreshed after the index update.
-        update = commands.index(["sudo", "apt-get", "update"])
-        upgrade = next(i for i, command in enumerate(commands) if "apt-get" in command and "upgrade" in command)
-        self.assertLess(update, upgrade)
-        self.assertIn("APT::Get::Always-Include-Phased-Updates=true", commands[upgrade])
+        self.assertEqual([command[2] for command in commands], ["update", "upgrade", "install"])
+        self.assertIn("APT::Get::Always-Include-Phased-Updates=true", commands[1])
 
     def test_release_verify_installs_every_fast_cn_system_dependency(self):
         # linux-verify reruns the CN tests, including real ffmpeg video extraction (#1060).
         def packages(workflow_name, job_name):
             steps = workflow(workflow_name)["jobs"][job_name]["steps"]
             step = next(step for step in steps if step.get("name") == "Install Linux system dependencies")
-            words = shlex.split(step["run"])
-            return set(words[words.index("install") + 1:]) - {"-y"}
+            self.assertEqual(step["uses"], "./.github/actions/apt-install")
+            inputs = step.get("with", {})
+            return set(shlex.split(inputs.get("packages", APT_INSTALL["inputs"]["packages"]["default"]))
+                       + shlex.split(inputs.get("extra-packages", "")))
 
         missing = packages("kukuri-fast.yml", "linux-cn") - packages("kukuri-release-verify.yml", "linux-verify")
         self.assertEqual(missing, set(), "release linux-verify must install the Fast CN test dependencies")
