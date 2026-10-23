@@ -94,16 +94,14 @@ jobs:
         with:
           toolchain: 1.98.1
       - name: Linux build dependencies
-        run: |
-          sudo apt-get update
+        uses: ./.github/actions/apt-install
+        timeout-minutes: 10
+        with:
           # Refresh every preinstalled package to the current APT candidate before bundling:
           # superseded runner versions lose their exact source entry in the APT index
           # (libgcrypt20 #907, libsqlite3-0 #1094, libxml2 #1384).
-          sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-            -o Dpkg::Options::=--force-confold -o APT::Get::Always-Include-Phased-Updates=true
-          sudo apt-get install -y pkg-config libdbus-1-dev libglib2.0-dev libgtk-3-dev \
-            libwebkit2gtk-4.1-dev libasound2-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
-            libfuse2 file desktop-file-utils dbus binutils python3
+          upgrade: 'true'
+          extra-packages: libfuse2 file desktop-file-utils dbus binutils python3
       - uses: pnpm/action-setup@v4
         with:
           version: 10.16.1
@@ -209,6 +207,11 @@ jobs:
             --file "$filename" --file "$filename.sig" --file linux-x86_64-updater-key.pub --file "$notices"
       # #1800: 配布と同じ build を同じ PC で複数起動し、画面と Rust のやり取りを含めて確かめる。音声は instance ごとの
       # 仮想の入出力(PulseAudio の null sink)で、key の入力は window manager(openbox)の下で確かめる。
+      - name: Install real app test dependencies
+        uses: ./.github/actions/apt-install
+        timeout-minutes: 10
+        with:
+          packages: xvfb openbox xdotool pulseaudio pulseaudio-utils libasound2-plugins
       - name: Real app tests
         timeout-minutes: 20
         shell: bash
@@ -216,7 +219,6 @@ jobs:
           REAL_APP_AUDIO: pulse
         run: |
           set -euo pipefail
-          sudo apt-get install -y xvfb openbox xdotool pulseaudio pulseaudio-utils libasound2-plugins
           # #1822: 音声の server は desktop(rtkit の下の PipeWire・PulseAudio)と同じく real-time の優先度で動かす。無いと
           # CPU が埋まったときに server が遅れ、app の出力が作り直されてエコーキャンセルが数秒合わなくなる。
           sudo prlimit --pid $$ --rtprio=95 --nice=40

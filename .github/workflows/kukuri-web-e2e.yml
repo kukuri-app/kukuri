@@ -72,7 +72,10 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y clang llvm pkg-config libdbus-1-dev
+        uses: ./.github/actions/apt-install
+        timeout-minutes: 10
+        with:
+          packages: clang llvm pkg-config libdbus-1-dev
 
       # #1413: key は job id ごと（kukuri-fast.yml 参照）。build の内容は browser に依らないので共有する。
       - name: Cache Rust

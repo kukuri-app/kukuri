@@ -73,18 +73,8 @@ jobs:
           components: clippy,rustfmt
 
       - name: Install Linux system dependencies
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          pkg-config
-          libdbus-1-dev
-          libglib2.0-dev
-          libgtk-3-dev
-          libwebkit2gtk-4.1-dev
-          libasound2-dev
-          libayatana-appindicator3-dev
-          librsvg2-dev
-          patchelf
+        uses: ./.github/actions/apt-install
+        timeout-minutes: 10
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -137,18 +127,8 @@ jobs:
           toolchain: 1.98.1
 
       - name: Install Linux system dependencies
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          pkg-config
-          libdbus-1-dev
-          libglib2.0-dev
-          libgtk-3-dev
-          libwebkit2gtk-4.1-dev
-          libasound2-dev
-          libayatana-appindicator3-dev
-          librsvg2-dev
-          patchelf
+        uses: ./.github/actions/apt-install
+        timeout-minutes: 10
 
       - name: Cache Rust
         uses: ./.github/actions/cache-rust
@@ -187,7 +167,10 @@ jobs:
           components: clippy
 
       - name: Install LLVM tools for the wasm C build
-        run: sudo apt-get update && sudo apt-get install -y clang llvm
+        uses: ./.github/actions/apt-install
+        timeout-minutes: 10
+        with:
+          packages: clang llvm
 
       - name: Cache Rust
         uses: ./.github/actions/cache-rust
@@ -251,18 +234,8 @@ jobs:
           toolchain: 1.98.1
 
       - name: Install Linux system dependencies
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          pkg-config
-          libdbus-1-dev
-          libglib2.0-dev
-          libgtk-3-dev
-          libwebkit2gtk-4.1-dev
-          libasound2-dev
-          libayatana-appindicator3-dev
-          librsvg2-dev
-          patchelf
+        uses: ./.github/actions/apt-install
+        timeout-minutes: 10
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -320,19 +293,10 @@ jobs:
           toolchain: 1.98.1
 
       - name: Install Linux system dependencies
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          pkg-config
-          libdbus-1-dev
-          libglib2.0-dev
-          libgtk-3-dev
-          libwebkit2gtk-4.1-dev
-          libasound2-dev
-          libayatana-appindicator3-dev
-          librsvg2-dev
-          patchelf
-          fonts-noto-cjk
+        uses: ./.github/actions/apt-install
+        timeout-minutes: 10
+        with:
+          extra-packages: fonts-noto-cjk
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -391,19 +355,10 @@ jobs:
           toolchain: 1.98.1
 
       - name: Install Linux system dependencies
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          pkg-config
-          ffmpeg
-          libdbus-1-dev
-          libglib2.0-dev
-          libgtk-3-dev
-          libwebkit2gtk-4.1-dev
-          libasound2-dev
-          libayatana-appindicator3-dev
-          librsvg2-dev
-          patchelf
+        uses: ./.github/actions/apt-install
+        timeout-minutes: 10
+        with:
+          extra-packages: ffmpeg
 
       - name: Cache Rust
         uses: ./.github/actions/cache-rust
@@ -439,18 +394,8 @@ jobs:
           toolchain: 1.98.1
 
       - name: Install Linux system dependencies
-        run: >
-          sudo apt-get update &&
-          sudo apt-get install -y
-          pkg-config
-          libdbus-1-dev
-          libglib2.0-dev
-          libgtk-3-dev
-          libwebkit2gtk-4.1-dev
-          libasound2-dev
-          libayatana-appindicator3-dev
-          librsvg2-dev
-          patchelf
+        uses: ./.github/actions/apt-install
+        timeout-minutes: 10
 
       - name: Cache Rust
         uses: ./.github/actions/cache-rust
