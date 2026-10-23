@@ -18,6 +18,30 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.4.9-preview.1] - 2026-10-23
+
+### Features
+
+- topic の lease が 60 秒ごとに近隣∪台帳の次の相手へ紹介を求め、後から現れた保持者へ届く（#1910 AC-2） ([#1919](https://github.com/kukuri-app/kukuri/pull/1919))
+- 公開 topic の読み先に、近隣の紹介で見つけた非近隣の通常 peer を足す（#1910 AC-1） ([#1918](https://github.com/kukuri-app/kukuri/pull/1918))
+- 保持の期間と容量の内で公開 topic を保持し、前日より前の日も遡って取り込む（#1909 AC-3） ([#1917](https://github.com/kukuri-app/kukuri/pull/1917))
+- 保持する topic の blob・リアクション・取り下げ・session・Dome も取り込み、取れない対象を取り直す（#1909 AC-2） ([#1916](https://github.com/kukuri-app/kukuri/pull/1916))
+- CLI daemon が指定した公開 topic を画面の列なしに取り込む（#1909 AC-1） ([#1913](https://github.com/kukuri-app/kukuri/pull/1913))
+
+### Fixes
+
+- CIのAPT依存installを共通化し、ミラー切替と時間上限を設ける ([#1924](https://github.com/kukuri-app/kukuri/pull/1924))
+- CLI の公開スレッドの出力 schema を共有 DTO の欄に合わせる（#1914） ([#1915](https://github.com/kukuri-app/kukuri/pull/1915))
+
+### Other
+
+- リリースの版を 0.4.9 にする ([#1926](https://github.com/kukuri-app/kukuri/pull/1926))
+- Rust依存とiroh forkをv1.4.1へ更新する（#1921 AC-1） ([#1925](https://github.com/kukuri-app/kukuri/pull/1925))
+- desktop／CLI の実 stack と Web の実ブラウザで、紹介で見つけた保持者からの取得と再提供を確かめる（#1910 AC-3） ([#1920](https://github.com/kukuri-app/kukuri/pull/1920))
+- rust-cache の key から runner 同梱の toolchain を外し、Windows・nextest・Playwright の job を分ける（#1911） ([#1912](https://github.com/kukuri-app/kukuri/pull/1912))
+- 外部 relay の結合試験で session を確認済みにしてから接続を反映する ([#1908](https://github.com/kukuri-app/kukuri/pull/1908))
+- 0.4.8 preview の公開と LP・運用記録 ([#1907](https://github.com/kukuri-app/kukuri/pull/1907))
+
 ## [v0.4.8-preview.1] - 2026-10-21
 
 ### Features
