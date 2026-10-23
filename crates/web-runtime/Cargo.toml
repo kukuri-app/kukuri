@@ -67,7 +67,7 @@ kukuri-core = { path = "../core" }
 kukuri-docs-sync = { path = "../docs-sync" }
 kukuri-iroh-node = { path = "../iroh-node" }
 kukuri-store = { path = "../store", features = ["test-support"] }
-kukuri-transport = { path = "../transport" }
+kukuri-transport = { path = "../transport", features = ["test-support"] }
 kukuri-webrtc-transport = { path = "../webrtc-transport", features = ["test-signaling"] }
 n0-future.workspace = true
 

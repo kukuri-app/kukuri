@@ -13,6 +13,8 @@
 //! - `POST /account-key-export`（本文は passphrase）: native で生成した鍵を書き出し、export と公開鍵の 2 行を返す。
 //!   `POST /account-key-import`（本文は export と passphrase の 2 行）: browser の export を取り込み、公開鍵を返す
 //!   （鍵の export・import の互換。#1220 AC-2c）。
+//! - `POST /holder-info`（#1910 AC-3）: この node（browser の読み先の近隣）の gossip の近隣にいる保持者が作った公開
+//!   channel の topic・channel ID・保持者の endpoint ID・metadata の replica と key を 5 行で返す。
 //!
 //! native だけで動く。
 
@@ -25,11 +27,16 @@ use anyhow::{Context as _, Result};
 use axum::http::{StatusCode, header};
 use axum::{extract::State, routing::post};
 use iroh::{EndpointAddr, RelayUrl, TransportAddr, endpoint::Connection};
+use kukuri_app_api::{AppService, ScopeDisplayRequest, ScopeDisplayTarget, ServiceHandles};
 use kukuri_blob_service::{BlobService, IrohBlobService};
-use kukuri_core::{BlobHash, KukuriKeys};
-use kukuri_docs_sync::IrohDocsSync;
+use kukuri_core::{BlobHash, ChannelId, KukuriKeys, TimelineScope, TopicId};
+use kukuri_docs_sync::{BucketReplica, BucketScope, IrohDocsSync, TimeBucket};
 use kukuri_iroh_node::{IrohDocsNode, NodeOptions};
-use kukuri_transport::TransportRelayConfig;
+use kukuri_store::MemoryStore;
+use kukuri_transport::{
+    DiscoveryMode, FakeNetwork, FakeTransport, HintStream, HintTransport, IrohGossipTransport,
+    SeedPeer, Transport as _, TransportNetworkConfig, TransportRelayConfig,
+};
 use kukuri_webrtc_transport::{WebRtcConfig, WebRtcTransport, signaling_fixture};
 
 #[path = "../tests/support/storage_e2e.rs"]
@@ -43,6 +50,144 @@ struct Peer {
     docs: IrohDocsSync,
     blob: BlobHash,
     reports: AtomicUsize,
+    holder: Holder,
+}
+
+/// #1910 AC-3: browser の読み先の近隣（この node）の gossip の近隣にいる保持者と、その保持者が作った公開 channel の
+/// metadata の置き場所。browser は保持者を知らず、この node の紹介で候補に入れる。
+struct Holder {
+    topic: String,
+    channel_id: String,
+    endpoint_id: String,
+    replica: String,
+    key: String,
+    _node: Arc<IrohDocsNode>,
+    _app: AppService,
+    _bridge: Arc<IrohGossipTransport>,
+    _bridge_hints: tokio::sync::Mutex<HintStream>,
+}
+
+fn gossip_transport(
+    node: &Arc<IrohDocsNode>,
+    relay: &RelayUrl,
+) -> Result<Arc<IrohGossipTransport>> {
+    Ok(Arc::new(
+        IrohGossipTransport::from_shared_parts(
+            node.endpoint().clone(),
+            node.gossip().clone(),
+            node.discovery(),
+            TransportNetworkConfig::default(),
+            TransportRelayConfig {
+                iroh_relay_urls: vec![relay.to_string()],
+            },
+        )?
+        .with_topic_peer_introductions(node.topic_peer_introductions()),
+    ))
+}
+
+/// 保持者の node を作り、公開 topic の列を開いて gossip に居させる。この node（bridge）は保持者を seed に同じ topic の
+/// hint を購読し、近隣になってから保持者が公開 channel を作る。
+async fn holder(bridge_node: &Arc<IrohDocsNode>, relay: &RelayUrl) -> Result<Holder> {
+    let bridge = gossip_transport(bridge_node, relay)?;
+    let node = IrohDocsNode::memory_with(NodeOptions {
+        relay_config: TransportRelayConfig {
+            iroh_relay_urls: vec![relay.to_string()],
+        },
+        ..NodeOptions::default()
+    })
+    .await?;
+    let transport = gossip_transport(&node, relay)?;
+    let keys = KukuriKeys::generate();
+    let docs = Arc::new(IrohDocsSync::new(node.clone()));
+    docs.use_account_docs_author(&keys.derive_docs_author_seed(), &keys.public_key_hex())
+        .await?;
+    let store = Arc::new(MemoryStore::default());
+    let app = AppService::from_handles(ServiceHandles::new(
+        store.clone(),
+        store,
+        Arc::new(FakeTransport::new("holder", FakeNetwork::default())),
+        transport,
+        docs,
+        Arc::new(IrohBlobService::new(node.clone())),
+        keys,
+    ));
+    app.switch_writer(1);
+    let topic = "kukuri:topic:web-introduced-holder".to_string();
+    app.set_scope_display(ScopeDisplayRequest {
+        observer: "holder".into(),
+        target: ScopeDisplayTarget::Timeline {
+            topic: topic.clone(),
+            scope: TimelineScope::Public,
+        },
+        visible: true,
+    })
+    .await?;
+    node.endpoint().online().await;
+    bridge
+        .configure_discovery(
+            DiscoveryMode::StaticPeer,
+            false,
+            vec![SeedPeer {
+                endpoint_id: node.endpoint().id().to_string(),
+                addr_hint: None,
+            }],
+            Vec::new(),
+        )
+        .await?;
+    let bridge_hints = bridge.subscribe_hints(&TopicId::new(&topic)).await?;
+    let hint_topic = format!("hint/{topic}");
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while !bridge
+            .peers()
+            .await
+            .map(|peers| {
+                peers
+                    .topic_diagnostics
+                    .iter()
+                    .any(|diag| diag.topic == hint_topic && diag.peer_count > 0)
+            })
+            .unwrap_or(false)
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .context("the holder did not become a neighbor of the bridge")?;
+    let channel = app
+        .create_public_channel(
+            &topic,
+            "ブラウザが読む公開スレッド",
+            "最初の投稿",
+            Vec::new(),
+            Vec::new(),
+        )
+        .await?;
+    // metadata の置き場所（ADR 0068 §2: 作成時刻の bucket の `channels/list/<秒 20 桁>-<ID>/<ID>`）。
+    let seconds = ChannelId::new(&channel.channel_id)
+        .public_channel_created_at_ms()
+        .context("public channel id")?
+        .div_euclid(1_000);
+    let replica = BucketReplica::new(
+        BucketScope::Topic {
+            topic_id: topic.clone(),
+        },
+        TimeBucket::from_unix_seconds(seconds)?,
+    )?
+    .replica_id();
+    Ok(Holder {
+        topic,
+        key: format!(
+            "channels/list/{seconds:020}-{id}/{id}",
+            id = channel.channel_id
+        ),
+        channel_id: channel.channel_id,
+        endpoint_id: node.endpoint().id().to_string(),
+        replica: replica.as_str().to_string(),
+        _node: node,
+        _app: app,
+        _bridge: bridge,
+        _bridge_hints: tokio::sync::Mutex::new(bridge_hints),
+    })
 }
 
 #[tokio::main]
@@ -69,6 +214,7 @@ async fn main() -> Result<()> {
     docs.use_account_docs_author(&keys.derive_docs_author_seed(), &keys.public_key_hex())
         .await?;
     storage_e2e::write_records(&docs, &storage_e2e::replica("native"), "native", 1..=3).await?;
+    let holder = holder(&node, &relay).await?;
     // browser が relay で届くようになってから URL を出す。
     node.endpoint().online().await;
     let app = axum::Router::new()
@@ -80,6 +226,7 @@ async fn main() -> Result<()> {
         .route("/report-count", post(report_count))
         .route("/account-key-export", post(account_key_export))
         .route("/account-key-import", post(account_key_import))
+        .route("/holder-info", post(holder_info))
         .with_state(Arc::new(Peer {
             node,
             relay,
@@ -88,6 +235,7 @@ async fn main() -> Result<()> {
             docs,
             blob,
             reports: AtomicUsize::new(0),
+            holder,
         }));
     signaling_fixture::serve(app).await
 }
@@ -137,6 +285,14 @@ async fn account_key_import(body: String) -> String {
     import
         .await
         .unwrap_or_else(|error| format!("error: {error:#}"))
+}
+
+async fn holder_info(State(peer): State<Arc<Peer>>) -> String {
+    let holder = &peer.holder;
+    format!(
+        "{}\n{}\n{}\n{}\n{}",
+        holder.topic, holder.channel_id, holder.endpoint_id, holder.replica, holder.key
+    )
 }
 
 async fn info(State(peer): State<Arc<Peer>>) -> String {

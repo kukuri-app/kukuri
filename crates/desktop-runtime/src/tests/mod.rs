@@ -61,6 +61,7 @@ mod community_node;
 mod device_backup;
 mod dome_session;
 mod empty_namespace_reclaim;
+mod holder_discovery;
 mod identity_restart;
 mod legacy_store_retirement;
 mod media_blob_restore;
