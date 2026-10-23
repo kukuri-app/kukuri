@@ -33,10 +33,13 @@ runs:
         import re
         import sys
 
-        for path in (Path('/etc/apt/sources.list'), Path('/etc/apt/sources.list.d/ubuntu.sources')):
+        # GitHub images use mirror+file URIs pointing to apt-mirrors.txt on both Ubuntu versions.
+        for path in (Path('/etc/apt/sources.list'), Path('/etc/apt/sources.list.d/ubuntu.sources'),
+                     Path('/etc/apt/apt-mirrors.txt')):
             if path.exists():
                 path.write_text(re.sub(r'https?://[^\s]+/ubuntu/?',
                                        lambda _: sys.argv[1].rstrip('/') + '/', path.read_text()))
+                print(f'Ubuntu mirror: {path} -> {sys.argv[1]}')
         PY
         }
 
