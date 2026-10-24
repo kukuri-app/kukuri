@@ -187,7 +187,7 @@ async fn benign_live_cold_and_reused_post_ingest() -> Result<()> {
         for (name, mime, bytes, frames) in fixtures {
             let len = bytes.len();
             let stored = blobs.put_blob(bytes, mime).await?;
-            let asset = AssetRef { hash: stored.hash, mime: mime.into(), bytes: len as u64, role: AssetRole::VideoManifest };
+            let asset = AssetRef { hash: stored.hash, mime: mime.into(), bytes: len as u64, role: AssetRole::VideoManifest, origin: None };
             let id = post(&docs, &asset).await?;
             let before = metrics.snapshot();
             let started = Instant::now();

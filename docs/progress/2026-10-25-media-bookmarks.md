@@ -52,3 +52,12 @@
 再監査は固定head `1f72f3c6a384a9613ca02f46555e400df7d07066` に対してPASS、blockerは0件。監査側でも対象の3ファイル・23件が成功し、変更のないAC-1〜3・INVAR-2のPASSを維持した。全受入条件を満たしたため、実装と確認を終了した。
 
 PR枠は#1928の末端成果AC-MEDIAの1枠とする。本書のAC-1〜3は、その成果に必要な判定観点として内容をすべて維持する。製品範囲と期待結果は変えず、CI成功とmerge後の内容照合を終えてからIssueをCloseする。
+
+## PR CIでの補完
+
+PR [#1929](https://github.com/kukuri-app/kukuri/pull/1929) の最初のhead `a39eddca3` では次の2件を確認した。
+
+- Regression: Linux専用の`cn-indexer/tests/live_moderation.rs`の1行のAssetRef初期化に`origin`が無く、linux-cnのcompileがE0063で失敗した。CIの失敗を再現証拠とし、既存テストデータへ`origin: None`を補った。動作と旧形式のserializeは変えない。
+- 意図した視覚差分: `composer-dialog-wide-dark.png`で「ブックマークから選択」の追加を含む差分を検出した（他45件は比較成功）。expected・actual・diffを目視確認し、runbookのKukuri Visual Baselineを同じbranchで実行した。[run 40126463425](https://github.com/kukuri-app/kukuri/actions/runs/40126463425) は成功し、生成artifactから該当する1枚だけを採用した。比較の閾値と検査は変更していない。
+
+この追加差分はLinux専用のテスト初期値・基準画像・検証記録に限定する。製品範囲と実行時のコードは変更せず、追加差分の監査と更新headのCI成功後にマージする。
