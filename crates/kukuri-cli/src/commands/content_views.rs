@@ -34,6 +34,12 @@ fn view(properties: Value) -> Value {
 
 pub(super) fn output(name: &str) -> Value {
     match name {
+        "bookmark_media" => bookmarked_media(),
+        "get_bookmarked_media" => nullable(bookmarked_media()),
+        "list_bookmarked_media" => view(
+            json!({"items": array(bookmarked_media()), "newer_cursor": nullable(content_schema::media_bookmark_cursor()), "older_cursor": nullable(content_schema::media_bookmark_cursor())}),
+        ),
+        "remove_bookmarked_media" => json!({"type": "null"}),
         "create_post" | "withdraw_post" | "create_repost" => string(),
         "list_timeline" | "list_thread" | "list_profile_timeline" => view(
             json!({"items": array(post()), "next_cursor": nullable(schema::cursor()), "unavailable_count": {"type": "integer", "minimum": 0}}),
@@ -81,6 +87,13 @@ pub(super) fn output(name: &str) -> Value {
         }
         _ => panic!("content commandのoutput schemaが未定義: {name}"),
     }
+}
+
+fn bookmarked_media() -> Value {
+    view(
+        json!({"hash": string(), "source": schema::media_origin(), "bookmarked_from_object_id": string(),
+        "attachments": array(schema::attachment()), "content_labels": array(string()), "bookmarked_at": integer()}),
+    )
 }
 
 fn provenance() -> Value {

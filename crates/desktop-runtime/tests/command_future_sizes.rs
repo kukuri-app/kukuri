@@ -87,6 +87,7 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             "bookmark_custom_reaction",
             size1(DesktopRuntime::bookmark_custom_reaction),
         ),
+        ("bookmark_media", size1(DesktopRuntime::bookmark_media)),
         ("bookmark_post", size1(DesktopRuntime::bookmark_post)),
         (
             "bookmarked_post_ids",
@@ -243,6 +244,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::get_blob_media_payload),
         ),
         (
+            "get_bookmarked_media",
+            size1(DesktopRuntime::get_bookmarked_media),
+        ),
+        (
             "get_blob_preview_url",
             size1(DesktopRuntime::get_blob_preview_url),
         ),
@@ -338,6 +343,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         (
             "list_bookmarked_custom_reactions",
             size0(DesktopRuntime::list_bookmarked_custom_reactions),
+        ),
+        (
+            "list_bookmarked_media",
+            size1(DesktopRuntime::list_bookmarked_media),
         ),
         (
             "list_bookmarked_posts_page",
@@ -499,6 +508,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         (
             "remove_bookmarked_custom_reaction",
             size1(DesktopRuntime::remove_bookmarked_custom_reaction),
+        ),
+        (
+            "remove_bookmarked_media",
+            size1(DesktopRuntime::remove_bookmarked_media),
         ),
         (
             "remove_bookmarked_post",

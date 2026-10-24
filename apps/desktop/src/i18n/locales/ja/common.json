@@ -323,7 +323,7 @@
     "newer": "前のページ",
     "older": "次のページ",
     "fields": {
-      "hash": "blobハッシュ",
+      "hash": "ハッシュ",
       "mime": "MIMEタイプ",
       "bytes": "サイズ（bytes）",
       "role": "添付の種類",

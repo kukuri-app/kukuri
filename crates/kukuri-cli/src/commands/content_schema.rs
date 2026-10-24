@@ -7,6 +7,17 @@ use super::{
 
 pub(super) fn input(name: &str) -> Value {
     match name {
+        "bookmark_media" => object(
+            json!({"topic": {"type": "string"}, "object_id": {"type": "string"}, "hash": {"type": "string"}, "channel_ref": channel_ref()}),
+            &["topic", "object_id", "hash", "channel_ref"],
+        ),
+        "get_bookmarked_media" | "remove_bookmarked_media" => {
+            object(json!({"hash": {"type": "string"}}), &["hash"])
+        }
+        "list_bookmarked_media" => object(
+            json!({"cursor": media_bookmark_cursor(), "before": {"type": "boolean"}}),
+            &[],
+        ),
         "create_post" => object(
             json!({"topic": {"type": "string"}, "content": {"type": "string"},
             "reply_to": {"type": "string"}, "channel_ref": channel_ref(), "attachments": array(media::input_schema()),
@@ -134,6 +145,13 @@ pub(super) fn input(name: &str) -> Value {
         | "get_notification_status" => object(json!({}), &[]),
         _ => panic!("content commandのinput schemaが未定義: {name}"),
     }
+}
+
+pub(super) fn media_bookmark_cursor() -> Value {
+    object(
+        json!({"bookmarked_at": {"type": "integer"}, "hash": {"type": "string"}}),
+        &["bookmarked_at", "hash"],
+    )
 }
 
 pub(super) fn bookmark_cursor() -> Value {

@@ -57,7 +57,7 @@ pub(super) fn attachment() -> Value {
             "hash": {"type": "string"}, "mime": {"type": "string"},
             "bytes": {"type": "integer", "minimum": 0}, "role": {"type": "string"},
             "status": {"enum": ["Missing", "Available", "Pinned"]},
-            "origin": object(json!({"topic_id": {"type": "string"}, "object_id": {"type": "string"}, "author_pubkey": {"type": "string"}, "created_at": {"type": "integer"}}), &["topic_id", "object_id", "author_pubkey", "created_at"]),
+            "origin": media_origin(),
             "provenance": object(json!({
                 "canonical_source": {"type": "string"},
                 "observed_via": array(object(json!({
@@ -67,6 +67,13 @@ pub(super) fn attachment() -> Value {
             }), &["canonical_source", "observed_via"])
         }),
         &["hash", "mime", "bytes", "role", "status"],
+    )
+}
+
+pub(super) fn media_origin() -> Value {
+    object(
+        json!({"topic_id": {"type": "string"}, "object_id": {"type": "string"}, "author_pubkey": {"type": "string"}, "created_at": {"type": "integer"}}),
+        &["topic_id", "object_id", "author_pubkey", "created_at"],
     )
 }
 

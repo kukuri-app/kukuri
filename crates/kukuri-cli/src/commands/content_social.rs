@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kukuri_desktop_runtime::{
-    AuthorRequest, BookmarkCustomReactionRequest, BookmarkPostRequest,
+    AuthorRequest, BookmarkCustomReactionRequest, BookmarkMediaRequest, BookmarkPostRequest,
     CreateCustomReactionAssetRequest, CreateCustomReactionSetRequest, CreatePostRequest,
-    CreateRepostRequest, ImportCustomReactionSetRequest, ListBookmarkedPostsRequest,
-    ListProfileTimelineRequest, ListRecentReactionsRequest, ListSocialConnectionsRequest,
-    ListThreadRequest, ListTimelineRequest, NotificationIdRequest,
-    RemoveBookmarkedCustomReactionRequest, RemoveBookmarkedPostRequest,
+    CreateRepostRequest, ImportCustomReactionSetRequest, ListBookmarkedMediaRequest,
+    ListBookmarkedPostsRequest, ListProfileTimelineRequest, ListRecentReactionsRequest,
+    ListSocialConnectionsRequest, ListThreadRequest, ListTimelineRequest, MediaBookmarkRequest,
+    NotificationIdRequest, RemoveBookmarkedCustomReactionRequest, RemoveBookmarkedPostRequest,
     ResolveCommunityIndexPostsRequest, SetMyProfileRequest, ToggleReactionRequest,
     WithdrawPostRequest,
 };
@@ -68,6 +68,10 @@ macro_rules! content_commands {
 }
 
 content_commands!(runtime, context, payload;
+    BookmarkMedia("bookmark_media", Write) => async_call!(runtime, payload, BookmarkMediaRequest, bookmark_media),
+    GetBookmarkedMedia("get_bookmarked_media", Read) => async_call!(runtime, payload, MediaBookmarkRequest, get_bookmarked_media),
+    ListBookmarkedMedia("list_bookmarked_media", Read) => async_call!(runtime, payload, ListBookmarkedMediaRequest, list_bookmarked_media),
+    RemoveBookmarkedMedia("remove_bookmarked_media", Destructive) => async_call!(runtime, payload, MediaBookmarkRequest, remove_bookmarked_media),
     CreatePost("create_post", Write) => encode(
         runtime
             .create_post(

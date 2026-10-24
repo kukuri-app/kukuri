@@ -290,6 +290,7 @@ describe('useDesktopShellViewModels', () => {
     // gallery は image mime のみ(video_poster 以外)。src は object url 未取得なら null
     expect(card.media.imageGalleryItems).toEqual([
       {
+        attachment: post.attachments[0],
         hash: imageHash,
         src: null,
         failed: false,
@@ -324,6 +325,7 @@ describe('useDesktopShellViewModels', () => {
     expect(readyCard.media.state).toBe('ready');
     expect(readyCard.media.imageGalleryItems).toEqual([
       {
+        attachment: post.attachments[0],
         hash: imageHash,
         src: 'blob:image-preview-1',
         failed: false,

@@ -219,11 +219,8 @@ fn baseline_inventory_is_classified_once() {
         manifest.baseline,
         "d372c91bdc963bda07308a359fe3baeca8e06150"
     );
-    assert_eq!(
-        manifest.scope_revision,
-        "2026-10-11-1197-ac4a-notification-id"
-    );
-    assert_eq!(manifest.entries.len(), 202);
+    assert_eq!(manifest.scope_revision, "2026-10-25-media-bookmarks");
+    assert_eq!(manifest.entries.len(), 206);
     check_inventory(&gui_commands(), &manifest.entries).expect("全入口の分類");
 }
 

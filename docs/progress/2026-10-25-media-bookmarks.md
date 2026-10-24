@@ -61,3 +61,11 @@ PR [#1929](https://github.com/kukuri-app/kukuri/pull/1929) の最初のhead `a39
 - 意図した視覚差分: `composer-dialog-wide-dark.png`で「ブックマークから選択」の追加を含む差分を検出した（他45件は比較成功）。expected・actual・diffを目視確認し、runbookのKukuri Visual Baselineを同じbranchで実行した。[run 40126463425](https://github.com/kukuri-app/kukuri/actions/runs/40126463425) は成功し、生成artifactから該当する1枚だけを採用した。比較の閾値と検査は変更していない。
 
 この追加差分はLinux専用のテスト初期値・基準画像・検証記録に限定する。製品範囲と実行時のコードは変更せず、追加差分の監査と更新headのCI成功後にマージする。
+
+### 全体CIでの既存契約との同期
+
+head `d16f76dd7` の全体CIでは、追加したruntimeの4入口にCLI対応表とfutureサイズ測定の登録が不足していた。既存のGUI/CLI対応契約に従い、保存・点取得・一覧・解除を共有runtimeへ委譲するCLI adapterとschemaを登録し、対応表を206入口・CLI登録簿を170件へ同期した。除外の追加や64KiBのfuture上限の緩和は行っていない。future検査は成功し、最大値は従来どおりmove_domeの47,408 bytesだった。
+
+UI側では、独立したサムネイル操作に合わせたli単位のDOM参照、galleryの添付メタデータを含む期待値、追加ボタンを含むTab順を既存testへ反映した。画像の取得・表示制限・focus ringの検査は維持した。翻訳は既存の「ユーザー」用語へ揃え、日本語のhashラベルを「ハッシュ」にした。値とコピー内容は変更していない。
+
+関連するCLI lib 34件・対応表5件・futureサイズ1件、UI対象4ファイル87件（修正後の再実行を含む）、keyboardとメディア再利用のPlaywright8件、typecheck・ESLint・format・差分検査は成功した。WindowsでTS featureを含めたCLI全integration testをまとめてbuildした際にはrustcの内部エラーが発生したため、関連targetはincrementalを無効にして確認し、全体確認は更新headのPR CIで行う。

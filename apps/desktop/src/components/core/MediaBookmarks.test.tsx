@@ -54,7 +54,7 @@ test('right click and Shift+F10 show original source metadata, copy it and resto
   const dialog = screen.getByRole('dialog', { name: 'メディアの情報' });
   expect(within(dialog).getByText(source.author_pubkey)).toBeVisible();
   expect(within(dialog).getByText(source.object_id)).toBeVisible();
-  await userEvent.click(within(dialog).getByRole('button', { name: 'blobハッシュをコピー' }));
+  await userEvent.click(within(dialog).getByRole('button', { name: 'ハッシュをコピー' }));
   expect(clipboard).toHaveBeenLastCalledWith(image.hash);
   await userEvent.click(within(dialog).getByRole('button', { name: 'すべてのメタデータをコピー' }));
   expect(JSON.parse(clipboard.mock.calls.at(-1)![0] as string).origin).toEqual(source);

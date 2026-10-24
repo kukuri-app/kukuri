@@ -15,3 +15,5 @@
 - 未確認: Tauri実機、screen reader、touchの実入力。新しいnative入力処理は追加せず、既存のDialogとclipboardを使ったbrowser上の操作を確認した。ローカルWindowsでは画素比較を無効にし、実操作・目視・寸法を確認した。PRのLinux CIでは45件が比較成功し、投稿フォームの1件は追加ボタンを含む意図した差分としてLinux生成の基準画像へ更新した（Kukuri Visual Baseline run 40126463425）。比較の閾値は変更していない。
 - Review result: PASS。固定head `1f72f3c6a` の再監査で全AC / INVARがPASS、blockerは0件。旧headのadvisory判定の未達と修正の証跡は作業記録を参照。
 - 例外: なし。
+
+CIで検出した既存Tab順の期待値は、新しい選択ボタンを含む順序へ同期し、ja/enとdark/lightの実keyboard検査が成功した。翻訳は既存のユーザー用語へ揃え、ハッシュのラベルから不要な実装語を除いた。確認画像も同じ実装から更新した。

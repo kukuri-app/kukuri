@@ -1,6 +1,6 @@
 {
   "baseline": "d372c91bdc963bda07308a359fe3baeca8e06150",
-  "scope_revision": "2026-10-11-1197-ac4a-notification-id",
+  "scope_revision": "2026-10-25-media-bookmarks",
   "entries": [
     {"tauri":"get_desktop_startup_status","cli":"get_desktop_startup_status","inventory":"INV-1"},
     {"tauri":"commands::system_locale::get_system_locales","excluded":"os","reason":"#917: desktopの同意前UI言語を選ぶOS local read。UIを持たないCLIの業務commandには追加しない。"},
@@ -65,6 +65,10 @@
     {"tauri":"import_custom_reaction_set","cli":"import_custom_reaction_set","inventory":"INV-2"},
     {"tauri":"list_bookmarked_posts_page","cli":"list_bookmarked_posts","inventory":"INV-2"},
     {"tauri":"bookmarked_post_ids","excluded":"gui_visible_membership","reason":"#1221 R1-A: GUIの表示中IDだけを判定する有界なbookmark照会。CLIのbookmark一覧はlist_bookmarked_postsのcursorつきページで読む（#1221 R5-G）。"},
+    {"tauri":"bookmark_media","cli":"bookmark_media","inventory":"INV-2"},
+    {"tauri":"get_bookmarked_media","cli":"get_bookmarked_media","inventory":"INV-2"},
+    {"tauri":"list_bookmarked_media","cli":"list_bookmarked_media","inventory":"INV-2"},
+    {"tauri":"remove_bookmarked_media","cli":"remove_bookmarked_media","inventory":"INV-2"},
     {"tauri":"bookmark_post","cli":"bookmark_post","inventory":"INV-2"},
     {"tauri":"remove_bookmarked_post","cli":"remove_bookmarked_post","inventory":"INV-2"},
     {"tauri":"create_private_channel","cli":"create_private_channel","inventory":"INV-4"},
