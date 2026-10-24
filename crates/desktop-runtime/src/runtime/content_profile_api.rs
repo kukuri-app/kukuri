@@ -22,7 +22,8 @@ impl DesktopRuntime {
     }
 
     pub async fn create_post(&self, request: CreatePostRequest) -> Result<String> {
-        let attachments = pending_attachments_from_requests(request.attachments).await?;
+        let attachments =
+            crate::attachments::pending_post_attachments_from_requests(request.attachments).await?;
         self.app_service
             .create_post_with_attachments_in_channel(
                 request.topic.as_str(),

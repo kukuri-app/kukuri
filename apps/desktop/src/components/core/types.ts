@@ -52,7 +52,17 @@ export type ComposerDraftMediaView = {
   attachments: ComposerDraftAttachmentView[];
 };
 
+export type MediaBookmarkTarget = {
+  topic: string;
+  objectId: string;
+  channelRef: import('@/lib/api').ChannelRef;
+  source: import('@/lib/api').MediaOrigin;
+};
+
 export type PostMediaView = {
+  bookmarkTarget?: MediaBookmarkTarget;
+  videoAttachment?: import('@/lib/api').AttachmentView;
+  posterAttachment?: import('@/lib/api').AttachmentView;
   objectId: string;
   kind: 'image' | 'video' | null;
   statusLabel?: string | null;
@@ -71,6 +81,7 @@ export type PostMediaView = {
   metaBytesLabel?: string | null;
   // 投稿の画像のすべて(拡大表示の順)。カードには先頭 4 枚を並べる(#1690)。
   imageGalleryItems?: Array<{
+    attachment?: import('@/lib/api').AttachmentView;
     hash: string;
     src: string | null;
     // #1207: 自動取得が上限に達した / その再取得を試行中。

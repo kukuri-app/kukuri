@@ -26,6 +26,7 @@ mod direct_messages;
 mod envelopes;
 mod ledgers;
 mod live_game;
+mod media_bookmarks;
 mod notifications;
 mod peer_candidates;
 mod private_channels;

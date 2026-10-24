@@ -29,6 +29,7 @@ fn row(index: usize, author: &str, derived_at: i64) -> ObjectProjectionRow {
         },
         content: Some(format!("body {index}")),
         attachments: vec![AssetRef {
+            origin: None,
             hash: attachment,
             mime: "image/png".into(),
             bytes: 1,

@@ -1,5 +1,6 @@
 import type { PostMediaView } from '@/components/core/types';
 import type { AttachmentView, PostView } from '@/lib/api';
+import { isPublicChannelId } from '@/lib/publicChannels';
 import { contentProvenanceFromView } from '@/lib/api/provenance';
 import {
   POST_CARD_IMAGE_LIMIT,
@@ -29,7 +30,7 @@ export type BuildPostMediaViewOptions = {
 };
 
 export function buildPostMediaView(
-  post: Pick<PostView, 'object_id' | 'attachments'>,
+  post: Pick<PostView, 'object_id' | 'attachments'> & Partial<PostView>,
   {
     mediaObjectUrls,
     mediaRetryingHashes = {},
@@ -46,6 +47,7 @@ export function buildPostMediaView(
   const videoPoster = selectVideoPoster(post);
   const videoManifest = selectVideoManifest(post);
   const imageGalleryItems = images.map((attachment) => ({
+    attachment,
     hash: attachment.hash,
     src:
       typeof mediaObjectUrls[attachment.hash] === 'string'
@@ -96,6 +98,13 @@ export function buildPostMediaView(
 
   return {
     objectId: post.object_id,
+    bookmarkTarget: post.origin_topic_id && post.author_pubkey && !post.local_state ? {
+      topic: post.origin_topic_id, objectId: post.object_id,
+      channelRef: post.channel_id ? { kind: isPublicChannelId(post.channel_id) ? 'public_channel' : 'private_channel', channel_id: post.channel_id } : { kind: 'public' },
+      source: { topic_id: post.origin_topic_id, object_id: post.object_id, author_pubkey: post.author_pubkey, created_at: post.created_at ?? 0 },
+    } : undefined,
+    videoAttachment: videoManifest ?? undefined,
+    posterAttachment: videoPoster ?? undefined,
     kind: mediaKind,
     extraAttachmentCount,
     gatedBy: adultContentGated && mediaKind !== null ? gatedBy ?? 'self_label' : undefined,

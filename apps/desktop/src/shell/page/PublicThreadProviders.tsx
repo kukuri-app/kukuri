@@ -317,6 +317,7 @@ function CreatePublicThreadDialog({
               />
             </Label>
             <ComposerAttachmentField
+              onBookmarkSelection={(item) => setMedia((current) => [...current, item])}
               inputKey={attachmentInputKey}
               count={media.length}
               disabled={pending}

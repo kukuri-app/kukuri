@@ -406,6 +406,7 @@ fn parity_bookmarked_post_max(source_object_id: &str, bookmarked_at: i64) -> Boo
     let mut row = parity_bookmarked_post(source_object_id, bookmarked_at);
     row.content = Some(format!("content:{source_object_id}"));
     row.attachments = vec![AssetRef {
+        origin: None,
         hash: BlobHash::new("3".repeat(64)),
         mime: "image/png".into(),
         bytes: 42,

@@ -855,6 +855,7 @@ async fn leaving_a_private_channel_rejects_its_late_body() {
             bytes: stored.bytes,
         },
         vec![kukuri_core::AssetRef {
+            origin: None,
             hash: media.hash.clone(),
             mime: "image/png".into(),
             bytes: media.bytes,

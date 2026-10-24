@@ -8,6 +8,7 @@ import { createDeveloperLogsMock } from './api/developerLogs';
 import { createDirectMessagesMock } from './api/directMessages';
 import { createLiveGameMock } from './api/liveGame';
 import { createNotificationsMock } from './api/notifications';
+import { createMediaBookmarksMock } from './api/mediaBookmarks';
 import { createPostsMock } from './api/posts';
 import { createProfileSocialMock } from './api/profileSocial';
 import { createReactionsMock } from './api/reactions';
@@ -22,6 +23,7 @@ export function createDesktopMockApi(options?: DesktopMockApiOptions): DesktopAp
   const runtime = createMockRuntime(options);
   const api: DesktopApi = {
     ...createPostsMock(runtime),
+    ...createMediaBookmarksMock(runtime),
     ...createReactionsMock(runtime),
     ...createProfileSocialMock(runtime),
     ...createNotificationsMock(runtime),

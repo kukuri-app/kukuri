@@ -21,6 +21,7 @@ pub(crate) const DOME_CONNECTIONS: &str = "dome_connections";
 pub(crate) const DOME_HOSTING: &str = "dome_hosting";
 pub(crate) const REACTIONS: &str = "reactions";
 pub(crate) const REACTION_BOOKMARKS: &str = "reaction_bookmarks";
+pub(crate) const MEDIA_BOOKMARKS: &str = "media_bookmarks";
 pub(crate) const POST_BOOKMARKS: &str = "post_bookmarks";
 pub(crate) const MUTES: &str = "mutes";
 pub(crate) const DOCS_AUTHORS: &str = "docs_authors";
@@ -206,6 +207,12 @@ pub(super) fn create_projection_stores(db: &IdbDatabase) -> Result<(), JsValue> 
         POST_BOOKMARKS,
         &["r.source_object_id"],
         &[("order", &["r.bookmarked_at", "r.source_object_id"])],
+    )?;
+    table(
+        db,
+        MEDIA_BOOKMARKS,
+        &["r.hash"],
+        &[("order", &["r.bookmarked_at", "r.hash"])],
     )?;
     table(db, MUTES, &["r.author_pubkey"], &[])?;
     table(db, DOCS_AUTHORS, &["r.author_pubkey"], &[])?;

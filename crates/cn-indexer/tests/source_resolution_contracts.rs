@@ -296,6 +296,7 @@ async fn duplicate_media_hashes_preserve_first_mime_including_a_thumbnail_withou
             text: "caption".into(),
         },
         vec![AssetRef {
+            origin: None,
             hash: a.clone(),
             mime: " image/png ".into(),
             bytes: 4,
@@ -443,6 +444,7 @@ async fn prevented_media_hash_is_neither_fetched_nor_scanned_and_spares_other_ha
     let prevented = blob_hash(b"reported attachment");
     let other = blob_hash(b"other attachment");
     let asset = |hash: &kukuri_core::BlobHash| AssetRef {
+        origin: None,
         hash: hash.clone(),
         mime: "image/png".into(),
         bytes: 4,

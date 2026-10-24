@@ -5,16 +5,18 @@ import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MediaBookmarkPicker } from '@/shell/page/MediaBookmarkPicker';
 
 type ComposerAttachmentFieldProps = {
   inputKey: number;
   count: number;
   disabled?: boolean;
   onChange: ChangeEventHandler<HTMLInputElement>;
+  onBookmarkSelection?: (item: import('@/shell/store').DraftMediaItem) => void;
 };
 
 /** 投稿の添付欄(選ぶボタン・選んだ数・対応形式)。投稿の composer と公開スレッドの作成で共用する(#1889)。 */
-export function ComposerAttachmentField({ inputKey, count, disabled = false, onChange }: ComposerAttachmentFieldProps) {
+export function ComposerAttachmentField({ inputKey, count, disabled = false, onChange, onBookmarkSelection }: ComposerAttachmentFieldProps) {
   const { t } = useTranslation(['common']);
   const inputRef = useRef<HTMLInputElement>(null);
   const statusId = useId();
@@ -33,6 +35,7 @@ export function ComposerAttachmentField({ inputKey, count, disabled = false, onC
         >
           {t('composer.chooseFiles')}
         </Button>
+        {onBookmarkSelection ? <MediaBookmarkPicker disabled={disabled} onSelect={onBookmarkSelection} /> : null}
         <span id={statusId} role='status' className='text-sm text-muted-foreground'>
           {count === 0 ? t('composer.noFilesSelected') : t('composer.selectedFiles', { count })}
         </span>

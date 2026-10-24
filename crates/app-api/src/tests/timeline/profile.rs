@@ -257,6 +257,7 @@ async fn set_my_profile_with_avatar_upload_persists_blob_backed_profile_and_auth
             display_name: Some("Avatar Owner".into()),
             about: Some("blob avatar".into()),
             picture_upload: Some(PendingAttachment {
+                bookmarked_media_hash: None,
                 mime: "image/png".into(),
                 bytes: avatar_bytes.clone(),
                 role: AssetRole::ProfileAvatar,
@@ -325,6 +326,7 @@ async fn set_my_profile_preserves_blob_avatar_when_only_text_changes() {
             display_name: Some("Asset Owner".into()),
             about: Some("blob avatar".into()),
             picture_upload: Some(PendingAttachment {
+                bookmarked_media_hash: None,
                 mime: "image/png".into(),
                 bytes: tiny_png_bytes(),
                 role: AssetRole::ProfileAvatar,

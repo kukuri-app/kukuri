@@ -303,5 +303,36 @@
       "provider_verdict": "提供方判定",
       "local_policy": "节点本地策略"
     }
+  },
+  "mediaBookmarks": {
+    "save": "收藏媒体",
+    "remove": "取消媒体收藏",
+    "choose": "从收藏中选择",
+    "title": "图片和视频收藏",
+    "description": "选择已收藏的媒体以添加到此帖子，同时保留来源作者和帖子的资料。",
+    "loading": "正在加载收藏…",
+    "empty": "尚未收藏图片或视频。",
+    "loadFailed": "无法加载收藏。",
+    "saveFailed": "无法更新收藏。",
+    "details": "媒体资料",
+    "sourceDescription": "来源帖子和附件的资料。",
+    "copyField": "复制{{field}}",
+    "copyAll": "复制所有元数据",
+    "copied": "已复制。",
+    "copyFailed": "无法复制。",
+    "newer": "上一页",
+    "older": "下一页",
+    "fields": {
+      "hash": "Blob 哈希",
+      "mime": "MIME 类型",
+      "bytes": "大小（bytes）",
+      "role": "附件类型",
+      "author": "来源作者的公钥",
+      "post": "来源帖子 ID",
+      "postLink": "来源帖子链接",
+      "topic": "来源话题",
+      "createdAt": "来源帖子时间",
+      "provenance": "内容来源"
+    }
   }
 }

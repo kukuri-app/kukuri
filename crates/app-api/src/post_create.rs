@@ -119,17 +119,41 @@ impl AppService {
             .blob_service
             .put_blob(content.as_bytes().to_vec(), "text/plain")
             .await?;
-        let stored_attachments = futures_util::future::try_join_all(attachments.into_iter().map(
-            |attachment| async move {
+        let mut stored_attachments = Vec::new();
+        for attachment in attachments {
+            if let Some(hash) = attachment.bookmarked_media_hash {
+                let saved = self
+                    .services
+                    .projection_store
+                    .get_bookmarked_media(&hash)
+                    .await?
+                    .context("bookmarked media was not found")?;
+                self.services
+                    .projection_store
+                    .retain_bookmarked_media(&saved)
+                    .await?;
+                content_labels.extend(saved.content_labels);
+                for mut asset in saved.attachments {
+                    asset.origin.get_or_insert_with(|| saved.source.clone());
+                    stored_attachments.push(asset);
+                }
+            } else {
                 let stored = self
                     .services
                     .blob_service
-                    .put_blob(attachment.bytes, attachment.mime.as_str())
+                    .put_blob(attachment.bytes, &attachment.mime)
                     .await?;
-                Ok::<_, anyhow::Error>((attachment.role, stored))
-            },
-        ))
-        .await?;
+                stored_attachments.push(kukuri_core::AssetRef {
+                    hash: stored.hash,
+                    mime: stored.mime,
+                    bytes: stored.bytes,
+                    role: attachment.role,
+                    origin: None,
+                });
+            }
+        }
+        content_labels.sort();
+        content_labels.dedup();
         let manifest = if stored_attachments.is_empty() {
             None
         } else {
@@ -144,7 +168,7 @@ impl AppService {
                 created_at: now,
                 items: stored_attachments
                     .iter()
-                    .map(|(role, stored)| MediaManifestItem {
+                    .map(|stored| MediaManifestItem {
                         blob_hash: stored.hash.clone(),
                         mime: stored.mime.clone(),
                         size: stored.bytes,
@@ -152,7 +176,7 @@ impl AppService {
                         height: None,
                         duration_ms: None,
                         codec: None,
-                        thumbnail_blob_hash: match role {
+                        thumbnail_blob_hash: match stored.role {
                             AssetRole::VideoManifest => None,
                             _ => None,
                         },
@@ -173,15 +197,7 @@ impl AppService {
                 mime: stored_blob.mime.clone(),
                 bytes: stored_blob.bytes,
             },
-            stored_attachments
-                .iter()
-                .map(|(role, stored)| kukuri_core::AssetRef {
-                    hash: stored.hash.clone(),
-                    mime: stored.mime.clone(),
-                    bytes: stored.bytes,
-                    role: role.clone(),
-                })
-                .collect(),
+            stored_attachments,
             manifest
                 .iter()
                 .map(|(manifest, _)| manifest.manifest_id.clone())

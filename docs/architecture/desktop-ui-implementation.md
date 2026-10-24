@@ -66,6 +66,8 @@ RadixのDialog、Tooltip、DropdownMenu、Popoverは`body`直下に描画され�
 - global listener、interval、subscriptionは所有するhookまたはserviceでcleanupする。
 - routingは共有target、workspace persistenceはlocal layoutを扱う。責務の詳細はADR 0031に従う。
 
+画像・動画のブックマークでは、`shell/page/MediaAssetActions`が保存操作・メタデータDialog・focusを、`shell/page/MediaBookmarkPicker`が一覧の取得・選択・preview URLの所有を持つ。shellから注入したアカウントのAPIを`MediaBookmarksContext`で共有し、投稿とviewerの表示componentから同じ操作を使う。
+
 ## Review surfaceと検証
 
 ### Metaverseのカテゴリ合成

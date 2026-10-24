@@ -39,6 +39,10 @@ pub(crate) async fn attachment_bytes(request: &CreateAttachmentRequest) -> Resul
 pub(crate) async fn pending_attachment_from_request(
     request: CreateAttachmentRequest,
 ) -> Result<PendingAttachment> {
+    anyhow::ensure!(
+        request.bookmarked_media_hash.is_none(),
+        "bookmarked media is supported only for posts"
+    );
     let bytes = attachment_bytes(&request)
         .await
         .context("failed to decode attachment data")?;
@@ -51,6 +55,7 @@ pub(crate) async fn pending_attachment_from_request(
         _ => AssetRole::ImageOriginal,
     };
     Ok(PendingAttachment {
+        bookmarked_media_hash: None,
         mime: request.mime,
         bytes,
         role,
@@ -183,4 +188,27 @@ pub(crate) fn validate_crop_rect(
         bail!("custom reaction crop rectangle exceeds the source image bounds");
     }
     Ok(())
+}
+
+pub(crate) async fn pending_post_attachments_from_requests(
+    requests: Vec<CreateAttachmentRequest>,
+) -> Result<Vec<PendingAttachment>> {
+    let mut result = Vec::with_capacity(requests.len());
+    for request in requests {
+        if let Some(hash) = request.bookmarked_media_hash {
+            anyhow::ensure!(
+                request.data_base64.is_empty(),
+                "reused media cannot include upload bytes"
+            );
+            result.push(PendingAttachment {
+                mime: request.mime,
+                bytes: Vec::new(),
+                role: AssetRole::Attachment,
+                bookmarked_media_hash: Some(hash),
+            });
+        } else {
+            result.push(pending_attachment_from_request(request).await?);
+        }
+    }
+    Ok(result)
 }

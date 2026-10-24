@@ -165,7 +165,7 @@ test('rows show the first post’s first image, a video poster or a hidden mark'
     </DesktopShellStoreContext.Provider>
   );
   const thumbnail = (title: string) =>
-    screen.getByText(title).closest('button')?.querySelector('.public-thread-row-thumbnail') ?? null;
+    screen.getByText(title).closest('li')?.querySelector('.public-thread-row-thumbnail') ?? null;
   await waitFor(() => expect(thumbnail('Not local')?.querySelector('img')).toHaveAttribute('src', 'blob:image'));
   expect(api.getPublicChannel).toHaveBeenCalledTimes(1);
   expect(api.getPublicChannel).toHaveBeenCalledWith(TOPIC, 'pc-1700000000001-cccccccccccccccc');

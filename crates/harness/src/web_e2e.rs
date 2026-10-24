@@ -586,6 +586,7 @@ async fn public_blob_holder(
             reply_to: None,
             channel_ref: ChannelRef::Public,
             attachments: vec![CreateAttachmentRequest {
+                bookmarked_media_hash: None,
                 file_name: Some("payload.png".to_string()),
                 mime: "image/png".to_string(),
                 byte_size: png.len() as u64,

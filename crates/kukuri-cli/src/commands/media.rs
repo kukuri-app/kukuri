@@ -102,6 +102,7 @@ fn load_attachment(file: FileAttachment) -> Result<CreateAttachmentRequest, Prot
         return Err(invalid());
     }
     Ok(CreateAttachmentRequest {
+        bookmarked_media_hash: None,
         file_name: file.file_name,
         mime: file.mime,
         byte_size: file.byte_size,

@@ -303,5 +303,36 @@
       "provider_verdict": "Provider verdict",
       "local_policy": "Node local policy"
     }
+  },
+  "mediaBookmarks": {
+    "save": "Bookmark media",
+    "remove": "Remove media bookmark",
+    "choose": "Choose from bookmarks",
+    "title": "Image and video bookmarks",
+    "description": "Choose saved media to attach it to this post. The source author and post will be included.",
+    "loading": "Loading bookmarks…",
+    "empty": "No image or video bookmarks yet.",
+    "loadFailed": "Could not load bookmarks.",
+    "saveFailed": "Could not update the bookmark.",
+    "details": "Media information",
+    "sourceDescription": "Information about the source post and attachment.",
+    "copyField": "Copy {{field}}",
+    "copyAll": "Copy all metadata",
+    "copied": "Copied.",
+    "copyFailed": "Could not copy.",
+    "newer": "Previous page",
+    "older": "Next page",
+    "fields": {
+      "hash": "Blob hash",
+      "mime": "MIME type",
+      "bytes": "Size (bytes)",
+      "role": "Attachment role",
+      "author": "Source author public key",
+      "post": "Source post ID",
+      "postLink": "Source post link",
+      "topic": "Source topic",
+      "createdAt": "Source post date",
+      "provenance": "Content provenance"
+    }
   }
 }

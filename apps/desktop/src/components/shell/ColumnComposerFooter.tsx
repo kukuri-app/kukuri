@@ -1,8 +1,9 @@
 import { MessageSquare, PenLine, Reply } from 'lucide-react';
 import type { ChangeEvent, FormEvent, KeyboardEvent } from 'react';
-import { useEffect, useRef } from 'react';
+import { useContext, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { MediaBookmarksContext } from '@/components/core/mediaBookmarksContext';
 import { ComposerPanel } from '@/components/core/ComposerPanel';
 import type { MentionCandidate } from '@/components/core/types';
 import { Button } from '@/components/ui/button';
@@ -61,6 +62,7 @@ export function ColumnComposerFooter({
   target,
 }: ColumnComposerFooterProps) {
   const { t } = useTranslation(['common']);
+  const rememberDraftPreview = useContext(MediaBookmarksContext)?.rememberDraftPreview;
   const key = columnDraftKey(target);
   const storedDraft = useDesktopShellStore((state) => state.columnDraftsByKey[key]);
   const draft = storedDraft ?? createColumnDraft(target);
@@ -157,6 +159,7 @@ export function ColumnComposerFooter({
         onSubmit={(event) => void onSubmit(target, event)}
         attachmentInputKey={draft.attachmentInputKey}
         onAttachmentSelection={(event) => void onAttachmentSelection(target, event)}
+        onBookmarkSelection={(item) => { rememberDraftPreview?.(item); updateDraft((current) => ({ ...current, mediaItems: [...current.mediaItems, item], error: null })); }}
         onPasteImageFiles={(files) => onAttachmentPaste(target, files)}
         draftMediaItems={draftMediaViews}
         onRemoveDraftAttachment={(itemId) => onRemoveAttachment(target, itemId)}

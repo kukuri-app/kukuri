@@ -3,6 +3,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'r
 import { useTranslation } from 'react-i18next';
 
 import { EmptyStateGuidance } from '@/components/core/EmptyStateGuidance';
+import { MediaAssetActions } from '@/shell/page/MediaAssetActions';
 import { MediaDemandObserver } from '@/components/core/MediaDemandObserver';
 import type { PostMediaView } from '@/components/core/types';
 import { useInfiniteScrollSentinel } from '@/components/core/useInfiniteScrollSentinel';
@@ -217,7 +218,7 @@ function PublicThreadRow({
   if (!actions) return null;
   const media = firstPost && postMedia ? postMedia(firstPost) : null;
   return (
-    <li ref={ref} data-post-id={row.channel_id}>
+    <li ref={ref} data-post-id={row.channel_id} className='public-thread-row-item'>
       {/* 文言の間の空白は、読み上げの名前を区切る(grid・flex の中なので見た目は変えない)。 */}
       <button type='button' className='public-thread-row' onClick={() => actions.open(topic, row.channel_id)}>
         <strong className='public-thread-row-title'>{row.title}</strong>{' '}
@@ -245,14 +246,15 @@ function PublicThreadRow({
             </>
           ) : null}
         </span>
-        {media ? <PublicThreadThumbnail media={media} /> : null}
+        {media ? <span className='public-thread-thumbnail-space' aria-hidden='true' /> : null}
       </button>
+      {media ? <PublicThreadThumbnail media={media} onOpen={() => actions.open(topic, row.channel_id)} /> : null}
     </li>
   );
 }
 
 /** 行の右のサムネイル。成人向けとして伏せる間は印だけを出し、画像を参照しない(#1900 判断 2)。照会中は枠だけを出す。 */
-function PublicThreadThumbnail({ media }: { media: PostMediaView }) {
+function PublicThreadThumbnail({ media, onOpen }: { media: PostMediaView; onOpen: () => void }) {
   const { t } = useTranslation('shell');
   if (media.state === 'gated') {
     return (
@@ -269,6 +271,11 @@ function PublicThreadThumbnail({ media }: { media: PostMediaView }) {
         ? { hash: media.videoPosterHash, src: media.videoPosterPreviewSrc }
         : undefined;
   if (!shown) return null;
+  const attachment = media.kind === 'image' ? media.imageGalleryItems?.[0]?.attachment : media.posterAttachment;
+  const preview = <><MediaDemandObserver hash={shown.hash} />{shown.src ? <img src={shown.src} alt='' /> : null}</>;
+  if (attachment && media.bookmarkTarget) return <span className='public-thread-row-thumbnail'>
+    <MediaAssetActions attachment={attachment} target={media.bookmarkTarget} bookmarkHash={media.kind === 'video' ? media.videoAttachment?.hash : undefined}><button type='button' className='media-image-trigger' aria-label={t('common:media.imageAlt')} onClick={onOpen}>{preview}</button></MediaAssetActions>
+  </span>;
   return (
     <span className='public-thread-row-thumbnail' aria-hidden='true'>
       <MediaDemandObserver hash={shown.hash} />

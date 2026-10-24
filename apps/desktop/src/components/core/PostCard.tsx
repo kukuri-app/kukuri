@@ -911,6 +911,7 @@ export function PostCard({
       </div>
 
       <MediaViewerDialog
+        target={view.media.bookmarkTarget}
         items={view.media.imageGalleryItems ?? []}
         index={mediaViewerIndex}
         open={mediaViewerOpen}

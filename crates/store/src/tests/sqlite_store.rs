@@ -86,6 +86,7 @@ async fn store_profile_upsert_latest_wins() {
             display_name: Some("newer".into()),
             about: None,
             picture_asset: Some(kukuri_core::AssetRef {
+                origin: None,
                 hash: kukuri_core::BlobHash::new("avatar-newer"),
                 mime: "image/png".into(),
                 bytes: 128,

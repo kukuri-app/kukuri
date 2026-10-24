@@ -81,6 +81,7 @@ impl AppService {
                 .put_blob(upload.bytes, upload.mime.as_str())
                 .await?;
             Some(kukuri_core::AssetRef {
+                origin: None,
                 hash: stored.hash,
                 mime: stored.mime,
                 bytes: stored.bytes,

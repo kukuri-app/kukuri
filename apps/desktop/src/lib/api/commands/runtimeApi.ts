@@ -168,7 +168,10 @@ import { command } from '../invoke/dispatch';
 import { commitDomeLayoutRequest, resyncDomeSnapshotsRequest } from './domeHostingRequests';
 import { developerLogsApi, displayDemandApi, domeTransitionApi, liveMediaApi, postReloadApi, socialBlockApi } from './apiModules';
 
+import { mediaBookmarksApi } from './mediaBookmarksApi';
+
 export const runtimeApi: DesktopApi = {
+  ...mediaBookmarksApi,
   createPost: command('createPost', async (topic, content, replyTo, attachments = [], channelRef = { kind: 'public' }, contentLabels = [], live = null) => {
     return invokeDesktop<string>('create_post', {
       request: {

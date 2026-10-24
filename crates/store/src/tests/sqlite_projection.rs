@@ -373,6 +373,7 @@ async fn batch_projection_insert_matches_single_insert_and_preserves_attachments
 
     let mut root = projection_row(topic, "public", "batch-root", 10);
     root.attachments = vec![kukuri_core::AssetRef {
+        origin: None,
         hash: BlobHash::new("f".repeat(64)),
         mime: "image/png".into(),
         bytes: 42,

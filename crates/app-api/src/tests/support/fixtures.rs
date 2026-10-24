@@ -146,6 +146,7 @@ pub(crate) fn verified_projection_row(
 }
 pub(crate) fn pending_image_attachment(mime: &str, bytes: &[u8]) -> PendingAttachment {
     PendingAttachment {
+        bookmarked_media_hash: None,
         mime: mime.to_string(),
         bytes: bytes.to_vec(),
         role: AssetRole::ImageOriginal,
@@ -158,6 +159,7 @@ pub(crate) fn pending_video_attachment(
     bytes: &[u8],
 ) -> PendingAttachment {
     PendingAttachment {
+        bookmarked_media_hash: None,
         mime: mime.to_string(),
         bytes: bytes.to_vec(),
         role,

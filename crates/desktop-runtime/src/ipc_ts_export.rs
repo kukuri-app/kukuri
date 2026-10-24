@@ -94,6 +94,7 @@ fn export_ipc_types() {
         WithdrawDomeConnectionProposalRequest, WithdrawPostRequest,
         WithdrawalReasonVisibilityRequest,
     };
+    use crate::{BookmarkMediaRequest, ListBookmarkedMediaRequest, MediaBookmarkRequest};
     use kukuri_app_api::*;
     use kukuri_cn_protocol::{
         AdvisorySubjectKind, AppealStatus, Basis, CommunityNodeConsentItem,
@@ -160,6 +161,13 @@ fn export_ipc_types() {
         NotificationKind,
         ChannelAccessTokenKind,
         ProfileAssetView,
+        kukuri_core::MediaOrigin,
+        kukuri_store::MediaBookmarkCursor,
+        BookmarkedMediaView,
+        BookmarkedMediaPageView,
+        BookmarkMediaRequest,
+        MediaBookmarkRequest,
+        ListBookmarkedMediaRequest,
         AttachmentView,
         BlobMediaPayload,
         ContentDisplaySettings,

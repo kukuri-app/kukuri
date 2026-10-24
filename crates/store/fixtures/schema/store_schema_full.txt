@@ -35,6 +35,10 @@ table bookmarked_custom_reactions
   column cid=6 name=height type=INTEGER notnull=1 default=None pk=0
   column cid=7 name=bookmarked_at type=INTEGER notnull=1 default=None pk=0
   column cid=8 name=search_key type=TEXT notnull=1 default=Some("''") pk=0
+table bookmarked_media
+  column cid=0 name=hash type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=bookmarked_at type=INTEGER notnull=1 default=None pk=0
+  column cid=2 name=snapshot_json type=TEXT notnull=1 default=None pk=0
 table bookmarked_posts
   column cid=0 name=source_object_id type=TEXT notnull=0 default=None pk=1
   column cid=1 name=source_envelope_id type=TEXT notnull=1 default=None pk=0
@@ -455,6 +459,10 @@ table withdrawal_write_outbox
 table writer_cutover
   column cid=0 name=id type=INTEGER notnull=0 default=None pk=1
   column cid=1 name=switched_at type=INTEGER notnull=1 default=None pk=0
+index bookmarked_media_order table=bookmarked_media unique=0 origin=c partial=0
+  key seqno=0 cid=1 name=Some("bookmarked_at")
+  key seqno=1 cid=0 name=Some("hash")
+  sql=Some("CREATE INDEX bookmarked_media_order ON bookmarked_media (bookmarked_at DESC, hash DESC)")
 index cn_private_index_grants_due table=cn_private_index_grants unique=0 origin=c partial=0
   key seqno=0 cid=0 name=Some("base_url")
   key seqno=1 cid=7 name=Some("active")
@@ -815,6 +823,9 @@ index sqlite_autoindex_block_edges_1 table=block_edges unique=1 origin=pk partia
   sql=None
 index sqlite_autoindex_bookmarked_custom_reactions_1 table=bookmarked_custom_reactions unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("asset_id")
+  sql=None
+index sqlite_autoindex_bookmarked_media_1 table=bookmarked_media unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("hash")
   sql=None
 index sqlite_autoindex_bookmarked_posts_1 table=bookmarked_posts unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("source_object_id")

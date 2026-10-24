@@ -13,6 +13,7 @@ fn repost_envelope_roundtrip() {
             source_object_kind: "comment".into(),
             content: "quoted source".into(),
             attachments: vec![AssetRef {
+                origin: None,
                 hash: BlobHash::new("hash-1"),
                 mime: "image/png".into(),
                 bytes: 24,

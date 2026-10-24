@@ -24,6 +24,7 @@
 13. `harness/scenarios/`
 14. `docs/adr/0003-image-post-data-classification.md`
 15. `docs/adr/0004-video-post-data-classification.md`
+16. `docs/adr/0069-media-bookmarks.md`
 
 ## 現在の対象
 - `desktop + core + store + docs-sync + blob-service + desktop-runtime + cn-* + harness`

@@ -73,6 +73,7 @@ mod live;
 mod live_object;
 mod media;
 mod media_adult_gating;
+mod media_bookmarks;
 mod notifications;
 mod private_channels;
 mod public_channel_list;

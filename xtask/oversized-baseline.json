@@ -13,7 +13,7 @@
       "path": "crates/harness/src/scenarios/community_node.rs"
     },
     {
-      "lines": 1194,
+      "lines": 1197,
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
@@ -25,16 +25,16 @@
       "path": "crates/cn-operator/src/docs.rs"
     },
     {
+      "lines": 1145,
+      "path": "apps/desktop/src/lib/api/types.generated.ts"
+    },
+    {
       "lines": 1143,
       "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {
       "lines": 1132,
       "path": "crates/desktop-runtime/src/runtime/private_channels_game_api.rs"
-    },
-    {
-      "lines": 1131,
-      "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {
       "lines": 1126,
@@ -47,6 +47,10 @@
     {
       "lines": 1052,
       "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
+    },
+    {
+      "lines": 1050,
+      "path": "crates/store/fixtures/schema/store_schema_full.txt"
     },
     {
       "lines": 1047,
@@ -65,16 +69,12 @@
       "path": "crates/harness/src/scenarios/desktop_smoke.rs"
     },
     {
-      "lines": 1039,
-      "path": "crates/store/fixtures/schema/store_schema_full.txt"
+      "lines": 1034,
+      "path": "crates/app-api/src/views.rs"
     },
     {
       "lines": 1030,
       "path": "crates/app-api/src/service/replica_window.rs"
-    },
-    {
-      "lines": 1030,
-      "path": "crates/app-api/src/views.rs"
     },
     {
       "lines": 1027,
@@ -85,7 +85,7 @@
       "path": "crates/store/src/parity/lists.rs"
     },
     {
-      "lines": 1006,
+      "lines": 1007,
       "path": "apps/desktop/src/shell/DesktopShellPage.tsx"
     },
     {

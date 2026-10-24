@@ -78,6 +78,7 @@ async fn publish(store: &SqliteStore, hash: iroh_blobs::Hash) -> Result<()> {
             },
             content: Some("body".into()),
             attachments: vec![AssetRef {
+                origin: None,
                 hash: BlobHash::new(hash.to_string()),
                 mime: "image/png".into(),
                 bytes: 1,

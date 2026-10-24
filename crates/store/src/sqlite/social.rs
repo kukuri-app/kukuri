@@ -379,6 +379,7 @@ fn profile_from_row(row: sqlx::sqlite::SqliteRow, keep_nulls: bool) -> Profile {
         display_name: text("display_name"),
         about: text("about"),
         picture_asset: text("picture_blob_hash").map(|hash| kukuri_core::AssetRef {
+            origin: None,
             hash: kukuri_core::BlobHash::new(hash),
             mime: text("picture_mime").unwrap_or_default(),
             bytes: row

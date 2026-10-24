@@ -279,6 +279,7 @@ async fn adult_hash_marker_follows_cached_projection_refs() {
     let mut first = remote_post("adult-1");
     first.content_labels = vec!["adult".into()];
     first.attachments.push(AssetRef {
+        origin: None,
         hash: hash.clone(),
         mime: "image/png".into(),
         bytes: 3,

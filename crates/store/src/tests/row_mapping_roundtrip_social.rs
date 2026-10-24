@@ -23,6 +23,7 @@ fn profile_max() -> Profile {
         display_name: Some("表示名 ✨".into()),
         about: Some("自己紹介 text".into()),
         picture_asset: Some(AssetRef {
+            origin: None,
             hash: BlobHash::new("9".repeat(64)),
             mime: "image/webp".into(),
             bytes: 2_468,
@@ -68,6 +69,7 @@ async fn profile_roundtrip_preserves_all_columns_via_get_profile_and_get_profile
         display_name: Some(String::new()),
         about: Some(String::new()),
         picture_asset: Some(AssetRef {
+            origin: None,
             hash: BlobHash::new(""),
             mime: String::new(),
             bytes: 0,
@@ -158,6 +160,7 @@ async fn profile_picture_mime_and_bytes_null_read_back_as_empty_and_zero() {
     assert_eq!(
         fetched.picture_asset,
         Some(AssetRef {
+            origin: None,
             hash: BlobHash::new("9".repeat(64)),
             mime: String::new(),
             bytes: 0,
