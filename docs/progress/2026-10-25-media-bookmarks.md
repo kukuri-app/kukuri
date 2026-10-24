@@ -30,7 +30,7 @@
 
 ## 確認結果
 
-実装・局所検証・独立監査を完了した。未決の製品判断とblockerはない。
+実装・局所検証・独立監査を完了した。Issue [#1928](https://github.com/kukuri-app/kukuri/issues/1928) でPR CIとマージを進める。未決の製品判断とblockerはない。
 
 - `cargo check -p kukuri-app-api -p kukuri-desktop-runtime`: 成功。
 - core・store・app-apiの`bookmark`関連: 24件成功。複数の動画を含む投稿からの選択と、再利用時のblob書込みを検査する追加contractも成功。
@@ -41,7 +41,7 @@
 - Web: Windowsにはclangが無いため、runbookのDocker imageを`kukuri-media-bookmarks-wasm`としてbuildし、`cargo check --locked --target wasm32-unknown-unknown -p kukuri-web-runtime`が成功した。registry・git・targetのvolume名は`kukuri-media-bookmarks-wasm-{cargo,git,target}`。
 - 大型ファイルbaselineは、APIの合成、生成TS、schema golden、添付view、shellのproviderと既存advisory lookupへの接続に必要な6pathだけを更新した。featureのための型と接続であり、別責務の抽出は増やしていない。
 
-[UI確認記録](../ui-reviews/2026-10-25-media-bookmarks.md)に画像・入力・未確認事項を記録した。Tauri実機とWebブラウザでの実ネットワーク操作は未実施。全体suiteとPR CIはこのローカル作業では実行していない。
+[UI確認記録](../ui-reviews/2026-10-25-media-bookmarks.md)に画像・入力・未確認事項を記録した。Tauri実機とWebブラウザでの実ネットワーク操作は未実施。全体suiteはPR CIで確認する。ローカルで成功した検証は、変更影響のない範囲では再実行しない。
 
 ## 独立監査で見つかったINVAR-1の未達
 
@@ -50,3 +50,5 @@
 旧headのPickerで追加testを実行し、pending中にpayloadが1回呼ばれる失敗をpost_id/blob_cidの2条件で再現した（`target/media-bookmarks-advisory-before.log`）。修正では、Pickerの20件を既存lookupと共有hash gateへ接続し、保存時点の投稿IDをoriginと別に保持した。新しい判定や独立したlookup経路は増やしていない。修正後は同じ条件に加え、表示OFFでのpreview解放・共有hashの制限を確認する23件が成功した。独立監査は追加差分とINVAR-1だけを再確認する。
 
 再監査は固定head `1f72f3c6a384a9613ca02f46555e400df7d07066` に対してPASS、blockerは0件。監査側でも対象の3ファイル・23件が成功し、変更のないAC-1〜3・INVAR-2のPASSを維持した。全受入条件を満たしたため、実装と確認を終了した。
+
+PR枠は#1928の末端成果AC-MEDIAの1枠とする。本書のAC-1〜3は、その成果に必要な判定観点として内容をすべて維持する。製品範囲と期待結果は変えず、CI成功とmerge後の内容照合を終えてからIssueをCloseする。
