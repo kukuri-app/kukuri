@@ -55,6 +55,7 @@ type ComposerPanelProps = {
   onSubmit: FormEventHandler<HTMLFormElement>;
   attachmentInputKey: number;
   onAttachmentSelection: ChangeEventHandler<HTMLInputElement>;
+  onBookmarkSelection?: (item: import('@/shell/store').DraftMediaItem) => void;
   onPasteImageFiles?: (files: File[]) => void | Promise<void>;
   draftMediaItems: ComposerDraftMediaView[];
   onRemoveDraftAttachment: (itemId: string) => void;
@@ -84,6 +85,7 @@ export function ComposerPanel({
   onSubmit,
   attachmentInputKey,
   onAttachmentSelection,
+  onBookmarkSelection,
   onPasteImageFiles,
   draftMediaItems,
   onRemoveDraftAttachment,
@@ -263,6 +265,7 @@ export function ComposerPanel({
         count={draftMediaItems.length}
         disabled={attachmentsDisabled}
         onChange={onAttachmentSelection}
+          onBookmarkSelection={mode === 'message' ? undefined : onBookmarkSelection}
       />
 
       {onAdultLabeledChange && mode !== 'message' ? (

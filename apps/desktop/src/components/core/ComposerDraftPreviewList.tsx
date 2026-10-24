@@ -22,11 +22,11 @@ export function ComposerDraftPreviewList({ items, onRemove }: ComposerDraftPrevi
         <li key={item.id} className='draft-attachment-item'>
           <div className='draft-attachment-content'>
             <div className='draft-preview-frame'>
-              <img
+              {item.previewUrl ? <img
                 className='draft-preview-image'
                 src={item.previewUrl}
                 alt={t('composer.draftPreviewAlt', { name: item.sourceName })}
-              />
+              /> : <span>{t('fallbacks.attachment')}</span>}
             </div>
             <div>
               <strong>{item.sourceName}</strong>

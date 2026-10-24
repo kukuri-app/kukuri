@@ -82,6 +82,7 @@ fn profile_asset() -> ProfileAssetView {
 
 fn attachment() -> AttachmentView {
     AttachmentView {
+        origin: None,
         hash: "b".repeat(64),
         mime: "image/png".to_string(),
         bytes: 4096,
@@ -93,6 +94,7 @@ fn attachment() -> AttachmentView {
 
 fn observed_attachment() -> AttachmentView {
     AttachmentView {
+        origin: None,
         provenance: Some(ContentProvenanceView {
             canonical_source: "blob".to_string(),
             observed_via: vec![ContentObservationView {

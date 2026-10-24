@@ -439,6 +439,7 @@ impl E2eStack {
     ) -> Result<(String, String)> {
         let stored = self.author.blobs.put_blob(bytes.to_vec(), mime).await?;
         let attachment = AssetRef {
+            origin: None,
             hash: BlobHash::new(stored.hash.as_str().to_string()),
             mime: mime.to_string(),
             bytes: bytes.len() as u64,
@@ -544,6 +545,7 @@ impl E2eStack {
         mime: &str,
     ) -> Result<String> {
         let attachment = AssetRef {
+            origin: None,
             hash: BlobHash::new(missing_hash.to_string()),
             mime: mime.to_string(),
             bytes: 4,

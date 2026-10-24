@@ -6,6 +6,8 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { IconButton } from '@/components/ui/icon-button';
 
 import { MediaDemandObserver } from './MediaDemandObserver';
+import { MediaAssetActions } from '@/shell/page/MediaAssetActions';
+import type { MediaBookmarkTarget } from './types';
 import { MediaFetchFailure } from './MediaFetchFailure';
 
 type MediaViewerDialogProps = {
@@ -15,7 +17,9 @@ type MediaViewerDialogProps = {
     failed?: boolean;
     retrying?: boolean;
     mime: string;
+    attachment?: import('@/lib/api').AttachmentView;
   }>;
+  target?: MediaBookmarkTarget;
   index: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -38,6 +42,7 @@ function clampIndex(index: number, length: number) {
 
 export function MediaViewerDialog({
   items,
+  target,
   index,
   open,
   onOpenChange,
@@ -132,7 +137,11 @@ export function MediaViewerDialog({
           >
             {/* #1690: 表示中の画像を取得する。カードに並ばない 5 枚目以降はここでだけ取得する。 */}
             <MediaDemandObserver hash={currentItem?.hash ?? null} />
-            {currentItem?.src ? (
+            {currentItem?.src && currentItem.attachment && target ? (
+              <MediaAssetActions attachment={currentItem.attachment} target={target} className='media-viewer-asset'>
+                <img className='media-viewer-image' src={currentItem.src} alt={t('media.imageAlt')} />
+              </MediaAssetActions>
+            ) : currentItem?.src ? (
               <img
                 className='media-viewer-image'
                 src={currentItem.src}

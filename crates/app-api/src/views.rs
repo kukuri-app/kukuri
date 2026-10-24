@@ -301,6 +301,8 @@ pub struct AttachmentView {
     pub status: BlobViewStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<ContentProvenanceView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<kukuri_core::MediaOrigin>,
 }
 
 /// #858: 成人向け表現の表示設定(ADR 0046)。canonical source は desktop-runtime の
@@ -381,6 +383,8 @@ pub enum SocialConnectionKind {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingAttachment {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bookmarked_media_hash: Option<String>,
     pub mime: String,
     pub bytes: Vec<u8>,
     pub role: AssetRole,

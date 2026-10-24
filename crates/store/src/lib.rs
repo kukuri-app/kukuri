@@ -7,8 +7,10 @@
 mod account_store;
 mod account_sync;
 mod cache;
+mod media_bookmarks;
 mod memory;
 mod models;
+pub use media_bookmarks::*;
 mod pagination;
 /// backend の差分ハーネス(試験と、他の crate の試験から `test-support` で使う)。
 #[cfg(any(test, feature = "test-support"))]

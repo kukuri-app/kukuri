@@ -39,7 +39,21 @@ export type ChannelAccessTokenKind = "invite" | "grant" | "share";
 
 export type ProfileAssetView = { hash: string, mime: string, bytes: number, role: 'profile_avatar', };
 
-export type AttachmentView = { hash: string, mime: string, bytes: number, role: string, status: BlobViewStatus, provenance?: ContentProvenanceView | null, };
+export type MediaOrigin = { topic_id: string, object_id: string, author_pubkey: string, created_at: number, };
+
+export type MediaBookmarkCursor = { bookmarked_at: number, hash: string, };
+
+export type BookmarkedMediaView = { hash: string, source: MediaOrigin, bookmarked_from_object_id: string, attachments: Array<AttachmentView>, content_labels: Array<string>, bookmarked_at: number, };
+
+export type BookmarkedMediaPageView = { items: Array<BookmarkedMediaView>, newer_cursor: MediaBookmarkCursor | null, older_cursor: MediaBookmarkCursor | null, };
+
+export type BookmarkMediaRequest = { topic: string, object_id: string, hash: string, channel_ref: ChannelRef, };
+
+export type MediaBookmarkRequest = { hash: string, };
+
+export type ListBookmarkedMediaRequest = { cursor: MediaBookmarkCursor | null, before: boolean, };
+
+export type AttachmentView = { hash: string, mime: string, bytes: number, role: string, status: BlobViewStatus, provenance?: ContentProvenanceView | null, origin?: MediaOrigin | null, };
 
 export type BlobMediaPayload = { bytes_base64: string, mime: string, };
 
@@ -835,7 +849,7 @@ export type WithdrawPostRequest = { topic: string, object_id: string, channel_re
 
 export type CreateRepostRequest = { topic: string, source_topic: string, source_object_id: string, commentary?: string | null, };
 
-export type CreateAttachmentRequest = { file_name?: string | null, mime: string, byte_size: number, data_base64: string, role?: string | null, };
+export type CreateAttachmentRequest = { file_name?: string | null, mime: string, byte_size: number, data_base64: string, bookmarked_media_hash?: string | null, role?: string | null, };
 
 export type ReactionKeyRequest = { "kind": "emoji", emoji: string, } | { "kind": "custom_asset", asset_id: string, owner_pubkey: string, blob_hash: string, search_key: string, mime: string, bytes: number, width: number, height: number, };
 

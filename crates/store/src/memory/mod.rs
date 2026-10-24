@@ -96,6 +96,7 @@ pub struct MemoryStore {
     reaction_projection_rows: Arc<RwLock<MemoryReactionProjectionRows>>,
     bookmarked_custom_reactions: Arc<RwLock<HashMap<String, BookmarkedCustomReactionRow>>>,
     bookmarked_posts: Arc<RwLock<MemoryBookmarkedPosts>>,
+    media_bookmarks: Arc<RwLock<media_bookmarks::MemoryMediaBookmarks>>,
     direct_message_conversations: Arc<RwLock<HashMap<String, DirectMessageConversationRow>>>,
     direct_message_rows: Arc<RwLock<MemoryDirectMessageRows>>,
     direct_message_outbox_rows: Arc<RwLock<MemoryDirectMessageOutboxRows>>,
@@ -167,6 +168,7 @@ mod bookmarks;
 mod direct_messages;
 mod envelopes;
 mod live_game;
+mod media_bookmarks;
 mod notifications;
 mod observations;
 mod private_channel_keys;

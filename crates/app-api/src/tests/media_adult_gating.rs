@@ -172,6 +172,7 @@ async fn adult_labeled_media_payload_is_blocked_until_display_enabled() {
             "labeled caption",
             None,
             vec![PendingAttachment {
+                bookmarked_media_hash: None,
                 mime: "image/png".into(),
                 bytes: b"adult-labeled-image".to_vec(),
                 role: AssetRole::ImageOriginal,
@@ -262,6 +263,7 @@ async fn unlabeled_media_payload_is_unaffected_by_adult_display_setting() {
             "plain caption",
             None,
             vec![PendingAttachment {
+                bookmarked_media_hash: None,
                 mime: "image/png".into(),
                 bytes: b"plain-image".to_vec(),
                 role: AssetRole::ImageOriginal,
@@ -326,6 +328,7 @@ async fn advisory_labeled_media_respects_adult_display_gate() {
             "plain caption",
             None,
             vec![PendingAttachment {
+                bookmarked_media_hash: None,
                 mime: "image/png".into(),
                 bytes: b"advisory-labeled-image".to_vec(),
                 role: AssetRole::ImageOriginal,
@@ -429,6 +432,7 @@ impl RemotePeerBlobService {
         let hash = blake3::hash(data).to_hex().to_string();
         self.remote.lock().await.insert(hash.clone(), data.to_vec());
         kukuri_core::AssetRef {
+            origin: None,
             hash: BlobHash::new(hash),
             mime: mime.to_string(),
             bytes: data.len() as u64,
@@ -665,6 +669,7 @@ async fn advisory_registration_does_not_gate_unrelated_media() {
             "unrelated caption",
             None,
             vec![PendingAttachment {
+                bookmarked_media_hash: None,
                 mime: "image/png".into(),
                 bytes: b"unrelated-image".to_vec(),
                 role: AssetRole::ImageOriginal,

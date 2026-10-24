@@ -43,6 +43,7 @@ mod direct_messages;
 mod envelopes;
 mod legacy_store_retirement;
 pub(crate) mod live_game;
+mod media_bookmarks;
 mod notifications;
 mod observations;
 mod peer_candidates;

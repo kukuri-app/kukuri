@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import type { PostView } from '@/lib/api';
 import { isAdultLabeledPost, isGatingContentAdvisory } from '@/shell/media';
 import {
   postGateableMediaHashes,
   resolvePostAdvisory,
   type TimelineContentAdvisoryIndex,
+  type AdvisoryPostSource,
 } from '@/shell/contentAdvisories';
 
 const SETTLED_LOOKUP = { active: false, settled: {} };
@@ -22,7 +22,7 @@ export function collectAdultGatedMediaHashes({
   additionalHashes,
 }: {
   /// 表示経路に現れる投稿(タイムライン系と「見つける」の解決済み投稿)。
-  posts: readonly PostView[];
+  posts: readonly AdvisoryPostSource[];
   timelineContentAdvisories: TimelineContentAdvisoryIndex;
   /// 投稿から導けないゲート対象(「見つける」の index 応答が持つ advisory など)。
   additionalHashes: readonly string[];
@@ -66,7 +66,7 @@ export function useAdultGatedMediaHashes({
   additionalHashes,
 }: {
   adultContentEnabled: boolean;
-  posts: readonly PostView[];
+  posts: readonly AdvisoryPostSource[];
   timelineContentAdvisories: TimelineContentAdvisoryIndex;
   additionalHashes: readonly string[];
 }): string[] {

@@ -19,6 +19,7 @@ pub(crate) async fn attachment_views_from_refs(
     let mut attachments = Vec::with_capacity(refs.len());
     for attachment in refs {
         attachments.push(AttachmentView {
+            origin: attachment.origin.clone(),
             hash: attachment.hash.as_str().to_string(),
             mime: attachment.mime.clone(),
             bytes: attachment.bytes,
@@ -39,6 +40,7 @@ pub(crate) async fn direct_message_attachment_views(
     };
     let mut attachments = Vec::new();
     attachments.push(AttachmentView {
+        origin: None,
         hash: manifest.original.hash.as_str().to_string(),
         mime: manifest.original.mime.clone(),
         bytes: manifest.original.bytes,
@@ -51,6 +53,7 @@ pub(crate) async fn direct_message_attachment_views(
     });
     if let Some(poster) = manifest.poster.as_ref() {
         attachments.push(AttachmentView {
+            origin: None,
             hash: poster.hash.as_str().to_string(),
             mime: poster.mime.clone(),
             bytes: poster.bytes,

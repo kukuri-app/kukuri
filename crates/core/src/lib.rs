@@ -173,7 +173,7 @@ pub use live::{
 pub use media::{
     AssetRef, AssetRole, DOME_INSTANCE_MANIFEST_MIME, DOME_PRESET_MANIFEST_MIME,
     GAME_MANIFEST_MIME, KukuriMediaManifestV1, LIVE_MANIFEST_MIME, ManifestBlobRef,
-    MediaManifestItem, blob_hash, build_media_manifest_envelope,
+    MediaManifestItem, MediaOrigin, blob_hash, build_media_manifest_envelope,
 };
 pub use metaverse_audio::{
     LiveMediaAccessRequestV1, METAVERSE_AUDIO_POSITION_TRACK, METAVERSE_AUDIO_TRACK,

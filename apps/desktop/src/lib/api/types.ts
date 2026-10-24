@@ -12,6 +12,10 @@ import type {
   BlobMediaPayload,
   ContentDisplaySettings,
   BookmarkedPostView,
+  AttachmentView,
+  BookmarkedMediaView,
+  BookmarkedMediaPageView,
+  MediaBookmarkCursor,
   BookmarkedPostPageView,
   BookmarkCursor,
   ChannelAccessTokenExport,
@@ -238,6 +242,8 @@ export type CreateAttachmentInput = {
   mime: string;
   byte_size: number;
   data_base64: string;
+  bookmarked_media_hash?: string | null;
+  reused_attachments?: AttachmentView[];
   web_source?: { blob: Blob; owner: string; hash: string };
   role?: string | null;
 };
@@ -338,6 +344,10 @@ export interface DesktopApi {
     channelRef?: ChannelRef
   ): Promise<BookmarkedPostView>;
   removeBookmarkedPost(objectId: string): Promise<void>;
+  bookmarkMedia(topic: string, objectId: string, hash: string, channelRef?: ChannelRef): Promise<BookmarkedMediaView>;
+  getBookmarkedMedia(hash: string): Promise<BookmarkedMediaView | null>;
+  listBookmarkedMedia(cursor?: MediaBookmarkCursor | null, before?: boolean): Promise<BookmarkedMediaPageView>;
+  removeBookmarkedMedia(hash: string): Promise<void>;
   resolveCommunityIndexPosts(
     entries: CommunityIndexPostResolveInput[]
   ): Promise<CommunityIndexPostResolveResponse>;

@@ -37,6 +37,7 @@ pub(crate) fn image_attachment_request(
     bytes: &[u8],
 ) -> CreateAttachmentRequest {
     CreateAttachmentRequest {
+        bookmarked_media_hash: None,
         file_name: Some(name.to_string()),
         mime: mime.to_string(),
         byte_size: bytes.len() as u64,
@@ -51,6 +52,7 @@ pub(crate) fn profile_avatar_attachment_request(
     bytes: &[u8],
 ) -> CreateAttachmentRequest {
     CreateAttachmentRequest {
+        bookmarked_media_hash: None,
         file_name: Some(name.to_string()),
         mime: mime.to_string(),
         byte_size: bytes.len() as u64,
@@ -66,6 +68,7 @@ pub(crate) fn video_attachment_request(
     role: &str,
 ) -> CreateAttachmentRequest {
     CreateAttachmentRequest {
+        bookmarked_media_hash: None,
         file_name: Some(name.to_string()),
         mime: mime.to_string(),
         byte_size: bytes.len() as u64,

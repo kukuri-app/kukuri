@@ -475,12 +475,14 @@
 }
 
 /* #1900: 最初の投稿のサムネイルは右に 64px の正方形。サムネイルの無い行は今の 1 列のまま。 */
-.public-thread-row:has(.public-thread-row-thumbnail) {
+.public-thread-row:has(.public-thread-row-thumbnail),
+.public-thread-row:has(.public-thread-thumbnail-space) {
   grid-template-columns: minmax(0, 1fr) 4rem;
   column-gap: var(--space-md);
 }
 
-.public-thread-row-thumbnail {
+.public-thread-row-thumbnail,
+.public-thread-thumbnail-space {
   grid-column: 2;
   grid-row: 1 / span 2;
   display: grid;

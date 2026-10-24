@@ -21,6 +21,7 @@ pub fn hash(seed: u32) -> String {
 
 pub fn asset(hash: &str) -> AssetRef {
     AssetRef {
+        origin: None,
         hash: BlobHash::new(hash),
         mime: "image/png".into(),
         bytes: 1,

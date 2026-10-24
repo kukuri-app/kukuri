@@ -69,13 +69,13 @@ export function createOptimisticPostActions({
   ): AttachmentView[] {
     let attachmentIndex = 0;
     return items.flatMap((item) =>
-      item.attachments.map((attachment) => ({
+      item.attachments.flatMap((attachment) => attachment.reused_attachments ?? [{
         hash: `${localId}-attachment-${attachmentIndex++}`,
         mime: attachment.mime,
         bytes: attachment.byte_size,
         role: attachment.role ?? 'image_original',
         status: 'Available',
-      }))
+      }])
     );
   }
 

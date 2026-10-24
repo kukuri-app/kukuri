@@ -363,6 +363,10 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     authenticate_community_node(request: CommunityNodeTargetRequest) => runtime.authenticate_community_node(request).await.map_err(map_error);
     block_author(request: AuthorRequest) => runtime.block_author(request).await.map_err(map_error);
     bookmark_custom_reaction(request: BookmarkCustomReactionRequest) => runtime.bookmark_custom_reaction(request).await.map_err(map_error);
+    bookmark_media(request: BookmarkMediaRequest) => runtime.bookmark_media(request).await.map_err(map_error);
+    get_bookmarked_media(request: MediaBookmarkRequest) => runtime.get_bookmarked_media(request).await.map_err(map_error);
+    list_bookmarked_media(request: ListBookmarkedMediaRequest) => runtime.list_bookmarked_media(request).await.map_err(map_error);
+    remove_bookmarked_media(request: MediaBookmarkRequest) => runtime.remove_bookmarked_media(request).await.map_err(map_error);
     bookmark_post(request: BookmarkPostRequest) => runtime.bookmark_post(request).await.map_err(map_error);
     bookmarked_post_ids(request: BookmarkedPostIdsRequest) => runtime.bookmarked_post_ids(request).await.map_err(map_error);
     cancel_account_transfer() => runtime.cancel_account_transfer().await.map_err(map_error);

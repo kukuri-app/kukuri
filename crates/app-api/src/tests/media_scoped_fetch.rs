@@ -12,6 +12,7 @@ async fn create_post_with_image_attachment_surfaces_attachment_metadata() {
             "caption",
             None,
             vec![PendingAttachment {
+                bookmarked_media_hash: None,
                 mime: "image/png".into(),
                 bytes: b"fake-image".to_vec(),
                 role: AssetRole::ImageOriginal,
@@ -64,6 +65,7 @@ async fn expired_projection_blocks_media_bytes_until_source_is_revalidated() {
             "caption",
             None,
             vec![PendingAttachment {
+                bookmarked_media_hash: None,
                 mime: "image/png".into(),
                 bytes: b"cached-image".to_vec(),
                 role: AssetRole::ImageOriginal,
@@ -125,6 +127,7 @@ async fn private_post_media_requires_current_channel_membership() {
             "private image",
             None,
             vec![PendingAttachment {
+                bookmarked_media_hash: None,
                 mime: "image/png".into(),
                 bytes: b"private image".to_vec(),
                 role: AssetRole::ImageOriginal,

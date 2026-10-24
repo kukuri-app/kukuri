@@ -37,7 +37,7 @@ async fn reactions_for_target(
 impl IndexedDbCache {
     /// bookmark の行の変更と、その保護参照の置き換えを 1 つの transaction で行う。`stores` は行の store（と、custom
     /// reaction の bookmark では公開参照の store）。
-    async fn bookmark_update(
+    pub(super) async fn bookmark_update(
         &self,
         stores: &'static [&'static str],
         reference: String,

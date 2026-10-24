@@ -162,6 +162,7 @@ where
             ));
         }
         Ok(AssetRef {
+            origin: None,
             hash: asset.hash,
             mime: asset.mime,
             bytes: asset.bytes,

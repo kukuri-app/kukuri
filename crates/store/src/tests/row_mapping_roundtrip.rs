@@ -122,12 +122,14 @@ fn object_projection_max() -> ObjectProjectionRow {
         content: Some("投稿本文 📝".into()),
         attachments: vec![
             AssetRef {
+                origin: None,
                 hash: BlobHash::new("2".repeat(64)),
                 mime: "image/png".into(),
                 bytes: 2_048,
                 role: AssetRole::ImageOriginal,
             },
             AssetRef {
+                origin: None,
                 hash: BlobHash::new("3".repeat(64)),
                 mime: "video/mp4".into(),
                 bytes: 1_048_576,
@@ -141,6 +143,7 @@ fn object_projection_max() -> ObjectProjectionRow {
             source_object_kind: "comment".into(),
             content: "引用元 💬".into(),
             attachments: vec![AssetRef {
+                origin: None,
                 hash: BlobHash::new("4".repeat(64)),
                 mime: "image/webp".into(),
                 bytes: 512,
@@ -418,6 +421,7 @@ fn bookmarked_post_max() -> BookmarkedPostRow {
         },
         content: Some("ブックマーク本文 🔖".into()),
         attachments: vec![AssetRef {
+            origin: None,
             hash: BlobHash::new("a".repeat(64)),
             mime: "image/jpeg".into(),
             bytes: 65_536,

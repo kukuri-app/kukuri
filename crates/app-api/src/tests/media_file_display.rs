@@ -72,6 +72,7 @@ async fn redisplay_after_the_provider_stops(content_labels: Vec<String>) -> anyh
             text: "video".into(),
         },
         vec![kukuri_core::AssetRef {
+            origin: None,
             hash: stored.hash.clone(),
             mime: "video/mp4".into(),
             bytes: stored.bytes,

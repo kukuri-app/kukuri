@@ -628,6 +628,7 @@ pub trait ProjectionStore:
     crate::AccountSyncStore
     + crate::PrivateChannelKeyStore
     + crate::PublicChannelStore
+    + crate::MediaBookmarkStore
     + ObjectProjectionStore
     + ContentObservationStore
     + PostWithdrawalStore
@@ -643,6 +644,7 @@ impl<T> ProjectionStore for T where
     T: crate::AccountSyncStore
         + crate::PrivateChannelKeyStore
         + crate::PublicChannelStore
+        + crate::MediaBookmarkStore
         + ObjectProjectionStore
         + ContentObservationStore
         + PostWithdrawalStore

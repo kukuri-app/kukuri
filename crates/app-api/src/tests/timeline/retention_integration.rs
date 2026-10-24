@@ -61,6 +61,7 @@ async fn later_reader_reads_retained_topic_content_from_the_retaining_peer() -> 
         b"retained-poster".to_vec(),
     );
     let attachment = |mime: &str, bytes: &[u8], role| PendingAttachment {
+        bookmarked_media_hash: None,
         mime: mime.into(),
         bytes: bytes.to_vec(),
         role,

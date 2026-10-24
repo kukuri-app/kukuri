@@ -5,12 +5,12 @@ import type {
   CommunityNodeNodeStatus,
   DesktopApi,
   NotificationView,
-  PostView,
 } from '@/lib/api';
 import {
   advisorySubjectKey,
   postAdvisorySubjects,
   type AdvisorySubjectRef,
+  type AdvisoryPostSource,
   type TimelineContentAdvisoryIndex,
 } from '@/shell/contentAdvisories';
 import { useDesktopShellStoreApi } from '@/shell/store';
@@ -64,7 +64,7 @@ export function adoptingContentAdvisoryNodes(
 type UseTimelineContentAdvisoryLookupArgs = {
   api: Pick<DesktopApi, 'lookupCommunityNodeContentAdvisories'>;
   /// 表示中の投稿(タイムライン・スレッド・ブックマーク・プロフィール等)。
-  posts: readonly PostView[];
+  posts: readonly AdvisoryPostSource[];
   notifications: readonly NotificationView[];
   /// `adoptingContentAdvisoryNodes` の結果。照会先が無く確定していれば、照会も照会中表示もしない。
   adoptingNodes: AdoptingContentAdvisoryNodes;

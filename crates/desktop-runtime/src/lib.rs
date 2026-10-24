@@ -20,6 +20,8 @@ mod ipc_ts_export;
 mod kdf;
 mod live_media;
 mod media_access;
+mod media_bookmarks;
+pub use media_bookmarks::*;
 mod media_devices;
 #[cfg(not(target_family = "wasm"))]
 mod metaverse_audio;

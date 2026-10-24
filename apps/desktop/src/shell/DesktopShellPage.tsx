@@ -83,6 +83,7 @@ import {
 } from '@/shell/slices/workspace';
 import { routeStateForColumn } from '@/shell/routing/initialWorkspaceRoute';
 import { columnTitlesFor } from '@/shell/page/columnTitles';
+import { MediaBookmarksContext } from '@/components/core/mediaBookmarksContext';
 import { PostRecoveryProviders } from '@/components/core/PostRecoveryProviders';
 import { IS_WEB_RUNTIME } from '@/lib/webRuntime';
 
@@ -880,7 +881,7 @@ export function DesktopShellPage({
   );
 
   return (
-    <PostRecoveryProviders mediaRetry={retryMediaFetch} mediaDemand={setMediaDemand} postReload={reloadPostElements}>
+    <MediaBookmarksContext.Provider value={{ api, rememberDraftPreview, gatedMediaHashes: gatedAdultMediaHashes }}><PostRecoveryProviders mediaRetry={retryMediaFetch} mediaDemand={setMediaDemand} postReload={reloadPostElements}>
       <LiveProviders api={api} locale={locale} join={shellActions.handleJoinLiveSession}
         leave={shellActions.handleLeaveLiveSession} end={shellActions.handleEndLiveSession}
         publishLiveIntro={shellActions.publishLiveIntro} openThread={(id, options) => void openThread(id, options)}
@@ -1001,6 +1002,6 @@ export function DesktopShellPage({
         />
         </PublicThreadProviders>
       </LiveProviders>
-    </PostRecoveryProviders>
+    </PostRecoveryProviders></MediaBookmarksContext.Provider>
   );
 }

@@ -11,6 +11,7 @@ const COPY = {
     post: '投稿を書く',
     close: '閉じる',
     chooseFiles: 'ファイルを選択',
+    chooseBookmarks: 'ブックマークから選択',
     adult: 'この投稿を成人向けとして申告する',
     publish: '投稿',
     hint: 'Esc で閉じる、Ctrl+Enter で送信。',
@@ -23,6 +24,7 @@ const COPY = {
     post: 'Write a post',
     close: 'Close',
     chooseFiles: 'Choose files',
+    chooseBookmarks: 'Choose from bookmarks',
     adult: 'Label this post as adult material (self-declared)',
     publish: 'Post',
     hint: 'Esc closes, Ctrl+Enter sends.',
@@ -82,7 +84,7 @@ for (const locale of ['ja', 'en'] as const) {
       await textarea.fill('keyboard draft');
       await expect(column.getByText(copy.hint, { exact: true })).toBeVisible();
 
-      // 閉じる → 案内link → 本文 → ファイルを選択 → 成人向け申告 → 送信 の順に Tab で到達する。
+      // 閉じる → 案内link → 本文 → ファイルを選択 → ブックマークから選択 → 成人向け申告 → 送信 の順に Tab で到達する。
       // :focus-visible は keyboard 由来の focus にだけ一致するため、script の focus() ではなく
       // 本文から Shift+Tab で先頭の control へ戻ってから巡回する。
       await textarea.click();
@@ -93,6 +95,7 @@ for (const locale of ['ja', 'en'] as const) {
         column.getByRole('button', { name: copy.help, exact: true }),
         textarea,
         column.getByRole('button', { name: copy.chooseFiles, exact: true }),
+        column.getByRole('button', { name: copy.chooseBookmarks, exact: true }),
         column.getByRole('checkbox', { name: copy.adult }),
         column.getByRole('button', { name: copy.publish, exact: true }),
       ];
@@ -102,7 +105,7 @@ for (const locale of ['ja', 'en'] as const) {
         await expectVisibleFocusRing(control);
       }
       await page.keyboard.press('Shift+Tab');
-      await expectVisibleFocusRing(expectedOrder[4]);
+      await expectVisibleFocusRing(expectedOrder[5]);
 
       // 送信ボタンではなく本文以外の control に focus がある状態の Esc でも閉じる。
       await page.keyboard.press('Escape');

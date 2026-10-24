@@ -38,6 +38,8 @@ pub use sync::{
     CONNECTIVITY_PEER_PAGE_LIMIT, ConnectivityPeersRequest, ScopeDisplayRequest, ScopeDisplayTarget,
 };
 mod media;
+mod media_bookmarks;
+pub use media_bookmarks::{BookmarkedMediaPageView, BookmarkedMediaView};
 mod notifications;
 mod post_create;
 mod private_channel_indexing;

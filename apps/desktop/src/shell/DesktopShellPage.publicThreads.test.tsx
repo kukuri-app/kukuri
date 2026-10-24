@@ -531,7 +531,7 @@ test('list rows fetch the first post’s image like the timeline and keep adult 
   });
   renderAtHash(LIST_ROUTE, api);
   const column = await waitFor(() => getActiveColumn('Public threads'));
-  const row = (title: string) => within(column).getByText(title).closest('button')!;
+  const row = (title: string) => within(column).getByText(title).closest('li')!;
   const thumbnail = (title: string) => row(title).querySelector('.public-thread-row-thumbnail');
   await waitFor(() => expect(thumbnail('Photos')?.querySelector('img')?.getAttribute('src')).toMatch(/^blob:mock-/));
   expect(thumbnail('Adult photos')).toHaveAccessibleName('Image hidden as adult material');

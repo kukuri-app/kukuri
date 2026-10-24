@@ -5,6 +5,8 @@ import { Flag } from 'lucide-react';
 import { IconButton } from '@/components/ui/icon-button';
 import { POST_CARD_IMAGE_LIMIT } from '@/shell/media';
 
+import { MediaAssetActions } from '@/shell/page/MediaAssetActions';
+import type { AttachmentView } from '@/lib/api';
 import { MediaFetchFailure } from './MediaFetchFailure';
 import { MediaDemandObserver } from './MediaDemandObserver';
 import { type PostMediaView } from './types';
@@ -109,7 +111,9 @@ export function PostMedia({
     );
   }
 
-  const imageTiles = tiles.map((tile, index) =>
+  const withActions = (attachment: AttachmentView | undefined, content: React.ReactNode, key?: string, bookmarkHash?: string) =>
+    attachment && media.bookmarkTarget ? <MediaAssetActions key={key} attachment={attachment} target={media.bookmarkTarget} bookmarkHash={bookmarkHash}>{content}</MediaAssetActions> : content;
+  const imageTiles = tiles.map((tile, index) => withActions(tile.attachment,
     tile.src ? (
       <button
         key={`${index}:${tile.hash}`}
@@ -142,7 +146,7 @@ export function PostMedia({
         data-testid={`media-skeleton-${media.objectId}`}
         aria-hidden='true'
       />
-    )
+    ), `${index}:${tile.hash}`)
   );
 
   return (
@@ -180,7 +184,7 @@ export function PostMedia({
           ) : (
             imageTiles
           )
-        ) : media.videoPlaybackSrc && !media.videoUnsupportedOnClient ? (
+        ) : withActions(media.videoPlaybackSrc && !media.videoUnsupportedOnClient ? media.videoAttachment : media.posterAttachment ?? media.videoAttachment, media.videoPlaybackSrc && !media.videoUnsupportedOnClient ? (
           <video
             className='media-video'
             controls
@@ -203,7 +207,7 @@ export function PostMedia({
             data-testid={`media-skeleton-${media.objectId}`}
             aria-hidden='true'
           />
-        )}
+        ), undefined, media.videoAttachment?.hash ?? media.posterAttachment?.hash)}
       </div>
 
       {media.metaMime || media.metaBytesLabel ? (

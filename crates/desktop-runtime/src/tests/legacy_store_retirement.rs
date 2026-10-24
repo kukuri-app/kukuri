@@ -282,6 +282,7 @@ fn remote_projection(
         },
         content: Some(format!("remote {index}")),
         attachments: vec![kukuri_core::AssetRef {
+            origin: None,
             hash: kukuri_core::BlobHash::new(format!("{:064x}", index + 1)),
             mime: "image/png".into(),
             bytes: 1,

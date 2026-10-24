@@ -331,6 +331,7 @@ async fn later_reader_fetches_the_body_and_image_from_the_peer_that_listed_them(
                 bytes: body.bytes,
             },
             vec![AssetRef {
+                origin: None,
                 hash: image.hash.clone(),
                 mime: "image/png".into(),
                 bytes: image.bytes,
@@ -406,6 +407,7 @@ async fn later_reader_gets_an_offline_authors_profile_and_avatar_from_a_topic_pe
         .set_profile(
             "Relayed Author",
             AssetRef {
+                origin: None,
                 hash: avatar.hash.clone(),
                 mime: "image/png".into(),
                 bytes: avatar.bytes,
@@ -500,6 +502,7 @@ async fn a_relayed_profile_copy_does_not_hide_the_authors_update() -> Result<()>
         .put_blob(b"updated avatar bytes".to_vec(), "image/png")
         .await?;
     let avatar = AssetRef {
+        origin: None,
         hash: avatar.hash.clone(),
         mime: "image/png".into(),
         bytes: avatar.bytes,
@@ -838,6 +841,7 @@ async fn reader_fetches_an_image_from_a_topic_neighbor_that_holds_it() -> Result
                 text: "image post".into(),
             },
             vec![AssetRef {
+                origin: None,
                 hash: image.hash.clone(),
                 mime: "image/png".into(),
                 bytes: image.bytes,

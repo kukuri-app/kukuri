@@ -9,6 +9,7 @@ fn profile_envelope_roundtrip() {
         display_name: Some("Alice".into()),
         about: Some("hello".into()),
         picture_asset: Some(AssetRef {
+            origin: None,
             hash: BlobHash::new("avatar-hash"),
             mime: "image/png".into(),
             bytes: 42,
@@ -173,6 +174,7 @@ fn profile_post_envelope_roundtrip() {
             object_kind: "comment".into(),
             content: "hello profile topic".into(),
             attachments: vec![AssetRef {
+                origin: None,
                 hash: BlobHash::new("hash-1"),
                 mime: "image/png".into(),
                 bytes: 12,

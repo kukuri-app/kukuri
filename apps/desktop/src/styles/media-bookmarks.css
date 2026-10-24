@@ -1,0 +1,42 @@
+.media-asset-actions {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+}
+.media-bookmark-button {
+  position: absolute;
+  top: 0.25rem;
+  left: 0.25rem;
+  z-index: 2;
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--background) 82%, transparent);
+}
+.media-bookmark-button[aria-pressed='true'] { color: var(--accent); }
+.media-bookmark-error {
+  position: absolute;
+  left: 0.25rem;
+  bottom: 0.25rem;
+  max-width: calc(100% - 0.5rem);
+  padding: 0.25rem;
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--background) 82%, transparent);
+}
+.media-viewer-asset { display: grid; place-items: center; }
+.media-metadata-list { display: grid; gap: 0.75rem; margin-bottom: 1rem; }
+.media-metadata-list dt { font-size: 0.875rem; color: var(--muted-foreground); }
+.media-metadata-list dd { display: flex; align-items: start; gap: 0.5rem; margin: 0; }
+.media-metadata-list dd > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.media-bookmark-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+.media-bookmark-picker .media-bookmark-choice { width: 100%; border-radius: var(--radius); display: flex; flex-direction: column; align-items: stretch; height: auto; padding: 0.5rem; white-space: normal; }
+.media-bookmark-choice img, .media-bookmark-placeholder { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius-sm); }
+.media-bookmark-placeholder { display: grid; place-items: center; background: var(--surface-panel-muted); }
+.media-bookmark-choice small { overflow-wrap: anywhere; color: var(--muted-foreground); }
+@media (max-width: 479px) { .media-bookmark-grid { grid-template-columns: minmax(0, 1fr); } }
+
+.public-thread-row-item { position: relative; }
+.public-thread-row-item > .public-thread-row-thumbnail { position: absolute; top: var(--space-md); right: var(--space-md); }
+.public-thread-thumbnail-space { visibility: hidden; }
+.media-viewer-stage > .media-viewer-asset { width: fit-content; max-width: 100%; height: auto; }
+
+.public-thread-row-item > .public-thread-row-thumbnail:not(:has(.media-asset-actions)) { pointer-events: none; }

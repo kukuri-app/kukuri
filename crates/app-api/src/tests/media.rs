@@ -18,6 +18,7 @@ async fn create_post_with_image_only_succeeds() {
             "",
             None,
             vec![PendingAttachment {
+                bookmarked_media_hash: None,
                 mime: "image/jpeg".into(),
                 bytes: b"fake-jpeg".to_vec(),
                 role: AssetRole::ImageOriginal,
@@ -311,6 +312,7 @@ async fn image_post_visible_before_full_blob_download() {
             bytes: 0,
         },
         vec![kukuri_core::AssetRef {
+            origin: None,
             hash: image_hash.clone(),
             mime: "image/png".into(),
             bytes: image_bytes.len() as u64,
@@ -382,12 +384,14 @@ async fn video_post_visible_before_full_blob_download() {
         },
         vec![
             kukuri_core::AssetRef {
+                origin: None,
                 hash: kukuri_core::blob_hash(b"video-bytes"),
                 mime: "video/mp4".into(),
                 bytes: 8192,
                 role: kukuri_core::AssetRole::VideoManifest,
             },
             kukuri_core::AssetRef {
+                origin: None,
                 hash: poster_hash.clone(),
                 mime: "image/jpeg".into(),
                 bytes: 1024,

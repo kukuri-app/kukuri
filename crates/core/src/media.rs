@@ -9,6 +9,18 @@ pub struct AssetRef {
     pub mime: String,
     pub bytes: u64,
     pub role: AssetRole,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<MediaOrigin>,
+}
+
+/// 再利用する添付の参照元。最初の作者であることの証明ではない。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct MediaOrigin {
+    pub topic_id: String,
+    pub object_id: String,
+    pub author_pubkey: String,
+    pub created_at: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,4 +84,25 @@ pub fn build_media_manifest_envelope(
         ],
         manifest,
     )
+}
+
+#[cfg(test)]
+mod bookmark_contract {
+    use super::*;
+
+    #[test]
+    fn media_origin_is_optional_and_survives_serialization() {
+        let legacy = r#"{"hash":"abc","mime":"image/png","bytes":3,"role":"ImageOriginal"}"#;
+        let mut asset: AssetRef = serde_json::from_str(legacy).unwrap();
+        assert!(asset.origin.is_none());
+        assert_eq!(serde_json::to_string(&asset).unwrap(), legacy);
+        asset.origin = Some(MediaOrigin {
+            topic_id: "topic".into(),
+            object_id: "source".into(),
+            author_pubkey: "a".repeat(64),
+            created_at: 1,
+        });
+        let json = serde_json::to_string(&asset).unwrap();
+        assert_eq!(serde_json::from_str::<AssetRef>(&json).unwrap(), asset);
+    }
 }

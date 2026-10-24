@@ -10,6 +10,7 @@ import {
   filterChannelScopedItems,
   withSocialPostDefaults,
 } from '../desktopMockModel';
+import { reusedMediaAttachments } from './mediaBookmarks';
 import { type MockRuntime } from '../mockRuntime';
 
 type PostsMock = Pick<
@@ -69,13 +70,13 @@ export function createPostsMock(runtime: MockRuntime): PostsMock {
       const rootId = replyTo
         ? posts.find((post) => post.object_id === replyTo)?.root_id ?? replyTo
         : objectId;
-      const postAttachments: AttachmentView[] = (attachments ?? []).map((attachment, index) => ({
+      const postAttachments: AttachmentView[] = (attachments ?? []).flatMap((attachment, index) => reusedMediaAttachments(runtime, attachment) ?? [{
         hash: `${objectId}-attachment-${index}`,
         mime: attachment.mime,
         bytes: attachment.byte_size,
         role: attachment.role ?? 'image_original',
         status: 'Available',
-      }));
+      }]);
       postsByTopic[topic] = [
         withSocialPostDefaults({
           object_id: objectId,

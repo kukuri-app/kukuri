@@ -79,6 +79,8 @@ pub struct CreateAttachmentRequest {
     pub mime: String,
     pub byte_size: u64,
     pub data_base64: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bookmarked_media_hash: Option<String>,
     pub role: Option<String>,
     #[cfg(target_family = "wasm")]
     #[serde(default, skip_serializing_if = "Option::is_none")]

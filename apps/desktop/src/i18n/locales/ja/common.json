@@ -303,5 +303,36 @@
       "provider_verdict": "提供元の判定",
       "local_policy": "ノードのローカル方針"
     }
+  },
+  "mediaBookmarks": {
+    "save": "メディアをブックマーク",
+    "remove": "メディアのブックマークを解除",
+    "choose": "ブックマークから選択",
+    "title": "画像・動画のブックマーク",
+    "description": "保存した画像・動画を選ぶと、この投稿に添付します。元の投稿者と元投稿の情報も引き継ぎます。",
+    "loading": "ブックマークを読み込んでいます…",
+    "empty": "画像・動画のブックマークはありません。",
+    "loadFailed": "ブックマークを読み込めませんでした。",
+    "saveFailed": "ブックマークを更新できませんでした。",
+    "details": "メディアの情報",
+    "sourceDescription": "ブックマーク元の投稿と添付の情報です。",
+    "copyField": "{{field}}をコピー",
+    "copyAll": "すべてのメタデータをコピー",
+    "copied": "コピーしました。",
+    "copyFailed": "コピーできませんでした。",
+    "newer": "前のページ",
+    "older": "次のページ",
+    "fields": {
+      "hash": "ハッシュ",
+      "mime": "MIMEタイプ",
+      "bytes": "サイズ（bytes）",
+      "role": "添付の種類",
+      "author": "元の投稿者の公開鍵",
+      "post": "元の投稿ID",
+      "postLink": "元の投稿へのリンク",
+      "topic": "元のトピック",
+      "createdAt": "元の投稿日時",
+      "provenance": "取得元の情報"
+    }
   }
 }
