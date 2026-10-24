@@ -30,7 +30,7 @@
 
 ## 確認結果
 
-実装と局所検証を終え、独立監査を待っている。未決の製品判断はない。
+実装・局所検証・独立監査を完了した。未決の製品判断とblockerはない。
 
 - `cargo check -p kukuri-app-api -p kukuri-desktop-runtime`: 成功。
 - core・store・app-apiの`bookmark`関連: 24件成功。複数の動画を含む投稿からの選択と、再利用時のblob書込みを検査する追加contractも成功。
@@ -48,3 +48,5 @@
 固定head `41b90f3` の監査は、AC-1〜3とINVAR-2がPASS、INVAR-1のadvisory判定だけがFAILだった。自己申告ラベルのない保存画像にpost_idのadvisoryがある場合、Pickerが既存の照会と判定を通らずpreviewを取得していた。
 
 旧headのPickerで追加testを実行し、pending中にpayloadが1回呼ばれる失敗をpost_id/blob_cidの2条件で再現した（`target/media-bookmarks-advisory-before.log`）。修正では、Pickerの20件を既存lookupと共有hash gateへ接続し、保存時点の投稿IDをoriginと別に保持した。新しい判定や独立したlookup経路は増やしていない。修正後は同じ条件に加え、表示OFFでのpreview解放・共有hashの制限を確認する23件が成功した。独立監査は追加差分とINVAR-1だけを再確認する。
+
+再監査は固定head `1f72f3c6a384a9613ca02f46555e400df7d07066` に対してPASS、blockerは0件。監査側でも対象の3ファイル・23件が成功し、変更のないAC-1〜3・INVAR-2のPASSを維持した。全受入条件を満たしたため、実装と確認を終了した。

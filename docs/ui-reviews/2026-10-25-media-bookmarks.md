@@ -13,5 +13,5 @@
 - 資源: 一覧は20件の置換窓。画像または動画posterだけを1件ずつ読み、動画本体は選択一覧で取得しない。閉じる・ページ移動でpreviewを解放し、選択したURLの所有を下書きへ渡す。投稿時の解放もbrowser testで確認した。SQLのcursor条件は`bookmarked_media_order`索引を使う。
 - 検証: 関連するRust・Vitest・typecheck・ESLint・Storybook build・Playwright、migrationの全63世代の往復とschema golden、Web向けcompile。詳細は[作業記録](../progress/2026-10-25-media-bookmarks.md)。
 - 未確認: Tauri実機、screen reader、touchの実入力。新しいnative入力処理は追加せず、既存のDialogとclipboardを使ったbrowser上の操作を確認した。画素のbaseline比較はWindowsでは無効のため、実操作・画像の目視・寸法の検査を用いた。
-- Review result: 実装と局所検証を完了し、独立監査待ち。
+- Review result: PASS。固定head `1f72f3c6a` の再監査で全AC / INVARがPASS、blockerは0件。旧headのadvisory判定の未達と修正の証跡は作業記録を参照。
 - 例外: なし。
