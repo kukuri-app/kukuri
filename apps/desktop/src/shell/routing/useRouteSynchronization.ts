@@ -33,7 +33,7 @@ import {
   activeWorkspaceColumn,
   activeWorkspaceScope,
   openTransientColumn,
-  timelineColumnIdForScope,
+  columnIdForScope,
 } from '@/shell/slices/workspace';
 import { workspaceForRoute } from '@/shell/routing/routeWorkspaceProjection';
 
@@ -113,7 +113,7 @@ export function useRouteSynchronization({
       const scope = { topicId, channelId: null };
       setField('workspaceState', (current) =>
         openTransientColumn(current, {
-          id: timelineColumnIdForScope(current, scope),
+          id: columnIdForScope(current, 'timeline', scope),
           kind: 'timeline',
           scope,
           pinned: false,
@@ -153,7 +153,7 @@ export function useRouteSynchronization({
       const scope = { topicId, channelId: nextProjection[topicId] ?? null };
       setField('workspaceState', (current) =>
         openTransientColumn(current, {
-          id: timelineColumnIdForScope(current, scope),
+          id: columnIdForScope(current, 'timeline', scope),
           kind: 'timeline',
           scope,
           pinned: false,

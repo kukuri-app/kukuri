@@ -14,8 +14,8 @@ import {
   setColumnSpan,
   setColumnPinned,
   setColumnTimelineView,
-  setTimelineColumnTopic,
-  timelineColumnIdForScope,
+  setColumnTopic,
+  columnIdForScope,
   type ColumnState,
 } from '@/shell/slices/workspace';
 
@@ -518,59 +518,78 @@ describe('workspace state transitions', () => {
     );
   });
 
-  it('replaces only the target Timeline topic while preserving Column identity and state', () => {
-    const initial = createInitialWorkspaceState();
-    const timeline = {
-      ...initial.columns[0],
-      parentColumnId: 'source-column',
-      pinned: true,
-      timelineView: 'bookmarks' as const,
-    };
-    const thread = transientColumn();
-    const state = {
-      ...initial,
-      columns: [timeline, thread],
-      activeColumnId: thread.id,
-    };
+  it.each(['timeline', 'publicThreads', 'stream', 'game', 'metaverse'] as const)(
+    'replaces only the target %s topic while preserving Column identity and state',
+    (kind) => {
+      const initial = createInitialWorkspaceState();
+      const timeline = {
+        ...initial.columns[0],
+        kind,
+        parentColumnId: 'source-column',
+        pinned: true,
+        timelineView: 'bookmarks' as const,
+      };
+      const thread = transientColumn();
+      const state = {
+        ...initial,
+        columns: [timeline, thread],
+        activeColumnId: thread.id,
+      };
 
-    const next = setTimelineColumnTopic(state, timeline.id, 'kukuri:topic:next');
+      const next = setColumnTopic(state, timeline.id, 'kukuri:topic:next');
 
-    expect(next).not.toBe(state);
-    expect(next.columns).toHaveLength(2);
-    expect(next.activeColumnId).toBe(thread.id);
-    expect(next.columns[0]).toEqual({
-      ...timeline,
-      scope: { topicId: 'kukuri:topic:next', channelId: null },
-    });
-    expect(next.columns[1]).toBe(thread);
-  });
+      expect(next).not.toBe(state);
+      expect(next.columns).toHaveLength(2);
+      expect(next.activeColumnId).toBe(thread.id);
+      expect(next.columns[0]).toEqual({
+        ...timeline,
+        scope: { topicId: 'kukuri:topic:next', channelId: null },
+      });
+      expect(next.columns[1]).toBe(thread);
+    }
+  );
 
   it('ignores Timeline topic replacement for invalid targets and unchanged topics', () => {
     const initial = createInitialWorkspaceState();
     const withThread = openTransientColumn(initial, transientColumn());
     const currentTopic = initial.columns[0].scope?.topicId ?? '';
 
-    expect(setTimelineColumnTopic(withThread, 'missing', 'kukuri:topic:next')).toBe(withThread);
-    expect(setTimelineColumnTopic(withThread, 'thread-1', 'kukuri:topic:next')).toBe(withThread);
-    expect(setTimelineColumnTopic(withThread, INITIAL_TIMELINE_COLUMN_ID, currentTopic)).toBe(
+    expect(setColumnTopic(withThread, 'missing', 'kukuri:topic:next')).toBe(withThread);
+    expect(setColumnTopic(withThread, 'thread-1', 'kukuri:topic:next')).toBe(withThread);
+    expect(setColumnTopic(withThread, INITIAL_TIMELINE_COLUMN_ID, currentTopic)).toBe(
       withThread
     );
-    expect(setTimelineColumnTopic(withThread, INITIAL_TIMELINE_COLUMN_ID, '')).toBe(withThread);
+    expect(setColumnTopic(withThread, INITIAL_TIMELINE_COLUMN_ID, '')).toBe(withThread);
   });
+
+  it.each([
+    { kind: 'profile' }, { kind: 'notifications' }, { kind: 'messages' },
+    { kind: 'conversation', entityId: 'peer' }, { kind: 'explore' },
+    { kind: 'thread', entityId: 'post' },
+    { kind: 'timeline', scope: { topicId: 'kukuri:topic:general', channelId: 'channel-1' } },
+    { kind: 'stream', entityId: 'live' }, { kind: 'game', entityId: 'room' },
+    { kind: 'metaverse', entityId: 'dome' },
+  ] satisfies Partial<ColumnState>[])(
+    'keeps the topic fixed for $kind outside topic lists', (overrides) => {
+      const initial = createInitialWorkspaceState();
+      initial.columns[0] = { ...initial.columns[0], ...overrides };
+      expect(setColumnTopic(initial, initial.activeColumnId, 'kukuri:topic:dev')).toBe(initial);
+    }
+  );
 
   // Issue #1053: topic 切替後の Timeline は id が切替前 topic のままなので、scope で探して再利用する。
   it('resolves a Timeline Column by scope even when its id still carries the previous topic', () => {
     const initial = createDefaultWorkspaceState();
     const devScope = { topicId: 'kukuri:topic:dev', channelId: null };
-    const switched = setTimelineColumnTopic(initial, INITIAL_TIMELINE_COLUMN_ID, devScope.topicId);
+    const switched = setColumnTopic(initial, INITIAL_TIMELINE_COLUMN_ID, devScope.topicId);
     const exploreActive = activateColumn(
       switched,
       columnIdentityId('explore', initial.columns[0].scope)
     );
 
-    expect(timelineColumnIdForScope(exploreActive, devScope)).toBe(INITIAL_TIMELINE_COLUMN_ID);
+    expect(columnIdForScope(exploreActive, 'timeline', devScope)).toBe(INITIAL_TIMELINE_COLUMN_ID);
     const reopened = openTransientColumn(exploreActive, {
-      id: timelineColumnIdForScope(exploreActive, devScope),
+      id: columnIdForScope(exploreActive, 'timeline', devScope),
       kind: 'timeline',
       scope: devScope,
       pinned: false,
@@ -597,17 +616,18 @@ describe('workspace state transitions', () => {
       activeColumnId: 'active',
     };
 
-    expect(timelineColumnIdForScope(state, scope)).toBe('active');
-    expect(timelineColumnIdForScope({ ...state, activeColumnId: 'none' }, scope)).toBe(identityId);
+    expect(columnIdForScope(state, 'timeline', scope)).toBe('active');
+    expect(columnIdForScope({ ...state, activeColumnId: 'none' }, 'timeline', scope)).toBe(identityId);
     expect(
-      timelineColumnIdForScope(
+      columnIdForScope(
         { ...state, columns: [timeline('first'), timeline('second')], activeColumnId: 'none' },
+        'timeline',
         scope
       )
     ).toBe('first');
-    expect(timelineColumnIdForScope({ ...state, columns: [] }, scope)).toBe(identityId);
+    expect(columnIdForScope({ ...state, columns: [] }, 'timeline', scope)).toBe(identityId);
     expect(
-      timelineColumnIdForScope(state, { topicId: 'kukuri:topic:dev', channelId: 'channel-1' })
+      columnIdForScope(state, 'timeline', { topicId: 'kukuri:topic:dev', channelId: 'channel-1' })
     ).toBe(columnIdentityId('timeline', { topicId: 'kukuri:topic:dev', channelId: 'channel-1' }));
   });
 });

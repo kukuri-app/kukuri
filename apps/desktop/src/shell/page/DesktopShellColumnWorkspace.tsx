@@ -44,6 +44,8 @@ import type { ColumnDraftTarget } from '@/shell/slices/columnDrafts';
 import {
   activateColumn,
   closeColumn,
+  canSelectColumnTopic,
+  columnTopicScope,
   columnSpanPolicy,
   moveColumn,
   setColumnPinned,
@@ -100,7 +102,7 @@ type DesktopShellColumnWorkspaceProps = {
   onActivateColumn: (column: ColumnState, preserveAuthorPane?: boolean) => void;
   // Column 内の操作(ボタン / プルダウン)で active 化したとき、route だけを同期する(Issue #1053)。
   onSyncColumnRoute: (column: ColumnState) => void;
-  onSelectTimelineTopic: (column: ColumnState, topicId: string) => void;
+  onSelectTopic: (column: ColumnState, topicId: string) => void;
   onSelectTimelineView: (column: ColumnState, view: TimelineViewId) => void;
   onToggleTimelineFlow: (column: ColumnState) => void;
   // Timeline Column header のプライベートチャンネル入口(Issue #966)。公開 scope では
@@ -109,7 +111,6 @@ type DesktopShellColumnWorkspaceProps = {
   onOpenChannelSettings: (column: ColumnState, topicId: string, channelId: string) => void;
   renderProfileSurface: (column: ColumnState) => ReactNode;
   renderPrimarySurface: (column: ColumnState) => ReactNode;
-  scopeLabel: string;
   renderThreadSurface: (column: ColumnState) => ReactNode;
   timelineViewItems: Array<{ id: TimelineViewId; label: string }>;
   titles: ColumnTitles;
@@ -141,14 +142,13 @@ export function DesktopShellColumnWorkspace({
   onOpenConversationAuthor,
   onActivateColumn,
   onSyncColumnRoute,
-  onSelectTimelineTopic,
+  onSelectTopic,
   onSelectTimelineView,
   onToggleTimelineFlow,
   onOpenChannelManager,
   onOpenChannelSettings,
   renderProfileSurface,
   renderPrimarySurface,
-  scopeLabel,
   renderThreadSurface,
   timelineViewItems,
   titles,
@@ -268,20 +268,20 @@ export function DesktopShellColumnWorkspace({
         />
       );
     }
-    if (column.kind === 'timeline' && column.scope?.channelId === null) {
+    if (canSelectColumnTopic(column) && column.scope) {
       const topics = trackedTopics.includes(column.scope.topicId)
         ? trackedTopics
         : [column.scope.topicId, ...trackedTopics];
       return (
         <ColumnContextSelect
-          label={t('workspace.timelineTopicSwitch')}
+          label={t('workspace.columnTopicSwitch')}
           value={column.scope.topicId}
           title={column.scope.topicId}
           options={topics.map((topicId) => ({
             value: topicId,
             label: topicDisplayName(topicId),
           }))}
-          onChange={(topicId) => onSelectTimelineTopic(column, topicId)}
+          onChange={(topicId) => onSelectTopic(column, topicId)}
         />
       );
     }
@@ -392,7 +392,7 @@ export function DesktopShellColumnWorkspace({
     if (column.kind === 'publicThreads') {
       return (
         <PublicThreadList
-          key={column.publicThreadOrder ?? 'last_post'}
+          key={`${column.scope?.topicId}:${column.publicThreadOrder ?? 'last_post'}`}
           column={column}
           postMedia={publicThreadPostMedia}
         />
@@ -410,7 +410,7 @@ export function DesktopShellColumnWorkspace({
     return renderPrimarySurface(column);
   };
   const scopeDestinationLabel = (column: ColumnState) => {
-    if (!column.scope) return scopeLabel;
+    if (!column.scope) return '';
     const topicLabel = column.scope.topicId.split(':').filter(Boolean).at(-1) ?? column.scope.topicId;
     const channelId = column.scope.channelId;
     const channel = isPublicChannelId(channelId)
@@ -439,9 +439,8 @@ export function DesktopShellColumnWorkspace({
       const author = knownAuthorsByPubkey[column.entityId];
       return authorDisplayLabel(column.entityId, author?.display_name, author?.name);
     }
+    if (!columnTopicScope(column)) return undefined;
     if (column.kind === 'thread') return `${titles.thread} · ${scopeDestinationLabel(column)}`;
-    if (column.kind === 'publicThreads' && column.scope) return topicDisplayName(column.scope.topicId);
-    if (column.entityId) return titles[column.kind];
     return scopeDestinationLabel(column);
   };
   const renderFooter = (column: ColumnState, active: boolean) => {

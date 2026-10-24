@@ -93,6 +93,7 @@ test('Public and private Timeline Columns coexist and keep posts within their ow
   await expect(publicColumn.getByText('browser mock peer post')).toBeVisible();
   await expect(privateColumn.getByText('browser mock peer post')).toHaveCount(0);
   await expect(privateColumn.getByText('private scoped post')).toBeVisible();
+  await expect(privateColumn.locator('.shell-column-header select')).toHaveCount(0);
   await expect(publicColumn.getByText('private scoped post')).toHaveCount(0);
 
   // Public Column から投稿しても private Column には現れない。
@@ -188,6 +189,7 @@ test('Thread opened from the private Column keeps the private scope for header a
     .click();
   const threadColumn = activeColumn(page, 'Thread');
   await expect(threadColumn).toBeVisible();
+  await expect(threadColumn.locator('.shell-column-header select')).toHaveCount(0);
   await expect(threadColumn.locator('.shell-column-header')).toContainText(
     `Thread · ${GENERAL_PRIVATE_SCOPE}`
   );

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { DesktopApi, ScopeDisplayTarget } from '@/lib/api';
 import { normalizeInvokeError } from '@/lib/api/invoke/error';
 import { channelTimelineScope } from '@/shell/presentation';
-import type { ColumnScope, ColumnState } from '@/shell/slices/workspace';
+import { columnTopicScope, type ColumnScope, type ColumnState } from '@/shell/slices/workspace';
 
 // #1221 R2-C: 購読する scope は account 全体で 64 件まで。超えた操作は backend がこの code で拒否する。
 export const SCOPE_LIMIT_REACHED = 'SCOPE_LIMIT_REACHED';
@@ -53,14 +53,9 @@ const timelineTarget = (scope: ColumnScope): ScopeDisplayTarget => ({
 
 // 列が購読する対象。timeline 系は列の scope、profile は表示中の author、conversation は DM の相手。
 export function columnScopeTarget(column: ColumnState): ScopeDisplayTarget | null {
+  const scope = columnTopicScope(column);
+  if (scope) return timelineTarget(scope);
   switch (column.kind) {
-    case 'timeline':
-    case 'thread':
-    case 'publicThreads':
-    case 'stream':
-    case 'game':
-    case 'metaverse':
-      return column.scope ? timelineTarget(column.scope) : null;
     case 'profile':
     case 'conversation':
       return column.entityId ? { kind: 'author', pubkey: column.entityId } : null;

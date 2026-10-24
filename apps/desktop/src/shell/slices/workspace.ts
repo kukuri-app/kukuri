@@ -54,6 +54,16 @@ export type ColumnStateInput = Omit<ColumnState, 'preferredDesktopSpan'> & {
   preferredDesktopSpan?: number;
 };
 
+export function columnTopicScope(column: ColumnState): ColumnScope | undefined {
+  return ['timeline', 'thread', 'publicThreads', 'stream', 'game', 'metaverse'].includes(column.kind)
+    ? column.scope
+    : undefined;
+}
+
+export function canSelectColumnTopic(column: ColumnState): boolean {
+  return columnTopicScope(column)?.channelId === null && !column.entityId && column.kind !== 'thread';
+}
+
 export type WorkspaceState = {
   columns: ColumnState[];
   activeColumnId: string;
@@ -200,13 +210,19 @@ export function activeWorkspaceScope(state: WorkspaceState): ColumnScope {
   };
 }
 
-// scope に一致する Timeline Column の id。topic 切替後の Timeline は id を変えず scope だけ
+// scope に一致する Column の id。topic 切替後の一覧は id を変えず scope だけ
 // 変わるため、identity id だけで探すと既存 Column を見落として重複を開く(Issue #1053)。
 // active → identity id → 先頭の順に一致を探し、無ければ identity id を返す。
-export function timelineColumnIdForScope(state: WorkspaceState, scope: ColumnScope): string {
-  const identityId = columnIdentityId('timeline', scope);
+export function columnIdForScope(
+  state: WorkspaceState,
+  kind: ColumnKind,
+  scope: ColumnScope,
+  entityId?: string
+): string {
+  const identityId = columnIdentityId(kind, scope, entityId);
   const matches = (column: ColumnState) =>
-    column.kind === 'timeline' &&
+    column.kind === kind &&
+    column.entityId === entityId &&
     column.scope?.topicId === scope.topicId &&
     column.scope.channelId === scope.channelId;
   return (
@@ -454,7 +470,7 @@ export function setColumnPublicThreadOrder(
   return changed ? { ...state, columns } : state;
 }
 
-export function setTimelineColumnTopic(
+export function setColumnTopic(
   state: WorkspaceState,
   columnId: string,
   topicId: string
@@ -462,7 +478,7 @@ export function setTimelineColumnTopic(
   if (!topicId) return state;
   let changed = false;
   const columns = state.columns.map((column) => {
-    if (column.id !== columnId || column.kind !== 'timeline') return column;
+    if (column.id !== columnId || !canSelectColumnTopic(column)) return column;
     if (column.scope?.topicId === topicId && column.scope.channelId === null) return column;
     changed = true;
     return { ...column, scope: { topicId, channelId: null } };

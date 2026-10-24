@@ -216,7 +216,7 @@ test('Column header switches replace Timeline scope in place and focus an inacti
   await page.goto('/#/timeline?topic=kukuri%3Atopic%3Ageneral');
 
   const timeline = page.getByRole('region', { name: /^Timeline Column,/ });
-  const topicSelect = timeline.getByRole('combobox', { name: 'Timeline topic' });
+  const topicSelect = timeline.getByRole('combobox', { name: 'Column topic' });
   const initialColumnId = await timeline.getAttribute('data-column-id');
   await expect(topicSelect).toHaveValue('kukuri:topic:general');
 
