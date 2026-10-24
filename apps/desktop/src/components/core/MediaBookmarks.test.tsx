@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { createInstance } from 'i18next';
 import { I18nextProvider } from 'react-i18next';
 import { expect, test, vi } from 'vitest';
+import { act } from '@testing-library/react';
+import { createDesktopShellStore, DesktopShellStoreContext } from '@/shell/store';
 import { resources } from '@/i18n';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
 import type { AttachmentView, BookmarkedMediaView } from '@/lib/api';
@@ -15,14 +17,16 @@ import type { MediaBookmarkTarget } from './types';
 const source = { topic_id: 'topic', object_id: 'original-post', author_pubkey: 'a'.repeat(64), created_at: 1_700_000_000_000 };
 const target: MediaBookmarkTarget = { topic: 'reused-topic', objectId: 'reused-post', channelRef: { kind: 'public' }, source: { ...source, object_id: 'reused-post', author_pubkey: 'b'.repeat(64) } };
 const image: AttachmentView = { hash: 'c'.repeat(64), mime: 'image/png', bytes: 24, role: 'image_original', status: 'Available', origin: source };
-const saved: BookmarkedMediaView = { hash: image.hash, source, attachments: [image], content_labels: [], bookmarked_at: 10 };
+const saved: BookmarkedMediaView = { bookmarked_from_object_id: source.object_id, hash: image.hash, source, attachments: [image], content_labels: [], bookmarked_at: 10 };
 
-async function setup(children: React.ReactNode, overrides: Partial<ReturnType<typeof createDesktopMockApi>> = {}) {
+async function setup(children: React.ReactNode, overrides: Partial<ReturnType<typeof createDesktopMockApi>> = {}, gatedMediaHashes: readonly string[] = []) {
   const i18n = createInstance();
   await i18n.init({ resources, lng: 'ja', fallbackLng: 'en', defaultNS: 'common' });
   const api = { ...createDesktopMockApi(), getBookmarkedMedia: vi.fn(async () => null as BookmarkedMediaView | null), ...overrides };
-  render(<I18nextProvider i18n={i18n}><MediaBookmarksContext.Provider value={{ api }}>{children}</MediaBookmarksContext.Provider></I18nextProvider>);
-  return api;
+  const store = createDesktopShellStore();
+  store.getState().setField('timelineAdvisoryLookup', { active: false, settled: {} });
+  render(<I18nextProvider i18n={i18n}><DesktopShellStoreContext.Provider value={store}><MediaBookmarksContext.Provider value={{ api, gatedMediaHashes }}>{children}</MediaBookmarksContext.Provider></DesktopShellStoreContext.Provider></I18nextProvider>);
+  return { ...api, store };
 }
 
 test('media bookmark is a ghost button and saves independently without opening the image', async () => {
@@ -110,4 +114,46 @@ test('picker shows a load failure, retries and cancels without selecting', async
   await userEvent.keyboard('{Escape}');
   expect(select).not.toHaveBeenCalled();
   await waitFor(() => expect(screen.getByRole('button', { name: 'ブックマークから選択' })).toHaveFocus());
+});
+
+test.each(['post_id', 'blob_cid'] as const)('picker blocks previews while advisory is pending or gated (%s)', async (kind) => {
+  const row = { ...saved, bookmarked_from_object_id: 'bookmarked-reuse-post' };
+  const payload = vi.fn(async () => ({ mime: 'image/png', bytes_base64: 'AA==' }));
+  const revoke = vi.spyOn(URL, 'revokeObjectURL');
+  const api = await setup(<MediaBookmarkPicker onSelect={() => undefined} />, {
+    listBookmarkedMedia: async () => ({ items: [row], newer_cursor: null, older_cursor: null }), getBlobMediaPayload: payload,
+  });
+  act(() => api.store.getState().setField('timelineAdvisoryLookup', { active: true, settled: {} }));
+  await userEvent.click(screen.getByRole('button', { name: 'ブックマークから選択' }));
+  await screen.findByText(`画像添付 · ${image.hash.slice(0, 12)}`);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  expect(payload).not.toHaveBeenCalled();
+  expect(api.store.getState().mediaBookmarkPreviews[0].object_id).toBe(row.bookmarked_from_object_id);
+  const id = kind === 'post_id' ? row.bookmarked_from_object_id : image.hash;
+  act(() => {
+    api.store.getState().setField('timelineContentAdvisories', { [`${kind}:${id}`]: [{ nodeBaseUrl: 'https://node.example', advisory: {
+      issuer_node_id: 'd'.repeat(64), subject_kind: kind, subject_id: id, category: 'nsfw', label: 'adult', confidence: 84, signal_id: 'signal-1', basis: 'classifier_score',
+    } }] });
+    api.store.getState().setField('timelineAdvisoryLookup', { active: true, settled: { [`post_id:${row.bookmarked_from_object_id}`]: true, [`blob_cid:${image.hash}`]: true } });
+  });
+  expect(payload).not.toHaveBeenCalled();
+  act(() => api.store.getState().setField('adultContentEnabled', true));
+  await waitFor(() => expect(payload).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(document.querySelector('.media-bookmark-choice img')).not.toBeNull());
+  act(() => api.store.getState().setField('adultContentEnabled', false));
+  expect(document.querySelector('.media-bookmark-choice img')).toBeNull();
+  await waitFor(() => expect(revoke).toHaveBeenCalled());
+  await userEvent.click(document.querySelector('.ui-dialog-close') as HTMLButtonElement);
+  await waitFor(() => expect(api.store.getState().mediaBookmarkPreviews).toEqual([]));
+});
+
+test('picker applies the shared hash gate even without an advisory on the bookmarked post', async () => {
+  const payload = vi.fn(async () => null);
+  await setup(<MediaBookmarkPicker onSelect={() => undefined} />, {
+    listBookmarkedMedia: async () => ({ items: [saved], newer_cursor: null, older_cursor: null }), getBlobMediaPayload: payload,
+  }, [image.hash]);
+  await userEvent.click(screen.getByRole('button', { name: 'ブックマークから選択' }));
+  await screen.findByText(`画像添付 · ${image.hash.slice(0, 12)}`);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  expect(payload).not.toHaveBeenCalled();
 });

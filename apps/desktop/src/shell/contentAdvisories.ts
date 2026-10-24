@@ -41,7 +41,7 @@ export function advisorySubjectKey(kind: AdvisorySubjectRef['kind'], id: string)
   return `${kind}:${normalized}`;
 }
 
-type AdvisoryPostSource = Pick<PostView, 'object_id' | 'attachments' | 'repost_of' | 'reply_preview'>;
+export type AdvisoryPostSource = Pick<PostView, 'object_id' | 'attachments' | 'repost_of' | 'reply_preview'> & Partial<Pick<PostView, 'content_labels'>>;
 
 /// 投稿カードに現れる subject(本文・添付・引用元・返信プレビュー)。
 export function postAdvisorySubjects(post: AdvisoryPostSource): AdvisorySubjectRef[] {

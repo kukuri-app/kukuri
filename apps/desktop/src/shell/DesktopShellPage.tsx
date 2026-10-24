@@ -881,7 +881,7 @@ export function DesktopShellPage({
   );
 
   return (
-    <MediaBookmarksContext.Provider value={{ api, rememberDraftPreview }}><PostRecoveryProviders mediaRetry={retryMediaFetch} mediaDemand={setMediaDemand} postReload={reloadPostElements}>
+    <MediaBookmarksContext.Provider value={{ api, rememberDraftPreview, gatedMediaHashes: gatedAdultMediaHashes }}><PostRecoveryProviders mediaRetry={retryMediaFetch} mediaDemand={setMediaDemand} postReload={reloadPostElements}>
       <LiveProviders api={api} locale={locale} join={shellActions.handleJoinLiveSession}
         leave={shellActions.handleLeaveLiveSession} end={shellActions.handleEndLiveSession}
         publishLiveIntro={shellActions.publishLiveIntro} openThread={(id, options) => void openThread(id, options)}

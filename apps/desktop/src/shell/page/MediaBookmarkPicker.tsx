@@ -1,16 +1,26 @@
-import { useContext, useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bookmark } from 'lucide-react';
 import type { BookmarkedMediaPageView, BookmarkedMediaView, MediaBookmarkCursor } from '@/lib/api';
 import type { DraftMediaItem } from '@/shell/store';
+import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
+import { resolvePostAdvisory } from '@/shell/contentAdvisories';
 import { createObjectUrlFromPayload } from '@/shell/media';
 import { IconButton } from '@/components/ui/icon-button';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { MediaBookmarksContext, MEDIA_BOOKMARK_CHANGED } from '@/components/core/mediaBookmarksContext';
 
+const EMPTY_HASHES: readonly string[] = [];
+
 export function MediaBookmarkPicker({ disabled, onSelect }: { disabled?: boolean; onSelect: (item: DraftMediaItem) => void }) {
-  const api = useContext(MediaBookmarksContext)?.api;
+  const context = useContext(MediaBookmarksContext);
+  const api = context?.api;
+  const gatedHashes = context?.gatedMediaHashes ?? EMPTY_HASHES;
+  const adultEnabled = useDesktopShellStore((state) => state.adultContentEnabled);
+  const advisories = useDesktopShellStore((state) => state.timelineContentAdvisories);
+  const lookup = useDesktopShellStore((state) => state.timelineAdvisoryLookup);
+  const setBookmarkPreviews = useDesktopShellFieldSetter('mediaBookmarkPreviews');
   const { t } = useTranslation('common');
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState<BookmarkedMediaPageView | null>(null);
@@ -18,6 +28,22 @@ export function MediaBookmarkPicker({ disabled, onSelect }: { disabled?: boolean
   const [removing, setRemoving] = useState(false);
   const [failed, setFailed] = useState(false);
   const [previews, setPreviews] = useState<Record<string, string>>({});
+  const advisoryPosts = useMemo(() => open ? (page?.items ?? []).map((item) => ({
+    object_id: item.bookmarked_from_object_id || item.source.object_id, attachments: item.attachments,
+    content_labels: item.content_labels, repost_of: null, reply_preview: null,
+  })) : [], [open, page]);
+  useEffect(() => {
+    setBookmarkPreviews(advisoryPosts);
+    return () => setBookmarkPreviews([]);
+  }, [advisoryPosts, setBookmarkPreviews]);
+  const allowedSignature = advisoryPosts.flatMap((post, index) => {
+    const gate = resolvePostAdvisory(post, advisories, lookup);
+    return !gate.pending && (adultEnabled || (!post.content_labels.includes('adult') && !gate.advisory && !post.attachments.some((asset) => gatedHashes.includes(asset.hash)))) ? [page!.items[index].hash] : [];
+  }).join('|');
+  const previewItems = useMemo(() => {
+    const allowed = new Set(allowedSignature.split('|'));
+    return (page?.items ?? []).filter((item) => allowed.has(item.hash));
+  }, [allowedSignature, page]);
   const urls = useRef(new Map<string, string>());
   const request = useRef(0);
   const load = async (cursor: MediaBookmarkCursor | null = null, before = false) => {
@@ -38,10 +64,8 @@ export function MediaBookmarkPicker({ disabled, onSelect }: { disabled?: boolean
     setPreviews({});
     // 1 件ずつpreviewを読む。動画の本体は一覧では取得しない。
     void (async () => {
-      const settings = await api.getContentDisplaySettings();
-      for (const item of page.items) {
+      for (const item of previewItems) {
         if (!active) break;
-        if (!settings.adult_content_enabled && item.content_labels.includes('adult')) continue;
         const preview = item.attachments.find((asset) => asset.role === 'video_poster') ?? item.attachments.find((asset) => asset.mime.startsWith('image/'));
         if (!preview) continue;
         try {
@@ -54,7 +78,7 @@ export function MediaBookmarkPicker({ disabled, onSelect }: { disabled?: boolean
       }
     })().catch(() => undefined);
     return () => { active = false; owned.forEach((url) => URL.revokeObjectURL(url)); owned.clear(); };
-  }, [api, open, page]);
+  }, [api, open, page, previewItems]);
   const remove = async (item: BookmarkedMediaView) => {
     if (!api || removing) return;
     setRemoving(true);
@@ -68,8 +92,9 @@ export function MediaBookmarkPicker({ disabled, onSelect }: { disabled?: boolean
   const select = (item: BookmarkedMediaView) => {
     const primary = item.attachments.find((asset) => asset.hash === item.hash) ?? item.attachments[0];
     if (!primary) return;
-    const preview = urls.current.get(item.hash) ?? '';
-    urls.current.delete(item.hash); // 選んだURLの所有を下書きへ渡す。
+    const canPreview = previewItems.some((row) => row.hash === item.hash);
+    const preview = canPreview ? urls.current.get(item.hash) ?? '' : '';
+    if (canPreview) urls.current.delete(item.hash); // 選んだURLの所有を下書きへ渡す。
     onSelect({ id: crypto.randomUUID(), source_name: `${t(primary.mime.startsWith('video/') ? 'media.video' : 'media.imageAlt')} · ${item.hash.slice(0, 12)}`,
       preview_url: preview, attachments: [{ mime: primary.mime, byte_size: primary.bytes, role: primary.role, data_base64: '', bookmarked_media_hash: item.hash,
         reused_attachments: item.attachments.map((asset) => ({ ...asset, origin: asset.origin ?? item.source })) }] });
@@ -83,7 +108,7 @@ export function MediaBookmarkPicker({ disabled, onSelect }: { disabled?: boolean
       <DialogBody>
         {loading ? <p role='status'>{t('mediaBookmarks.loading')}</p> : failed ? <div role='alert'><p>{t('mediaBookmarks.loadFailed')}</p><Button type='button' variant='secondary' onClick={() => void load()}>{t('actions.retry')}</Button></div> : page?.items.length === 0 ? <p>{t('mediaBookmarks.empty')}</p> : null}
         <div className='media-bookmark-grid' aria-busy={loading}>{page?.items.map((item) => <div key={item.hash} className='relative min-w-0'><Button type='button' variant='ghost' className='media-bookmark-choice' disabled={loading || disabled || removing} onClick={() => select(item)}>
-          {previews[item.hash] ? <img src={previews[item.hash]} alt='' /> : <span className='media-bookmark-placeholder'><Bookmark aria-hidden='true' /></span>}
+          {previewItems.some((row) => row.hash === item.hash) && previews[item.hash] ? <img src={previews[item.hash]} alt='' /> : <span className='media-bookmark-placeholder'><Bookmark aria-hidden='true' /></span>}
           <span>{item.attachments.some((asset) => asset.role === 'video_manifest') ? t('media.video') : t('media.imageAlt')} · {item.hash.slice(0, 12)}</span>
           <small>{item.source.author_pubkey.slice(0, 16)}</small>
         </Button><IconButton className='media-bookmark-button' type='button' variant='ghost' label={t('mediaBookmarks.remove')} aria-pressed='true' disabled={loading || removing} onClick={() => void remove(item)}><Bookmark className='size-4 fill-current' aria-hidden='true' /></IconButton></div>)}</div>

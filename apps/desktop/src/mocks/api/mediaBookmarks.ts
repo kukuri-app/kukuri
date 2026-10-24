@@ -26,7 +26,7 @@ export function createMediaBookmarksMock(runtime: MockRuntime): Pick<DesktopApi,
       const attachments = ['video_manifest', 'video_poster'].includes(asset.role)
         ? [post.attachments.filter((candidate) => candidate.role === 'video_manifest')[ordinal], post.attachments.filter((candidate) => candidate.role === 'video_poster')[ordinal]].filter((asset): asset is AttachmentView => Boolean(asset)) : [asset];
       const primary = attachments.find((asset) => asset.role === 'video_manifest') ?? asset;
-      const row: BookmarkedMediaView = { hash: primary.hash, source: primary.origin ?? { topic_id: topic, object_id: objectId, author_pubkey: post.author_pubkey, created_at: post.created_at },
+      const row: BookmarkedMediaView = { hash: primary.hash, bookmarked_from_object_id: objectId, source: primary.origin ?? { topic_id: topic, object_id: objectId, author_pubkey: post.author_pubkey, created_at: post.created_at },
         attachments, content_labels: post.content_labels ?? [], bookmarked_at: Date.now() };
       rows.set(row.hash, row);
       return structuredClone(row);

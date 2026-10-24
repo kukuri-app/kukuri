@@ -27,3 +27,5 @@ Accepted
 利用者がブックマークから選び投稿したときだけ、保存した参照とoriginを投稿先へ公開する。通常のファイル添付と同じ投稿先確認を使う。メタデータの表示・コピーだけではblobの取得や投稿を行わない。
 
 UIと検証条件は[作業記録](../progress/2026-10-25-media-bookmarks.md)および[DESIGN.md](../../DESIGN.md)に従う。
+
+一覧を開いている間は、最大20件の添付と`bookmarked_from_object_id`（保存時点の投稿ID）を既存のcontent advisory照会へ加える。このIDは元投稿の表示に使うoriginとは分ける。未決の間は取得せず、自己申告・post_id/blob_cid advisory・共有hashの判定を通常の投稿と共用する。advisoryを自己申告ラベルへ書き換えたり永続化したりしない。ページ移動・終了で一時の照会対象を外し、表示OFFへの切替では取得済みpreviewも隠して解放する。

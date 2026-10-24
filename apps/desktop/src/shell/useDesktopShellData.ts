@@ -94,6 +94,7 @@ export function useDesktopShellData({
 }: UseDesktopShellDataArgs) {
   const storeApi = useDesktopShellStoreApi();
   const { demandedMediaHashes, setMediaDemand } = useMediaVisibilityDemand();
+  const mediaBookmarkPreviews = useDesktopShellStore((state) => state.mediaBookmarkPreviews);
   const state = useDesktopShellStore(useShallow(selectShellDataSlice));
   const {
     trackedTopics,
@@ -264,6 +265,7 @@ export function useDesktopShellData({
     timelinesByKey,
     visibleColumns,
   ]);
+  const allAdvisoryPosts = useMemo(() => [...advisoryLookupPosts, ...mediaBookmarkPreviews], [advisoryLookupPosts, mediaBookmarkPreviews]);
   const visibleBookmarkIds = useMemo(() => [
     ...new Set([...advisoryLookupPosts, ...communityIndexResolvedPosts].map((post) => post.object_id)),
   ].slice(0, 1600), [advisoryLookupPosts, communityIndexResolvedPosts]);
@@ -307,7 +309,7 @@ export function useDesktopShellData({
   );
   useTimelineContentAdvisoryLookup({
     api,
-    posts: advisoryLookupPosts,
+    posts: allAdvisoryPosts,
     notifications,
     adoptingNodes,
   });
@@ -419,8 +421,8 @@ export function useDesktopShellData({
   // #858 / #1107: 表示設定 OFF の間にゲート対象となる添付 hash(引用 snapshot 含む)。
   // 取得対象からの除外、表示済み object URL の破棄、カードの代替表示が同じ集合を使う。
   const adultGatedPosts = useMemo(
-    () => [...advisoryLookupPosts, ...communityIndexResolvedPosts],
-    [advisoryLookupPosts, communityIndexResolvedPosts]
+    () => [...allAdvisoryPosts, ...communityIndexResolvedPosts],
+    [allAdvisoryPosts, communityIndexResolvedPosts]
   );
   const gatedAdultMediaHashes = useAdultGatedMediaHashes({
     adultContentEnabled,

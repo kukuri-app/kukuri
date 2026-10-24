@@ -8,6 +8,7 @@ use kukuri_store::{BookmarkedMediaRow, MEDIA_BOOKMARK_PAGE_SIZE, MediaBookmarkCu
 pub struct BookmarkedMediaView {
     pub hash: String,
     pub source: MediaOrigin,
+    pub bookmarked_from_object_id: String,
     pub attachments: Vec<AttachmentView>,
     pub content_labels: Vec<String>,
     pub bookmarked_at: i64,
@@ -25,6 +26,11 @@ impl AppService {
     async fn bookmarked_media_view(&self, row: BookmarkedMediaRow) -> Result<BookmarkedMediaView> {
         Ok(BookmarkedMediaView {
             hash: row.hash,
+            bookmarked_from_object_id: if row.bookmarked_from_object_id.is_empty() {
+                row.source.object_id.clone()
+            } else {
+                row.bookmarked_from_object_id
+            },
             source: row.source,
             content_labels: row.content_labels,
             bookmarked_at: row.bookmarked_at,
@@ -112,6 +118,7 @@ impl AppService {
             created_at: row.created_at,
         });
         let saved = BookmarkedMediaRow {
+            bookmarked_from_object_id: row.object_id.as_str().into(),
             hash: primary.hash.as_str().into(),
             source,
             attachments,

@@ -94,6 +94,7 @@ mod tests {
     fn row(index: i64) -> BookmarkedMediaRow {
         let hash = format!("{index:064x}");
         BookmarkedMediaRow {
+            bookmarked_from_object_id: format!("post-{index}"),
             hash: hash.clone(),
             source: MediaOrigin {
                 topic_id: "topic".into(),

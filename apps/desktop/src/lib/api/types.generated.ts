@@ -43,7 +43,7 @@ export type MediaOrigin = { topic_id: string, object_id: string, author_pubkey: 
 
 export type MediaBookmarkCursor = { bookmarked_at: number, hash: string, };
 
-export type BookmarkedMediaView = { hash: string, source: MediaOrigin, attachments: Array<AttachmentView>, content_labels: Array<string>, bookmarked_at: number, };
+export type BookmarkedMediaView = { hash: string, source: MediaOrigin, bookmarked_from_object_id: string, attachments: Array<AttachmentView>, content_labels: Array<string>, bookmarked_at: number, };
 
 export type BookmarkedMediaPageView = { items: Array<BookmarkedMediaView>, newer_cursor: MediaBookmarkCursor | null, older_cursor: MediaBookmarkCursor | null, };
 

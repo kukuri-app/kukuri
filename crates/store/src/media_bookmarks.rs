@@ -16,6 +16,8 @@ pub struct MediaBookmarkCursor {
 pub struct BookmarkedMediaRow {
     pub hash: String,
     pub source: MediaOrigin,
+    #[serde(default)]
+    pub bookmarked_from_object_id: String,
     pub attachments: Vec<AssetRef>,
     pub content_labels: Vec<String>,
     pub bookmarked_at: i64,

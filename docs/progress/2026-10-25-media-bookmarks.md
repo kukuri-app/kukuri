@@ -36,9 +36,15 @@
 - core・store・app-apiの`bookmark`関連: 24件成功。複数の動画を含む投稿からの選択と、再利用時のblob書込みを検査する追加contractも成功。
 - storeのmigration: 全63世代のdown/upとschema goldenを含む13件成功。新しいcursor queryが索引を使うことも確認した。
 - `cargo check -p kukuri-cn-indexer -p kukuri-cn-e2e -p kukuri-harness -p kukuri-cli --tests`: 成功。添付の省略可能なfieldを加えた影響先のcompileを確認した。
-- TypeScript、ESLint、Storybook build: 成功。関連するVitestは7ファイル・46件成功。
+- TypeScript、ESLint、Storybook build: 成功。関連するVitestは9ファイル・62件成功。
 - Playwright: 新機能2条件に加え、公開スレッドと画像viewer・表示制限の関連9件が成功。最後の2条件ではaxe-coreの違反0件と、選択したpreview URLの解放も確認した。
 - Web: Windowsにはclangが無いため、runbookのDocker imageを`kukuri-media-bookmarks-wasm`としてbuildし、`cargo check --locked --target wasm32-unknown-unknown -p kukuri-web-runtime`が成功した。registry・git・targetのvolume名は`kukuri-media-bookmarks-wasm-{cargo,git,target}`。
-- 大型ファイルbaselineは、APIの合成、生成TS、schema golden、添付view、shellのprovider追加に必要な5pathだけを更新した。featureのための型と接続であり、別責務の抽出は増やしていない。
+- 大型ファイルbaselineは、APIの合成、生成TS、schema golden、添付view、shellのproviderと既存advisory lookupへの接続に必要な6pathだけを更新した。featureのための型と接続であり、別責務の抽出は増やしていない。
 
 [UI確認記録](../ui-reviews/2026-10-25-media-bookmarks.md)に画像・入力・未確認事項を記録した。Tauri実機とWebブラウザでの実ネットワーク操作は未実施。全体suiteとPR CIはこのローカル作業では実行していない。
+
+## 独立監査で見つかったINVAR-1の未達
+
+固定head `41b90f3` の監査は、AC-1〜3とINVAR-2がPASS、INVAR-1のadvisory判定だけがFAILだった。自己申告ラベルのない保存画像にpost_idのadvisoryがある場合、Pickerが既存の照会と判定を通らずpreviewを取得していた。
+
+旧headのPickerで追加testを実行し、pending中にpayloadが1回呼ばれる失敗をpost_id/blob_cidの2条件で再現した（`target/media-bookmarks-advisory-before.log`）。修正では、Pickerの20件を既存lookupと共有hash gateへ接続し、保存時点の投稿IDをoriginと別に保持した。新しい判定や独立したlookup経路は増やしていない。修正後は同じ条件に加え、表示OFFでのpreview解放・共有hashの制限を確認する23件が成功した。独立監査は追加差分とINVAR-1だけを再確認する。

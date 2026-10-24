@@ -3,11 +3,13 @@ import {
   INITIAL_TIMELINE_ADVISORY_LOOKUP_STATE,
   type TimelineAdvisoryLookupState,
   type TimelineContentAdvisoryIndex,
+  type AdvisoryPostSource,
 } from '@/shell/contentAdvisories';
 
 /// メディア(blob object URL・非対応動画)(WP-H6 PR3 のドメインスライス)。
 export type MediaSliceState = {
   mediaObjectUrls: Record<string, string | null>;
+  mediaBookmarkPreviews: AdvisoryPostSource[];
   // #1207: 失敗が確定した hash のうち、再取得を試行中のもの。失敗表示を残したまま操作を止める。
   mediaRetryingHashes: Record<string, true>;
   unsupportedVideoManifests: Record<string, true>;
@@ -35,6 +37,7 @@ export type MediaSliceState = {
 export function createInitialMediaSlice(): MediaSliceState {
   return {
     mediaObjectUrls: {},
+    mediaBookmarkPreviews: [],
     mediaRetryingHashes: {},
     unsupportedVideoManifests: {},
     adultContentEnabled: false,
