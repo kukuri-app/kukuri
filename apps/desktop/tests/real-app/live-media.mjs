@@ -7,8 +7,9 @@ import { openTopic } from './session.mjs';
 import { click, fill, text } from './ui.mjs';
 
 export const t = (key) => text('live', key);
-/// live の列の session の card(視聴・配信の操作と状態はこの中)。投稿の中の Live(#1839)は除く。
-export const CARD = 'article[data-live-session-id]:not(.post-live article)';
+/// 個別ライブの列(映像はstage、参加・終了はfooter)。
+export const CARD = '.shell-column-surface:has(.live-stage)';
+export const DETAILS = '.live-details-dialog';
 /// 配信者の配信の操作(shell の上部の bar。#1839 AC-3)。
 export const BAR = 'section.shell-live-broadcast';
 /// 配信者が話す音の帯域(Hz)。
@@ -78,7 +79,7 @@ export const observeDraws = (viewer) =>
       if (source instanceof VideoFrame && this.canvas.getAttribute('aria-label') === ${JSON.stringify(VIDEO)}) {
         const [red, , blue] = this.getImageData(2, 2, 1, 1).data;
         draws.push({ at: performance.timeOrigin + performance.now(), red, blue, size: source.displayWidth + 'x' + source.displayHeight,
-          embedded: Boolean(this.canvas.closest('.post-live')), stage: Boolean(this.canvas.closest('.live-stage')) });
+          details: Boolean(this.canvas.closest('.live-details-dialog')), stage: Boolean(this.canvas.closest('.live-stage')) });
         if (draws.length > 3000) draws.shift();
       }
       return result;
@@ -90,13 +91,13 @@ export const observeDraws = (viewer) =>
 /// `viewer` の canvas に `since`(epoch の ms)より後に描かれた frame。
 export const drawsSince = (viewer, since) => viewer.evaluate(`(window.__draws ?? []).filter((each) => each.at > ${since})`);
 
-/// card と配信の操作の bar の状態の表示(配信・視聴の状態と、失敗の理由)。
+/// 個別ライブの列と配信の操作の bar の状態の表示(配信・視聴の状態と、失敗の理由)。
 export const statusOf = (instance) =>
   instance.evaluate(
     `[...document.querySelectorAll('${CARD} [role="status"], ${CARD} [role="alert"], ${BAR} [role="status"], ${BAR} [role="alert"]')].map((node) => node.textContent).join(' | ')`
   );
 
-/// live の列を閉じる(card を含む列の閉じる button)。列が消えるのを待つ。
+/// live の列を閉じる(列の閉じる button)。列が消えるのを待つ。
 export async function closeLiveColumn(instance) {
   await eventually(`${instance.name} to close the live column`, () =>
     instance.evaluate(`(() => {
@@ -106,24 +107,49 @@ export async function closeLiveColumn(instance) {
     })()`), 30_000);
 }
 
-/// live の列を開き直し、card が出るのを待つ(同じ route へは移れないので、一度 timeline へ移る)。
-export async function reopenLiveColumn(instance, topic) {
-  await openTopic(instance, topic, 'timeline');
-  await new Promise((resolve) => setTimeout(resolve, 1_000));
-  await openTopic(instance, topic, 'live');
-  await eventually(`${instance.name} to show the live column`, () => instance.evaluate(`Boolean(document.querySelector('${CARD}'))`), 30_000);
+/// 投稿のサムネイルから情報のモーダルを開く。
+export async function openLiveDetails(instance) {
+  await eventually(`${instance.name} to open live details`, () => instance.evaluate(`(() => {
+    if (document.querySelector('${DETAILS}')) return true;
+    const button = document.querySelector('.post-live .live-thumbnail-open');
+    if (!button) return false;
+    button.scrollIntoView({ block: 'center' });
+    button.click();
+    return false;
+  })()`, { gesture: true }), 60_000);
 }
 
-/// H が card から camera の配信を始める(配信中の操作は shell の上部の bar)。
+/// 投稿の情報を確認し、個別ライブを大きく表示する。
+export async function selectLive(instance) {
+  if (await instance.evaluate(`Boolean(document.querySelector('${CARD}'))`)) return;
+  await openLiveDetails(instance);
+  await click(instance, t('actions.stage'), { within: DETAILS });
+  await eventually(`${instance.name} to show the live stage`, () => instance.evaluate(`Boolean(document.querySelector('${CARD}'))`), 30_000);
+}
+
+/// live の列を、開始投稿の情報から開き直す。
+export async function reopenLiveColumn(instance, topic) {
+  await openTopic(instance, topic, 'timeline');
+  await selectLive(instance);
+}
+
+/// H が拡大表示からcameraの配信を始める(配信中の操作は shell の上部の bar)。
 export async function startBroadcast(host) {
   await click(host, t('media.start.camera'), { within: CARD });
 }
 
 /// H が live session を作る。
 export async function createSession(host, title) {
-  await click(host, t('actions.start'));
+  await eventually(`${host.name} to open the post composer`, () => host.evaluate(`(() => {
+    const column = document.querySelector('.shell-column-surface[data-active="true"]');
+    if (column?.querySelector('.shell-column-composer')) return true;
+    column?.querySelector('.shell-column-footer .shell-column-primary-action')?.click();
+    return false;
+  })()`, { gesture: true }), 30_000);
+  await click(host, t('actions.start'), { within: '.shell-column-composer' });
   await fill(host, t('fields.placeholders.title'), title);
   await click(host, t('actions.start'), { nth: -1 });
+  await selectLive(host);
 }
 
 /// `viewer` が session に参加し、描かれ始めるのを待つ。
