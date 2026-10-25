@@ -89,3 +89,6 @@ Linuxの基準画像生成run [40205114672](https://github.com/kukuri-app/kukuri
 CI対応のhead `25f90e69828849bd90d68b7ca272fb1ae10bca6f`の独立差分監査はPASS、blockerは0件。入口だけを更新したWebメディアscenarioの検証内容、command分類・future予算・行数gateの維持を確認した。
 
 Linux基準画像の再生成run [40206691340](https://github.com/kukuri-app/kukuri/actions/runs/40206691340)は53枚の画像を生成して成功。今回の表示変更を含む`live-wide-dark.png`と`composer-dialog-wide-dark.png`を目視確認して反映した。その他の画像は今回の変更対象ではなく、既存の比較許容値内で成功しているため据え置いた。Windowsでは基準画像を生成していない。
+
+
+head `3e1708e73`のCIで、UI全体・Rust静的検査・Windows通常検査・Web向けbuildが成功した。ブラウザのサムネイルtestは、初回frameの到着が遅れた場合に30秒周期の更新を既定の5秒で待ち切れなかった。画像解除後の自動JPEGと手動優先の期待結果は維持し、1周期を確認できる35秒の待機時間へ合わせた。配信処理・更新周期は変更していない。

@@ -133,7 +133,8 @@ test('local video, mobile camera selection, and manual thumbnail priority', asyn
   await expect(dialog.getByRole('button', { name: 'Remove image', exact: true })).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Close dialog' }).click();
   await bar.getByRole('combobox', { name: 'Camera to use' }).selectOption('front');
-  await expect.poll(() => page.evaluate(({ topic, session }) => window.__KUKURI_DESKTOP__!.getLiveThumbnail(topic, session), ids)).toMatchObject({ custom: false, data_url: expect.stringMatching(/^data:image\/jpeg;base64,/) });
+  // カメラの初回frameが遅れた場合も、30秒の自動更新周期を1回待って確認する。
+  await expect.poll(() => page.evaluate(({ topic, session }) => window.__KUKURI_DESKTOP__!.getLiveThumbnail(topic, session), ids), { timeout: 35_000 }).toMatchObject({ custom: false, data_url: expect.stringMatching(/^data:image\/jpeg;base64,/) });
   await bar.getByRole('button', { name: 'Stop video broadcast' }).click();
   await expect(bar).toHaveCount(0);
 });
