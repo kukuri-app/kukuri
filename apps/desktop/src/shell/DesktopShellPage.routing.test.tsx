@@ -34,7 +34,7 @@ test.each([
   {
     path: '#/live',
     workspaceLabel: 'Live',
-    expectedControl: () => screen.getAllByRole('button', { name: 'Start Live' })[0],
+    expectedControl: () => screen.getByText('Choose a live session from a post or public thread to show large'),
   },
   {
     path: '#/game',

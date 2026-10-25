@@ -442,10 +442,6 @@ test('desktop Columns use kind spans, keyboard reorder, drag reorder, and persis
   const liveColumn = page.getByRole('region', { name: /^Live Column/ });
   await expect(liveColumn).toHaveAttribute('data-span', '2');
   expect(Math.round((await liveColumn.boundingBox())!.width)).toBe(896);
-  const wideStreamTracks = await liveColumn.locator('.shell-stream-layout').evaluate(
-    (element) => getComputedStyle(element).gridTemplateColumns
-  );
-  expect(wideStreamTracks.split(' ').length).toBe(1);
 
   const controlCenter = await openControlCenter(page);
   await controlCenter.getByRole('button', { name: 'Add Metaverse Column' }).click();

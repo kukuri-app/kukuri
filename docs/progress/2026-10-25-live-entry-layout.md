@@ -72,3 +72,15 @@ INVAR-3: 既存の有界なカラムcacheとイベントによる更新を使う
 
 
 差分再監査は`3c8d8f832a07f3159c5556114bf37fcf4ba7ece7`でPASS。成人向け表示の同条件での再現、限定channelのepoch付き取得、本人のローカル優先確認と署名・参加資格・版の維持を再確認し、blockerは0件となった。変更のない対象の判定と成功済みの検証は再利用した。以後の変更は本記録とUI review recordの監査結果の追記のみ。
+
+
+## PRとマージの確認（2026-10-26）
+
+PRは[#1933](https://github.com/kukuri-app/kukuri/pull/1933)。AC-1a〜gを検証観点とする一つのライブ導線の成果を、このPRへ対応付ける。完了条件は、実際に発生したCIの成功、必要な差分監査、mainへのマージと内容の一致確認とする。
+
+最初のCIで生成型とテストの行数上限、GUI commandの未分類2件を検出した。生成型はサムネイルの入出力2型に必要な4行の増加としてbaselineを同期する。smokeの内部grid検査は、ライブ導線testが実際の全面・半分の寸法を確認済みのため重複を削除し、1000行未満へ戻す。生成器が検出した既存の縮小分も上限を引き下げる。追加APIは既存のGUIプレビュー／メディア操作として分類し、CLIのcommandや出力は増やさない。
+
+Linuxの基準画像生成run [40205114672](https://github.com/kukuri-app/kukuri/actions/runs/40205114672)は成功したが、53枚とも既存画像と同じだった。production buildのライブ導線は正常で、比較許容値内の差分を更新しない`changed`の動作が原因と確認した。生成workflowで`--update-snapshots=all`を明示し、比較側の許容値とCI要件は維持したまま、変更後の画像を撮り直す。
+
+
+同じCIで、旧ライブ一覧・開始ボタンを前提にするUI testとWebの実機メディアscenario、追加APIを含めていないfutureサイズの一覧、Tauri側lockfileの未同期も検出した。表示・routeのtestは個別拡大と取得前の待機状態へ合わせる。Web scenarioは投稿欄→サムネイル→詳細→配信／参加へ変更し、既存の映像・音声・音量・停止・presenceの検証は維持する。新APIは既存のfuture予算測定へ加え、Tauri lockfileは画像依存の1行だけ同期する。

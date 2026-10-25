@@ -4135,6 +4135,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "hex",
+ "image",
  "kukuri-blob-service",
  "kukuri-core",
  "kukuri-docs-sync",

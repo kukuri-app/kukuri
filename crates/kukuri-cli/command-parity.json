@@ -1,6 +1,6 @@
 {
   "baseline": "d372c91bdc963bda07308a359fe3baeca8e06150",
-  "scope_revision": "2026-10-25-media-bookmarks",
+  "scope_revision": "2026-10-26-live-thumbnails",
   "entries": [
     {"tauri":"get_desktop_startup_status","cli":"get_desktop_startup_status","inventory":"INV-1"},
     {"tauri":"commands::system_locale::get_system_locales","excluded":"os","reason":"#917: desktopの同意前UI言語を選ぶOS local read。UIを持たないCLIの業務commandには追加しない。"},
@@ -127,6 +127,8 @@
     {"tauri":"set_session_display","cli":"set_session_display","inventory":"INV-5"},
     {"tauri":"create_live_session","cli":"create_live_session","inventory":"INV-5"},
     {"tauri":"get_live_session","cli":"get_live_session","inventory":"INV-5"},
+    {"tauri":"get_live_thumbnail","excluded":"gui_content_preview","reason":"#1933: 表示中の配信カードの静止画を読む。画像を表示するGUIのプレビュー経路として扱う。"},
+    {"tauri":"set_live_thumbnail","excluded":"gui_media_device","reason":"#1933: GUIで選んだ画像、または取り込み中の配信映像の静止画を共有する。既存のGUIメディア操作と同じ分類にする。"},
     {"tauri":"end_live_session","cli":"end_live_session","inventory":"INV-5"},
     {"tauri":"join_live_session","cli":"join_live_session","inventory":"INV-5"},
     {"tauri":"leave_live_session","cli":"leave_live_session","inventory":"INV-5"},
