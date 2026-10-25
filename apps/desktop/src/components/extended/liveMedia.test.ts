@@ -21,6 +21,45 @@ function batch(state: number, clockUs: number, chunks: Array<[number, boolean, n
   return buffer;
 }
 
+// 音声時計と描画tickを制御し、復号済みframeの保持と解放を確かめる。
+function playerFixture() {
+  const active = new Set<object>();
+  class Decoder {
+    state = 'unconfigured';
+    private latest = -Infinity;
+    constructor(private readonly init: { output: (frame: unknown) => void }) {}
+    configure() { this.state = 'configured'; }
+    decode(chunk: { timestamp: number }) {
+      if (chunk.timestamp < this.latest) return;
+      this.latest = chunk.timestamp;
+      const frame = { timestamp: chunk.timestamp, displayWidth: 2, displayHeight: 2,
+        close() { active.delete(this); } };
+      active.add(frame);
+      this.init.output(frame);
+    }
+    reset() { this.latest = -Infinity; }
+    close() { this.state = 'closed'; }
+  }
+  let draw = () => {};
+  let now = 0;
+  const time = vi.spyOn(performance, 'now').mockImplementation(() => now);
+  vi.stubGlobal('VideoDecoder', Decoder);
+  vi.stubGlobal('EncodedVideoChunk', class {
+    constructor(init: object) { Object.assign(this, init); }
+  });
+  vi.stubGlobal('requestAnimationFrame', (callback: () => void) => ((draw = callback), 1));
+  vi.stubGlobal('cancelAnimationFrame', () => {});
+  const drawn: number[] = [];
+  const canvas = { width: 0, height: 0,
+    getContext: () => ({ drawImage: (frame: { timestamp: number }) => drawn.push(frame.timestamp) }),
+  } as unknown as HTMLCanvasElement;
+  const player = createLivePlayer(canvas);
+  return { player, drawn, draw: () => draw(), advance: (ms: number) => { now += ms; }, retained: () => active.size,
+    close() { player.close(); vi.unstubAllGlobals(); time.mockRestore(); } };
+}
+
+const keyframe = (timestampUs: number) => ({ timestampUs, keyframe: true, data: new Uint8Array([1]) });
+
 describe('live media', () => {
   test('captures the selected camera by deviceId', async () => {
     const getUserMedia = vi.fn(async () => ({} as MediaStream));
@@ -65,52 +104,42 @@ describe('live media', () => {
     expect(frameToShow([], 1_000_000)).toBe(-1);
   });
 
-  // #1809: 配信を始め直すと frame の時刻が前へ戻る。WebKitGTK の decoder は、前に出した frame より早い時刻の frame を出さない。
+  // #1809: WebKitGTKは以前より早いtimestampを同じdecoderで描かない。
   test('draws a restarted broadcast whose timestamps go back', () => {
-    class Decoder {
-      state = 'unconfigured';
-      private latest = -Infinity;
-      constructor(private readonly init: { output: (frame: unknown) => void }) {}
-      configure() {
-        this.state = 'configured';
-      }
-      decode(chunk: { timestamp: number }) {
-        if (chunk.timestamp < this.latest) return;
-        this.latest = chunk.timestamp;
-        this.init.output({ timestamp: chunk.timestamp, displayWidth: 2, displayHeight: 2, close() {} });
-      }
-      reset() {
-        this.latest = -Infinity;
-      }
-      close() {
-        this.state = 'closed';
-      }
-    }
-    let draw = () => {};
-    vi.stubGlobal('VideoDecoder', Decoder);
-    vi.stubGlobal('EncodedVideoChunk', class {
-      constructor(init: object) {
-        Object.assign(this, init);
-      }
-    });
-    vi.stubGlobal('requestAnimationFrame', (callback: () => void) => ((draw = callback), 1));
-    vi.stubGlobal('cancelAnimationFrame', () => {});
-    const drawn: number[] = [];
-    const canvas = {
-      width: 0,
-      height: 0,
-      getContext: () => ({ drawImage: (frame: { timestamp: number }) => drawn.push(frame.timestamp) }),
-    } as unknown as HTMLCanvasElement;
+    const fixture = playerFixture();
     try {
-      const player = createLivePlayer(canvas);
-      const keyframe = (timestampUs: number) => ({ timestampUs, keyframe: true, data: new Uint8Array([1]) });
-      player.push({ state: 'watching', audioClockUs: 76_000_000, chunks: [keyframe(76_000_000)] });
-      draw();
-      player.push({ state: 'watching', audioClockUs: 15_000_000, chunks: [keyframe(15_000_000)] });
-      draw();
-      expect(drawn).toEqual([76_000_000, 15_000_000]);
+      fixture.player.push({ state: 'watching', audioClockUs: 76_000_000, chunks: [keyframe(76_000_000)] });
+      fixture.draw();
+      fixture.player.push({ state: 'watching', audioClockUs: 15_000_000, chunks: [keyframe(15_000_000)] });
+      fixture.draw();
+      expect(fixture.drawn).toEqual([76_000_000, 15_000_000]);
+    } finally { fixture.close(); }
+  });
+
+  test('keeps presenting against a delayed audio clock when decoded frames reach the limit', () => {
+    const fixture = playerFixture();
+    const periods = new Set<number>();
+    try {
+      // Windowsの6端末試験で観測した、映像が音声時計より約1.6秒先に到着する状態。
+      for (let index = 0; index < 180; index += 1) {
+        const audio = 10_000_000 + index * 33_333;
+        const before = fixture.drawn.length;
+        fixture.player.push({ state: 'watching', audioClockUs: audio, chunks: [keyframe(audio + 1_600_000)] });
+        expect(fixture.retained()).toBeLessThanOrEqual(30);
+        fixture.draw();
+        if (fixture.drawn.length > before) {
+          periods.add(Math.floor(index / 30));
+          const shown = fixture.drawn.at(-1)!;
+          expect(shown - audio).toBeGreaterThanOrEqual(-45_000);
+          expect(shown - audio).toBeLessThanOrEqual(125_000);
+        }
+        fixture.advance(33.333);
+      }
+      expect(fixture.drawn.length).toBeGreaterThan(0);
+      expect([...periods]).toEqual([1, 2, 3, 4, 5]);
     } finally {
-      vi.unstubAllGlobals();
+      fixture.close();
+      expect(fixture.retained()).toBe(0);
     }
   });
 

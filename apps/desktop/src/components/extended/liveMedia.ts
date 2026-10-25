@@ -226,13 +226,18 @@ export function createLivePlayer(canvas: HTMLCanvasElement) {
   const context = canvas.getContext('2d');
   const frames: VideoFrame[] = [];
   let clock = { us: 0, at: 0 };
+  const audioNow = () => clock.us === 0 ? 0 : clock.us + (performance.now() - clock.at) * 1000;
   let waitingKeyframe = true;
   let lastTimestampUs = -Infinity;
   const createDecoder = () => {
     const decoder = new VideoDecoder({
       output: (frame) => {
         frames.push(frame);
-        if (frames.length > DECODED_FRAMES) frames.shift()?.close();
+        if (frames.length > DECODED_FRAMES) {
+          // 次に出せるframeを残す。全て先の映像なら、新しい到着で待機中のframeを追い出さない。
+          const ready = frameToShow(frames.map((frame) => frame.timestamp), audioNow());
+          frames.splice(ready > 0 ? 0 : frames.length - 1, 1)[0]?.close();
+        }
       },
       error: () => {
         waitingKeyframe = true;
@@ -244,10 +249,9 @@ export function createLivePlayer(canvas: HTMLCanvasElement) {
   let decoder = createDecoder();
   let animation = 0;
   const draw = () => {
-    const now = clock.us === 0 ? 0 : clock.us + (performance.now() - clock.at) * 1000;
     const index = frameToShow(
       frames.map((frame) => frame.timestamp),
-      now
+      audioNow()
     );
     if (index >= 0) {
       const shown = frames[index];
