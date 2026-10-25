@@ -11,7 +11,7 @@
 - Performance: 既存の有界な一覧・投稿cacheを使う。画像は表示中のカードだけが取得し、配信の静止画は30秒間隔・同時1要求で更新する。固定keyを置き換え、投稿・manifest・blobを更新ごとに増やさない。署名・画像形式・寸法と容量を受信側でも確認する。
 - Validation: 受入条件とコマンド・結果は[作業記録](../progress/2026-10-25-live-entry-layout.md#検証記録)を参照。
 - Not verified: Android実機の複数カメラ、Tauri WebView、screen reader、WebAssemblyの追加ビルド（ローカルに`clang`が無いため停止）。Chromiumでは2つの仮想カメラを実際のMediaStreamにして確認した。
-- Review result: 対象の描画と操作を確認。署名・公開範囲の独立監査は作業記録に記す。
+- Review result: PASS。対象の描画・操作と、`3c8d8f832`の固定headの独立監査を完了。成人向け表示制限、限定channelの遠隔取得、本人の操作がサムネイル照会を待たないことを確認し、blockerは0件。詳細は作業記録を参照。
 - Exceptions: 変更前の画像は過去の同対象recordを参照する。今回と完全に同じfixtureの変更前スクリーンショットは取得していない。本人映像の欠落は基準commitに対する失敗testで再現した。
 
 ## 画面
