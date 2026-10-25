@@ -88,6 +88,14 @@ for (const name of names) {
         DIAGNOSE_MS
       ).catch((reason) => `unavailable: ${reason}`);
       console.log(`[${name}] ${instance.name} columns: ${columns}`);
+      if (name === 'live' || name === 'live-relay') {
+        const media = await within(instance.evaluate(`JSON.stringify({ at: Date.now(), visibility: document.visibilityState,
+          media: window.__liveDiagnostics, draws: window.__draws?.slice(-2),
+          canvases: [...document.querySelectorAll('.live-stage canvas, .live-details-dialog canvas')].map((canvas) => ({
+            hidden: canvas.hidden, width: canvas.width, height: canvas.height,
+            rect: canvas.getBoundingClientRect().toJSON() })) })`), DIAGNOSE_MS).catch((reason) => `unavailable: ${reason}`);
+        console.log(`[${name}] ${instance.name} media: ${media}`);
+      }
     }
   } finally {
     await Promise.all(started.map((instance) => instance.close()));

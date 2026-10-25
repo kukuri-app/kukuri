@@ -73,6 +73,40 @@ export const observeDraws = (viewer) =>
   viewer.evaluate(`(() => {
     if (window.__draws) return true;
     const draws = [];
+    // Windowsで受信・復号・描画のどこが止まったかを、失敗時のlogで区別する。bytesは残さない。
+    const media = window.__liveDiagnostics = { batches: 0, chunks: 0, decodes: 0, animations: 0 };
+    // Tauriのinvokeはreadonly。診断用callback mapで応答を観測し、元のcallbackへそのまま渡す。
+    const callbacks = window.__TAURI_INTERNALS__.callbacks;
+    const remember = callbacks.set;
+    callbacks.set = function (id, callback) {
+      return remember.call(this, id, (result) => {
+        if (result instanceof ArrayBuffer && result.byteLength >= 11) {
+          const batch = new DataView(result);
+          const chunks = batch.getUint16(9, true);
+          if (batch.getUint8(0) <= 3 && 11 + 13 * chunks <= result.byteLength) {
+            media.batches += 1;
+            media.chunks += chunks;
+            media.lastBatchAt = Date.now();
+            media.state = batch.getUint8(0);
+            media.audioClockUs = Number(batch.getBigUint64(1, true));
+          }
+        }
+        return callback(result);
+      });
+    };
+    const decode = VideoDecoder.prototype.decode;
+    VideoDecoder.prototype.decode = function (chunk) {
+      media.decodes += 1;
+      media.videoTimestampUs = chunk.timestamp;
+      media.lastDecodeAt = Date.now();
+      return decode.call(this, chunk);
+    };
+    const animate = window.requestAnimationFrame;
+    window.requestAnimationFrame = (callback) => animate.call(window, (now) => {
+      media.animations += 1;
+      media.lastAnimationAt = Date.now();
+      callback(now);
+    });
     const drawImage = CanvasRenderingContext2D.prototype.drawImage;
     CanvasRenderingContext2D.prototype.drawImage = function (source, ...rest) {
       const result = drawImage.call(this, source, ...rest);
