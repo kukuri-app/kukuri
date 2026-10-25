@@ -2011,7 +2011,7 @@ async function live() {
   let watched;
   const hear = (what) =>
     eventually(what, async () => {
-      watched = await watch();
+      watched = await watch({ restart: watched?.state === 2 });
       return watched.keyframes > 0 && watched.audio_clock_us > 0 && watched.video_us - watched.audio_clock_us < 1_000_000;
     }).catch((error) => assert.fail(`${error.message}: ${JSON.stringify(watched)}`));
   await eventually('native sees the live session', async () =>
