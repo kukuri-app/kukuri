@@ -74,11 +74,11 @@ export function captureErrorKind(error: unknown, source: LiveVideoSource): LiveC
 }
 
 /// camera か画面を、上限の大きさ・frame 数で取り込む。
-export async function captureVideo(source: LiveVideoSource, limits: LiveVideoLimits): Promise<MediaStream> {
+export async function captureVideo(source: LiveVideoSource, limits: LiveVideoLimits, cameraId = ''): Promise<MediaStream> {
   if (typeof VideoEncoder === 'undefined') throw new DOMException('WebCodecs is unavailable', 'NotSupportedError');
   const video = { width: { max: limits.width }, height: { max: limits.height }, frameRate: { max: limits.framerate } };
   return source === 'camera'
-    ? navigator.mediaDevices.getUserMedia({ video, audio: false })
+    ? navigator.mediaDevices.getUserMedia({ video: { ...video, ...(cameraId ? { deviceId: { exact: cameraId } } : {}) }, audio: false })
     : navigator.mediaDevices.getDisplayMedia({ video, audio: false });
 }
 
@@ -305,4 +305,17 @@ export function createLivePlayer(canvas: HTMLCanvasElement) {
       if (decoder.state !== 'closed') decoder.close();
     },
   };
+}
+
+export const LIVE_THUMBNAIL_INTERVAL_MS = 30_000;
+
+
+/** 手動画像と自動の静止画に同じ縮小・JPEG変換を使う。 */
+export function liveThumbnailDataUrl(source: CanvasImageSource, width: number, height: number): string {
+  const scale = Math.min(384 / width, 216 / height, 1);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  canvas.getContext('2d')!.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.5);
 }

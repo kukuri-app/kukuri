@@ -89,11 +89,17 @@ test('an introduction shows the live session from its origin and opens the origi
   expect(setSessionDisplay).toHaveBeenLastCalledWith(
     expect.objectContaining({ topic: 'kukuri:topic:origin', scope: { kind: 'public' }, session_id: 'live-1', kind: 'live', visible: true })
   );
-  const card = await screen.findByRole('article');
-  expect(within(card).getByText('Launch Party')).toBeInTheDocument();
+  const tile = await screen.findByRole('article');
+  await userEvent.click(within(tile).getByRole('button'));
+  const card = await screen.findByRole('dialog', { name: 'Launch Party' });
+  expect(actions.join).not.toHaveBeenCalled();
+  await user.click(within(card).getByRole('button', { name: 'Join' }));
+  expect(actions.join).toHaveBeenCalledWith('kukuri:topic:origin', 'live-1');
+  expect(within(card).getByRole('heading', { name: 'Launch Party' })).toBeInTheDocument();
   await user.click(within(card).getByRole('button', { name: 'Open original post' }));
   expect(actions.openPost).toHaveBeenCalledWith('kukuri:topic:origin', 'start-post');
-  await user.click(within(card).getByRole('button', { name: 'Share' }));
+  await user.click(within(tile).getByRole('button'));
+  await user.click(within(await screen.findByRole('dialog', { name: 'Launch Party' })).getByRole('button', { name: 'Share' }));
   expect(actions.introduce).toHaveBeenCalledWith(
     { session_id: 'live-1', topic_id: 'kukuri:topic:origin', channel_id: null },
     'Launch Party'
@@ -120,7 +126,9 @@ test('a reference whose channel differs from the live session is not expanded', 
 test('the start post shows an ended live session without a link to itself', async () => {
   const { display } = renderLive(post('start-post'), session({ status: 'Ended', ended_at: 2 }));
   await display();
-  const card = await screen.findByRole('article');
+  const tile = await screen.findByRole('article');
+  await userEvent.click(within(tile).getByRole('button'));
+  const card = await screen.findByRole('dialog', { name: 'Launch Party' });
   expect(within(card).getByText('Ended')).toBeInTheDocument();
   expect(within(card).queryByRole('button', { name: 'Open original post' })).toBeNull();
   expect(within(card).getByRole('button', { name: 'Join' })).toBeDisabled();

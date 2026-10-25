@@ -22,17 +22,12 @@ type LiveGameParams = ActionsBaseParams & {
   gameDrafts: Record<string, GameEditorDraft>;
   gameParticipantsInput: string;
   gameTitle: string;
-  liveDescription: string;
-  liveTitle: string;
   peerTicket: string;
   selectedThread: string | null;
   trackedTopics: string[];
   setPeerTicket: Setter<'peerTicket'>;
-  setLiveTitle: Setter<'liveTitle'>;
-  setLiveDescription: Setter<'liveDescription'>;
   setLiveError: Setter<'liveError'>;
   setLivePendingBySessionId: Setter<'livePendingBySessionId'>;
-  setLiveCreatePending: Setter<'liveCreatePending'>;
   setShellChromeState: Setter<'shellChromeState'>;
   setGameTitle: Setter<'gameTitle'>;
   setGameDescription: Setter<'gameDescription'>;
@@ -42,7 +37,6 @@ type LiveGameParams = ActionsBaseParams & {
   setGameSavingByRoomId: Setter<'gameSavingByRoomId'>;
   setGameCreatePending: Setter<'gameCreatePending'>;
   setError: Setter<'error'>;
-  setLiveCreateDialogOpen: BoolStateDispatch;
   setGameCreateDialogOpen: BoolStateDispatch;
 };
 
@@ -58,17 +52,12 @@ export function createLiveGameActions({
   gameDrafts,
   gameParticipantsInput,
   gameTitle,
-  liveDescription,
-  liveTitle,
   peerTicket,
   selectedThread,
   trackedTopics,
   setPeerTicket,
-  setLiveTitle,
-  setLiveDescription,
   setLiveError,
   setLivePendingBySessionId,
-  setLiveCreatePending,
   setShellChromeState,
   setGameTitle,
   setGameDescription,
@@ -78,7 +67,6 @@ export function createLiveGameActions({
   setGameSavingByRoomId,
   setGameCreatePending,
   setError,
-  setLiveCreateDialogOpen,
   setGameCreateDialogOpen,
 }: LiveGameParams) {
   async function handleImportPeer() {
@@ -95,41 +83,6 @@ export function createLiveGameActions({
           ? importError.message
           : translate('common:errors.failedToImportPeer')
       );
-    }
-  }
-
-  async function handleCreateLiveSession(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!liveTitle.trim()) {
-      setLiveError(translate('live:errors.titleRequired'));
-      return;
-    }
-    // #1839: 開始 post の本文。dialog を閉じると form ごと消えるので、store に持たない。
-    const startPost = String(new FormData(event.currentTarget).get('start_post') ?? '').trim();
-    setLiveCreatePending(true);
-    try {
-      await api.createLiveSession(
-        activeTopic,
-        liveTitle.trim(),
-        liveDescription.trim(),
-        activeComposeChannel,
-        startPost
-      );
-      setLiveTitle('');
-      setLiveDescription('');
-      setLiveError(null);
-      setLiveCreateDialogOpen(false);
-      setShellChromeState((current) => ({
-        ...current,
-      }));
-      syncRoute('replace', {
-        primarySection: 'live',
-      });
-      await loadTopics(trackedTopics, activeTopic, selectedThread);
-    } catch (liveCreateError) {
-      setLiveError(messageFromError(liveCreateError, translate('live:errors.failedCreate')));
-    } finally {
-      setLiveCreatePending(false);
     }
   }
 
@@ -275,7 +228,6 @@ export function createLiveGameActions({
 
   return {
     handleImportPeer,
-    handleCreateLiveSession,
     handleJoinLiveSession,
     handleLeaveLiveSession,
     handleEndLiveSession,

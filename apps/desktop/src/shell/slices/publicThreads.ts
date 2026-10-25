@@ -51,9 +51,6 @@ export function knownPublicThreadTitle(
   return thread && !thread.deleted && !isHiddenAuthor(authors[thread.creator_pubkey]) ? thread.title : undefined;
 }
 
-/// 公開スレッドの詳細の列の上部に出す配信中の Live の数(#1840 判断 14)。より多いときは「すべての配信」から列を開く。
-export const SHOWN_THREAD_LIVE_SESSIONS = 3;
-
 /// 公開スレッドの詳細の列で、上部にそのスレッドで配信中の Live を出すか(#1840 AC-4)。出す列は、そのスレッドの Live を読む。
 export function showsThreadLives(column: Pick<ColumnState, 'kind' | 'scope'>, developerModeEnabled: boolean): boolean {
   return (

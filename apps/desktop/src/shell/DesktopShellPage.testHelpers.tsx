@@ -422,8 +422,10 @@ export async function openChannelSettings(user: ReturnType<typeof userEvent.setu
 }
 
 export async function openLiveCreateDialog(user: ReturnType<typeof userEvent.setup>) {
-  await selectWorkspace(user, 'Live');
-  await user.click(within(getActiveColumn('Live')).getByRole('button', { name: 'Start Live' }));
+  const column = getActiveColumn('Timeline');
+  const compose = within(column).queryByRole('button', { name: /^Post to / });
+  if (compose) await user.click(compose);
+  await user.click(within(column).getByRole('button', { name: 'Start Live' }));
   return await screen.findByRole('dialog', { name: 'Start Live' });
 }
 

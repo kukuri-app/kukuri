@@ -178,6 +178,22 @@ impl DesktopRuntime {
             .await
     }
 
+    pub async fn get_live_thumbnail(
+        &self,
+        request: LiveSessionCommandRequest,
+    ) -> Result<Option<kukuri_app_api::LiveThumbnailView>> {
+        self.app_service
+            .get_live_thumbnail(&request.topic, &request.session_id)
+            .await
+    }
+
+    pub async fn set_live_thumbnail(
+        &self,
+        request: kukuri_app_api::SetLiveThumbnailInput,
+    ) -> Result<()> {
+        self.app_service.set_live_thumbnail(request).await
+    }
+
     pub async fn end_live_session(&self, request: LiveSessionCommandRequest) -> Result<()> {
         self.app_service
             .end_live_session(request.topic.as_str(), request.session_id.as_str())

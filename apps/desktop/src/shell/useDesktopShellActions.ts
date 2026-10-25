@@ -69,7 +69,6 @@ type UseDesktopShellActionsArgs = {
   openDirectMessagePane: OpenDirectMessagePane;
   openAuthorDetail: OpenAuthorDetail;
   openThread: OpenThread;
-  setLiveCreateDialogOpen: Dispatch<SetStateAction<boolean>>;
   setGameCreateDialogOpen: Dispatch<SetStateAction<boolean>>;
   setProfileAvatarPreviewUrl: Dispatch<SetStateAction<string | null>>;
   setProfileAvatarInputKey: Dispatch<SetStateAction<number>>;
@@ -131,7 +130,6 @@ export function useDesktopShellActions({
   openDirectMessagePane,
   openAuthorDetail,
   openThread,
-  setLiveCreateDialogOpen,
   setGameCreateDialogOpen,
   setProfileAvatarPreviewUrl,
   setProfileAvatarInputKey,
@@ -162,8 +160,6 @@ export function useDesktopShellActions({
     channelAudienceInput,
     inviteTokenInput,
     gameDrafts,
-    liveTitle,
-    liveDescription,
     gameTitle,
     gameDescription,
     gameParticipantsInput,
@@ -245,11 +241,8 @@ export function useDesktopShellActions({
   const setDirectMessageError = useDesktopShellFieldSetter('directMessageError');
   const setDirectMessageSending = useDesktopShellFieldSetter('directMessageSending');
   const setColumnDraftsByKey = useDesktopShellFieldSetter('columnDraftsByKey');
-  const setLiveTitle = useDesktopShellFieldSetter('liveTitle');
-  const setLiveDescription = useDesktopShellFieldSetter('liveDescription');
   const setLiveError = useDesktopShellFieldSetter('liveError');
   const setLivePendingBySessionId = useDesktopShellFieldSetter('livePendingBySessionId');
-  const setLiveCreatePending = useDesktopShellFieldSetter('liveCreatePending');
   const setChannelLabelInput = useDesktopShellFieldSetter('channelLabelInput');
   const setChannelAudienceInput = useDesktopShellFieldSetter('channelAudienceInput');
   const setInviteTokenInput = useDesktopShellFieldSetter('inviteTokenInput');
@@ -495,7 +488,6 @@ export function useDesktopShellActions({
 
   const {
     handleImportPeer,
-    handleCreateLiveSession,
     handleJoinLiveSession,
     handleLeaveLiveSession,
     handleEndLiveSession,
@@ -514,17 +506,12 @@ export function useDesktopShellActions({
     gameDrafts,
     gameParticipantsInput,
     gameTitle,
-    liveDescription,
-    liveTitle,
     peerTicket,
     selectedThread,
     trackedTopics,
     setPeerTicket,
-    setLiveTitle,
-    setLiveDescription,
     setLiveError,
     setLivePendingBySessionId,
-    setLiveCreatePending,
     setShellChromeState,
     setGameTitle,
     setGameDescription,
@@ -534,7 +521,6 @@ export function useDesktopShellActions({
     setGameSavingByRoomId,
     setGameCreatePending,
     setError,
-    setLiveCreateDialogOpen,
     setGameCreateDialogOpen,
   });
 
@@ -946,7 +932,6 @@ export function useDesktopShellActions({
     handleAcceptCommunityNodeConsents,
     handleWithdrawCommunityNodeConsents,
     handleImportPeer,
-    handleCreateLiveSession,
     handleJoinLiveSession,
     handleLeaveLiveSession,
     handleEndLiveSession,

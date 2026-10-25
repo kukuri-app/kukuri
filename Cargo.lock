@@ -3833,6 +3833,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "hex",
+ "image",
  "iroh",
  "iroh-mainline-address-lookup",
  "kukuri-blob-service",

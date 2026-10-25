@@ -11,8 +11,8 @@ export type PublicThreadActions = {
   /** 一覧の列の「スレッドを作る」の Dialog を開く。 */
   create: (topic: string) => void;
   copyLink: (topic: string, channelId: string) => void;
-  /** スレッドの「ライブ」の列を、詳細の列を親にして開く。`sessionId` があればその Live を示す(#1840 AC-4)。 */
-  openLive: (topic: string, channelId: string, sessionId: string | null) => void;
+  /** 詳細の列を親にして、個別ライブを大きく表示する。 */
+  openLive: (topic: string, channelId: string, sessionId: string) => void;
   /** 読んだスレッドを覚える(列の見出し・投稿の公開範囲・本文のリンクの表示に使う)。 */
   remember: (threads: PublicChannelView[]) => void;
   /** ID から 1 件読んで覚える。同じスレッドは並行して読まず、読めたものは使い回す(読めなければ次にまた読む)。 */

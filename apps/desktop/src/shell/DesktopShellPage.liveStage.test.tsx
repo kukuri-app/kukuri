@@ -1,7 +1,7 @@
 // #1841 AC-3: ライブの列の左側に、列の Live を大きく出して会話の投稿とリアクションを重ねる。一覧のカードの「大きく表示」は列の Live を
 // 切り替え(前の Live のリアクションを混ぜない)、投稿の中の Live の「大きく表示」は投稿の場所を会話にした列を開く(Live の場所は列に
 // 持たせ、保存と URL に載せる)。列の下部から参加でき、列を閉じると Live の場所の購読の需要を外す。
-import { act, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, test, vi } from 'vitest';
 
@@ -11,6 +11,11 @@ import type { ColumnState } from '@/shell/slices/workspace';
 import { WORKSPACE_LAYOUT_STORAGE_KEY } from '@/shell/workspacePersistence';
 
 import { getActiveColumn, renderAtHash, setViewportWidth } from './DesktopShellPage.testHelpers';
+
+vi.mock('@/components/extended/liveMedia', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/extended/liveMedia')>()),
+  createLivePlayer: vi.fn(() => ({ push: vi.fn(), reset: vi.fn(), close: vi.fn() })),
+}));
 
 const TOPIC = 'kukuri:topic:general';
 
@@ -41,26 +46,38 @@ function reaction(target: string, id: string) {
 test('a card shows its live large, and another card switches the live without mixing the reactions', async () => {
   const user = userEvent.setup();
   const api = createDesktopMockApi();
-  const morning = await api.createLiveSession(TOPIC, 'Morning stream', '', { kind: 'public' }, 'morning start');
-  const evening = await api.createLiveSession(TOPIC, 'Evening stream', '', { kind: 'public' }, 'evening start');
+  const thread = await api.createPublicChannel(TOPIC, 'Watch party', 'thread conversation');
+  const channel = { kind: 'public_channel' as const, channel_id: thread.channel_id };
+  const morning = await api.createLiveSession(TOPIC, 'Morning stream', '', channel, 'morning start');
+  const evening = await api.createLiveSession(TOPIC, 'Evening stream', '', channel, 'evening start');
+  const ended = await api.createLiveSession(TOPIC, 'Ended stream', '', channel);
+  await api.endLiveSession(TOPIC, ended);
   const morningStart = (await api.getLiveSession(TOPIC, morning))!.start_post_id!;
   const eveningStart = (await api.getLiveSession(TOPIC, evening))!.start_post_id!;
   await api.toggleReaction(TOPIC, eveningStart, { kind: 'emoji', emoji: '🔥' });
-  renderAtHash('#/live?topic=kukuri%3Atopic%3Ageneral', api);
-  const list = await waitFor(() => getActiveColumn('Live'));
-  await waitFor(() => expect(card(list, morning)).not.toBeNull());
-  expect(list.querySelector('.live-stage')).toBeNull();
-
-  await user.click(within(card(list, morning)!).getByRole('button', { name: 'Show large' }));
+  renderAtHash(`#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=${thread.channel_id}`, api);
+  const detail = await waitFor(() => getActiveColumn('Public thread'));
+  await user.click(await within(within(detail).getByRole('list', { name: 'Live now' })).findByRole('button', { name: /^Live Morning stream / }));
+  await user.click(within(await screen.findByRole('dialog', { name: 'Morning stream' })).getByRole('button', { name: 'Show large' }));
   const column = await waitFor(() => getActiveColumn('Live'));
   const stage = await waitFor(() => within(column.querySelector<HTMLElement>('.live-stage')!).getByText('Morning stream'));
   expect(stage).toBeVisible();
-  // 左側に出している Live のカードには「大きく表示」を出さない。
+  expect(column.querySelector('.live-column')).toHaveAttribute('data-layout', 'full');
+  expect(column.querySelector('.live-column-side')).toBeNull();
+  await user.click(within(column).getByRole('button', { name: 'Split view' }));
   await waitFor(() => expect(card(column, evening)).not.toBeNull());
-  expect(within(card(column, morning)!).queryByRole('button', { name: 'Show large' })).toBeNull();
+  expect(card(column, morning)).toBeNull();
+  expect(card(column, ended)).toBeNull();
+  const threadTab = within(column).getByRole('tab', { name: 'Public thread' });
+  await user.click(threadTab);
+  expect(await within(column.querySelector<HTMLElement>('[role="tabpanel"]')!).findByText('thread conversation')).toBeInTheDocument();
+  await user.keyboard('{ArrowLeft}');
+  expect(within(column).getByRole('tab', { name: 'Other live sessions' })).toHaveFocus();
+  await waitFor(() => expect(card(column, evening)).not.toBeNull());
 
   // 別のカードで Live を切り替えると、列を置き換える(列は 1 つのまま)。
-  await user.click(within(card(column, evening)!).getByRole('button', { name: 'Show large' }));
+  await user.click(within(card(column, evening)!).getByRole('button'));
+  await user.click(within(await screen.findByRole('dialog', { name: 'Evening stream' })).getByRole('button', { name: 'Show large' }));
   const switched = await waitFor(() => getActiveColumn('Live'));
   await waitFor(() => expect(within(switched.querySelector<HTMLElement>('.live-stage')!).getByText('Evening stream')).toBeVisible());
   await waitFor(() => expect(persistedColumns().filter((item) => item.kind === 'stream').map((item) => item.entityId)).toEqual([evening]));
@@ -104,9 +121,10 @@ test("a post's live opens large in the post's place, keeps the live place, joins
   });
   renderAtHash(`#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=${thread.channel_id}`, api);
   const detail = await waitFor(() => getActiveColumn('Public thread'));
-  const intro = await waitFor(() => within(detail.querySelector<HTMLElement>('.post-live')!).getByRole('button', { name: 'Show large' }));
+  const intro = await waitFor(() => within(detail.querySelector<HTMLElement>('.post-live')!).getByRole('button'));
 
   await user.click(intro);
+  await user.click(within(await screen.findByRole('dialog', { name: 'Night stream' })).getByRole('button', { name: 'Show large' }));
   const column = await waitFor(() => getActiveColumn('Live'));
   const stage = await waitFor(() => column.querySelector<HTMLElement>('.live-stage')!);
   await waitFor(() => expect(within(stage).getByText('Night stream')).toBeVisible());
@@ -156,7 +174,8 @@ test("replying from the stage opens the reply column next to the live column and
   renderAtHash(`#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=${thread.channel_id}`, api);
   const detail = await waitFor(() => getActiveColumn('Public thread'));
   // 詳細の上部の行から、詳細を親にしたライブの列を開くと、左側にその Live が出る。
-  await user.click(await within(detail).findByRole('button', { name: /^Live Night stream / }));
+  await user.click(await within(within(detail).getByRole('list', { name: 'Live now' })).findByRole('button', { name: /^Live Night stream / }));
+  await user.click(within(await screen.findByRole('dialog', { name: 'Night stream' })).getByRole('button', { name: 'Show large' }));
   const column = await waitFor(() => getActiveColumn('Live'));
   const stage = await waitFor(() => column.querySelector<HTMLElement>('.live-stage')!);
   await user.click(await within(stage).findByRole('button', { name: 'Reply to the live' }));

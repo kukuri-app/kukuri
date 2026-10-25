@@ -42,7 +42,6 @@ const REACTION_SET_NOTICE_TIMEOUT_MS = 6000;
 type OverlayActions = Pick<
   ReturnType<typeof useDesktopShellActions>,
   | 'handleCreateGameRoom'
-  | 'handleCreateLiveSession'
   | 'handleCreatePrivateChannel'
   | 'handleJoinChannelAccess'
   | 'handleSelectPrivateChannel'
@@ -58,14 +57,12 @@ type ShellDialogs = Pick<
   | 'confirmLeaveChannel'
   | 'gameCreateDialogOpen'
   | 'leaveChannelDialogOpen'
-  | 'liveCreateDialogOpen'
   | 'profileAvatarCropFile'
   | 'profileAvatarCropOpen'
   | 'setChannelDialogOpen'
   | 'setChannelSettingsDialogOpen'
   | 'setGameCreateDialogOpen'
   | 'setLeaveChannelDialogOpen'
-  | 'setLiveCreateDialogOpen'
   | 'setProfileAvatarCropFile'
   | 'setProfileAvatarCropOpen'
 >;
@@ -167,7 +164,6 @@ export function DesktopShellOverlays({
 }: DesktopShellOverlaysProps) {
   const {
     handleCreateGameRoom,
-    handleCreateLiveSession,
     handleCreatePrivateChannel,
     handleJoinChannelAccess,
     handleSelectPrivateChannel,
@@ -180,14 +176,12 @@ export function DesktopShellOverlays({
     channelSettingsDialogOpen,
     gameCreateDialogOpen,
     leaveChannelDialogOpen,
-    liveCreateDialogOpen,
     profileAvatarCropFile,
     profileAvatarCropOpen,
     setChannelDialogOpen,
     setChannelSettingsDialogOpen,
     setGameCreateDialogOpen,
     setLeaveChannelDialogOpen,
-    setLiveCreateDialogOpen,
     setProfileAvatarCropFile,
     setProfileAvatarCropOpen,
   } = dialogs;
@@ -225,10 +219,6 @@ export function DesktopShellOverlays({
     joinedChannelsNextCursorByTopic,
     knownAuthorsByPubkey,
     localProfile,
-    liveCreatePending,
-    liveDescription,
-    liveError,
-    liveTitle,
     reactionSetNotice,
     syncStatus,
   } = useDesktopShellStore(
@@ -250,10 +240,6 @@ export function DesktopShellOverlays({
       joinedChannelsNextCursorByTopic: s.joinedChannelsNextCursorByTopic,
       knownAuthorsByPubkey: s.knownAuthorsByPubkey,
       localProfile: s.localProfile,
-      liveCreatePending: s.liveCreatePending,
-      liveDescription: s.liveDescription,
-      liveError: s.liveError,
-      liveTitle: s.liveTitle,
       reactionSetNotice: s.reactionSetNotice,
       syncStatus: s.syncStatus,
     }))
@@ -263,8 +249,6 @@ export function DesktopShellOverlays({
   const setChannelLabelInput = useDesktopShellFieldSetter('channelLabelInput');
   const setChannelAudienceInput = useDesktopShellFieldSetter('channelAudienceInput');
   const setInviteTokenInput = useDesktopShellFieldSetter('inviteTokenInput');
-  const setLiveTitle = useDesktopShellFieldSetter('liveTitle');
-  const setLiveDescription = useDesktopShellFieldSetter('liveDescription');
   const setGameTitle = useDesktopShellFieldSetter('gameTitle');
   const setGameDescription = useDesktopShellFieldSetter('gameDescription');
   const setGameParticipantsInput = useDesktopShellFieldSetter('gameParticipantsInput');
@@ -486,55 +470,6 @@ export function DesktopShellOverlays({
                 {shareImportPending ? t('common:actions.join') : t('channels:previewDialog.import')}
               </Button>
             </div>
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={liveCreateDialogOpen} onOpenChange={setLiveCreateDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('live:actions.start')}</DialogTitle>
-            <DialogDescription>
-              {t('common:labels.audience')}: {activeComposeAudienceLabel}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>
-            <form
-              className='composer composer-compact'
-              onSubmit={(event) => void handleCreateLiveSession(event)}
-              aria-busy={liveCreatePending}
-            >
-              <Label>
-                <span>{t('live:fields.title')}</span>
-                <Input
-                  value={liveTitle}
-                  onChange={(event) => setLiveTitle(event.target.value)}
-                  placeholder={t('live:fields.placeholders.title')}
-                  disabled={liveCreatePending}
-                />
-              </Label>
-              <Label>
-                <span>{t('live:fields.description')}</span>
-                <Textarea
-                  value={liveDescription}
-                  onChange={(event) => setLiveDescription(event.target.value)}
-                  placeholder={t('live:fields.placeholders.description')}
-                  disabled={liveCreatePending}
-                />
-              </Label>
-              <Label>
-                <span>{t('live:fields.startPost')}</span>
-                <Textarea
-                  name='start_post'
-                  placeholder={t('live:fields.placeholders.startPost')}
-                  disabled={liveCreatePending}
-                />
-              </Label>
-              {liveError ? <p className='error error-inline'>{liveError}</p> : null}
-              <Button type='submit' disabled={liveCreatePending}>
-                {t('live:actions.start')}
-              </Button>
-            </form>
           </DialogBody>
         </DialogContent>
       </Dialog>

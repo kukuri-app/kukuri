@@ -37,8 +37,9 @@ import {
 } from '@/shell/slices/publicThreads';
 import { type DraftMediaItem, useDesktopShellStore, useDesktopShellStoreApi } from '@/shell/store';
 
-import { PublicThreadActionsContext, type PublicThreadActions } from './publicThreadActions';
+import { PublicThreadActionsContext, type PublicThreadActions, useLiveSurfacesEnabled } from './publicThreadActions';
 import { PublicThreadLinkCard } from './PublicThreadLinkCard';
+import { LiveThumbnailField } from './LiveThumbnailField';
 
 /// タイトルの上限(core の `PUBLIC_CHANNEL_MAX_TITLE_CHARS`)。
 const TITLE_MAX_CHARS = 200;
@@ -229,13 +230,18 @@ function CreatePublicThreadDialog({
   onClose: () => void;
   onCreated: (thread: PublicChannelView) => void;
 }) {
-  const { t } = useTranslation(['shell', 'common']);
+  const { t } = useTranslation(['shell', 'common', 'live']);
   const [title, setTitle] = useState('');
   const [firstPost, setFirstPost] = useState('');
   const [media, setMedia] = useState<DraftMediaItem[]>([]);
   const [attachmentInputKey, setAttachmentInputKey] = useState(0);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [adultLabeled, setAdultLabeled] = useState(false);
+  const liveEnabled = useLiveSurfacesEnabled();
+  const [startLive, setStartLive] = useState(false);
+  const [thumbnail, setThumbnail] = useState<string | null>(null);
+  const [createdLiveId, setCreatedLiveId] = useState<string | null>(null);
+  const [createdThread, setCreatedThread] = useState<PublicChannelView | null>(null);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   const draftSequence = useRef(0);
@@ -267,15 +273,20 @@ function CreatePublicThreadDialog({
     setPending(true);
     setFailed(false);
     try {
-      onCreated(
-        await api.createPublicChannel(
+      const thread = createdThread ?? await api.createPublicChannel(
           topic,
           title.trim(),
           firstPost.trim(),
           media.flatMap((item) => item.attachments),
           adultLabeled ? [ADULT_CONTENT_LABEL] : []
-        )
-      );
+        );
+      setCreatedThread(thread);
+      if (startLive) {
+        const id = createdLiveId ?? await api.createLiveSession(topic, thread.title, '', { kind: 'public_channel', channel_id: thread.channel_id });
+        setCreatedLiveId(id);
+        if (thumbnail) await api.setLiveThumbnail({ topic, session_id: id, data_url: thumbnail, custom: true });
+      }
+      onCreated(thread);
     } catch {
       setPending(false);
       setFailed(true);
@@ -334,6 +345,11 @@ function CreatePublicThreadDialog({
             ) : null}
             <ComposerDraftPreviewList items={composerDraftMediaViews(media)} onRemove={removeFile} />
             <ComposerAdultLabelToggle checked={adultLabeled} onChange={setAdultLabeled} />
+            {liveEnabled ? <Label className='flex items-center gap-2'>
+              <input type='checkbox' checked={startLive} disabled={pending || Boolean(createdThread)} onChange={(event) => setStartLive(event.target.checked)} />
+              <span>{t('live:actions.start')}</span>
+            </Label> : null}
+            {liveEnabled && startLive ? <LiveThumbnailField value={thumbnail} onChange={setThumbnail} disabled={pending} /> : null}
             {failed ? <p className='error error-inline'>{t('shell:publicThreads.create.failed')}</p> : null}
             <Button type='submit' disabled={pending || !title.trim()}>
               {t('shell:publicThreads.create.submit')}
@@ -357,7 +373,7 @@ function RenamePublicThreadDialog({
   onClose: () => void;
   onRenamed: (thread: PublicChannelView) => void;
 }) {
-  const { t } = useTranslation(['shell', 'common']);
+  const { t } = useTranslation(['shell', 'common', 'live']);
   const [title, setTitle] = useState(thread.title);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);

@@ -204,9 +204,9 @@ function PublicThreadRow({
   postMedia?: PostMediaBuilder;
 }) {
   const { t } = useTranslation('shell');
+  const liveSurfaces = useLiveSurfacesEnabled();
   const actions = useContext(PublicThreadActionsContext);
   const load = actions?.load;
-  const liveSurfaces = useLiveSurfacesEnabled();
   const author = useDesktopShellStore((state) => state.knownAuthorsByPubkey[row.creator_pubkey]);
   const firstPost = useDesktopShellStore((state) => state.publicThreadsById[row.channel_id]?.first_post) ?? row.first_post;
   const ref = useRef<HTMLLIElement>(null);
@@ -341,7 +341,6 @@ export function PublicThreadOrderMenu({ column }: { column: ColumnState }) {
 export function PublicThreadScopeActions({ topic, channelId }: { topic: string; channelId: string }) {
   const { t } = useTranslation(['common', 'shell']);
   const actions = useContext(PublicThreadActionsContext);
-  const liveSurfaces = useLiveSurfacesEnabled();
   const refresh = actions?.refresh;
   const load = actions?.load;
   const { visible } = useColumnRuntime();
@@ -374,18 +373,6 @@ export function PublicThreadScopeActions({ topic, channelId }: { topic: string; 
     <div className='shell-column-scope-actions'>
       {unavailable && !known ? (
         <span className='shell-column-header-summary'>{t('shell:publicThreads.titleUnavailable')}</span>
-      ) : null}
-      {liveSurfaces ? (
-        <Button
-          variant='ghost'
-          size='sm'
-          type='button'
-          className='shell-column-scope-action'
-          onClick={() => actions.openLive(topic, channelId, null)}
-        >
-          <Radio className='size-4' aria-hidden='true' />
-          {t('shell:primarySections.live')}
-        </Button>
       ) : null}
       <Button
         variant='ghost'

@@ -13,11 +13,8 @@ export type GameEditorDraft = {
 export type LiveGameSliceState = {
   liveSessionsByScopeKey: Record<string, LiveSessionView[]>;
   gameRoomsByScopeKey: Record<string, GameRoomView[]>;
-  liveTitle: string;
-  liveDescription: string;
   liveError: string | null;
   livePanelStateByScopeKey: Record<string, AsyncPanelState>;
-  liveCreatePending: boolean;
   livePendingBySessionId: Record<string, true>;
   selectedLiveSessionId: string | null;
   // #1841: ライブの列の左側に出している Live の開始 post(id ごと)。数の表示の custom reaction の画像を取得の対象にする。
@@ -37,11 +34,8 @@ export function createInitialLiveGameSlice(): LiveGameSliceState {
   return {
     liveSessionsByScopeKey: {},
     gameRoomsByScopeKey: {},
-    liveTitle: '',
-    liveDescription: '',
     liveError: null,
     livePanelStateByScopeKey: {},
-    liveCreatePending: false,
     livePendingBySessionId: {},
     selectedLiveSessionId: null,
     liveStageStartPosts: {},

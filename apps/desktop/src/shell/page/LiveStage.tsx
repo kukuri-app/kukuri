@@ -5,6 +5,8 @@ import { Check, Reply, SlidersHorizontal } from 'lucide-react';
 import { ReactionGlyph } from '@/components/core/ReactionGlyph';
 import { ReactionPickerPopover } from '@/components/core/ReactionPickerPopover';
 import { LiveViewer } from '@/components/extended/LiveSessionMedia';
+import { LiveBroadcastPreview } from '@/components/extended/LiveBroadcastPreview';
+import { liveBroadcastFor } from '@/components/extended/liveBroadcast';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
 import { Notice } from '@/components/ui/notice';
@@ -23,6 +25,7 @@ import { authorDisplayLabel, translateLiveStatus } from '@/shell/presentation';
 import { removeRecordEntry, setRecordEntry } from '@/shell/stateUpdates';
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
 
+import { LiveBroadcastStartButtons } from './LiveCard';
 import { LiveActionsContext } from './liveActions';
 import { type LiveOverlayFloat, type LiveOverlayPost, type LiveOverlaySource, useLiveOverlay } from './liveOverlay';
 import {
@@ -105,7 +108,9 @@ export function LiveStage({
           <span>{translateLiveStatus(session.status)}</span>
           <span className='live-stage-context'>{t('live:stage.conversation', { place: conversationLabel })}</span>
         </div>
-        {actions && session.joined_by_me && !isOwner ? (
+        {actions && isOwner ? (
+          <LiveBroadcastPreview controller={liveBroadcastFor(actions.api)} sessionId={session.session_id} overlay={layers} />
+        ) : actions && session.joined_by_me ? (
           <LiveViewer
             api={actions.api}
             request={{ topic: source.live.topic_id, session_id: session.session_id }}
@@ -114,11 +119,12 @@ export function LiveStage({
         ) : (
           <div className='live-viewer-screen live-stage-placeholder'>
             {layers}
-            <p>{t(isOwner ? 'live:stage.broadcasting' : 'live:stage.joinToWatch')}</p>
+            <p>{t('live:stage.joinToWatch')}</p>
           </div>
         )}
         {conversation === 'unreadable' ? <Notice>{t('live:stage.unreadable')}</Notice> : null}
         <div className='live-stage-controls'>
+          <LiveBroadcastStartButtons topic={source.live.topic_id} session={session} />
           <div className='live-stage-controls' role='group' aria-label={t('live:stage.layers')}>
             {(['posts', 'reactions'] as const).map((layer) => (
               <Button
@@ -165,6 +171,7 @@ export function LiveStage({
     <section
       ref={element}
       className='live-stage'
+      data-live-session-id={session?.session_id}
       aria-label={t('live:stage.label', { title: session?.title ?? '' })}
     >
       {body}

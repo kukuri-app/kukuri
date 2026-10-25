@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 
 import tauriConfig from '../../../src-tauri/tauri.conf.json';
-import { captureErrorKind, createLivePlayer, encodeVideo, fitVideoSize, frameToShow, parseLiveVideoBatch } from './liveMedia';
+import { captureErrorKind, captureVideo, createLivePlayer, encodeVideo, fitVideoSize, frameToShow, parseLiveVideoBatch } from './liveMedia';
 
 /// Rust の `encode_screen_batch` と同じ形の応答を作る。
 function batch(state: number, clockUs: number, chunks: Array<[number, boolean, number[]]>) {
@@ -22,6 +22,17 @@ function batch(state: number, clockUs: number, chunks: Array<[number, boolean, n
 }
 
 describe('live media', () => {
+  test('captures the selected camera by deviceId', async () => {
+    const getUserMedia = vi.fn(async () => ({} as MediaStream));
+    vi.stubGlobal('VideoEncoder', class {});
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    try {
+      await captureVideo('camera', { width: 1280, height: 720, framerate: 30, bitrate: 1_500_000 }, 'rear');
+      expect(getUserMedia).toHaveBeenCalledWith({ audio: false, video: {
+        width: { max: 1280 }, height: { max: 720 }, frameRate: { max: 30 }, deviceId: { exact: 'rear' },
+      } });
+    } finally { vi.unstubAllGlobals(); }
+  });
   test('reads the video and the audio clock the runtime hands to the screen', () => {
     const parsed = parseLiveVideoBatch(batch(0, 10_020_000, [[10_000_000, true, [1, 2]], [10_033_000, false, [3]]]));
     expect(parsed.state).toBe('watching');

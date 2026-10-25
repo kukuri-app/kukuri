@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { openFixtureLive } from './live-fixture';
 import { DEVELOPER_MODE_STORAGE_KEY } from '../../src/lib/developerMode';
 
 // Issue #748 設計判断 12 / 13 の browser 固定:
@@ -26,6 +27,7 @@ async function openControlCenter(page: Page) {
 }
 
 async function addColumn(page: Page, name: 'Add Live Column' | 'Add Metaverse Column') {
+  if (name === 'Add Live Column') { await openFixtureLive(page); return; }
   const controlCenter = await openControlCenter(page);
   await controlCenter.getByRole('button', { name }).click();
 }
@@ -329,16 +331,14 @@ test('pointer selection and history preserve joined Live and hosted Metaverse se
   await page.goto('/#/timeline?topic=kukuri%3Atopic%3Ageneral');
   await addColumn(page, 'Add Live Column');
   const live = page.getByRole('region', { name: /^Live Column/ });
-  await live.getByRole('button', { name: 'Start Live', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Start Live' });
-  await dialog.getByLabel('Live Title').fill('Column session continuity');
-  await dialog.getByRole('button', { name: 'Start Live', exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  const liveSession = live.locator('[data-live-session-id]').filter({ hasText: 'Column session continuity' });
-  await liveSession.getByRole('button', { name: 'Join', exact: true }).click();
-  await expect(liveSession.getByRole('button', { name: 'Leave', exact: true })).toBeEnabled();
+  // 参加の状態は表示寿命と独立して保持する。
+  await page.evaluate(async () => {
+    const api = window.__KUKURI_DESKTOP__!;
+    const id = new URLSearchParams(location.hash.split('?')[1]).get('sessionId')!;
+    await api.joinLiveSession('kukuri:topic:general', id);
+  });
+  const liveSession = live.locator('.live-stage');
   const sessionElement = await liveSession.elementHandle();
-
   await addColumn(page, 'Add Metaverse Column');
   const { metaverse, stage } = await createMetaverseRoom(page);
   const stageElement = await stage.elementHandle();
@@ -355,8 +355,11 @@ test('pointer selection and history preserve joined Live and hosted Metaverse se
   await page.goBack();
   await expect(activeColumn(page, 'Live')).toBeVisible();
   await expect(page).toHaveURL(/#\/live\?/);
-  await expect(liveSession.getByRole('button', { name: 'Leave', exact: true })).toBeEnabled();
-  await expect(liveSession).toContainText('viewers: 1');
+  expect(await page.evaluate(async () => {
+    const api = window.__KUKURI_DESKTOP__!;
+    const id = new URLSearchParams(location.hash.split('?')[1]).get('sessionId')!;
+    return (await api.getLiveSession('kukuri:topic:general', id))?.joined_by_me;
+  })).toBe(true);
   await page.goForward();
   await expect(activeColumn(page, 'Metaverse')).toBeVisible();
   await expect(page).toHaveURL(/#\/game\?/);

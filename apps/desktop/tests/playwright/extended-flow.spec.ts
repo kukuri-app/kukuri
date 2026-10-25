@@ -46,7 +46,8 @@ function activeColumn(page: Page, title: string) {
 }
 
 async function openLiveCreateDialog(page: Page) {
-  await activeColumn(page, 'Live').getByRole('button', { name: 'Start Live' }).click();
+  await activeColumn(page, 'Timeline').getByRole('button', { name: /^Post to / }).click();
+  await activeColumn(page, 'Timeline').getByRole('button', { name: 'Start Live' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   return dialog;
@@ -80,7 +81,7 @@ test('browser mock shell can run profile, private channel, live, and game flows'
   );
   await page.keyboard.press('Escape');
 
-  await page.goto('/#/live');
+  await page.goto('/#/timeline');
   const liveDialog = await openLiveCreateDialog(page);
   const liveTitle = liveDialog.getByLabel('Live Title');
   const liveDescription = liveDialog.getByLabel('Live Description');
@@ -90,9 +91,11 @@ test('browser mock shell can run profile, private channel, live, and game flows'
   await expect(liveDescription).toHaveValue('watch along');
   await liveDialog.getByRole('button', { name: 'Start Live' }).click();
   // #1839: 開始 post の中にも同じ Live が出るので、Live の一覧のカードに絞る。
-  const liveCard = activeColumn(page, 'Live')
+  const liveTile = activeColumn(page, 'Timeline')
     .locator('article[data-live-session-id]')
     .filter({ has: page.getByText('Launch Party') });
+  await liveTile.getByRole('button').click();
+  const liveCard = page.getByRole('dialog', { name: 'Launch Party' });
   await expect(liveCard).toBeVisible();
   // #1034・#1839 AC-3: 主催者の card に配信の開始がある(取り込みは押した後だけで、配信中の操作は shell の上部)。
   await expect(liveCard.getByRole('button', { name: 'Broadcast camera' })).toBeVisible();
@@ -101,6 +104,7 @@ test('browser mock shell can run profile, private channel, live, and game flows'
   await expect(liveCard.getByText('viewers: 1')).toBeVisible();
   await liveCard.getByRole('button', { name: 'End', exact: true }).click();
   await expect(liveCard.getByText('Ended', { exact: true })).toBeVisible();
+  await liveCard.getByRole('button', { name: 'Close dialog' }).click();
 
   await page.goto('/#/game');
   await expect(page.getByRole('heading', { name: 'Metaverse Rooms' })).toBeVisible();
@@ -113,5 +117,5 @@ test('browser mock shell can run profile, private channel, live, and game flows'
   await page.goto('/#/profile?profileMode=edit');
   await page.getByPlaceholder('Visible label').fill('Browser Author');
   await page.getByRole('button', { name: 'Save Profile' }).click();
-  await expect(page.getByText('Browser Author')).toBeVisible();
+  await expect(activeColumn(page, 'Profile').getByText('Browser Author')).toBeVisible();
 });

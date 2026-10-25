@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useContext, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useMemo, useState } from 'react';
 
 import { BookmarksEmptyState, BookmarksListFrame } from '@/components/core/BookmarksEmptyState';
 import { PagedList } from '@/components/core/PagedList';
@@ -8,9 +8,6 @@ import { CommunityIndexWorkspace } from '@/components/core/CommunityIndexWorkspa
 import type { CommunityIndexingTarget } from '@/components/core/CommunityIndexingRequestDialog';
 import { MetaverseRoomPanel } from '@/components/extended/MetaverseRoomPanel';
 import type { CommunityNodePanelView } from '@/components/settings/types';
-import { AuthorTrustGateNotice } from '@/components/core/AuthorTrustGateNotice';
-import { useAuthorTrustGateReveal } from '@/components/core/useAuthorTrustGateReveal';
-import { SessionVisibility, PendingSessionCards } from '@/components/extended/SessionVisibility';
 import { GameRoomPanel } from '@/components/extended/GameRoomPanel';
 import type { MetaverseRoomActions } from '@/components/extended/metaverse/MetaverseRoomActions';
 import { ProfileConnectionsPanel } from '@/components/extended/ProfileConnectionsPanel';
@@ -55,8 +52,6 @@ import {
 } from '@/shell/presentation';
 import { useDesktopShellViewModels } from '@/shell/useDesktopShellViewModels';
 import { ColumnLiveStage } from './ColumnLiveStage';
-import { LiveCard } from './LiveCard';
-import { LiveActionsContext } from './liveActions';
 import { useLiveSurfacesEnabled } from './publicThreadActions';
 import type { OpenAuthorDetail, OpenThread, Translate } from '@/shell/actions/shared';
 import { useShallow } from 'zustand/react/shallow';
@@ -230,8 +225,8 @@ export function DesktopShellPrimarySurface({
     gameParticipantsInput,
     gameSavingByRoomId,
     gameTitle,
-    liveError,
     localProfile,
+    authorTrustGates,
     adultContentEnabled,
     mediaObjectUrls,
     unsupportedVideoManifests,
@@ -258,7 +253,6 @@ export function DesktopShellPrimarySurface({
     profileTimelineLoadMoreError,
     profileSaving,
     recentReactions,
-    selectedLiveSessionId,
     selectedThread,
     shellChromeState,
     socialConnections,
@@ -270,10 +264,6 @@ export function DesktopShellPrimarySurface({
     timelineUnavailableByKey,
     timelinesByKey,
     joinedChannelsByTopic,
-    liveSessionsByScopeKey,
-    authorTrustGates,
-    livePanelStateByScopeKey,
-    livePendingBySessionId,
     gameRoomsByScopeKey,
     gamePanelStateByScopeKey,
     gameDrafts,
@@ -293,8 +283,8 @@ export function DesktopShellPrimarySurface({
       gameParticipantsInput: s.gameParticipantsInput,
       gameSavingByRoomId: s.gameSavingByRoomId,
       gameTitle: s.gameTitle,
-      liveError: s.liveError,
       localProfile: s.localProfile,
+      authorTrustGates: s.authorTrustGates,
       adultContentEnabled: s.adultContentEnabled,
       mediaObjectUrls: s.mediaObjectUrls,
       unsupportedVideoManifests: s.unsupportedVideoManifests,
@@ -321,7 +311,6 @@ export function DesktopShellPrimarySurface({
       profileTimelineLoadMoreError: s.profileTimelineLoadMoreError,
       profileSaving: s.profileSaving,
       recentReactions: s.recentReactions,
-      selectedLiveSessionId: s.selectedLiveSessionId,
       selectedThread: s.selectedThread,
       shellChromeState: s.shellChromeState,
       socialConnections: s.socialConnections,
@@ -333,19 +322,13 @@ export function DesktopShellPrimarySurface({
       timelineUnavailableByKey: s.timelineUnavailableByKey,
       timelinesByKey: s.timelinesByKey,
       joinedChannelsByTopic: s.joinedChannelsByTopic,
-      liveSessionsByScopeKey: s.liveSessionsByScopeKey,
-      authorTrustGates: s.authorTrustGates,
-      livePanelStateByScopeKey: s.livePanelStateByScopeKey,
-      livePendingBySessionId: s.livePendingBySessionId,
       gameRoomsByScopeKey: s.gameRoomsByScopeKey,
       gamePanelStateByScopeKey: s.gamePanelStateByScopeKey,
       gameDrafts: s.gameDrafts,
     }))
   );
   // #1061: 配信一覧の折りたたみと、この一覧だけの「表示する」。
-  const liveTrustGate = useAuthorTrustGateReveal(authorTrustGates);
   // #1841: ライブの列の左側に列の Live を大きく出す(開発者モードでだけ)。一覧のカードの「大きく表示」は、この列を置き換える。
-  const liveActions = useContext(LiveActionsContext);
   const liveSurfaces = useLiveSurfacesEnabled();
   const stagedColumn = liveSurfaces && column.scope && column.entityId
     ? { ...column, scope: column.scope, entityId: column.entityId }
@@ -437,40 +420,16 @@ export function DesktopShellPrimarySurface({
     [activeTimelineKey, buildPostCardView, localAuthorPubkey, postCardViews, surfaceJoinedChannels, timelineFilter, timelinesByKey]
   );
   const surfaceScopeKey = timelineStorageKeyForChannel(surfaceTopic, surfaceChannelId);
-  const [pendingLiveCount, setPendingLiveCount] = useState(0);
-  const surfaceLiveSessions = liveSessionsByScopeKey[surfaceScopeKey] ?? [];
   const surfaceGameRooms = useMemo(
     () => gameRoomsByScopeKey[surfaceScopeKey] ?? [],
     [gameRoomsByScopeKey, surfaceScopeKey]
   );
-  const surfaceLivePanelState =
-    livePanelStateByScopeKey[surfaceScopeKey] ?? DEFAULT_ASYNC_PANEL_STATE;
   const surfaceGamePanelState =
     gamePanelStateByScopeKey[surfaceScopeKey] ?? DEFAULT_ASYNC_PANEL_STATE;
   const surfaceAudienceLabel = surfaceChannelId
     ? surfaceJoinedChannels.find((channel) => channel.channel_id === surfaceChannelId)?.label ??
       surfaceChannelId
     : 'Public';
-  const surfaceLiveSessionListItems = surfaceLiveSessions.map((session) => ({
-    session,
-    isOwner: session.host_pubkey === syncStatus.local_author_pubkey,
-    pending: Boolean(livePendingBySessionId[session.session_id]),
-  }));
-  // Live の一覧の見出しと状態。左側に Live を大きく出している間は、一覧の上に置く。
-  const liveListHeader = (
-    <>
-      <div className='panel-header'>
-        <div>
-          <h3>{t('live:title')}</h3>
-          <small>{t('live:summary', { count: surfaceLiveSessionListItems.length })}</small>
-        </div>
-      </div>
-      {surfaceLivePanelState.status === 'loading' ? <Notice>{t('live:loading')}</Notice> : null}
-      {surfaceLivePanelState.status === 'error' && (liveError ?? surfaceLivePanelState.error) ? (
-        <Notice tone='destructive'>{liveError ?? surfaceLivePanelState.error}</Notice>
-      ) : null}
-    </>
-  );
   const surfaceGameDraftViews = Object.fromEntries(
     surfaceGameRooms.map((room) => {
       const draft = gameDrafts[room.room_id] ?? createGameEditorDraft(room);
@@ -737,64 +696,15 @@ export function DesktopShellPrimarySurface({
           />
         ) : null}
 
-        {activeSurfaceSection === 'live' ? (
-          <div className='shell-stream-layout'>
-            {stagedColumn ? (
-              <ColumnLiveStage
-                column={stagedColumn}
-                joinedChannels={surfaceJoinedChannels}
-                buildPostCardView={buildPostCardView}
-                onReactionPickerOpen={() => void loadReactionCatalogData()}
-                onToggleReaction={(post, reactionKey) => void handleToggleReaction(post, reactionKey)}
-                onReply={(post) => beginColumnReply(post, column.id)}
-              />
-            ) : (
-              <section className='shell-column-content'>{liveListHeader}</section>
-            )}
-            <div className='shell-column-content'>
-              {stagedColumn ? liveListHeader : null}
-              {surfaceLiveSessionListItems.length === 0 && pendingLiveCount === 0 &&
-              surfaceLivePanelState.status === 'ready' ? (
-                <p className='empty-state'>{t('live:empty')}</p>
-              ) : null}
-              <ul className='post-list'>
-                {surfaceLiveSessionListItems.map(({ session }) => {
-                  // #1061: 採用 CN の評価で主催者が非表示推奨なら、配信を折りたたむ。
-                  const trustGate = liveTrustGate.gateFor(session.host_pubkey);
-                  if (trustGate) {
-                    return (
-                      <li key={session.session_id}>
-                        <AuthorTrustGateNotice
-                          gate={trustGate}
-                          onReveal={() => liveTrustGate.reveal(trustGate.authorPubkey)}
-                          onOpenAuthor={(pubkey) => void openAuthorDetail(pubkey)}
-                        />
-                      </li>
-                    );
-                  }
-                  return (
-                  <SessionVisibility key={session.session_id} sessionId={session.session_id} kind="live" context={{ api, topic: surfaceTopic, scope: surfaceTimelineScope }}>
-                    <LiveCard
-                      topic={surfaceTopic}
-                      session={session}
-                      targeted={selectedLiveSessionId === session.session_id}
-                      media={!liveSurfaces || session.session_id !== column.entityId}
-                      onStage={liveActions && liveSurfaces && session.session_id !== column.entityId
-                        ? () => liveActions.stage(
-                          { session_id: session.session_id, topic_id: surfaceTopic, channel_id: surfaceChannelId },
-                          { topicId: surfaceTopic, channelId: surfaceChannelId },
-                          column
-                        )
-                        : undefined}
-                    />
-                  </SessionVisibility>
-                  );
-                })}
-              </ul>
-              <PendingSessionCards context={{ api, topic: surfaceTopic, scope: surfaceTimelineScope }}
-                kind="live" targetId={column.live ? undefined : column.entityId} onCountChange={setPendingLiveCount} refreshToken={surfaceLiveSessions} knownIds={surfaceLiveSessions.map((item) => item.session_id)} />
-            </div>
-          </div>
+        {activeSurfaceSection === 'live' && stagedColumn ? (
+          <ColumnLiveStage
+            column={stagedColumn}
+            joinedChannels={surfaceJoinedChannels}
+            buildPostCardView={buildPostCardView}
+            onReactionPickerOpen={() => void loadReactionCatalogData()}
+            onToggleReaction={(post, reactionKey) => void handleToggleReaction(post, reactionKey)}
+            onReply={(post) => beginColumnReply(post, column.id)}
+          />
         ) : null}
 
         {activeSurfaceSection === 'game' && column.kind === 'game' ? (

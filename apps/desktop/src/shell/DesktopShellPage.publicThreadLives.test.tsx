@@ -5,8 +5,6 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
-import type { ColumnState } from '@/shell/slices/workspace';
-import { WORKSPACE_LAYOUT_STORAGE_KEY } from '@/shell/workspacePersistence';
 
 import { getActiveColumn, renderAtHash, setViewportWidth } from './DesktopShellPage.testHelpers';
 
@@ -17,14 +15,29 @@ beforeEach(() => {
   window.history.replaceState(null, '', '/');
 });
 
-function persistedColumns(): ColumnState[] {
-  return (JSON.parse(window.localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY) ?? '{}') as { columns?: ColumnState[] })
-    .columns ?? [];
-}
-
 function footer(column: HTMLElement) {
   return within(column.querySelector<HTMLElement>('.shell-column-footer') ?? column);
 }
+
+test('creating a public thread can also start a live in that thread without capturing media', async () => {
+  const user = userEvent.setup();
+  const api = createDesktopMockApi();
+  const createLive = vi.spyOn(api, 'createLiveSession');
+  const capture = vi.spyOn(api, 'setLiveBroadcast');
+  renderAtHash('#/timeline?topic=kukuri%3Atopic%3Ageneral&context=publicThreads', api);
+  const list = await waitFor(() => getActiveColumn('Public threads'));
+  await user.click(footer(list).getByRole('button', { name: 'Create public thread' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Create a public thread' });
+  await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Live together');
+  await user.type(within(dialog).getByRole('textbox', { name: 'First post (optional)' }), 'Welcome');
+  await user.click(within(dialog).getByRole('checkbox', { name: 'Start Live' }));
+  await user.click(within(dialog).getByRole('button', { name: 'Create' }));
+  const detail = await waitFor(() => getActiveColumn('Public thread'));
+  expect(await within(within(detail).getByRole('list', { name: 'Live now' })).findByRole('button', { name: /^Live Live together / })).toBeInTheDocument();
+  expect(within(detail).getByText('Welcome')).toBeInTheDocument();
+  expect(createLive).toHaveBeenCalledWith(TOPIC, 'Live together', '', { kind: 'public_channel', channel_id: expect.stringMatching(/^pc-/) });
+  expect(capture).not.toHaveBeenCalled();
+});
 
 test('a live started in a public thread shows in the detail header and the list until it ends', async () => {
   const user = userEvent.setup();
@@ -35,15 +48,10 @@ test('a live started in a public thread shows in the detail header and the list 
   const detail = await waitFor(() => getActiveColumn('Public thread'));
   expect(within(detail).queryByRole('list', { name: 'Live now' })).toBeNull();
 
-  // 上部の「ライブ」から、詳細の列を親にしたスレッドの「ライブ」の列を開き、下部から始める(判断 15)。
-  await user.click(within(detail).getByRole('button', { name: 'Live' }));
-  const liveColumn = await waitFor(() => getActiveColumn('Live'));
-  expect(within(liveColumn).getAllByText('Watch party · general').length).toBeGreaterThan(0);
-  const opened = persistedColumns().find((column) => column.kind === 'stream');
-  const detailColumn = persistedColumns().find((column) => column.scope?.channelId === thread.channel_id);
-  expect(opened?.scope).toEqual({ topicId: TOPIC, channelId: thread.channel_id });
-  expect(opened?.parentColumnId).toBe(detailColumn?.id);
-  await user.click(footer(liveColumn).getByRole('button', { name: 'Start Live' }));
+  // 投稿欄からその公開スレッドで直接開始する。
+  expect(within(detail).queryByRole('button', { name: 'Live' })).toBeNull();
+  await user.click(footer(detail).getByRole('button', { name: /^Post to / }));
+  await user.click(within(detail).getByRole('button', { name: 'Start Live' }));
   const dialog = await screen.findByRole('dialog', { name: 'Start Live' });
   await user.type(within(dialog).getByPlaceholderText('Friday stream'), 'Night stream');
   await user.click(within(dialog).getByRole('button', { name: 'Start Live' }));
@@ -55,17 +63,14 @@ test('a live started in a public thread shows in the detail header and the list 
     { kind: 'public_channel', channel_id: thread.channel_id },
   ]);
   const sessionId = await createLiveSession.mock.results[0]!.value;
-  expect(await within(liveColumn).findByText('Night stream')).toBeInTheDocument();
-
-  // 列を閉じると詳細の列へ戻り、上部に配信中の行が出る。開始 post はスレッドに入る。
-  await user.click(within(liveColumn).getByRole('button', { name: 'Close Live' }));
   const back = await waitFor(() => getActiveColumn('Public thread'));
-  const row = await within(back).findByRole('button', { name: /^Live Night stream / });
+  const row = await within(within(back).getByRole('list', { name: 'Live now' })).findByRole('button', { name: /^Live Night stream / });
   expect(back.querySelector('.post-live')).not.toBeNull();
 
   // 紹介の出し先は始めたスレッドが先頭(既定。判断 17)。スレッドへ紹介しても、上部の行は 1 件のまま。
   const createPost = vi.spyOn(api, 'createPost');
-  await user.click(within(back.querySelector<HTMLElement>('.post-live')!).getByRole('button', { name: 'Share' }));
+  await user.click(within(back.querySelector<HTMLElement>('.post-live')!).getByRole('button'));
+  await user.click(within(await screen.findByRole('dialog', { name: 'Night stream' })).getByRole('button', { name: 'Share' }));
   const share = await screen.findByRole('dialog', { name: 'Share live session' });
   const target0 = within(share).getByRole('combobox', { name: 'Post to' }) as HTMLSelectElement;
   expect(target0.options[0]?.textContent).toBe('general / Watch party');
@@ -87,6 +92,7 @@ test('a live started in a public thread shows in the detail header and the list 
 
   // 上部の行から、その Live を示す列を開く。
   await user.click(row);
+  await user.click(within(await screen.findByRole('dialog', { name: 'Night stream' })).getByRole('button', { name: 'Show large' }));
   const target = await waitFor(() => getActiveColumn('Live'));
   await waitFor(() =>
     expect(target.querySelector(`[data-live-session-id="${sessionId}"]`)).not.toBeNull()
@@ -94,7 +100,7 @@ test('a live started in a public thread shows in the detail header and the list 
 
   // 終えると上部から消える。開始 post は残る。
   await user.click(footer(target).getByRole('button', { name: 'End' }));
-  await waitFor(() => expect(within(target).getByText('Ended')).toBeInTheDocument());
+  await waitFor(() => expect(within(target).getByText('This live session has ended')).toBeInTheDocument());
   await user.click(within(target).getByRole('button', { name: 'Close Live' }));
   const after = await waitFor(() => getActiveColumn('Public thread'));
   await waitFor(() => expect(within(after).queryByRole('list', { name: 'Live now' })).toBeNull());
@@ -116,6 +122,6 @@ test('the list row is marked and the detail header lists the live without receiv
   const list = await waitFor(() => getActiveColumn('Public threads'));
   await user.click(await within(list).findByRole('button', { name: /^Watch party .* Live$/ }));
   const detail = await waitFor(() => getActiveColumn('Public thread'));
-  expect(await within(detail).findByRole('button', { name: /^Live Night stream / })).toBeInTheDocument();
+  expect(await within(within(detail).getByRole('list', { name: 'Live now' })).findByRole('button', { name: /^Live Night stream / })).toBeInTheDocument();
   for (const call of media) expect(call).not.toHaveBeenCalled();
 });

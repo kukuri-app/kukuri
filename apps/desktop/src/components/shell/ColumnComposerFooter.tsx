@@ -17,6 +17,7 @@ import {
 } from '@/shell/slices/columnDrafts';
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
 import { useWebBackLayer } from '@/lib/useWebBackLayer';
+import { LiveStartButton } from '@/shell/page/LiveStartButton';
 
 type ColumnComposerFooterProps = {
   active: boolean;
@@ -135,6 +136,9 @@ export function ColumnComposerFooter({
     <div className='shell-column-composer' onKeyDown={onComposerKeyDown}>
       <div className='shell-column-composer-heading'>
         <strong>{actionLabel}</strong>
+        {target.action === 'post' && target.scope ? (
+          <LiveStartButton scope={target.scope} audienceLabel={destinationLabel} disabled={draft.pending} />
+        ) : null}
         <Button variant='ghost' size='sm' className='min-h-11' type='button' onClick={collapse}>
           {t('actions.close')}
         </Button>

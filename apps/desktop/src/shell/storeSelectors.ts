@@ -65,8 +65,6 @@ export const selectShellActionsSlice = (s: DesktopShellStore) => ({
   gameTitle: s.gameTitle,
   inviteTokenInput: s.inviteTokenInput,
   joinedChannelsByTopic: s.joinedChannelsByTopic,
-  liveDescription: s.liveDescription,
-  liveTitle: s.liveTitle,
   localProfile: s.localProfile,
   peerTicket: s.peerTicket,
   profileDraft: s.profileDraft,

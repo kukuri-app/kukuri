@@ -19,6 +19,7 @@ export type LiveActions = {
   // #1839 AC-3: この端末の配信(shell の上部の bar)。配信中の Live の id と、配信の開始。同時に配信するのは 1 つだけ。
   broadcastingSessionId: string | null;
   startBroadcast: (target: LiveBroadcastTarget, source: LiveVideoSource) => void;
+  refresh?: (topic: string) => Promise<void>;
   openPost: (topic: string, postId: string) => void;
   copyLink: (link: string) => void;
   activateReference: (reference: InternalSmartReference) => void;

@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import { IS_WEB_RUNTIME, nextWebLiveVideo, pushWebLiveVideo } from '../../webRuntime';
-import type { DesktopApi, LiveBroadcastStatus } from '../types';
+import type { DesktopApi, LiveBroadcastStatus, LiveThumbnailView } from '../types';
 import { invokeDesktop } from '../invoke/desktop';
 import { command } from '../invoke/dispatch';
 import { normalizeInvokeError } from '../invoke/error';
@@ -11,6 +11,8 @@ import { normalizeInvokeError } from '../invoke/error';
 export const liveMediaApi: Pick<
   DesktopApi,
   | 'setLiveBroadcast'
+  | 'getLiveThumbnail'
+  | 'setLiveThumbnail'
   | 'pushLiveVideo'
   | 'stopLiveBroadcast'
   | 'watchLiveMedia'
@@ -18,6 +20,9 @@ export const liveMediaApi: Pick<
   | 'stopWatchingLiveMedia'
   | 'setLiveVolume'
 > = {
+  getLiveThumbnail: command('getLiveThumbnail', (topic, sessionId) =>
+    invokeDesktop<LiveThumbnailView | null>('get_live_thumbnail', { request: { topic, session_id: sessionId } })),
+  setLiveThumbnail: command('setLiveThumbnail', (request) => invokeDesktop<void>('set_live_thumbnail', { request })),
   setLiveBroadcast: command('setLiveBroadcast', (request) =>
     invokeDesktop<LiveBroadcastStatus>('set_live_broadcast', { request })),
   pushLiveVideo: command('pushLiveVideo', async (sessionId, keyframe, ageMicros, data) => {

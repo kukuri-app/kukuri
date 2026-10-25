@@ -61,11 +61,14 @@
     },
     "stopBroadcast": "映像の配信を止める",
     "video": "配信の映像",
-    "volume": "音量"
+    "volume": "音量",
+    "camera": "使用するカメラ",
+    "defaultCamera": "既定のカメラ",
+    "cameraNumber": "カメラ {{number}}"
   },
   "stage": {
     "attachments": "添付 {{count}} 件",
-    "broadcasting": "配信中です（自分の映像は上部の配信の操作で確かめられます）",
+    "broadcasting": "カメラまたは画面の配信を始めると、自分の映像が出ます",
     "conversation": "会話: {{place}}",
     "ended": "このライブは終了しました",
     "joinToWatch": "参加すると映像が出ます",
@@ -89,7 +92,15 @@
       "small": "小"
     },
     "text": "文字の大きさ",
-    "unreadable": "この場所の投稿を読めません"
+    "unreadable": "この場所の投稿を読めません",
+    "full": "全面表示",
+    "split": "半分表示",
+    "layout": "ライブのレイアウト",
+    "sidePanel": "ライブの補助表示",
+    "otherLives": "他の配信中のライブ",
+    "publicThread": "公開スレッド",
+    "noOtherLives": "他に配信中のライブはありません",
+    "selectLive": "投稿や公開スレッドから、拡大するライブを選んでください"
   },
   "statuses": {
     "Ended": "終了",
@@ -99,5 +110,22 @@
   },
   "summary": "{{count}} 件アクティブ",
   "title": "ライブセッション",
-  "unavailable": "このライブを読み込めません"
+  "unavailable": "このライブを読み込めません",
+  "thumbnail": {
+    "choose": "サムネイル画像を選択",
+    "label": "配信のサムネイル",
+    "remove": "画像を解除",
+    "automatic": "画像を選ばない場合は、配信中の映像から静止画を自動更新します",
+    "failed": "画像を読み込めませんでした",
+    "waiting": "映像の準備中"
+  },
+  "details": {
+    "broadcaster": "配信者",
+    "post": "投稿内容",
+    "noPost": "投稿の本文はありません"
+  },
+  "carousel": {
+    "previous": "前の配信を表示",
+    "next": "次の配信を表示"
+  }
 }

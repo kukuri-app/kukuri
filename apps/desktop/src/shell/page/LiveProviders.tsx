@@ -39,6 +39,7 @@ type LiveProvidersProps = {
   copyLink: (link: string) => void;
   activateReference: (reference: InternalSmartReference) => void;
   stage: LiveActions['stage'];
+  refresh?: LiveActions['refresh'];
   children: ReactNode;
 };
 
@@ -56,6 +57,7 @@ export function LiveProviders({
   copyLink,
   activateReference,
   stage,
+  refresh,
   children,
 }: LiveProvidersProps) {
   const { localPubkey, pendingBySessionId } = useDesktopShellStore(
@@ -85,9 +87,10 @@ export function LiveProviders({
       copyLink,
       activateReference,
       stage,
+      refresh,
     }),
     [api, locale, localPubkey, pendingBySessionId, join, leave, end, broadcast, broadcastingSessionId, openThread, copyLink, activateReference,
-      stage]
+      stage, refresh]
   );
   const renderLive = useCallback((post: PostView) => <PostLive post={post} />, []);
   return (
