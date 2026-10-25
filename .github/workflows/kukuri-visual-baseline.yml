@@ -58,7 +58,7 @@ jobs:
 
       - name: Generate visual baseline
         working-directory: apps/desktop
-        run: pnpm test:e2e:visual --update-snapshots
+        run: pnpm test:e2e:visual --update-snapshots=all
 
       - name: Upload visual baseline
         if: always()

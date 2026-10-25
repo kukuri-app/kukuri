@@ -16,19 +16,15 @@ export function useShellDialogs({ activePrimarySection }: UseShellDialogsArgs) {
   const [channelSettingsDialogOpen, setChannelSettingsDialogOpen] = useState(false);
   const [leaveChannelDialogOpen, setLeaveChannelDialogOpenState] = useState(false);
   const [pendingLeaveChannel, setPendingLeaveChannel] = useState<PendingLeaveChannel | null>(null);
-  const [liveCreateDialogOpen, setLiveCreateDialogOpen] = useState(false);
   const [gameCreateDialogOpen, setGameCreateDialogOpen] = useState(false);
   const [profileAvatarCropFile, setProfileAvatarCropFile] = useState<File | null>(null);
   const [profileAvatarCropOpen, setProfileAvatarCropOpen] = useState(false);
   const [profileAvatarInputKey, setProfileAvatarInputKey] = useState(0);
   useEffect(() => {
-    if (activePrimarySection !== 'live' && liveCreateDialogOpen) {
-      setLiveCreateDialogOpen(false);
-    }
     if (activePrimarySection !== 'game' && gameCreateDialogOpen) {
       setGameCreateDialogOpen(false);
     }
-  }, [activePrimarySection, gameCreateDialogOpen, liveCreateDialogOpen]);
+  }, [activePrimarySection, gameCreateDialogOpen]);
 
   const openLeaveChannelDialog = useCallback((topicId: string, channelId: string) => {
     setPendingLeaveChannel({ topicId, channelId });
@@ -60,7 +56,6 @@ export function useShellDialogs({ activePrimarySection }: UseShellDialogsArgs) {
     confirmLeaveChannel,
     gameCreateDialogOpen,
     leaveChannelDialogOpen,
-    liveCreateDialogOpen,
     openLeaveChannelDialog,
     profileAvatarCropFile,
     profileAvatarCropOpen,
@@ -69,7 +64,6 @@ export function useShellDialogs({ activePrimarySection }: UseShellDialogsArgs) {
     setChannelSettingsDialogOpen,
     setGameCreateDialogOpen,
     setLeaveChannelDialogOpen,
-    setLiveCreateDialogOpen,
     setProfileAvatarCropFile,
     setProfileAvatarCropOpen,
     setProfileAvatarInputKey,

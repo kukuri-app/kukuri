@@ -5,12 +5,13 @@ import { describe, expect, test, vi } from 'vitest';
 import type { LiveBroadcastStatus, LiveVideoSource, SetLiveBroadcastRequest } from '@/lib/api';
 import { LiveBroadcastBar } from './LiveBroadcastBar';
 import { LiveBroadcastController } from './liveBroadcast';
-import { captureVideo, encodeVideo } from './liveMedia';
+import { captureVideo, encodeVideo, liveThumbnailDataUrl } from './liveMedia';
 
 vi.mock('./liveMedia', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./liveMedia')>()),
   captureVideo: vi.fn(),
   encodeVideo: vi.fn(),
+  liveThumbnailDataUrl: vi.fn(),
 }));
 
 const LIMITS = { width: 1280, height: 720, framerate: 30, bitrate: 1_500_000 };
@@ -37,9 +38,55 @@ function broadcast(media: ReturnType<typeof api>, source: LiveVideoSource = 'cam
 }
 
 describe('LiveBroadcastBar', () => {
+  test('updates a snapshot every thirty seconds and releases the timer when stopped', async () => {
+    vi.useFakeTimers();
+    const media = { ...api(), setLiveThumbnail: vi.fn(async () => undefined) };
+    vi.mocked(captureVideo).mockResolvedValue({} as MediaStream);
+    vi.mocked(encodeVideo).mockReturnValue({ stop: vi.fn() });
+    vi.mocked(liveThumbnailDataUrl).mockReturnValue('data:image/jpeg;base64,snapshot');
+    const controller = new LiveBroadcastController(media);
+    Object.defineProperties(controller.preview, { videoWidth: { value: 640 }, videoHeight: { value: 360 } });
+    try {
+      controller.start(target, 'camera');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(media.setLiveThumbnail).toHaveBeenCalledWith({ ...request, custom: false, data_url: 'data:image/jpeg;base64,snapshot' });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(media.setLiveThumbnail).toHaveBeenCalledTimes(2);
+      controller.stop();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(media.setLiveThumbnail).toHaveBeenCalledTimes(2);
+    } finally { controller.stop(); vi.useRealTimers(); }
+  });
   test('shows nothing until a broadcast starts', () => {
     const { container } = render(<LiveBroadcastBar controller={new LiveBroadcastController(api())} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  test('selects another camera and replaces the capture without closing the microphone', async () => {
+    const media = api();
+    media.setLiveBroadcast.mockImplementation(async ({ microphone }) => ({ microphone, limits: LIMITS }));
+    const stopEncoding = vi.fn();
+    const cameras = ['front', 'rear'].map((deviceId) => ({ kind: 'videoinput', deviceId, label: deviceId } as MediaDeviceInfo));
+    const devices = { enumerateDevices: vi.fn(async () => cameras) };
+    vi.stubGlobal('navigator', { mediaDevices: devices });
+    vi.mocked(captureVideo).mockImplementation(async (_source, _limits, cameraId) => ({
+      getVideoTracks: () => [{ getSettings: () => ({ deviceId: cameraId || 'front' }) }],
+    }) as unknown as MediaStream);
+    vi.mocked(encodeVideo).mockReturnValue({ stop: stopEncoding });
+    const controller = broadcast(media);
+    try {
+      const select = await screen.findByRole('combobox', { name: 'Camera to use' });
+      expect(select).toHaveValue('front');
+      await userEvent.selectOptions(select, 'rear');
+      await waitFor(() => expect(controller.getState()?.phase).toBe('live'));
+      expect(captureVideo).toHaveBeenLastCalledWith('camera', LIMITS, 'rear');
+      expect(stopEncoding).toHaveBeenCalledTimes(1);
+      expect(media.setLiveBroadcast).toHaveBeenLastCalledWith({ ...request, source: 'camera', microphone: true });
+      expect(select).toHaveValue('rear');
+    } finally {
+      controller.stop();
+      vi.unstubAllGlobals();
+    }
   });
 
   // ADR 0067 の live_media_requires_explicit_start_and_permission(画面側): 取り込みが拒否されたら配信を止め、mic を開かない。

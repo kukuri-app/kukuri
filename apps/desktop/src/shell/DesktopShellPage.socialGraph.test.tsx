@@ -79,6 +79,7 @@ test('profile social management updates follow and mute lists and muted authors 
               friend_of_friend: false,
               object_kind: 'post',
               content: 'mute this post',
+              live: { session_id: 'live-muted', topic_id: 'kukuri:topic:general', channel_id: null },
               content_status: 'Available',
               attachments: [],
               created_at: 2,
@@ -98,6 +99,7 @@ test('profile social management updates follow and mute lists and muted authors 
               friend_of_friend: false,
               object_kind: 'post',
               content: 'keep this post',
+              live: { session_id: 'live-visible', topic_id: 'kukuri:topic:general', channel_id: null },
               content_status: 'Available',
               attachments: [],
               created_at: 1,
@@ -285,7 +287,7 @@ test('profile social management updates follow and mute lists and muted authors 
     expect(screen.getByText('No bookmarked posts yet.')).toBeInTheDocument();
   });
 
-  await selectWorkspace(user, 'Live');
+  await selectTimelineView(user, 'Feed');
   await waitFor(() => {
     expect(screen.queryByText('Muted Live')).not.toBeInTheDocument();
   });

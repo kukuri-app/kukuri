@@ -699,7 +699,7 @@ impl AppService {
         Ok(located)
     }
 
-    pub(super) async fn session_target_readers(
+    pub(crate) async fn session_target_readers(
         &self,
         topic_id: &str,
         channel: &str,

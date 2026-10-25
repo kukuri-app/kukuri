@@ -15,7 +15,6 @@ type ColumnDomainActionFooterProps = {
   onJoinLiveSession: (sessionId: string, topic: string) => Promise<void>;
   onLeaveLiveSession: (sessionId: string, topic: string) => Promise<void>;
   onOpenGameCreate: () => void;
-  onOpenLiveCreate: () => void;
 };
 
 export function ColumnDomainActionFooter({
@@ -26,7 +25,6 @@ export function ColumnDomainActionFooter({
   onJoinLiveSession,
   onLeaveLiveSession,
   onOpenGameCreate,
-  onOpenLiveCreate,
 }: ColumnDomainActionFooterProps) {
   const { t } = useTranslation(['common', 'live', 'game', 'shell']);
   const publicThreads = useContext(PublicThreadActionsContext);
@@ -59,9 +57,7 @@ export function ColumnDomainActionFooter({
   );
 
   if (column.kind === 'stream') {
-    if (!column.entityId) {
-      return button(t('live:actions.start'), Radio, onOpenLiveCreate);
-    }
+    if (!column.entityId) return null;
     // 別の場所の紹介 post から開いた Live は、Live の場所の一覧で探す(#1841)。
     const place = column.live ?? column.scope;
     const session = liveSessionsByScopeKey[timelineStorageKeyForChannel(place.topicId, place.channelId)]?.find(

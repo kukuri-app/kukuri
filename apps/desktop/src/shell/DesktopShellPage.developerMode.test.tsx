@@ -10,7 +10,6 @@ import {
   openControlCenter,
   openSettingsSection,
   renderAtHash,
-  selectWorkspace,
   setViewportWidth,
 } from './DesktopShellPage.testHelpers';
 
@@ -59,22 +58,20 @@ test('developer mode toggle reveals WIP tabs and badges and persists across relo
     expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
   });
   const controlCenter = await openControlCenter(user);
-  expect(within(controlCenter).getByRole('button', { name: 'Add Live Column' })).toBeInTheDocument();
+  expect(within(controlCenter).queryByRole('button', { name: 'Add Live Column' })).not.toBeInTheDocument();
   expect(within(controlCenter).getByRole('button', { name: 'Add Metaverse Column' })).toBeInTheDocument();
 
   // localStorage に永続化されるため、再マウント後も developer mode は有効のまま。
   unmount();
   render(<App api={createDesktopMockApi()} />);
   const restoredControlCenter = await openControlCenter(user);
-  expect(within(restoredControlCenter).getByRole('button', { name: 'Add Live Column' })).toBeInTheDocument();
+  expect(within(restoredControlCenter).queryByRole('button', { name: 'Add Live Column' })).not.toBeInTheDocument();
 });
 
 test('disabling developer mode while on Live routes back to timeline', async () => {
   window.localStorage.setItem(DEVELOPER_MODE_STORAGE_KEY, 'true');
   const user = userEvent.setup();
-  render(<App api={createDesktopMockApi()} />);
-
-  await selectWorkspace(user, 'Live');
+  renderAtHash('#/live?topic=kukuri%3Atopic%3Ageneral&sessionId=selected', createDesktopMockApi());
   expect(window.location.hash).toMatch(/^#\/live/);
 
   const drawer = await openSettingsSection(user, 'developer');

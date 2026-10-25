@@ -61,11 +61,14 @@
     },
     "stopBroadcast": "Stop video broadcast",
     "video": "Broadcast video",
-    "volume": "Volume"
+    "volume": "Volume",
+    "camera": "Camera to use",
+    "defaultCamera": "Default camera",
+    "cameraNumber": "Camera {{number}}"
   },
   "stage": {
     "attachments": "{{count}} attachment(s)",
-    "broadcasting": "You are broadcasting (check your video in the broadcast controls at the top)",
+    "broadcasting": "Start broadcasting your camera or screen to see your video here",
     "conversation": "Conversation: {{place}}",
     "ended": "This live session has ended",
     "joinToWatch": "Join to watch the video",
@@ -89,7 +92,15 @@
       "small": "Small"
     },
     "text": "Text size",
-    "unreadable": "You can't read posts in this place"
+    "unreadable": "You can't read posts in this place",
+    "full": "Full view",
+    "split": "Split view",
+    "layout": "Live layout",
+    "sidePanel": "Live side panel",
+    "otherLives": "Other live sessions",
+    "publicThread": "Public thread",
+    "noOtherLives": "No other live sessions are broadcasting",
+    "selectLive": "Choose a live session from a post or public thread to show large"
   },
   "statuses": {
     "Ended": "Ended",
@@ -99,5 +110,22 @@
   },
   "summary": "{{count}} active",
   "title": "Live Sessions",
-  "unavailable": "This live session can't be loaded"
+  "unavailable": "This live session can't be loaded",
+  "thumbnail": {
+    "choose": "Choose thumbnail image",
+    "label": "Live thumbnail",
+    "remove": "Remove image",
+    "automatic": "Without a chosen image, snapshots update automatically while broadcasting",
+    "failed": "Could not load this image",
+    "waiting": "Waiting for video"
+  },
+  "details": {
+    "broadcaster": "Broadcaster",
+    "post": "Post content",
+    "noPost": "This post has no text"
+  },
+  "carousel": {
+    "previous": "Previous live sessions",
+    "next": "Next live sessions"
+  }
 }

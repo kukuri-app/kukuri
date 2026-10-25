@@ -1,8 +1,8 @@
 # 2026-10-18 公開スレッドの配信中の Live
 
-- Status: current
+- Status: superseded
 - Supersedes: None
-- Superseded by: None
+- Superseded by: [2026-10-25 ライブの開始・一覧・拡大表示](2026-10-25-live-entry-layout.md)
 - PR: #1840 AC-4 の PR（Refs #1840）
 - Preview: 下の「画面」
 - Surface / user / purpose: 公開スレッドの詳細の列の上部、公開スレッドの一覧の列の行、スレッドの scope の「ライブ」の列、Live の紹介の Dialog。公開スレッドを見ている利用者が、そのスレッドで始まった配信を見失わずに視聴し、自分も同じスレッドで配信を始める。

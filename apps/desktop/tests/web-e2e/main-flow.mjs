@@ -1989,19 +1989,23 @@ async function live() {
   await enableDeveloperMode(browser);
   await browser.$('button[aria-label="Close settings"]').click();
   await browser.execute((topic) => {
-    location.hash = `#/live?topic=${encodeURIComponent(topic)}`;
+    location.hash = `#/timeline?topic=${encodeURIComponent(topic)}`;
   }, TOPIC);
   const title = `web live ${RUN}`;
-  await browser.$('button=Start Live').click();
+  await openComposer(publicColumn(browser));
+  await publicColumn(browser).$('button=Start Live').click();
   const dialog = await dialogWith(browser, 'Start Live');
   await dialog.$('input[placeholder="Friday stream"]').setValue(title);
   await (await dialog.$$('button=Start Live')).at(-1).click();
   const card = browser.$(
-    `//article[@data-live-session-id and not(ancestor::*[contains(@class, "post-live")]) and contains(., "${title}")]`
+    `//div[contains(@class, "post-live")]//article[@data-live-session-id and contains(., "${title}")]`
   );
   await card.waitForExist({ timeout: WAIT });
   const request = { topic: TOPIC, session_id: await card.getAttribute('data-live-session-id') };
-  await card.$('button=Broadcast camera').click();
+  await card.$('button').click();
+  const details = await dialogWith(browser, title);
+  await details.$('button=Broadcast camera').click();
+  await details.$('button[aria-label="Close dialog"]').click();
   const bar = browser.$('section.shell-live-broadcast');
   await bar.$('span=Broadcasting video').waitForExist({ timeout: WAIT });
   await bar.$('button[aria-label="Disable microphone"]').waitForExist({ timeout: WAIT });
@@ -2022,19 +2026,21 @@ async function live() {
   await watch({ restart: true, ms: 0 });
   await hear('native receives the video and the sound');
 
-  // 別の Web が live の列から参加すると、映像が描かれ、音がブラウザの出力へ渡る。音量 0 で無音になり、退出で受信が止まる。
+  // 別の Web が投稿のサムネイルから詳細を開いて参加すると、映像が描かれ、音がブラウザの出力へ渡る。音量 0 で無音になり、退出で受信が止まる。
   const viewer = await openClient('web-viewer', { ice: true, media: true });
   await enableDeveloperMode(viewer);
   await viewer.$('button[aria-label="Close settings"]').click();
   await viewer.execute(observeLivePlayback);
   await viewer.execute((topic) => {
-    location.hash = `#/live?topic=${encodeURIComponent(topic)}`;
+    location.hash = `#/timeline?topic=${encodeURIComponent(topic)}`;
   }, TOPIC);
   const viewerCard = viewer.$(
-    `//article[@data-live-session-id="${request.session_id}" and not(ancestor::*[contains(@class, "post-live")])]`
+    `//div[contains(@class, "post-live")]//article[@data-live-session-id="${request.session_id}"]`
   );
   await viewerCard.waitForExist({ timeout: WAIT });
-  await viewerCard.$('button=Join').click();
+  await viewerCard.$('button').click();
+  const viewerDetails = await dialogWith(viewer, title);
+  await viewerDetails.$('button=Join').click();
   const drawn = () => viewer.execute(() => window.__liveDraws);
   const loudest = () => viewer.execute(() => window.__liveLevelOver(1_200));
   await eventually('the web viewer draws the video', async () => (await drawn()) > 10);
@@ -2045,12 +2051,13 @@ async function live() {
     volume.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await eventually('the web viewer is silent at volume 0', async () => (await loudest()) < 0.0001);
-  await viewerCard.$('button=Leave').click();
-  await viewerCard.$('button=Join').waitForExist({ timeout: WAIT });
+  await viewerDetails.$('button=Leave').click();
+  await viewerDetails.$('button=Join').waitForExist({ timeout: WAIT });
   const closed = () => viewer.execute(() => window.__livePlaybackClosed());
   await eventually('the web viewer stops receiving', closed);
   await new Promise((resolve) => setTimeout(resolve, 3_000));
   assert.ok(await closed(), 'the web viewer does not receive again after leaving');
+  await viewerDetails.$('button[aria-label="Close dialog"]').click();
 
   // mic を止めた後に始めた視聴は、映像を受けても、音声の再生時刻が映像の時刻に追いつかない。
   await bar.$('button[aria-label="Disable microphone"]').click();

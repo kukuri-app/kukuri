@@ -106,7 +106,6 @@ const ADDABLE_COLUMN_KINDS: ColumnKind[] = [
   'notifications',
   'messages',
   'profile',
-  'stream',
   'metaverse',
 ];
 
@@ -197,7 +196,6 @@ export function DesktopShellControlCenter({
   // live・game・metaverse は開発者モードでだけ出し、game・metaverse は Web では使えない（ADR 0060 §3）。
   const addableColumnKinds = ADDABLE_COLUMN_KINDS.filter(
     (kind) =>
-      !(kind === 'stream' && primarySectionHidden('live', developerModeEnabled)) &&
       !(kind === 'metaverse' && primarySectionHidden('game', developerModeEnabled))
   );
 

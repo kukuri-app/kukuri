@@ -38,14 +38,8 @@ test('desktop shell can create, join, leave, and end a live session', async () =
   await user.click(within(liveDialog).getByRole('button', { name: 'Start Live' }));
 
   // Live の一覧のカード(開始 post の中にも同じ Live が出る。#1839)。
-  const listCard = () => {
-    const card = screen
-      .queryAllByText('Launch Party')
-      .map((title) => title.closest('article'))
-      .find((article) => article instanceof HTMLElement && !article.closest('.post-live'));
-    if (!(card instanceof HTMLElement)) throw new Error('live session card not found');
-    return card;
-  };
+  await user.click(await screen.findByRole('button', { name: /^Live Launch Party / }));
+  const listCard = () => screen.getByRole('dialog', { name: 'Launch Party' });
   await waitFor(() => listCard());
   expect(within(listCard()).getByText('watch along')).toBeInTheDocument();
 
@@ -406,6 +400,7 @@ test('copy link actions write canonical hash routes for topic, post, and live', 
               friend_of_friend: false,
               object_kind: 'post',
               content: 'copy this post',
+              live: { session_id: 'session-demo', topic_id: 'kukuri:topic:general', channel_id: null },
               content_status: 'Available',
               attachments: [],
               created_at: 1,
@@ -476,11 +471,10 @@ test('copy link actions write canonical hash routes for topic, post, and live', 
     expect(screen.getAllByRole('status')).toHaveLength(1);
   });
 
-  await selectWorkspace(user, 'Live');
-  const liveArticle = screen.getByText('Live Demo').closest('article');
-  if (!(liveArticle instanceof HTMLElement)) {
-    throw new Error('expected live article');
-  }
+  await user.keyboard('{Escape}');
+  const tile = postArticle.querySelector<HTMLElement>('.live-thumbnail-open')!;
+  await user.click(tile);
+  const liveArticle = await screen.findByRole('dialog', { name: 'Live Demo' });
   await user.click(within(liveArticle).getByRole('button', { name: 'Copy link' }));
   expect(writeText).toHaveBeenLastCalledWith(
     '#/live?topic=kukuri%3Atopic%3Ageneral&sessionId=session-demo'
@@ -488,6 +482,7 @@ test('copy link actions write canonical hash routes for topic, post, and live', 
   await waitFor(() => {
     expect(screen.getAllByRole('status')).toHaveLength(1);
   });
+  await user.keyboard('{Escape}');
 
   await selectWorkspace(user, 'Metaverse');
   expect(screen.getByText('Metaverse Rooms')).toBeInTheDocument();

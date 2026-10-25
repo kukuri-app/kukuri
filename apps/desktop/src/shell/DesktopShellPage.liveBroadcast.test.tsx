@@ -36,11 +36,14 @@ test('a broadcast keeps running after leaving the live column and stops from the
     const card = screen
       .queryAllByText('Launch Party')
       .map((title) => title.closest('article'))
-      .find((article) => article instanceof HTMLElement && !article.closest('.post-live'));
+      .find((article) => article instanceof HTMLElement && article.closest('.post-live'));
     if (!(card instanceof HTMLElement)) throw new Error('live session card not found');
     return card;
   });
-  await user.click(within(listCard).getByRole('button', { name: 'Broadcast camera' }));
+  await user.click(within(listCard).getByRole('button'));
+  const details = await screen.findByRole('dialog', { name: 'Launch Party' });
+  await user.click(within(details).getByRole('button', { name: 'Broadcast camera' }));
+  await user.keyboard('{Escape}');
   const bar = () => screen.queryByRole('region', { name: 'Broadcast controls for Launch Party' });
   expect(await within(bar()!).findByText('Broadcasting video')).toBeInTheDocument();
   expect(encodeVideo).toHaveBeenCalledTimes(1);
@@ -65,9 +68,11 @@ test('a broadcast keeps running after leaving the live column and stops from the
     if (!(card instanceof HTMLElement)) throw new Error('live not shown in the start post');
     return card;
   });
-  await user.click(within(embedded).getByRole('button', { name: 'Broadcast camera' }));
+  await user.click(within(embedded).getByRole('button'));
+  const again = await screen.findByRole('dialog', { name: 'Launch Party' });
+  await user.click(within(again).getByRole('button', { name: 'Broadcast camera' }));
   await within(bar()!).findByText('Broadcasting video');
-  await user.click(within(embedded).getByRole('button', { name: 'End' }));
+  await user.click(within(again).getByRole('button', { name: 'End' }));
   await waitFor(() => expect(bar()).toBeNull());
   expect(stopEncoding).toHaveBeenCalledTimes(2);
 }, 20_000);

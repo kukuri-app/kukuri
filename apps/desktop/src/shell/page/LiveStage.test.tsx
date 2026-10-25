@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { LiveSessionMedia } from '@/components/extended/LiveSessionMedia';
 import { createLivePlayer } from '@/components/extended/liveMedia';
+import { liveBroadcastFor } from '@/components/extended/liveBroadcast';
 import type { DesktopApi, LiveSessionView, PostView, ReactionReceivedView, ReactionSummaryView } from '@/lib/api';
 import { announceReactionReceived } from '@/shell/data/useRuntimeEventBridge';
 import { createDesktopShellStore, DesktopShellStoreContext, timelineStorageKeyForChannel } from '@/shell/store';
@@ -25,6 +26,7 @@ const ME = 'm'.repeat(64);
 const CAT = 'f'.repeat(64);
 
 beforeEach(() => {
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
   vi.mocked(createLivePlayer).mockReturnValue({ push: vi.fn(), reset: vi.fn(), close: vi.fn() });
   vi.stubGlobal('IntersectionObserver', class {
     observe() {}
@@ -96,6 +98,7 @@ function setup({
   }),
   mediaObjectUrls = { 'cat-hash': 'data:image/png;base64,AAAA' } as Record<string, string | null>,
   conversationChannel = THREAD,
+  previewStream = null as MediaStream | null,
 } = {}) {
   const store = createDesktopShellStore();
   const key = timelineStorageKeyForChannel(TOPIC, conversationChannel);
@@ -121,6 +124,12 @@ function setup({
     localPubkey: ME,
     pendingBySessionId: {},
   } as unknown as LiveActions;
+  const controller = liveBroadcastFor(actions.api);
+  controller.preview.srcObject = previewStream;
+  if (previewStream) vi.spyOn(controller, 'getState').mockReturnValue({
+    topic: TOPIC, sessionId: found.session_id, title: found.title, source: 'camera',
+    microphone: false, phase: 'live', notice: null, cameras: [], cameraId: '',
+  });
   const onReply = vi.fn();
   const onToggleReaction = vi.fn();
   const view = () => (
@@ -153,6 +162,17 @@ function setup({
 }
 
 const layers = (container: HTMLElement) => container.querySelector<HTMLElement>('.live-stage-layers')!;
+
+test('shows the local capture in the large stage without watching the broadcast over the network', async () => {
+  const stream = {} as MediaStream;
+  const { container, api } = setup({ found: session({ host_pubkey: ME }), previewStream: stream });
+  await screen.findByText('Windows 11 の確認');
+  const video = container.querySelector('video');
+  expect(video).not.toBeNull();
+  expect(video?.srcObject).toBe(stream);
+  expect(video?.muted).toBe(true);
+  expect(api.watchLiveMedia).not.toHaveBeenCalled();
+});
 
 test('overlays the conversation posts and the start post reactions, including a custom reaction image', async () => {
   const { container, store, key } = setup();
@@ -265,7 +285,7 @@ test('shows the state of an ended live, of the broadcaster, and of a conversatio
   ended.unmount();
 
   const broadcaster = setup({ found: session({ host_pubkey: ME }) });
-  expect(await screen.findByText(/You are broadcasting/)).toBeVisible();
+  expect(await screen.findByText(/Start broadcasting your camera or screen/)).toBeVisible();
   broadcaster.unmount();
 
   const unreadable = setup({ conversationChannel: 'channel-1700000000000-abcdefgh', posts: [post('secret')] });

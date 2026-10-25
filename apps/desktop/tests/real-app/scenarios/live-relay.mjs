@@ -14,6 +14,7 @@ import {
   injectCapture,
   measureSync,
   observeDraws,
+  selectLive,
   startBroadcast,
   VOICE,
   watch,
@@ -44,11 +45,12 @@ export async function run({ launch, log, topic }) {
   const all = [host, ...viewers];
   await Promise.all(all.map(accept));
   await connect(all);
-  await Promise.all(all.map((instance) => openTopic(instance, topic, 'live')));
+  await Promise.all(all.map((instance) => openTopic(instance, topic, 'timeline')));
   await Promise.all(all.map((instance) => waitForPeers(instance, topic, viewers.length)));
   await injectCapture(host);
   await Promise.all(viewers.map(observeDraws));
   await createSession(host, 'live-relay');
+  await Promise.all(viewers.map(selectLive));
   await startBroadcast(host);
   const voice = audioMode ? speak('host', VOICE) : () => undefined;
   const direct = viewers.slice(0, 4);

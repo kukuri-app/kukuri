@@ -94,21 +94,92 @@
   background: var(--border-subtle);
 }
 
+.shell-phase1 .shell-column-body:has(> .live-column) {
+  padding: 0;
+  overflow: hidden;
+}
+
+.live-column {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.live-column-layout-controls,
+.live-column-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  padding: var(--space-xs);
+}
+
 .shell-phase1 .shell-stream-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-md);
+  flex: 1;
   min-width: 0;
+  min-height: 0;
+}
+
+.live-column[data-layout='split'] .shell-stream-layout {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.shell-stream-layout > .shell-main-stack,
+.shell-stream-layout > .shell-main-stack > .shell-section,
+.shell-stream-layout .live-stage,
+.shell-stream-layout .live-viewer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shell-stream-layout .live-stage-header,
+.shell-stream-layout .live-stage-controls {
+  padding-inline: var(--space-xs);
+}
+
+.shell-stream-layout .live-stage .live-viewer-screen {
+  flex: 1;
+  min-height: 0;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+
+.live-column-side {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.live-column-side-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.live-column-composer {
+  position: sticky;
+  bottom: 0;
+  padding: var(--space-xs);
+  background: var(--surface-panel-solid);
 }
 
 @container (min-width: 46rem) {
-  .shell-phase1 .shell-stream-layout {
-    grid-template-columns: minmax(0, 1.25fr) minmax(18rem, 0.75fr);
-    align-items: start;
+  .live-column[data-layout='split'] .shell-stream-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
 
-  .shell-phase1 .shell-stream-layout > .shell-column-content {
-    margin: 0;
+  .live-column-side {
+    border-top: 0;
+    border-inline-start: 1px solid var(--border-subtle);
   }
 }
 

@@ -54,7 +54,7 @@ export function LiveViewer({ api, request, overlay }: MediaProps) {
   }, [api, topic, sessionId]);
 
   return (
-    <div className='flex flex-col gap-2'>
+    <div className='live-viewer flex flex-col gap-2'>
       <div className='live-viewer-screen'>
         <canvas
           ref={canvasRef}

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSessionDisplay } from '@/components/extended/useSessionDisplay';
 import type { DesktopApi, LiveSessionView, PostLiveView } from '@/lib/api';
 import { channelTimelineScope } from '@/shell/presentation';
-import { useDesktopShellStore } from '@/shell/store';
+import { timelineStorageKeyForChannel, useDesktopShellStore } from '@/shell/store';
 
 /**
  * #1839: 参照(Live を作った topic と id)の Live を、表示要求で 1 件読み、手元の行を返す。`element` が画面に入っている間だけ
@@ -13,6 +13,12 @@ import { useDesktopShellStore } from '@/shell/store';
 export function useLiveSession<T extends HTMLElement>(api: DesktopApi | undefined, live: PostLiveView) {
   const channelId = live.channel_id ?? null;
   const lastSync = useDesktopShellStore((state) => state.syncStatus.last_sync_ts);
+  const pending = useDesktopShellStore((state) => state.livePendingBySessionId[live.session_id]);
+  const cached = useDesktopShellStore((state) =>
+    state.liveSessionsByScopeKey[timelineStorageKeyForChannel(live.topic_id, channelId)]?.find(
+      (session) => session.session_id === live.session_id
+    )
+  );
   const [session, setSession] = useState<LiveSessionView | null | undefined>(undefined);
   const displayed = useRef(false);
   const load = useCallback(async () => {
@@ -27,7 +33,7 @@ export function useLiveSession<T extends HTMLElement>(api: DesktopApi | undefine
   }, [load]);
   useEffect(() => {
     void load();
-  }, [load, lastSync]);
+  }, [load, lastSync, cached, pending]);
   const { element } = useSessionDisplay<T>({
     // 公開スレッドで始めた Live は、公開スレッドの scope で表示要求を出す(#1840 AC-4)。
     context: api ? { api, topic: live.topic_id, scope: channelTimelineScope(channelId) } : undefined,

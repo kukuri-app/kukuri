@@ -32,6 +32,8 @@ mod dome_move;
 mod dome_session;
 mod game;
 mod live;
+mod live_thumbnail;
+pub use live_thumbnail::{LiveThumbnailView, SetLiveThumbnailInput};
 mod session_display;
 pub use session_display::{SessionCandidateView, SessionDisplayRequest};
 pub use sync::{

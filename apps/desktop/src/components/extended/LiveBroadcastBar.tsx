@@ -4,6 +4,7 @@ import { Camera, Mic, MicOff, MonitorUp, Square, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
+import { Select } from '@/components/ui/select';
 
 import type { LiveBroadcastController } from './liveBroadcast';
 
@@ -23,6 +24,15 @@ export function LiveBroadcastBar({ controller }: { controller: LiveBroadcastCont
       aria-label={t('live:media.controls', { title: state.title })}
       aria-busy={busy}
     >
+          {!failed && state.source === 'camera' && state.cameras.length > 0 ? (
+            <Select className='min-w-32 max-w-48 shrink-0' aria-label={t('live:media.camera')} value={state.cameraId} disabled={busy}
+              onChange={(event) => controller.setCamera(event.target.value)}>
+              {!state.cameraId ? <option value=''>{t('live:media.defaultCamera')}</option> : null}
+              {state.cameras.map((camera, index) => <option key={camera.deviceId} value={camera.deviceId}>
+                {camera.label || t('live:media.cameraNumber', { number: index + 1 })}
+              </option>)}
+            </Select>
+          ) : null}
       <div
         hidden={failed}
         aria-label={t('live:media.preview')}

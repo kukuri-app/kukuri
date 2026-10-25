@@ -28,6 +28,8 @@ type LiveGameMock = Pick<
   | 'setScopeDisplay'
   | 'listLiveSessions'
   | 'createLiveSession'
+  | 'getLiveThumbnail'
+  | 'setLiveThumbnail'
   | 'getLiveSession'
   | 'endLiveSession'
   | 'joinLiveSession'
@@ -78,6 +80,7 @@ export function createLiveGameMock(runtime: MockRuntime): LiveGameMock {
     metaverseAssetPayloads,
     mutedAuthorPubkeys,
   } = runtime;
+  const thumbnails = new Map<string, import('@/lib/api').LiveThumbnailView>();
   const connectionProposals = new Map<string, DomeConnectionProposalView>();
   const connectionViews = new Map<string, DomeConnectionView>();
   const hostingViews = new Map<string, DomeHostingView>();
@@ -191,6 +194,14 @@ export function createLiveGameMock(runtime: MockRuntime): LiveGameMock {
         liveSessionsByTopic[topic] ?? [],
         scope
       ).filter((session) => !muted.has(session.host_pubkey));
+    },
+    async getLiveThumbnail(topic, sessionId) {
+      return thumbnails.get(`${topic}:${sessionId}`) ?? null;
+    },
+    async setLiveThumbnail(request) {
+      const key = `${request.topic}:${request.session_id}`;
+      if (!request.custom && thumbnails.get(key)?.custom) return;
+      thumbnails.set(key, { data_url: request.data_url, custom: request.custom && Boolean(request.data_url), updated_at: Date.now() });
     },
     async createLiveSession(topic, title, description, channelRef = { kind: 'public' }, startPost = '') {
       runtime.sequence += 1;

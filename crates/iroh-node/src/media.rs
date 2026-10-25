@@ -276,19 +276,21 @@ async fn serve(connection: &Connection, grant: MediaGrant) {
         return;
     };
     let run = moq_net::time::run(driver);
-    tokio::pin!(run);
-    let mut revalidate = n0_future::time::interval(MEDIA_REVALIDATE_INTERVAL);
-    revalidate.tick().await;
-    loop {
-        tokio::select! {
-            _ = &mut run => return,
-            _ = revalidate.tick() => {
-                if !(grant.revalidate)().await {
-                    session.abort(moq_net::Error::App(APP_REVOKED));
-                    return;
-                }
+    let revoked = async {
+        let mut revalidate = n0_future::time::interval(MEDIA_REVALIDATE_INTERVAL);
+        revalidate.tick().await;
+        loop {
+            revalidate.tick().await;
+            if !(grant.revalidate)().await {
+                session.abort(moq_net::Error::App(APP_REVOKED));
+                return;
             }
         }
+    };
+    // 状態の照会中も、認可済みの搬送と制御を進める。拒否が確定したら直ちに閉じる。
+    tokio::select! {
+        _ = run => {},
+        _ = revoked => {},
     }
 }
 

@@ -1,8 +1,8 @@
 import type { DesktopApi, LiveVideoSource } from '@/lib/api';
 
-import { captureErrorKind, captureVideo, encodeVideo } from './liveMedia';
+import { captureErrorKind, captureVideo, encodeVideo, liveThumbnailDataUrl, LIVE_THUMBNAIL_INTERVAL_MS } from './liveMedia';
 
-type LiveBroadcastApi = Pick<DesktopApi, 'setLiveBroadcast' | 'pushLiveVideo' | 'stopLiveBroadcast'>;
+type LiveBroadcastApi = Pick<DesktopApi, 'setLiveBroadcast' | 'pushLiveVideo' | 'stopLiveBroadcast'> & Partial<Pick<DesktopApi, 'setLiveThumbnail'>>;
 
 export type LiveBroadcastTarget = { topic: string; sessionId: string; title: string };
 
@@ -12,6 +12,8 @@ export type LiveBroadcastState = LiveBroadcastTarget & {
   microphone: boolean;
   phase: 'starting' | 'live' | 'failed';
   notice: string | null;
+  cameras: MediaDeviceInfo[];
+  cameraId: string;
 };
 
 /**
@@ -26,6 +28,7 @@ export class LiveBroadcastController {
   private encoding: { stop(): void } | null = null;
   /// 止める・始め直すたびに進め、古い開始の続きを捨てる。
   private generation = 0;
+  private thumbnailTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly api: LiveBroadcastApi) {
     this.preview.muted = true;
@@ -42,13 +45,19 @@ export class LiveBroadcastController {
   /// 配信を始める。別の Live を配信している間は始めない。
   start(target: LiveBroadcastTarget, source: LiveVideoSource) {
     if (this.state && this.state.sessionId !== target.sessionId) return;
-    this.update({ ...target, source, microphone: true, phase: 'starting', notice: null });
+    this.update({ ...target, source, microphone: true, phase: 'starting', notice: null, cameras: [], cameraId: '' });
     void this.run(source, true);
   }
 
   /// 配信中の source の切替(mic は閉じない)。
   setSource(source: LiveVideoSource) {
     if (this.state?.phase === 'live') void this.run(source, this.state.microphone);
+  }
+
+  setCamera(cameraId: string) {
+    if (this.state?.phase !== 'live' || this.state.source !== 'camera') return;
+    this.update({ ...this.state, cameraId });
+    void this.run('camera', this.state.microphone);
   }
 
   async toggleMicrophone() {
@@ -86,7 +95,7 @@ export class LiveBroadcastController {
     try {
       const status = await this.api.setLiveBroadcast({ ...request, source, microphone: keepMicrophone });
       if (generation !== this.generation) return;
-      const stream = await captureVideo(source, status.limits);
+      const stream = await captureVideo(source, status.limits, current.cameraId);
       if (generation !== this.generation) {
         stream.getTracks().forEach((track) => track.stop());
         return;
@@ -103,7 +112,13 @@ export class LiveBroadcastController {
         opened = (await this.api.setLiveBroadcast({ ...request, source, microphone: true })).microphone;
         if (generation !== this.generation) return;
       }
-      this.update({ ...this.state!, phase: 'live', microphone: opened, notice: microphone && !opened ? 'media.microphoneUnavailable' : null });
+      const cameras = source === 'camera' && navigator.mediaDevices?.enumerateDevices
+        ? (await navigator.mediaDevices.enumerateDevices().catch(() => [])).filter((device) => device.kind === 'videoinput')
+        : current.cameras;
+      if (generation !== this.generation) return;
+      const cameraId = source === 'camera' ? stream.getVideoTracks?.()[0]?.getSettings?.().deviceId ?? current.cameraId : current.cameraId;
+      this.update({ ...this.state!, cameras, cameraId, phase: 'live', microphone: opened, notice: microphone && !opened ? 'media.microphoneUnavailable' : null });
+      this.scheduleThumbnail(generation, 0);
     } catch (error) {
       if (generation !== this.generation) return;
       this.stopEncoding();
@@ -118,8 +133,25 @@ export class LiveBroadcastController {
   }
 
   private stopEncoding() {
+    if (this.thumbnailTimer !== null) clearTimeout(this.thumbnailTimer);
+    this.thumbnailTimer = null;
     this.encoding?.stop();
     this.encoding = null;
+  }
+
+  private scheduleThumbnail(generation: number, delay: number) {
+    if (!this.api.setLiveThumbnail) return;
+    this.thumbnailTimer = setTimeout(() => {
+      const state = this.state;
+      if (generation !== this.generation || state?.phase !== 'live') return;
+      const send = this.preview.videoWidth && this.preview.videoHeight
+        ? this.api.setLiveThumbnail!({ ...this.request(state), custom: false,
+          data_url: liveThumbnailDataUrl(this.preview, this.preview.videoWidth, this.preview.videoHeight) })
+        : Promise.resolve();
+      void send.catch(() => undefined).finally(() => {
+        if (generation === this.generation) this.scheduleThumbnail(generation, LIVE_THUMBNAIL_INTERVAL_MS);
+      });
+    }, delay);
   }
 
   private update(next: LiveBroadcastState | null) {

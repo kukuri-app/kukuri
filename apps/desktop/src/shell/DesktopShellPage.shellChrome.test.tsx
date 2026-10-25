@@ -147,7 +147,9 @@ test('column actions replace the legacy global floating action button', async ()
 
   initial.unmount();
   const live = renderAtHash('#/live?topic=kukuri%3Atopic%3Ageneral');
-  expect(screen.getByRole('button', { name: 'Start Live' })).toBeInTheDocument();
+  const liveColumn = await screen.findByRole('region', { name: /^Live Column,.*Active,/ });
+  expect(within(liveColumn).getByText('Choose a live session from a post or public thread to show large')).toBeInTheDocument();
+  expect(within(liveColumn).queryByRole('button', { name: 'Start Live' })).toBeNull();
 
   live.unmount();
   const game = renderAtHash('#/game?topic=kukuri%3Atopic%3Ageneral');

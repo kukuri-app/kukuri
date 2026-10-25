@@ -23,7 +23,7 @@ import { useAdultGatedMediaHashes } from '@/shell/data/useAdultGatedMediaHashes'
 import { useCommunityNodeRecovery } from '@/shell/actions/useCommunityNodeRecovery';
 import { useDesktopShellDataEffects } from '@/shell/data/useDesktopShellDataEffects';
 import { useMediaVisibilityDemand } from '@/shell/data/useMediaVisibilityDemand';
-import { SHOWN_THREAD_LIVE_SESSIONS, showsThreadLives } from '@/shell/slices/publicThreads';
+import { showsThreadLives } from '@/shell/slices/publicThreads';
 import {
   activeWorkspaceScope,
   columnIdentityId,
@@ -376,7 +376,7 @@ export function useDesktopShellData({
     ...(shellChromeState.activePrimarySection === 'game' ? activeGameRooms.map((room) => room.host_pubkey) : []),
     ...visibleColumns.filter((column) => showsThreadLives(column, developerModeEnabled)).flatMap((column) =>
       (state.liveSessionsByScopeKey[timelineStorageKeyForChannel(column.scope!.topicId, column.scope!.channelId)] ?? [])
-        .filter((session) => session.status === 'Live').slice(0, SHOWN_THREAD_LIVE_SESSIONS).map((live) => live.host_pubkey)),
+        .filter((session) => session.status === 'Live').map((live) => live.host_pubkey)),
   ])], [activeGameRooms, developerModeEnabled, shellChromeState.activePrimarySection, state.liveSessionsByScopeKey,
     visibleColumns]);
   useEffect(() => {

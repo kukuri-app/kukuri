@@ -61,11 +61,14 @@
     },
     "stopBroadcast": "停止直播画面",
     "video": "直播画面",
-    "volume": "音量"
+    "volume": "音量",
+    "camera": "选择摄像头",
+    "defaultCamera": "默认摄像头",
+    "cameraNumber": "摄像头 {{number}}"
   },
   "stage": {
     "attachments": "{{count}} 个附件",
-    "broadcasting": "正在直播（可在顶部的直播操作中查看自己的画面）",
+    "broadcasting": "开始摄像头或屏幕直播后会显示自己的画面",
     "conversation": "对话：{{place}}",
     "ended": "此直播已结束",
     "joinToWatch": "加入后显示直播画面",
@@ -89,7 +92,15 @@
       "small": "小"
     },
     "text": "文字大小",
-    "unreadable": "无法读取此处的帖子"
+    "unreadable": "无法读取此处的帖子",
+    "full": "完整显示",
+    "split": "分屏显示",
+    "layout": "直播布局",
+    "sidePanel": "直播辅助面板",
+    "otherLives": "其他正在直播的会话",
+    "publicThread": "公开帖子",
+    "noOtherLives": "没有其他正在直播的会话",
+    "selectLive": "从动态或公开帖子中选择要放大的直播"
   },
   "statuses": {
     "Ended": "已结束",
@@ -99,5 +110,22 @@
   },
   "summary": "{{count}} 个活跃",
   "title": "直播会话",
-  "unavailable": "无法加载此直播"
+  "unavailable": "无法加载此直播",
+  "thumbnail": {
+    "choose": "选择缩略图",
+    "label": "直播缩略图",
+    "remove": "移除图片",
+    "automatic": "未选择图片时，直播期间自动更新画面截图",
+    "failed": "无法读取图片",
+    "waiting": "等待画面"
+  },
+  "details": {
+    "broadcaster": "主播",
+    "post": "帖子内容",
+    "noPost": "帖子没有正文"
+  },
+  "carousel": {
+    "previous": "上一组直播",
+    "next": "下一组直播"
+  }
 }

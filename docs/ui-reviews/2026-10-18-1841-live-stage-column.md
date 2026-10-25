@@ -1,8 +1,8 @@
 # 2026-10-18 ライブの列の左側に Live を大きく出す入口
 
-- Status: current
+- Status: superseded
 - Supersedes: None
-- Superseded by: None
+- Superseded by: [2026-10-25 ライブの開始・一覧・拡大表示](2026-10-25-live-entry-layout.md)
 - PR: #1841 AC-3 の PR（Refs #1841）
 - Preview: 下の「画面」
 - Surface / user / purpose: ライブの列（幅 2）の左側と、Live の一覧のカード・投稿の中の Live の「大きく表示」。Live を見ている利用者が、選んだ Live を大きく出して会話の投稿とリアクションを重ねて見て、別の Live へ切り替える。重ねる部品そのものの見た目は [AC-2 の record](2026-10-18-1841-live-stage.md) のとおり。

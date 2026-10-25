@@ -766,6 +766,31 @@ impl AppService {
         topic_id: &str,
         session_id: &str,
     ) -> Result<Option<(ReplicaId, LiveSessionStateDocV1, LiveSessionManifestBlobV1)>> {
+        // 自分が書いた既知の状態は手元が正本。locator の遠隔照会を待って配信操作を止めない。
+        if let Some(row) = self
+            .services
+            .projection_store
+            .get_live_session(topic_id, session_id)
+            .await?
+            && row.host_pubkey == self.current_author_pubkey()
+            && (is_public_storage_channel(&row.channel_id)
+                || self
+                    .ensure_private_channel_access(topic_id, &ChannelId::new(&row.channel_id))
+                    .await
+                    .is_ok())
+            && let Ok(Some(local)) = load_verified_live_session(
+                self.services.docs_sync.as_ref(),
+                self.services.blob_service.as_ref(),
+                &row.source_replica_id,
+                topic_id,
+                session_id,
+                DocFetchPolicy::LocalOnly,
+            )
+            .await
+            && local.revision() >= row.revision
+        {
+            return Ok(Some(local.into_parts()));
+        }
         Ok(self
             .fetch_verified_live_session(topic_id, PUBLIC_CHANNEL_ID, session_id, false)
             .await?

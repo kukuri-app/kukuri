@@ -41,7 +41,8 @@ test('a live session starts with a post and can be shared to another topic', asy
   expect(within(embedded).getByText('Launch Party')).toBeInTheDocument();
   expect(within(embedded).queryByRole('button', { name: 'Open original post' })).toBeNull();
 
-  await user.click(within(embedded).getByRole('button', { name: 'Share' }));
+  await user.click(within(embedded).getByRole('button'));
+  await user.click(within(await screen.findByRole('dialog', { name: 'Launch Party' })).getByRole('button', { name: 'Share' }));
   const shareDialog = await screen.findByRole('dialog', { name: 'Share live session' });
   const target = within(shareDialog).getByRole('combobox', { name: 'Post to' });
   const devIndex = Array.from((target as HTMLSelectElement).options).findIndex((option) =>

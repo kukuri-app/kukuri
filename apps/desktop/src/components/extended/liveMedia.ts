@@ -74,11 +74,11 @@ export function captureErrorKind(error: unknown, source: LiveVideoSource): LiveC
 }
 
 /// camera か画面を、上限の大きさ・frame 数で取り込む。
-export async function captureVideo(source: LiveVideoSource, limits: LiveVideoLimits): Promise<MediaStream> {
+export async function captureVideo(source: LiveVideoSource, limits: LiveVideoLimits, cameraId = ''): Promise<MediaStream> {
   if (typeof VideoEncoder === 'undefined') throw new DOMException('WebCodecs is unavailable', 'NotSupportedError');
   const video = { width: { max: limits.width }, height: { max: limits.height }, frameRate: { max: limits.framerate } };
   return source === 'camera'
-    ? navigator.mediaDevices.getUserMedia({ video, audio: false })
+    ? navigator.mediaDevices.getUserMedia({ video: { ...video, ...(cameraId ? { deviceId: { exact: cameraId } } : {}) }, audio: false })
     : navigator.mediaDevices.getDisplayMedia({ video, audio: false });
 }
 
@@ -226,13 +226,18 @@ export function createLivePlayer(canvas: HTMLCanvasElement) {
   const context = canvas.getContext('2d');
   const frames: VideoFrame[] = [];
   let clock = { us: 0, at: 0 };
+  const audioNow = () => clock.us === 0 ? 0 : clock.us + (performance.now() - clock.at) * 1000;
   let waitingKeyframe = true;
   let lastTimestampUs = -Infinity;
   const createDecoder = () => {
     const decoder = new VideoDecoder({
       output: (frame) => {
         frames.push(frame);
-        if (frames.length > DECODED_FRAMES) frames.shift()?.close();
+        if (frames.length > DECODED_FRAMES) {
+          // 次に出せるframeを残す。全て先の映像なら、新しい到着で待機中のframeを追い出さない。
+          const ready = frameToShow(frames.map((frame) => frame.timestamp), audioNow());
+          frames.splice(ready > 0 ? 0 : frames.length - 1, 1)[0]?.close();
+        }
       },
       error: () => {
         waitingKeyframe = true;
@@ -244,10 +249,9 @@ export function createLivePlayer(canvas: HTMLCanvasElement) {
   let decoder = createDecoder();
   let animation = 0;
   const draw = () => {
-    const now = clock.us === 0 ? 0 : clock.us + (performance.now() - clock.at) * 1000;
     const index = frameToShow(
       frames.map((frame) => frame.timestamp),
-      now
+      audioNow()
     );
     if (index >= 0) {
       const shown = frames[index];
@@ -305,4 +309,17 @@ export function createLivePlayer(canvas: HTMLCanvasElement) {
       if (decoder.state !== 'closed') decoder.close();
     },
   };
+}
+
+export const LIVE_THUMBNAIL_INTERVAL_MS = 30_000;
+
+
+/** 手動画像と自動の静止画に同じ縮小・JPEG変換を使う。 */
+export function liveThumbnailDataUrl(source: CanvasImageSource, width: number, height: number): string {
+  const scale = Math.min(384 / width, 216 / height, 1);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  canvas.getContext('2d')!.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.5);
 }

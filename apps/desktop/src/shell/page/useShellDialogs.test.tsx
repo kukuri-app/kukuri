@@ -9,7 +9,7 @@ type DialogRouteProps = {
 };
 
 describe('useShellDialogs', () => {
-  test('applies live and game section close rules', () => {
+  test('closes the game dialog when leaving the game section', () => {
     const store = createDesktopShellStore();
     const wrapper = ({ children }: { children: ReactNode }) => (
       <DesktopShellStoreContext.Provider value={store}>{children}</DesktopShellStoreContext.Provider>
@@ -24,11 +24,7 @@ describe('useShellDialogs', () => {
       }
     );
 
-    hook.rerender({ activePrimarySection: 'live' });
-    act(() => hook.result.current.setLiveCreateDialogOpen(true));
     hook.rerender({ activePrimarySection: 'game' });
-    expect(hook.result.current.liveCreateDialogOpen).toBe(false);
-
     act(() => hook.result.current.setGameCreateDialogOpen(true));
     hook.rerender({ activePrimarySection: 'timeline' });
     expect(hook.result.current.gameCreateDialogOpen).toBe(false);

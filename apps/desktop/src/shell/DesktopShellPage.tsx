@@ -273,7 +273,6 @@ export function DesktopShellPage({
     openDirectMessagePane,
     openAuthorDetail,
     openThread,
-    setLiveCreateDialogOpen: dialogs.setLiveCreateDialogOpen,
     setGameCreateDialogOpen: dialogs.setGameCreateDialogOpen,
     setProfileAvatarPreviewUrl,
     setProfileAvatarInputKey: dialogs.setProfileAvatarInputKey,
@@ -823,7 +822,6 @@ export function DesktopShellPage({
       onLeaveLiveSession={shellActions.handleLeaveLiveSession}
       onOpenGameCreate={() => dialogs.setGameCreateDialogOpen(true)}
       onOpenKeyboardHelp={() => handleOpenSettingsSection('keyboard')}
-      onOpenLiveCreate={() => dialogs.setLiveCreateDialogOpen(true)}
       timelineViewItems={viewModels.timelineViewItems}
       onSelectTopic={(column, topicId) =>
         void selectColumnTopic(column, topicId)
@@ -881,7 +879,7 @@ export function DesktopShellPage({
 
   return (
     <MediaBookmarksContext.Provider value={{ api, rememberDraftPreview, gatedMediaHashes: gatedAdultMediaHashes }}><PostRecoveryProviders mediaRetry={retryMediaFetch} mediaDemand={setMediaDemand} postReload={reloadPostElements}>
-      <LiveProviders api={api} locale={locale} join={shellActions.handleJoinLiveSession}
+      <LiveProviders api={api} locale={locale} refresh={(topic) => loadTopics(trackedTopics, topic, null)} join={shellActions.handleJoinLiveSession}
         leave={shellActions.handleLeaveLiveSession} end={shellActions.handleEndLiveSession}
         publishLiveIntro={shellActions.publishLiveIntro} openThread={(id, options) => void openThread(id, options)}
         copyLink={handleCopyInternalLink} activateReference={(reference) => void handleActivateReference(reference)}

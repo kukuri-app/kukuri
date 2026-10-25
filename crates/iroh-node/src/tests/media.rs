@@ -1,36 +1,34 @@
 //! ADR 0067: media の受け口(実 iroh の 2 node)。送る側の認可が許した broadcast だけが届き、拒否・取消しでは届かない。
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
 use iroh::endpoint::TransportAddrUsage;
 use kukuri_transport::TransportRelayConfig;
 use moq_net::{Timestamp, origin, track};
+use tokio::sync::{Notify, watch};
 
 use crate::dome_session::direct_first_candidates;
+use crate::media::MediaRevalidate;
 use crate::{
     IrohDocsNode, MediaAuthorizer, MediaDenied, MediaGrant, NodeOptions, media_origin_config,
 };
 
 const PATH: &str = "media-test";
 
-/// `allow` の要求だけを許し、`allowed` が偽になったら評価し直しで取り消す。
-fn authorizer(publish: origin::Consumer, allowed: Arc<AtomicBool>) -> MediaAuthorizer {
+/// `allow` の要求だけを許し、渡された評価で継続の可否を確認する。
+fn authorizer(publish: origin::Consumer, revalidate: MediaRevalidate) -> MediaAuthorizer {
     Arc::new(move |_remote, request| {
         let publish = publish.clone();
-        let allowed = allowed.clone();
+        let revalidate = revalidate.clone();
         Box::pin(async move {
             if request != b"allow" {
                 return Err("access_denied".to_string());
             }
             Ok(MediaGrant {
                 publish,
-                revalidate: Arc::new(move || {
-                    let allowed = allowed.clone();
-                    Box::pin(async move { allowed.load(Ordering::SeqCst) })
-                }),
+                revalidate,
                 detail: String::new(),
             })
         })
@@ -63,8 +61,23 @@ async fn media_reaches_only_an_authorized_subscriber_until_access_is_revoked() -
         }));
     let broadcast = origin.publish(PATH, origin::Route::default())?;
     let mut track = broadcast.create_track("frames", None)?;
-    let allowed = Arc::new(AtomicBool::new(true));
-    publisher.install_media_authorizer(Some(authorizer(origin.consume(), allowed.clone())));
+    let (allowed, verdict) = watch::channel(None);
+    let checking = Arc::new(Notify::new());
+    let revalidate: MediaRevalidate = {
+        let checking = checking.clone();
+        Arc::new(move || {
+            let mut verdict = verdict.clone();
+            let checking = checking.clone();
+            Box::pin(async move {
+                checking.notify_one();
+                verdict
+                    .wait_for(Option::is_some)
+                    .await
+                    .is_ok_and(|value| *value == Some(true))
+            })
+        })
+    };
+    publisher.install_media_authorizer(Some(authorizer(origin.consume(), revalidate)));
 
     // 拒否: 理由の code だけが返り、session は始まらない。
     let denied = listener
@@ -87,11 +100,21 @@ async fn media_reaches_only_an_authorized_subscriber_until_access_is_revoked() -
     track.write_frame(Timestamp::from_micros(20_000)?, b"first".as_slice())?;
     assert_eq!(read_one_frame(&mut frames).await?, b"first");
 
-    // 取消し: 次の評価し直し(5 秒ごと)で送る側が閉じる。
-    allowed.store(false, Ordering::SeqCst);
+    // 再確認(5 秒ごと)の結果を待つ間も、認可済みの搬送を進める。
+    tokio::time::timeout(Duration::from_secs(10), checking.notified()).await?;
+    track.write_frame(Timestamp::from_micros(40_000)?, b"pending".as_slice())?;
+    assert_eq!(read_one_frame(&mut frames).await?, b"pending");
+
+    // 拒否が確定したら閉じ、それ以後に書いた frame は届かない。
+    allowed.send(Some(false))?;
     tokio::time::timeout(Duration::from_secs(15), subscription.closed())
         .await
         .expect("the publisher closes the revoked session");
+    track.write_frame(Timestamp::from_micros(60_000)?, b"revoked".as_slice())?;
+    assert!(!matches!(
+        tokio::time::timeout(Duration::from_secs(1), frames.recv_group()).await,
+        Ok(Ok(Some(_)))
+    ));
 
     publisher.install_media_authorizer(None);
     listener.shutdown().await?;
@@ -157,7 +180,7 @@ async fn metaverse_audio_relay_fallback_keeps_direct_candidates_relay_free() -> 
     let mut track = broadcast.create_track("frames", None)?;
     publisher.install_media_authorizer(Some(authorizer(
         origin.consume(),
-        Arc::new(AtomicBool::new(true)),
+        Arc::new(|| Box::pin(async { true })),
     )));
 
     let subscription = listener

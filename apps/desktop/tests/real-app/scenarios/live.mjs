@@ -9,6 +9,7 @@ import { audioMode, isolated, PERIOD_MS, record, speak } from '../audio.mjs';
 import {
   BAR,
   CARD,
+  DETAILS,
   closeLiveColumn,
   createSession,
   drawsSince,
@@ -18,6 +19,8 @@ import {
   isScreen,
   measureSync,
   observeDraws,
+  openLiveDetails,
+  selectLive,
   reopenLiveColumn,
   startBroadcast,
   statusOf,
@@ -49,7 +52,7 @@ export async function run({ launch, restart, log, topic }) {
   const all = () => [host, first, second];
   await Promise.all(all().map(accept));
   await connect(all());
-  await Promise.all(all().map((instance) => openTopic(instance, topic, 'live')));
+  await Promise.all(all().map((instance) => openTopic(instance, topic, 'timeline')));
   await Promise.all(all().map((instance) => waitForPeers(instance, topic, 2)));
   await injectCapture(host);
   await Promise.all([first, second].map(observeDraws));
@@ -59,6 +62,7 @@ export async function run({ launch, restart, log, topic }) {
     ids.push(status.discovery.local_endpoint_id, status.local_author_pubkey);
   }
   await createSession(host, 'live-check');
+  await Promise.all([first, second].map(selectLive));
 
   // LV-1: 配信の開始の前に参加すると「配信者はまだ映像を送っていません」。
   await click(first, JOIN, { within: CARD, timeout: 60_000 });
@@ -138,20 +142,20 @@ export async function run({ launch, restart, log, topic }) {
       log(`LV-4: the microphone off silences the viewer in ${silentAfter} ms while the video goes on, and on brings the sound back`);
     }
 
-    // LV-12(#1839 AC-4): V1 が同じ Live を live の列と開始 post の中の 2 か所で見ても、視聴は 1 つで(音は 2 重にならず)
-    // 両方に描かれる。live の列を閉じても開始 post の中で続き、音量 0 で無音になり、戻すと音が戻る。
-    await first.evaluate(`(document.querySelector('.post-live')?.scrollIntoView({ block: 'center' }), true)`);
+    // LV-12: stageと投稿から開いた詳細モーダルの2か所でも視聴は1つで、音は2重にならない。
+    // stageを閉じても詳細で続き、音量0で無音になり、戻すと音が戻る。
+    await openLiveDetails(first);
     await eventually('the first viewer to draw in both places', async () => {
       const draws = await drawsSince(first, Date.now() - 2_000);
-      return draws.some((each) => each.embedded) && draws.some((each) => !each.embedded);
+      return draws.some((each) => each.details) && draws.some((each) => !each.details);
     }, 30_000);
     const bothLevel = await expectSound('the host while shown twice');
     if (unit !== null) assert.ok(bothLevel < 1.5 * unit, `one sound for two views (${bothLevel} vs ${unit})`);
     await closeLiveColumn(first);
-    await expectDrawing(first, 'the camera in the start post after closing the live column');
+    await expectDrawing(first, 'the camera in the post details after closing the live column');
     const setVolume = (value) =>
       first.evaluate(`(() => {
-        const input = document.querySelector('.post-live input[type="range"]');
+        const input = document.querySelector('${DETAILS} input[type="range"]');
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(String(value))});
         input.dispatchEvent(new Event('input', { bubbles: true }));
         return true;
@@ -164,23 +168,22 @@ export async function run({ launch, restart, log, topic }) {
       await setVolume(100);
       await expectSound('the host at full volume again');
     }
-    await reopenLiveColumn(first, topic);
-    log(`LV-12: two views share one watch${bothLevel === null ? '' : ` (sound ${bothLevel.toFixed(4)} vs ${unit.toFixed(4)})`}, the start post keeps drawing after the live column closes${mutedIn === null ? '' : `, volume 0 silences in ${mutedIn} ms`}`);
+    log(`LV-12: two views share one watch${bothLevel === null ? '' : ` (sound ${bothLevel.toFixed(4)} vs ${unit.toFixed(4)})`}, the post details keeps drawing after the live column closes${mutedIn === null ? '' : `, volume 0 silences in ${mutedIn} ms`}`);
 
-    // LV-13(#1841 AC-3): V1 が一覧のカードの「大きく表示」で Live を列の左側に出しても、視聴は 1 つで(音は 2 重にならず)
-    // 左側と開始 post の中の両方に描かれる。左側に出した列を閉じても、開始 post の中で続く。
-    await click(first, t('actions.stage'), { within: CARD });
-    await first.evaluate(`(document.querySelector('.post-live')?.scrollIntoView({ block: 'center' }), true)`);
-    await eventually('the first viewer to draw on the stage and in the start post', async () => {
+    // LV-13: 詳細から再び「大きく表示」しても視聴は1つで、stageと詳細の両方に描かれる。
+    // stageを閉じた後も、元の投稿から開いた詳細で描画が続く。
+    await click(first, t('actions.stage'), { within: DETAILS });
+    await openLiveDetails(first);
+    await eventually('the first viewer to draw on the stage and in the post details', async () => {
       const draws = await drawsSince(first, Date.now() - 2_000);
-      return draws.some((each) => each.stage) && draws.some((each) => each.embedded);
+      return draws.some((each) => each.stage) && draws.some((each) => each.details);
     }, 30_000);
-    const stagedLevel = await expectSound('the host while shown on the stage and in the start post');
-    if (unit !== null) assert.ok(stagedLevel < 1.5 * unit, `one sound for the stage and the start post (${stagedLevel} vs ${unit})`);
+    const stagedLevel = await expectSound('the host while shown on the stage and in the post details');
+    if (unit !== null) assert.ok(stagedLevel < 1.5 * unit, `one sound for the stage and the post details (${stagedLevel} vs ${unit})`);
     await closeLiveColumn(first);
-    await expectDrawing(first, 'the camera in the start post after closing the staged live column');
+    await expectDrawing(first, 'the camera in the post details after closing the staged live column');
     await reopenLiveColumn(first, topic);
-    log(`LV-13: the stage and the start post share one watch${stagedLevel === null ? '' : ` (sound ${stagedLevel.toFixed(4)} vs ${unit.toFixed(4)})`}, the start post keeps drawing after the staged column closes`);
+    log(`LV-13: the stage and the post details share one watch${stagedLevel === null ? '' : ` (sound ${stagedLevel.toFixed(4)} vs ${unit.toFixed(4)})`}, the post details keeps drawing after the staged column closes`);
 
     // LV-6: 途中で参加した視聴者に、2 秒以内に最初の frame が描かれる。
     const joinedAt = Date.now();
@@ -241,9 +244,9 @@ export async function run({ launch, restart, log, topic }) {
     // LV-8: 配信者の app を起動し直しても、配信は自動では始まらない。
     host = await restart(host);
     await accept(host);
-    await openTopic(host, topic, 'live');
+    await reopenLiveColumn(host, topic);
     await waitForPeers(host, topic, 2);
-    await eventually('the host to show the card', () => host.evaluate(`Boolean(document.querySelector('${CARD}'))`), 30_000);
+    await eventually('the host to show the stage', () => host.evaluate(`Boolean(document.querySelector('${CARD}'))`), 30_000);
     await sleep(5_000);
     assert.ok(!(await statusOf(host)).includes(t('media.broadcasting')), 'the host does not broadcast after a restart');
     assert.ok(!(await drawing(first)), 'the first viewer draws nothing');
@@ -252,7 +255,7 @@ export async function run({ launch, restart, log, topic }) {
     // LV-7: session の終了の後は参加できない。
     await click(host, text('common', 'actions.end'), { within: CARD });
     await eventually('the viewer who left to see the session end', () =>
-      second.evaluate(`[...document.querySelectorAll('${CARD} button')].some((node) => node.textContent.trim() === ${JSON.stringify(JOIN)} && node.disabled)`), 30_000);
+      second.evaluate(`Boolean(document.querySelector('${CARD}')?.textContent.includes(${JSON.stringify(t('stage.ended'))})) && ![...document.querySelectorAll('${CARD} button')].some((node) => (node.getAttribute('aria-label') ?? node.textContent).trim() === ${JSON.stringify(JOIN)} && !node.disabled)`), 30_000);
     log('LV-7: nobody can join after the end');
 
     // LV-9: log の経路は direct_p2p。視聴者の識別子は media の log に出ない。

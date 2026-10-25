@@ -3,6 +3,7 @@
 // DesktopApi interface と、生成型に front 専用フィールドを交差させる PostView を扱う。
 export * from './types.generated';
 import type {
+  LiveThumbnailView, SetLiveThumbnailInput,
   ConnectivityPeersRequest,
   PeerPage,
   ScopeDisplayRequest,
@@ -419,6 +420,8 @@ export interface DesktopApi {
   ): Promise<string>;
   // #1839: 作成した topic と id で Live を 1 件引く。手元に無ければ null(表示要求で読む)。
   getLiveSession(topic: string, sessionId: string): Promise<LiveSessionView | null>;
+  getLiveThumbnail(topic: string, sessionId: string): Promise<LiveThumbnailView | null>;
+  setLiveThumbnail(request: SetLiveThumbnailInput): Promise<void>;
   endLiveSession(topic: string, sessionId: string): Promise<void>;
   joinLiveSession(topic: string, sessionId: string): Promise<void>;
   leaveLiveSession(topic: string, sessionId: string): Promise<void>;

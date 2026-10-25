@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { openFixtureLive } from './live-fixture';
 import { DEVELOPER_MODE_STORAGE_KEY } from '../../src/lib/developerMode';
 
 // 既存フローは Live/Game タブなど WIP 面の表示を前提とするため developer mode を有効化する。
@@ -437,17 +438,12 @@ test('desktop Columns use kind spans, keyboard reorder, drag reorder, and persis
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.goto('/#/timeline?topic=kukuri%3Atopic%3Ageneral');
 
-  let controlCenter = await openControlCenter(page);
-  await controlCenter.getByRole('button', { name: 'Add Live Column' }).click();
+  await openFixtureLive(page);
   const liveColumn = page.getByRole('region', { name: /^Live Column/ });
   await expect(liveColumn).toHaveAttribute('data-span', '2');
   expect(Math.round((await liveColumn.boundingBox())!.width)).toBe(896);
-  const wideStreamTracks = await liveColumn.locator('.shell-stream-layout').evaluate(
-    (element) => getComputedStyle(element).gridTemplateColumns
-  );
-  expect(wideStreamTracks.split(' ').length).toBeGreaterThan(1);
 
-  controlCenter = await openControlCenter(page);
+  const controlCenter = await openControlCenter(page);
   await controlCenter.getByRole('button', { name: 'Add Metaverse Column' }).click();
   let metaverseColumn = page.getByRole('region', { name: /^Metaverse Column/ });
   await expect(metaverseColumn).toHaveAttribute('data-span', '3');
@@ -534,7 +530,8 @@ test('named layouts save, restore, rename, survive reload, and delete', async ({
   await controlCenter.getByRole('button', { name: 'Save new layout' }).click();
   await expect(controlCenter.getByRole('button', { name: 'Research', exact: true })).toBeVisible();
 
-  await controlCenter.getByRole('button', { name: 'Add Live Column' }).click();
+  await page.keyboard.press('Escape');
+  await openFixtureLive(page);
   await expect(page.getByRole('region', { name: /^Live Column/ })).toBeVisible();
   controlCenter = await openControlCenter(page);
   await expect(controlCenter.getByText('Unsaved changes')).toBeVisible();

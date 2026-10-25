@@ -931,6 +931,10 @@ start_post: string, };
 
 export type LiveSessionCommandRequest = { topic: string, session_id: string, };
 
+export type LiveThumbnailView = { data_url: string | null, custom: boolean, updated_at: number, };
+
+export type SetLiveThumbnailInput = { topic: string, session_id: string, data_url: string | null, custom: boolean, };
+
 export type SessionDisplayRequest = { topic: string, scope: TimelineScope, replica_id: string, session_id: string, kind: string, observer: string, visible: boolean, retry: boolean, };
 
 export type ScopeDisplayRequest = { observer: string, target: ScopeDisplayTarget, visible: boolean, };

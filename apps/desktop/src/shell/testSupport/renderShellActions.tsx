@@ -51,7 +51,6 @@ export function renderActionsHook(options: RenderActionsOptions = {}) {
   const openDirectMessagePane = vi.fn(async () => undefined);
   const openAuthorDetail = vi.fn(async () => undefined);
   const openThread = vi.fn(async () => undefined);
-  const setLiveCreateDialogOpen = vi.fn();
   const setGameCreateDialogOpen = vi.fn();
   const setProfileAvatarPreviewUrl = vi.fn();
   const setProfileAvatarInputKey = vi.fn();
@@ -90,7 +89,6 @@ export function renderActionsHook(options: RenderActionsOptions = {}) {
         openDirectMessagePane,
         openAuthorDetail,
         openThread,
-        setLiveCreateDialogOpen,
         setGameCreateDialogOpen,
         setProfileAvatarPreviewUrl,
         setProfileAvatarInputKey,
@@ -116,7 +114,6 @@ export function renderActionsHook(options: RenderActionsOptions = {}) {
       openDirectMessagePane,
       openAuthorDetail,
       openThread,
-      setLiveCreateDialogOpen,
       setGameCreateDialogOpen,
       setProfileAvatarPreviewUrl,
       setProfileAvatarInputKey,

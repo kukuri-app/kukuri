@@ -542,86 +542,48 @@
 
 /* #1840 AC-4: 公開スレッドの詳細の列の上部の配信中の Live(1 行ずつで、押すとスレッドの「ライブ」の列を開く)と、一覧の行の
    配信中の印。 */
-.public-thread-lives {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-2xs);
-}
-
-.public-thread-live,
-.public-thread-live-all {
-  width: 100%;
+.public-thread-row-live { display: inline-flex; align-items: center; gap: var(--space-2xs); color: var(--accent); font-weight: 600; white-space: nowrap; }
+.public-thread-live-carousel { min-width: 0; width: 100%; }
+.live-carousel-heading { display: flex; align-items: center; gap: var(--space-xs); }
+.live-carousel-heading > strong { margin-inline-end: auto; }
+.live-carousel-track {
   display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  min-height: 2.25rem;
-  padding: var(--space-2xs) var(--space-sm);
+  gap: var(--space-sm);
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-snap-type: x mandatory;
+  list-style: none;
+  margin: 0;
+  padding: var(--space-xs) 0;
+}
+.live-carousel-track > li { flex: 0 0 min(13rem, 75%); min-width: 0; scroll-snap-align: start; }
+.live-thumbnail-card { min-width: 0; }
+.live-thumbnail-open {
+  position: relative;
+  display: block;
+  width: 100%;
+  overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-input);
   background: var(--surface-panel-muted);
-  color: inherit;
-  font: inherit;
-  font-size: var(--text-caption);
+  color: var(--foreground);
   text-align: start;
   cursor: pointer;
 }
+.live-thumbnail-open:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.live-thumbnail-image { width: 100%; aspect-ratio: 16 / 9; background: var(--surface-overlay); overflow: hidden; }
+.live-thumbnail-image > img { width: 100%; height: 100%; object-fit: cover; }
+.live-thumbnail-image > span { display: flex; height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-xs); color: var(--muted-foreground); }
+.live-thumbnail-status { position: absolute; top: var(--space-xs); inset-inline-start: var(--space-xs); border-radius: var(--radius-xs); padding: var(--space-2xs) var(--space-xs); background: var(--surface-panel-solid); color: var(--accent); font-size: var(--text-caption); }
+.live-thumbnail-caption { display: flex; flex-direction: column; gap: var(--space-2xs); padding: var(--space-xs); }
+.live-thumbnail-caption > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-thumbnail-caption > span { font-size: var(--text-caption); color: var(--muted-foreground); }
+.live-thumbnail-field { display: grid; gap: var(--space-xs); min-width: 0; }
+.live-thumbnail-field > img { width: 12rem; max-width: 100%; aspect-ratio: 16 / 9; object-fit: contain; }
+.live-thumbnail-field input { max-width: 100%; }
+.live-details-dialog .post-card { padding: var(--space-sm); }
+.live-post-details { margin-bottom: var(--space-sm); }
 
-.public-thread-live-all {
-  justify-content: center;
-}
-
-.public-thread-live:hover,
-.public-thread-live:focus-visible,
-.public-thread-live-all:hover,
-.public-thread-live-all:focus-visible {
-  border-color: var(--border-accent);
-  background: var(--surface-active);
-}
-
-.public-thread-live:focus-visible,
-.public-thread-live-all:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
-.public-thread-live-status,
-.public-thread-row-live {
-  color: var(--accent);
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.public-thread-live-title,
-.public-thread-live-host {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.public-thread-live-title {
-  color: var(--foreground-strong);
-}
-
-.public-thread-live-host {
-  margin-inline-start: auto;
-  color: var(--muted-foreground);
-}
-
-.public-thread-row-live {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2xs);
-}
-
-@media (max-width: 759px) {
-  .public-thread-live,
-  .public-thread-live-all {
-    min-height: 2.75rem;
-  }
-}
-
-/* #1841: ライブの列の左側に選んだ Live を大きく出し、投稿とリアクションを重ねる。重ねる層は pointer を受けない。 */
 .live-stage {
   display: flex;
   flex-direction: column;
@@ -649,12 +611,14 @@
   background: var(--surface-panel-muted);
 }
 
-.live-stage .live-viewer-screen > canvas {
+.live-stage .live-viewer-screen > canvas,
+.live-stage .live-viewer-screen > video {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   border-radius: 0;
+  object-fit: contain;
 }
 
 /* 映像の代わりの案内は上の中央に置き、重ねた投稿より手前に描く(DOM の順)。 */

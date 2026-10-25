@@ -11,6 +11,7 @@ import { createDesktopShellStore, DesktopShellStoreContext, timelineStorageKeyFo
 
 import { PublicThreadList, PublicThreadScopeActions } from './PublicThreadList';
 import { PublicThreadLiveRows } from './PublicThreadLive';
+import { LiveActionsContext, type LiveActions } from './liveActions';
 import { PublicThreadProviders } from './PublicThreadProviders';
 
 const TOPIC = 'kukuri:topic:general';
@@ -62,14 +63,14 @@ function setup(children: React.ReactNode, sessions: LiveSessionView[], developer
   render(
     <DesktopShellStoreContext.Provider value={store}>
       <PublicThreadProviders api={api} open={() => undefined} openLive={openLive} copyLink={() => undefined}>
-        {children}
+        <LiveActionsContext.Provider value={{ api, locale: 'en', localPubkey: 'me', pendingBySessionId: {}, broadcastingSessionId: null } as unknown as LiveActions}>{children}</LiveActionsContext.Provider>
       </PublicThreadProviders>
     </DesktopShellStoreContext.Provider>
   );
   return { openLive };
 }
 
-test('the newest three live sessions of the thread are shown and open the live column', async () => {
+test('the carousel shows current live thumbnails and opens details before the live column', async () => {
   const user = userEvent.setup();
   // 一覧の行は新しく始まった順(store の行の順)。
   const { openLive } = setup(<PublicThreadLiveRows topic={TOPIC} channelId={THREAD} />, [
@@ -82,17 +83,16 @@ test('the newest three live sessions of the thread are shown and open the live c
     live('1', HOST),
   ]);
   const rows = within(screen.getByRole('list', { name: 'Live now' }));
-  expect(rows.getAllByRole('button').map((button) => button.textContent)).toEqual([
-    'Live Live 4 Alice',
-    'Live Live 3 Alice',
-    'Live Live 2 Alice',
-    'All live sessions',
+  expect(rows.getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual([
+    'Live Live 4 Alice', 'Live Live 3 Alice', 'Live Live 2 Alice', 'Live Live 1 Alice',
   ]);
-
   await user.click(rows.getByRole('button', { name: 'Live Live 3 Alice' }));
+  expect(openLive).not.toHaveBeenCalled();
+  const dialog = screen.getByRole('dialog', { name: 'Live 3' });
+  expect(within(dialog).getByText('Alice')).toBeInTheDocument();
+  await user.click(within(dialog).getByRole('button', { name: 'Show large' }));
   expect(openLive).toHaveBeenLastCalledWith(TOPIC, THREAD, '3');
-  await user.click(rows.getByRole('button', { name: 'All live sessions' }));
-  expect(openLive).toHaveBeenLastCalledWith(TOPIC, THREAD, null);
+
 });
 
 test('nothing is shown without a live session', () => {
@@ -108,8 +108,7 @@ const LIST: ColumnState = {
   preferredDesktopSpan: 1,
 };
 
-test('the list row is marked live and the detail header opens the live column in developer mode', async () => {
-  const user = userEvent.setup();
+test('the list row is marked live without an unselected live column entry', async () => {
   const { openLive } = setup(
     <>
       <PublicThreadList column={LIST} />
@@ -118,8 +117,8 @@ test('the list row is marked live and the detail header opens the live column in
     []
   );
   expect(await screen.findByRole('button', { name: /^Watch party .* Live$/ })).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Live' }));
-  expect(openLive).toHaveBeenLastCalledWith(TOPIC, THREAD, null);
+  expect(screen.queryByRole('button', { name: 'Live' })).toBeNull();
+  expect(openLive).not.toHaveBeenCalled();
 });
 
 test('without developer mode the list row has no live mark and the header has no live button', async () => {

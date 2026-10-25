@@ -114,17 +114,15 @@ test('direct message conversation is placed directly in the column body', async 
   expectUnframed(await within(column).findByText('No messages yet.'));
 });
 
-test('live session header and list are placed directly in the column body', async () => {
-  renderAtHash(`#/live?${TOPIC_QUERY}`);
-
+test('the individual live stage is placed in the column body without an extra panel frame', async () => {
+  const api = createDesktopMockApi();
+  const id = await api.createLiveSession('kukuri:topic:general', 'Layout live', '');
+  renderAtHash(`#/live?${TOPIC_QUERY}&sessionId=${id}`, api);
   const column = await findColumn('Live');
-  expectUnframed(await within(column).findByRole('heading', { name: 'Live' }));
-  const list = await waitFor(() => {
-    const found = columnBody(column).querySelector('.post-list');
-    if (!found) throw new Error('expected live list');
-    return found;
-  });
-  expectUnframed(list);
+  const title = await within(column).findByText('Layout live');
+  expectUnframed(title);
+  expect(columnBody(column)).toContainElement(title);
+  expect(columnBody(column).querySelector('.live-column')).toHaveAttribute('data-layout', 'full');
 });
 
 test('explore workspace is placed directly in the column body', async () => {

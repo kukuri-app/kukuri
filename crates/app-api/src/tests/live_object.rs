@@ -25,6 +25,278 @@ fn input(start_post: &str) -> CreateLiveSessionInput {
     }
 }
 
+fn thumbnail_image(value: u8) -> Vec<u8> {
+    let mut image = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new(&mut image)
+        .encode(&[value, value, value], 1, 1, image::ExtendedColorType::Rgb8)
+        .unwrap();
+    image
+}
+
+#[tokio::test]
+async fn live_thumbnail_manual_image_wins_and_auto_updates_replace_one_record() {
+    let (owner, _, docs, blobs) = local_app_with_memory_services();
+    let topic = "kukuri:topic:live-thumbnails";
+    display_topic(&owner, topic).await.unwrap();
+    let session_id = owner
+        .create_live_session(topic, input("watch"))
+        .await
+        .unwrap();
+    let viewer = viewer_of(docs.clone(), blobs);
+    resolve(&viewer, topic, &session_id).await.unwrap();
+    let make = |custom, image: Option<u8>| crate::SetLiveThumbnailInput {
+        topic: topic.into(),
+        session_id: session_id.clone(),
+        custom,
+        data_url: image.map(|bytes| {
+            format!(
+                "data:image/jpeg;base64,{}",
+                BASE64_STANDARD.encode(thumbnail_image(bytes))
+            )
+        }),
+    };
+    let automatic = make(false, Some(12));
+    let chosen = make(true, Some(240));
+    owner.set_live_thumbnail(automatic.clone()).await.unwrap();
+    assert_eq!(
+        viewer
+            .get_live_thumbnail(topic, &session_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .data_url,
+        automatic.data_url
+    );
+    assert!(viewer.set_live_thumbnail(chosen.clone()).await.is_err());
+    owner.set_live_thumbnail(chosen.clone()).await.unwrap();
+    owner.set_live_thumbnail(automatic.clone()).await.unwrap();
+    let manual = viewer
+        .get_live_thumbnail(topic, &session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(manual.custom);
+    assert_eq!(manual.data_url, chosen.data_url);
+    owner.set_live_thumbnail(make(true, None)).await.unwrap();
+    for _ in 0..4 {
+        owner.set_live_thumbnail(automatic.clone()).await.unwrap();
+    }
+    let current = viewer
+        .get_live_thumbnail(topic, &session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!current.custom);
+    assert_eq!(current.data_url, automatic.data_url);
+    let (replica, _, _) = owner
+        .fetch_live_session_state_and_manifest(topic, &session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let records = docs
+        .query_replica(
+            &replica,
+            DocQuery::Exact(format!("media/live/{session_id}/thumbnail")),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        records.len(),
+        1,
+        "automatic updates replace the same record"
+    );
+    let mut invalid: serde_json::Value = serde_json::from_slice(&records[0].value).unwrap();
+    invalid["content"] = serde_json::Value::String("changed after signing".into());
+    docs.apply_doc_op(
+        &replica,
+        DocOp::SetJson {
+            key: records[0].key.clone(),
+            value: invalid,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        viewer
+            .get_live_thumbnail(topic, &session_id)
+            .await
+            .unwrap()
+            .is_none(),
+        "unsigned replacement must not be displayed"
+    );
+    owner.set_live_thumbnail(automatic.clone()).await.unwrap();
+    owner.end_live_session(topic, &session_id).await.unwrap();
+    assert!(owner.set_live_thumbnail(automatic).await.is_err());
+}
+
+#[tokio::test]
+async fn live_thumbnail_keeps_the_private_channel_audience() {
+    let (owner, _, docs, blobs) = local_app_with_memory_services();
+    let topic = "kukuri:topic:private-live-thumbnail";
+    let channel = owner
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(topic),
+            label: "private".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .unwrap();
+    let session_id = owner
+        .create_live_session_in_channel(
+            topic,
+            ChannelRef::PrivateChannel {
+                channel_id: ChannelId::new(channel.channel_id),
+            },
+            input("private"),
+            None,
+        )
+        .await
+        .unwrap();
+    owner
+        .set_live_thumbnail(crate::SetLiveThumbnailInput {
+            topic: topic.into(),
+            session_id: session_id.clone(),
+            custom: true,
+            data_url: Some(format!(
+                "data:image/jpeg;base64,{}",
+                BASE64_STANDARD.encode(thumbnail_image(3))
+            )),
+        })
+        .await
+        .unwrap();
+    let stranger = viewer_of(docs, blobs);
+    assert!(resolve(&stranger, topic, &session_id).await.is_none());
+    assert!(
+        stranger
+            .get_live_thumbnail(topic, &session_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn live_thumbnail_reaches_a_private_member_through_remote_docs() {
+    let (owner, _, docs, blobs) = local_app_with_memory_services();
+    let topic = "kukuri:topic:remote-private-thumbnail";
+    let channel = owner
+        .create_private_channel(CreatePrivateChannelInput {
+            topic_id: TopicId::new(topic),
+            label: "private".into(),
+            audience_kind: ChannelAudienceKind::InviteOnly,
+        })
+        .await
+        .unwrap();
+    let invite = owner
+        .export_private_channel_invite(topic, &channel.channel_id, None)
+        .await
+        .unwrap();
+    let member_docs = Arc::new(CountingDocsSync::reading_from(docs.clone()));
+    let hints = Arc::new(TrackingHintTransport::default());
+    *hints.resolved_destination.lock().await = Some(iroh::EndpointAddr::new(
+        iroh::SecretKey::from_bytes(&[23; 32]).public(),
+    ));
+    let store = Arc::new(MemoryStore::default());
+    let member = app_service_from_dependencies(
+        store.clone(),
+        store,
+        Arc::new(StaticTransport::new(PeerSnapshot::default())),
+        hints,
+        member_docs.clone(),
+        blobs,
+        generate_keys(),
+    );
+    member.import_private_channel_invite(&invite).await.unwrap();
+    let id = owner
+        .create_live_session_in_channel(
+            topic,
+            ChannelRef::PrivateChannel {
+                channel_id: ChannelId::new(channel.channel_id.clone()),
+            },
+            input("members"),
+            None,
+        )
+        .await
+        .unwrap();
+    let image = format!(
+        "data:image/jpeg;base64,{}",
+        BASE64_STANDARD.encode(thumbnail_image(240))
+    );
+    owner
+        .set_live_thumbnail(crate::SetLiveThumbnailInput {
+            topic: topic.into(),
+            session_id: id.clone(),
+            custom: true,
+            data_url: Some(image.clone()),
+        })
+        .await
+        .unwrap();
+    member
+        .set_session_display(crate::SessionDisplayRequest {
+            topic: topic.into(),
+            scope: TimelineScope::Channel {
+                channel_id: ChannelId::new(channel.channel_id),
+            },
+            session_id: id.clone(),
+            kind: "live".into(),
+            visible: true,
+            replica_id: String::new(),
+            observer: "thumbnail-member".into(),
+            retry: false,
+        })
+        .await
+        .unwrap();
+    let key = format!("media/live/{id}/thumbnail");
+    let (replica, _, _) = owner
+        .fetch_live_session_state_and_manifest(topic, &id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        member_docs
+            .query_replica_with_policy(
+                &replica,
+                DocQuery::Exact(key),
+                kukuri_docs_sync::DocFetchPolicy::LocalOnly
+            )
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let found = member
+        .get_live_thumbnail(topic, &id)
+        .await
+        .unwrap()
+        .expect("remote member thumbnail");
+    assert_eq!(found.data_url, Some(image));
+}
+
+#[tokio::test]
+async fn live_thumbnail_owner_keeps_priority_checks_local() {
+    let remote = Arc::new(CountingDocsSync::default());
+    let docs = Arc::new(CountingDocsSync::reading_from(remote.clone()));
+    let owner = viewer_of(docs, Arc::new(MemoryBlobService::default()));
+    let topic = "kukuri:topic:owner-thumbnail";
+    let id = owner.create_live_session(topic, input("")).await.unwrap();
+    owner
+        .set_live_thumbnail(crate::SetLiveThumbnailInput {
+            topic: topic.into(),
+            session_id: id.clone(),
+            custom: false,
+            data_url: Some(format!(
+                "data:image/jpeg;base64,{}",
+                BASE64_STANDARD.encode(thumbnail_image(12))
+            )),
+        })
+        .await
+        .unwrap();
+    owner.end_live_session(topic, &id).await.unwrap();
+    assert!(
+        remote.queries().await.is_empty(),
+        "the owner's locally signed live and thumbnail priority checks require no peer reads"
+    );
+}
+
 async fn post_with_live(app: &AppService, topic: &str, session_id: &str) -> PostView {
     app.list_timeline(topic, None, 50)
         .await

@@ -29,6 +29,7 @@ export function PostLive({ post }: { post: PostView }) {
           topic={live.topic_id}
           session={session}
           postId={post.object_id}
+          post={post}
           onStage={actions && stageable ? () => actions.stage(live, conversation) : undefined}
         />
       ) : (

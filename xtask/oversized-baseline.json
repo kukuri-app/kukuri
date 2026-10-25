@@ -5,7 +5,7 @@
       "path": "crates/cn-operator/src/config.rs"
     },
     {
-      "lines": 1308,
+      "lines": 1305,
       "path": "docs/THIRD_PARTY_NOTICES.md"
     },
     {
@@ -25,7 +25,7 @@
       "path": "crates/cn-operator/src/docs.rs"
     },
     {
-      "lines": 1145,
+      "lines": 1149,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {
@@ -85,12 +85,8 @@
       "path": "crates/store/src/parity/lists.rs"
     },
     {
-      "lines": 1007,
+      "lines": 1004,
       "path": "apps/desktop/src/shell/DesktopShellPage.tsx"
-    },
-    {
-      "lines": 1000,
-      "path": "apps/desktop/tests/playwright/shell.smoke.spec.ts"
     }
   ]
 }

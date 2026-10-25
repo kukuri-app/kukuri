@@ -277,6 +277,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         ),
         ("get_dome_hosting", size1(DesktopRuntime::get_dome_hosting)),
         ("get_live_session", size1(DesktopRuntime::get_live_session)),
+        (
+            "get_live_thumbnail",
+            size1(DesktopRuntime::get_live_thumbnail),
+        ),
         ("get_my_profile", size0(DesktopRuntime::get_my_profile)),
         ("get_notification", size1(DesktopRuntime::get_notification)),
         (
@@ -541,6 +545,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         ("watch_live_media", size1(DesktopRuntime::watch_live_media)),
         ("next_live_video", size1(DesktopRuntime::next_live_video)),
         ("set_live_volume", size1(DesktopRuntime::set_live_volume)),
+        (
+            "set_live_thumbnail",
+            size1(DesktopRuntime::set_live_thumbnail),
+        ),
         (
             "stop_watching_live_media",
             size1(DesktopRuntime::stop_watching_live_media),

@@ -304,7 +304,7 @@ test('author context restores from the hash route when a valid author pubkey is 
   expect(within(getDetailPane('Author')).getByText('author detail from route restore')).toBeInTheDocument();
 });
 
-test('live session route restores and retains unavailable targets for displayed acquisition', async () => {
+test('live session route restores and retains unavailable targets until displayed acquisition', async () => {
   const firstRender = renderAtHash(
     '#/live?topic=kukuri%3Atopic%3Ageneral&sessionId=session-demo',
     createDesktopMockApi({
@@ -330,8 +330,8 @@ test('live session route restores and retains unavailable targets for displayed 
   await waitFor(() => {
     expect(window.location.hash).toBe('#/live?topic=kukuri%3Atopic%3Ageneral&sessionId=session-demo');
   });
-  // 列の Live は左側にも大きく出る(#1841)ので、一覧のカードで確かめる。
-  expect(getActiveColumn('Live').querySelector('article[data-live-session-id="session-demo"]')).toHaveClass('post-card-targeted');
+  await waitFor(() => expect(getActiveColumn('Live').querySelector('[data-live-session-id="session-demo"]')).toHaveClass('live-stage'));
+  expect(within(getActiveColumn('Live')).getByText('Live Demo')).toBeInTheDocument();
 
   firstRender.unmount();
 
@@ -360,8 +360,8 @@ test('live session route restores and retains unavailable targets for displayed 
   await waitFor(() => {
     expect(window.location.hash).toBe('#/live?topic=kukuri%3Atopic%3Ageneral&sessionId=missing-session');
   });
-  expect(within(getActiveColumn('Live')).getByText('Session information is not available yet.')).toBeInTheDocument();
-  expect(within(getActiveColumn('Live')).getAllByRole('heading', { name: 'Live Sessions' })[0]).toBeInTheDocument();
+  expect(await within(getActiveColumn('Live')).findByText('Loading live sessions…')).toBeInTheDocument();
+  expect(getActiveColumn('Live').querySelector('.live-column')).toHaveAttribute('data-layout', 'full');
 });
 
 test('game route restores score rooms and retains unavailable targets for displayed acquisition', async () => {

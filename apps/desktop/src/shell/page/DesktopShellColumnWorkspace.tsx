@@ -1,3 +1,4 @@
+import { LiveColumn } from './LiveColumn';
 import {
   useCallback,
   useEffect,
@@ -90,7 +91,6 @@ type DesktopShellColumnWorkspaceProps = {
   onLeaveLiveSession: (sessionId: string, topic: string) => Promise<void>;
   onOpenGameCreate: () => void;
   onOpenKeyboardHelp: () => void;
-  onOpenLiveCreate: () => void;
   renderConversationSurface: (column: ColumnState) => ReactNode;
   renderMessagesSurface: (column: ColumnState) => ReactNode;
   renderNotificationsSurface: (column: ColumnState) => ReactNode;
@@ -131,7 +131,6 @@ export function DesktopShellColumnWorkspace({
   onLeaveLiveSession,
   onOpenGameCreate,
   onOpenKeyboardHelp,
-  onOpenLiveCreate,
   renderConversationSurface,
   renderMessagesSurface,
   renderNotificationsSurface,
@@ -407,6 +406,13 @@ export function DesktopShellColumnWorkspace({
         </div>
       );
     }
+    if (column.kind === 'stream' && column.scope) {
+      const conversation: ColumnState = { ...column, kind: 'timeline', entityId: undefined, timelineView: 'feed' };
+      return <LiveColumn column={column} thread={renderPrimarySurface(conversation)}
+        composer={renderFooter(conversation, column.id === workspaceState.activeColumnId)}>
+        {renderPrimarySurface(column)}
+      </LiveColumn>;
+    }
     return renderPrimarySurface(column);
   };
   const scopeDestinationLabel = (column: ColumnState) => {
@@ -503,7 +509,6 @@ export function DesktopShellColumnWorkspace({
           onJoinLiveSession={onJoinLiveSession}
           onLeaveLiveSession={onLeaveLiveSession}
           onOpenGameCreate={onOpenGameCreate}
-          onOpenLiveCreate={onOpenLiveCreate}
         />
       );
     }

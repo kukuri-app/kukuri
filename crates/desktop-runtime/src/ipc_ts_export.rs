@@ -431,6 +431,8 @@ fn export_ipc_types() {
         ListLiveSessionsRequest,
         CreateLiveSessionRequest,
         LiveSessionCommandRequest,
+        kukuri_app_api::LiveThumbnailView,
+        kukuri_app_api::SetLiveThumbnailInput,
         kukuri_app_api::SessionDisplayRequest,
         kukuri_app_api::ScopeDisplayRequest,
         kukuri_app_api::ScopeDisplayTarget,
