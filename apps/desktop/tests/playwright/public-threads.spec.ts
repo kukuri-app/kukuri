@@ -37,6 +37,7 @@ async function createThread(page: Page, title: string, firstPost: string) {
   await dialog.getByRole('button', { name: 'Create' }).click();
   await expect(dialog).toBeHidden();
   const detail = activeColumn(page, 'Public thread');
+  await expect(detail.locator('.shell-column-header select')).toHaveCount(0);
   await expect(detail.locator('.shell-column-header')).toContainText(`${title} · general`);
   return detail;
 }

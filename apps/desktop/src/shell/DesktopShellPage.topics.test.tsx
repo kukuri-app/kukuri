@@ -181,7 +181,7 @@ test('Timeline header replaces the active Column topic without adding a Column a
 
   const timeline = await screen.findByRole('region', { name: /^Timeline Column,/ });
   const columnId = timeline.dataset.columnId;
-  const topicSelect = within(timeline).getByRole('combobox', { name: 'Timeline topic' });
+  const topicSelect = within(timeline).getByRole('combobox', { name: 'Column topic' });
 
   await user.click(within(timeline).getByRole('button', { name: /^Post to / }));
   const composer = within(timeline).getByPlaceholderText('Write a post');
@@ -215,7 +215,7 @@ test('Timeline header switches an inactive Column and focuses it with the new to
     expect(window.location.hash).toBe('#/profile?topic=kukuri%3Atopic%3Ageneral');
   });
   const timeline = screen.getByRole('region', { name: /^Timeline Column,/ });
-  const topicSelect = within(timeline).getByRole('combobox', { name: 'Timeline topic' });
+  const topicSelect = within(timeline).getByRole('combobox', { name: 'Column topic' });
 
   await user.selectOptions(topicSelect, 'kukuri:topic:dev');
   await waitFor(() => {

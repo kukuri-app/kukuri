@@ -24,7 +24,7 @@ async function openWorkspaceWithSwitchedTimeline(page: Page) {
   await page.goto('/#/timeline?topic=kukuri%3Atopic%3Ageneral');
   await expect(column(page, 'Timeline')).toBeVisible();
   await column(page, 'Timeline')
-    .getByRole('combobox', { name: 'Timeline topic' })
+    .getByRole('combobox', { name: 'Column topic' })
     .selectOption('kukuri:topic:dev');
   await expect(page).toHaveURL(DEV_TIMELINE_URL);
   await selectColumn(page, 'Profile', /#\/profile\?topic=kukuri%3Atopic%3Ageneral$/);

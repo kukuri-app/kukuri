@@ -27,7 +27,7 @@ type ColumnSurfaceProps = {
   onSpanChange?: (span: ColumnSpan) => void;
   pinned: boolean;
   position: number;
-  scopeLabel: string;
+  scopeLabel?: string;
   span: ColumnSpan;
   spanOptions?: ColumnSpan[];
   title: string;
@@ -222,17 +222,19 @@ export function ColumnSurface({
             {active ? <span className='shell-column-state-label'>{activityLabel}</span> : null}
             <span className='shell-column-state-label'>{stateLabel}</span>
           </div>
-          <div className='shell-column-scope-row'>
-            {scopeControl ? (
-              <>
-                <span className='sr-only'>{scopeLabel}</span>
-                {scopeControl}
-              </>
-            ) : (
-              <p>{scopeLabel}</p>
-            )}
-            {scopeActions}
-          </div>
+          {scopeLabel || scopeControl || scopeActions ? (
+            <div className='shell-column-scope-row'>
+              {scopeControl ? (
+                <>
+                  <span className='sr-only'>{scopeLabel}</span>
+                  {scopeControl}
+                </>
+              ) : (
+                <p>{scopeLabel}</p>
+              )}
+              {scopeActions}
+            </div>
+          ) : null}
         </div>
         {headerActions || onPinnedChange || onClose ? (
           <div className='shell-column-header-actions'>

@@ -76,7 +76,7 @@ import {
   openTransientColumn,
   setColumnTimelineView,
   toggleColumnTimelineFlow,
-  setTimelineColumnTopic,
+  setColumnTopic,
   type ColumnScope,
   type ColumnState,
   type ColumnTimelineView,
@@ -751,7 +751,7 @@ export function DesktopShellPage({
       setSelectedLiveSessionId(null);
     }
   };
-  // Timeline header の view / topic 切替。正本を更新し、操作した Column を active にして route を同期する。
+  // Column header の表示 / topic 切替。正本を更新し、操作した Column を active にして route を同期する。
   // 操作時点の route は active 化の push が未 commit のことがあるため判定に使わない(Issue #1053)。
   const selectColumnTimelineView = (column: ColumnState, view: ColumnTimelineView) => {
     setWorkspaceState((current) =>
@@ -761,11 +761,11 @@ export function DesktopShellPage({
   };
   const toggleTimelineFlow = (column: ColumnState) =>
     setWorkspaceState((current) => activateColumn(toggleColumnTimelineFlow(current, column.id), column.id));
-  const selectColumnTimelineTopic = async (column: ColumnState, topicId: string) => {
+  const selectColumnTopic = async (column: ColumnState, topicId: string) => {
     const scope = { topicId, channelId: null };
     const nextColumn = { ...column, scope };
     setWorkspaceState((current) =>
-      activateColumn(setTimelineColumnTopic(current, column.id, topicId), column.id)
+      activateColumn(setColumnTopic(current, column.id, topicId), column.id)
     );
     setTimelineScopeByTopic(setRecordEntry(topicId, channelTimelineScope(null)));
     setComposeChannelByTopic(setRecordEntry(topicId, channelComposeTarget(null)));
@@ -803,7 +803,6 @@ export function DesktopShellPage({
   const channelEntries = usePrivateChannelEntries({ dialogs, shellActions, activateWorkspaceColumn });
   const workspace = (
     <DesktopShellColumnWorkspace
-      scopeLabel={viewModels.activeComposeAudienceLabel}
       locale={locale}
       onVisibleColumnsChange={(columnIds) => {
         visibleColumnIdsRef.current = columnIds;
@@ -826,8 +825,8 @@ export function DesktopShellPage({
       onOpenKeyboardHelp={() => handleOpenSettingsSection('keyboard')}
       onOpenLiveCreate={() => dialogs.setLiveCreateDialogOpen(true)}
       timelineViewItems={viewModels.timelineViewItems}
-      onSelectTimelineTopic={(column, topicId) =>
-        void selectColumnTimelineTopic(column, topicId)
+      onSelectTopic={(column, topicId) =>
+        void selectColumnTopic(column, topicId)
       }
       onSelectTimelineView={selectColumnTimelineView}
       onToggleTimelineFlow={toggleTimelineFlow}

@@ -287,7 +287,7 @@
       "mutual": "Mutuals only",
       "following": "Following only"
     },
-    "timelineTopicSwitch": "Timeline topic",
+    "columnTopicSwitch": "Column topic",
     "primaryLabel": "Primary workspace",
     "skipToWorkspace": "Skip to workspace",
     "communityNodeUnavailableAction": "Open Community Node Settings",

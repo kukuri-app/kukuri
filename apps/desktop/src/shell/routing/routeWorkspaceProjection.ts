@@ -5,7 +5,7 @@ import {
   columnIdentityId,
   openTransientColumn,
   setColumnTimelineView,
-  timelineColumnIdForScope,
+  columnIdForScope,
   type ColumnKind,
   type ColumnScope,
   type ColumnTimelineView,
@@ -35,7 +35,7 @@ function ensurePublicThreadList(
   topicId: string
 ): { state: WorkspaceState; id: string } {
   const scope = { topicId, channelId: null };
-  const id = columnIdentityId('publicThreads', scope);
+  const id = columnIdForScope(state, 'publicThreads', scope);
   if (state.columns.some((column) => column.id === id)) return { state, id };
   return { state: openTransientColumn(state, { id, kind: 'publicThreads', scope, pinned: false }), id };
 }
@@ -62,7 +62,7 @@ export function workspaceForRoute(
     const listed = ensurePublicThreadList(incoming, routeScope.topicId);
     return activateColumn(listed.state, listed.id);
   }
-  const timelineId = timelineColumnIdForScope(incoming, routeScope);
+  const timelineId = columnIdForScope(incoming, 'timeline', routeScope);
   const ensureTimelineColumn = (current: WorkspaceState) => {
     const withView = setColumnTimelineView(current, timelineId, nextTimelineView);
     if (withView.columns.some((column) => column.id === timelineId)) return withView;
@@ -190,12 +190,14 @@ export function workspaceForRoute(
     routeColumnKind = 'stream';
     routeEntityId = selectedLiveSessionId ?? undefined;
   } else if (routeSection === 'game') {
-    routeColumnKind = isScoreGameRoom || gameColumnResolutionPending ? 'game' : 'metaverse';
+    const current = incoming.columns.find((column) => column.id === incoming.activeColumnId);
+    routeColumnKind = isScoreGameRoom || gameColumnResolutionPending ||
+      (!selectedGameRoomId && current?.kind === 'game') ? 'game' : 'metaverse';
     routeEntityId = selectedGameRoomId ?? undefined;
   } else {
     return activateColumn(ensureTimelineColumn(incoming), timelineId);
   }
-  const routeColumnId = columnIdentityId(routeColumnKind, routeScope, routeEntityId);
+  const routeColumnId = columnIdForScope(incoming, routeColumnKind, routeScope, routeEntityId);
   if (incoming.activeColumnId === routeColumnId) return incoming;
   return openTransientColumn(incoming, {
     id: routeColumnId,

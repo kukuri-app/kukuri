@@ -350,7 +350,7 @@ const seesReaction = (browser, target, emoji) =>
 
 /** 列の topic を切り替える（その topic の timeline を表示して購読する）。 */
 const switchTopic = (browser, name) =>
-  browser.$('select[aria-label="Timeline topic"]').selectByAttribute('value', topicId(name));
+  browser.$('.shell-column-surface[aria-label^="Timeline Column,"] select[aria-label="Column topic"]').selectByAttribute('value', topicId(name));
 
 /** Web と native が公開の投稿を 1 件ずつ送り合う。返り値は双方の投稿（Web の投稿の `author_pubkey` が Web の公開鍵、native の
  * 投稿は profile を開く入口）。 */
@@ -1837,7 +1837,7 @@ async function publicBlob() {
   console.log('public blob from an unknown holder', { relayed: (await relayedBytes()) - before, size: png.length });
   await fixture('/fixture/public-blob-holder/stop', {});
   await a.refresh();
-  await eventually(`${a.label} reopens the timeline`, () => a.$('select[aria-label="Timeline topic"]').isExisting());
+  await eventually(`${a.label} reopens the timeline`, () => a.$('.shell-column-surface[aria-label^="Timeline Column,"] select[aria-label="Column topic"]').isExisting());
   await switchTopic(a, 'dev');
   await sees(a, newest);
   await loads('the image kept in IndexedDB after the reload');
@@ -2011,7 +2011,7 @@ async function live() {
   let watched;
   const hear = (what) =>
     eventually(what, async () => {
-      watched = await watch();
+      watched = await watch({ restart: watched?.state === 2 });
       return watched.keyframes > 0 && watched.audio_clock_us > 0 && watched.video_us - watched.audio_clock_us < 1_000_000;
     }).catch((error) => assert.fail(`${error.message}: ${JSON.stringify(watched)}`));
   await eventually('native sees the live session', async () =>

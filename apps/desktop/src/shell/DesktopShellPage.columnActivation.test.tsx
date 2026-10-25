@@ -44,7 +44,7 @@ async function renderWorkspace(api = createDesktopMockApi()) {
 
 async function switchTimelineTopicToDev(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(
-    within(column('Timeline')).getByRole('combobox', { name: 'Timeline topic' }),
+    within(column('Timeline')).getByRole('combobox', { name: 'Column topic' }),
     'kukuri:topic:dev'
   );
   await waitFor(() => expect(window.location.hash).toBe(DEV_TIMELINE_HASH));
@@ -134,7 +134,7 @@ test('a header select in an inactive Timeline Column focuses it and routes to th
   const idsBefore = columnIds();
 
   await user.selectOptions(
-    within(column('Timeline')).getByRole('combobox', { name: 'Timeline topic' }),
+    within(column('Timeline')).getByRole('combobox', { name: 'Column topic' }),
     'kukuri:topic:dev'
   );
 

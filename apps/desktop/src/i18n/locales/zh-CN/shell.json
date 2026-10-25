@@ -287,7 +287,7 @@
       "mutual": "仅互相关注",
       "following": "仅已关注"
     },
-    "timelineTopicSwitch": "时间线主题",
+    "columnTopicSwitch": "分栏主题",
     "primaryLabel": "主工作区",
     "skipToWorkspace": "跳转到工作区",
     "communityNodeUnavailableAction": "打开社区节点设置",
