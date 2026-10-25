@@ -72,68 +72,80 @@ impl AppService {
         };
         let owner = state.owner_pubkey.as_str();
         let key = format!("media/live/{session_id}/thumbnail");
+        let read = |docs: Arc<dyn DocsSync>, policy| {
+            let (replica, key) = (replica.clone(), key.clone());
+            async move {
+                let records = docs
+                    .query_replica_exact_bounded(
+                        &replica,
+                        &key,
+                        MAX_ENVELOPE_RECORDS_PER_OBJECT,
+                        policy,
+                    )
+                    .await?;
+                let mut latest: Option<LiveThumbnailView> = None;
+                for record in records {
+                    if record.value.len() > MAX_IMAGE_CHARS + 4_096 {
+                        continue;
+                    }
+                    let Ok(envelope) = serde_json::from_slice::<KukuriEnvelope>(&record.value)
+                    else {
+                        continue;
+                    };
+                    if envelope.kind != KIND
+                        || envelope.pubkey.as_str() != owner
+                        || envelope.verify().is_err()
+                    {
+                        continue;
+                    }
+                    let Ok(record) = serde_json::from_str::<ThumbnailRecord>(&envelope.content)
+                    else {
+                        continue;
+                    };
+                    if record.input.topic != topic
+                        || record.input.session_id != session_id
+                        || validate_image(record.input.data_url.as_deref()).is_err()
+                    {
+                        continue;
+                    }
+                    if latest
+                        .as_ref()
+                        .is_none_or(|previous| record.updated_at > previous.updated_at)
+                    {
+                        latest = Some(LiveThumbnailView {
+                            data_url: record.input.data_url,
+                            custom: record.input.custom,
+                            updated_at: record.updated_at,
+                        });
+                    }
+                }
+                Ok(latest)
+            }
+        };
+        if owner == self.current_author_pubkey() {
+            return read(self.services.docs_sync.clone(), DocFetchPolicy::LocalOnly).await;
+        }
+        let channel = channel_storage_id(state.channel_id.as_ref());
         read_local_then_remote(
             self.services.docs_sync.clone(),
             async {
-                self.remote_post_readers(
+                self.session_target_readers(
                     topic,
-                    state.channel_id.as_ref().map(ChannelId::as_str),
-                    &replica,
-                    None,
+                    &channel,
+                    Some((&channel, &replica, state.updated_at)),
+                    session_id,
+                    "live",
                 )
                 .await
                 .unwrap_or_default()
+                .into_iter()
+                .filter(|(source, _, policy)| {
+                    source == &replica && *policy == DocFetchPolicy::LocalThenRemote
+                })
+                .map(|(_, docs, _)| docs)
+                .collect()
             },
-            |docs: Arc<dyn DocsSync>, policy| {
-                let (replica, key) = (replica.clone(), key.clone());
-                async move {
-                    let records = docs
-                        .query_replica_exact_bounded(
-                            &replica,
-                            &key,
-                            MAX_ENVELOPE_RECORDS_PER_OBJECT,
-                            policy,
-                        )
-                        .await?;
-                    let mut latest: Option<LiveThumbnailView> = None;
-                    for record in records {
-                        if record.value.len() > MAX_IMAGE_CHARS + 4_096 {
-                            continue;
-                        }
-                        let Ok(envelope) = serde_json::from_slice::<KukuriEnvelope>(&record.value)
-                        else {
-                            continue;
-                        };
-                        if envelope.kind != KIND
-                            || envelope.pubkey.as_str() != owner
-                            || envelope.verify().is_err()
-                        {
-                            continue;
-                        }
-                        let Ok(record) = serde_json::from_str::<ThumbnailRecord>(&envelope.content)
-                        else {
-                            continue;
-                        };
-                        if record.input.topic != topic
-                            || record.input.session_id != session_id
-                            || validate_image(record.input.data_url.as_deref()).is_err()
-                        {
-                            continue;
-                        }
-                        if latest
-                            .as_ref()
-                            .is_none_or(|previous| record.updated_at > previous.updated_at)
-                        {
-                            latest = Some(LiveThumbnailView {
-                                data_url: record.input.data_url,
-                                custom: record.input.custom,
-                                updated_at: record.updated_at,
-                            });
-                        }
-                    }
-                    Ok(latest)
-                }
-            },
+            read,
         )
         .await
     }

@@ -39,7 +39,7 @@ function post(objectId: string, channelId: string | null = null): PostView {
   } as PostView;
 }
 
-function renderLive(target: PostView, found: LiveSessionView | null) {
+function renderLive(target: PostView, found: LiveSessionView | null, overrides: Partial<DesktopApi> = {}) {
   vi.stubGlobal('IntersectionObserver', class {
     constructor(callback: (entries: IntersectionObserverEntry[]) => void) {
       observers.push(callback);
@@ -50,7 +50,7 @@ function renderLive(target: PostView, found: LiveSessionView | null) {
   const getLiveSession = vi.fn().mockResolvedValue(found);
   const setSessionDisplay = vi.fn().mockResolvedValue(undefined);
   const actions: LiveActions = {
-    api: { getLiveSession, setSessionDisplay } as unknown as DesktopApi,
+    api: { getLiveSession, setSessionDisplay, ...overrides } as unknown as DesktopApi,
     locale: 'en',
     localPubkey: 'me',
     pendingBySessionId: {},
@@ -65,8 +65,9 @@ function renderLive(target: PostView, found: LiveSessionView | null) {
     activateReference: vi.fn(),
     stage: vi.fn(),
   };
+  const store = createDesktopShellStore();
   render(
-    <DesktopShellStoreContext.Provider value={createDesktopShellStore()}>
+    <DesktopShellStoreContext.Provider value={store}>
       <LiveActionsContext.Provider value={actions}>
         <PostLive post={target} />
       </LiveActionsContext.Provider>
@@ -78,7 +79,7 @@ function renderLive(target: PostView, found: LiveSessionView | null) {
       observers[observers.length - 1]([{ isIntersecting: true, intersectionRatio: 1 } as IntersectionObserverEntry])
     );
   };
-  return { actions, getLiveSession, setSessionDisplay, display };
+  return { actions, getLiveSession, setSessionDisplay, display, store };
 }
 
 // #1839: 紹介 post の中の Live は、Live を作った topic と scope で表示を要求し、元の投稿(開始 post)へ移れる。
@@ -132,4 +133,23 @@ test('the start post shows an ended live session without a link to itself', asyn
   expect(within(card).getByText('Ended')).toBeInTheDocument();
   expect(within(card).queryByRole('button', { name: 'Open original post' })).toBeNull();
   expect(within(card).getByRole('button', { name: 'Join' })).toBeDisabled();
+});
+
+
+test.each(['post', 'thread'] as const)('the detail modal keeps adult text gated from the %s source', async (source) => {
+  const channel = 'pc-1700000000000-cccccccccccccccc';
+  const secret = { ...post('adult-post', channel), content: 'private adult text', content_labels: ['adult'] };
+  const target = source === 'post' ? secret : post('empty-start', channel);
+  const { store, display } = renderLive(target, session({ channel_id: channel }), {
+    getPublicChannel: vi.fn(async () => ({ channel_id: channel, topic_id: 'kukuri:topic:origin', title: 'Thread',
+      creator_pubkey: 'host', created_at: 1, last_post_at: 1, live_now: true, first_post: secret })),
+  });
+  await display();
+  const tile = await screen.findByRole('article');
+  await userEvent.click(within(tile).getByRole('button'));
+  const dialog = await screen.findByRole('dialog', { name: 'Launch Party' });
+  if (source === 'thread') await waitFor(() => expect(within(dialog).queryByText('Loading live sessions…')).toBeNull());
+  expect(within(dialog).queryByText('private adult text')).toBeNull();
+  act(() => store.getState().setField('adultContentEnabled', true));
+  expect(await within(dialog).findByText('private adult text')).toBeInTheDocument();
 });

@@ -174,3 +174,33 @@ for (const width of [1440, 390]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
+
+
+test('live details keep the thread post behind the existing adult content gate', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForFunction(() => Boolean(window.__KUKURI_DESKTOP__));
+  await page.evaluate(async () => {
+    const api = window.__KUKURI_DESKTOP__!;
+    const topic = 'kukuri:topic:general';
+    const thread = await api.createPublicChannel(topic, 'Labeled conversation', 'Adult text must stay hidden');
+    const label = <T extends { object_id: string; content_labels?: string[] | null }>(post: T): T =>
+      post.object_id === thread.first_post_id ? { ...post, content_labels: ['adult'] } : post;
+    const getThread = api.getPublicChannel.bind(api);
+    api.getPublicChannel = async (...args) => {
+      const view = await getThread(...args);
+      return view?.first_post ? { ...view, first_post: label(view.first_post) } : view;
+    };
+    const listTimeline = api.listTimeline.bind(api);
+    api.listTimeline = async (...args) => { const page = await listTimeline(...args); return { ...page, items: page.items.map(label) }; };
+    const listThread = api.listThread.bind(api);
+    api.listThread = async (...args) => { const page = await listThread(...args); return { ...page, items: page.items.map(label) }; };
+    await api.createLiveSession(topic, 'Gated live', '', { kind: 'public_channel', channel_id: thread.channel_id });
+    location.hash = `/timeline?topic=kukuri%3Atopic%3Ageneral&channel=${thread.channel_id}`;
+  });
+  const detail = activeColumn(page, 'Public thread');
+  await expect(detail.getByText('Adult text must stay hidden', { exact: true })).toHaveCount(0);
+  await detail.locator('.live-carousel-track button').click();
+  const dialog = page.getByRole('dialog', { name: 'Gated live', exact: true });
+  await expect(dialog.locator('[data-testid^="post-adult-gated-"]')).toBeVisible();
+  await expect(dialog.getByText('Adult text must stay hidden', { exact: true })).toHaveCount(0);
+});

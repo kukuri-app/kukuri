@@ -58,3 +58,14 @@ INVAR-3: 既存の有界なカラムcacheとイベントによる更新を使う
 - 静的確認: TypeScriptの型検査、変更したTypeScriptのESLint、`cargo fmt`、`git diff --check`を実行した。日本語文書はyomiyasuで確認し、既存の並列リストと専門語に対する候補は維持した。
 - 追加のWebAssembly check: `cargo check -p kukuri-desktop-runtime --target wasm32-unknown-unknown`は、環境に`clang`が無いため依存crateのbuildで停止。成功とは扱わない。
 - 画像・未確認範囲: [UI review record](../ui-reviews/2026-10-25-live-entry-layout.md)。Android実機・Tauri WebViewは未確認。全体suiteとLinuxの視覚baseline比較はこのローカル作業では実行していない。
+
+
+## 独立監査
+
+`ec0418bc8ff063f79b5b05f1685996283697fd07`の独立監査はFAIL。固定条件の未達として次の3件を確認した。
+
+1. 詳細モーダルが成人向け投稿の本文を直接表示し、通常の投稿の表示制限を迂回する。通常と同じラベル・content advisoryの判定と代替表示を使うよう修正した。投稿からの表示と公開スレッドの最初の投稿へのfallbackの2経路で修正前の失敗を確認し、修正後は6testとChromiumの再現testが成功した。
+2. 限定channelのサムネイルのremote readerにepochの秘密を渡していない。既存のsessionのreader選定を再利用し、参加資格とepochに対応するreaderを使うよう修正した。ローカルに画像を持たない正規メンバーの取得を、既存の別provider fixtureで確認した。
+3. 初回の自動画像更新が、遠隔の画像の確認中にsessionのlockを保持し、終了や手動設定を待たせる。配信者の画像確認はローカルだけで打ち切る。配信操作が使う本人の既知の状態も、ローカルの署名・版を確認して使う。正規の署名検証は維持し、projectionより古い状態は採用しない。
+
+修正後は関連するRustの16testが成功した。本人の既知の状態を読む経路にも限定channelの参加資格を維持した。通常の投稿と画像の詳細を含むUIの12test、成人向け表示を迂回しないChromiumのtestも成功した。修正後の固定headで差分と影響先を再監査する。受入条件は追加せず、Scope revision 2を維持する。

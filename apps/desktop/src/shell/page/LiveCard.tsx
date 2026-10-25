@@ -1,7 +1,9 @@
 import { useContext, useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { Camera, Link2, Maximize2, MonitorUp, Repeat2, Reply } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { PostGatedContent } from '@/components/core/PostAdvisoryNotice';
 import { SmartReferenceText } from '@/components/core/SmartReferenceText';
 import { LiveSessionMedia } from '@/components/extended/LiveSessionMedia';
 import { Button } from '@/components/ui/button';
@@ -16,6 +18,8 @@ import { formatCount, localizeAudienceLabel, translateLiveStatus } from '@/shell
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { authorDisplayLabel } from '@/shell/presentation';
 import { useDesktopShellStore } from '@/shell/store';
+import { isAdultLabeledPost } from '@/shell/media';
+import { resolvePostAdvisory } from '@/shell/contentAdvisories';
 import { LiveThumbnailField, LiveThumbnailImage } from './LiveThumbnailField';
 import { useLiveThumbnail } from './useLiveThumbnail';
 import { PublicThreadActionsContext } from './publicThreadActions';
@@ -74,10 +78,17 @@ export function LiveCard(props: LiveCardProps) {
 }
 
 function LivePostDetails({ topic, session, post: provided }: { topic: string; session: LiveSessionView; post?: PostView }) {
-  const { t } = useTranslation('live');
+  const { t } = useTranslation(['live', 'common']);
   const actions = useContext(LiveActionsContext);
+  const { enabled, advisories, lookup } = useDesktopShellStore(useShallow((state) => ({
+    enabled: state.adultContentEnabled,
+    advisories: state.timelineContentAdvisories,
+    lookup: state.timelineAdvisoryLookup,
+  })));
   const [post, setPost] = useState<PostView | null | undefined>(provided);
   const [hostLabel, setHostLabel] = useState<string | null>(null);
+  const selfLabeled = post && isAdultLabeledPost(post);
+  const gated = post && !enabled && (selfLabeled || resolvePostAdvisory(post, advisories, lookup).advisory !== null);
   useEffect(() => {
     const api = actions?.api;
     if (!api) return;
@@ -103,7 +114,8 @@ function LivePostDetails({ topic, session, post: provided }: { topic: string; se
   return <div className='live-post-details'>
     {hostLabel ? <p>{t('details.broadcaster')}: {hostLabel}</p> : null}
     <h3>{t('details.post')}</h3>
-    <p className='post-copy-wrap'>{post === undefined && session.start_post_id ? t('loading') : post?.content || t('details.noPost')}</p>
+    {gated ? <PostGatedContent objectId={post!.object_id} gatedBy={selfLabeled ? 'self_label' : 'advisory'} /> :
+      <p className='post-copy-wrap'>{post === undefined && session.start_post_id ? t('live:loading') : post?.content || t('live:details.noPost')}</p>}
   </div>;
 }
 
