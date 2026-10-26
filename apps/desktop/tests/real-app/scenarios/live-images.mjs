@@ -23,7 +23,9 @@ async function overlayImages(host, viewers, topic) {
         await eventually(`${viewer.name} to display the first ${kind}`, async () => {
           observed = await viewer.evaluate(`(() => {
             const images = document.querySelectorAll(${JSON.stringify(selector)});
-            return { visibility: document.visibilityState, images: [...images].map((image) => ({ width: image.naturalWidth, complete: image.complete, src: image.src })),
+            return { visibility: document.visibilityState, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+              canvases: [...document.querySelectorAll('.live-stage [data-post-object-id="${id}"] .live-overlay-image canvas')].map((canvas) => [canvas.width, canvas.height]),
+              images: [...images].map((image) => ({ width: image.naturalWidth, complete: image.complete, src: image.src })),
               post: document.querySelector('.live-stage [data-post-object-id="${id}"]')?.textContent };
           })()`);
           return observed.images.length === 1 && observed.images[0].width === 48;
@@ -40,6 +42,10 @@ export async function run({ launch, log, topic }) {
   const all = await launch('host', 'first', 'second');
   const [host, first, second] = all;
   await Promise.all(all.map(accept));
+  // Server/Remote DesktopのOS設定に依存せず、通常のGIF再生を検証する。静止経路はbrowser試験で別に検証する。
+  if (process.platform === 'win32') for (const instance of all) {
+    await instance.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+  }
   await connect(all);
   await Promise.all(all.map((instance) => openTopic(instance, topic, 'timeline')));
   await Promise.all(all.map((instance) => waitForPeers(instance, topic, 2)));
