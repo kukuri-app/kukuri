@@ -6,6 +6,7 @@ on:
       - '.github/workflows/kukuri-linux-package.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'tools/check_media_audio_contract.py'
       - 'rust-toolchain.toml'
       - 'xtask/**'
       - 'crates/**'
@@ -22,6 +23,7 @@ on:
       - '.github/workflows/kukuri-linux-package.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'tools/check_media_audio_contract.py'
       - 'rust-toolchain.toml'
       - 'xtask/**'
       - 'crates/**'
@@ -125,6 +127,14 @@ jobs:
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: pnpm install --frozen-lockfile
+      - uses: taiki-e/install-action@nextest
+      - uses: actions/setup-python@v5
+        id: audio-python
+        with:
+          python-version: '3.13'
+          update-environment: false
+      - name: Native audio device-time contracts
+        run: '"${{ steps.audio-python.outputs.python-path }}" tools/check_media_audio_contract.py'
       - name: Package contracts
         run: |
           # harness は package の検証に使わない。依存 749 crate の debug build を避ける（#1160）。
