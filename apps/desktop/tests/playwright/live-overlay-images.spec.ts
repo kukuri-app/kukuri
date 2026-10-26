@@ -51,6 +51,9 @@ for (const width of [1440, 390]) for (const theme of ['dark', 'light']) for (con
     const images = stage.locator('.live-overlay-image img');
     await expect(images).toHaveCount(2);
     await expect.poll(() => images.first().evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(48);
+    const videoBox = (await stage.locator('.live-stage-layers').boundingBox())!;
+    const lastImage = (await images.last().boundingBox())!;
+    expect(videoBox.y + videoBox.height - lastImage.y - lastImage.height).toBeLessThanOrEqual(24);
     const animated = stage.locator('[data-post-object-id="overlay-gif"] .live-overlay-image');
     const initial = await animated.screenshot();
     await expect.poll(async () => (await animated.screenshot()).equals(initial), { timeout: 3000 }).toBe(false);

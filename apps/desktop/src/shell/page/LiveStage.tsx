@@ -247,28 +247,30 @@ function OverlayLayers({ posts, counts, floats, settings, mediaObjectUrls, media
           ))}
         </ol>
       ) : null}
-      {settings.posts && imagesEnabled ? <div className='live-stage-pushes'>
-        {pushes.map((slot) => slot.post ? <OverlayPushImage key={slot.key} slot={slot} mediaForPost={mediaForPost} /> : (
-          <span key={slot.key} className='live-stage-post-copy'>{t('loading')}</span>
-        ))}
-      </div> : null}
-      {settings.reactions ? (
-        <div className='live-stage-reactions'>
-          {floats.map((float) => (
-            <span key={float.id} className='live-stage-float' style={{ left: floatOffset(float.id) }}>
-              <Glyph reaction={float.reaction} mediaObjectUrls={mediaObjectUrls} />
-            </span>
+      {(settings.posts && imagesEnabled) || settings.reactions ? <div className='live-stage-aside'>
+        {settings.posts && imagesEnabled ? <div className='live-stage-pushes'>
+          {pushes.map((slot) => slot.post ? <OverlayPushImage key={slot.key} slot={slot} mediaForPost={mediaForPost} /> : (
+            <span key={slot.key} className='live-stage-post-copy'>{t('loading')}</span>
           ))}
-          <div className='live-stage-counts'>
-            {top(counts, COUNT_LIMIT).map((reaction) => (
-              <span key={reaction.normalized_reaction_key} className='live-stage-count'>
-                <Glyph reaction={reaction} mediaObjectUrls={mediaObjectUrls} />
-                {reaction.count}
+        </div> : null}
+        {settings.reactions ? (
+          <div className='live-stage-reactions'>
+            {floats.map((float) => (
+              <span key={float.id} className='live-stage-float' style={{ left: floatOffset(float.id) }}>
+                <Glyph reaction={float.reaction} mediaObjectUrls={mediaObjectUrls} />
               </span>
             ))}
+            <div className='live-stage-counts'>
+              {top(counts, COUNT_LIMIT).map((reaction) => (
+                <span key={reaction.normalized_reaction_key} className='live-stage-count'>
+                  <Glyph reaction={reaction} mediaObjectUrls={mediaObjectUrls} />
+                  {reaction.count}
+                </span>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </div> : null}
     </div>
   );
 }

@@ -454,7 +454,7 @@ node tests/real-app/run.mjs --app <release build の実行 file> [--scenario <�
   - GitHub の更新確認と、LAN への UPnP の探索。
 - Windows は WebView2 の診断用の port と疑似のカメラ・画面の起動の設定、Linux は Xvfb・D-Bus の下で WebKit の inspector を使う（`xvfb-run -a dbus-run-session -- node ...`）。
 - 音声の確認は、`REAL_APP_AUDIO` で CI の仮想デバイスの構成を指定したときだけ動く（`pulse`: Linux の PulseAudio に instance ごとの null sink を作る。`vbcable`: Windows の VB-CABLE を全 instance の既定の入出力にする）。手元では付けない（既定の機器を使わないため、付けなければ飛ばす）。空間音声（`spatial-audio`）は instance ごとの入出力が要るので `pulse` だけで動く。PulseAudio は desktop の音声の server（rtkit の下の PipeWire・PulseAudio）と同じく real-time の優先度で動かす（CI は runner の上限を上げてから起動する）。優先度が無いと、CPU が埋まったときに server が遅れて app の出力が作り直され、エコーキャンセルが数秒合わず、映像と音のずれも乱れる（#1822）。Linux は key の入力に window manager（openbox）と xdotool が要る。中身は [metaverse-spatial-audio.md](metaverse-spatial-audio.md)。
-- `live-overlay-push`（#1950）は3端末の公開スレッドで、2送信者の連打、他端末の回数表示、Live・会話の切替と期限切れを確認する。開始前に対象の古い投稿を画面内へ移し、本文・添付を通常の再取得操作で準備する。送信受付はruntime event、描画はDOMの変化から観測し、送信受付と遠隔表示の時間を分けて記録する。通信と画像は合成データだけを使い、外部への告知範囲は上記の `live-images` と同じ。
+- `live-overlay-push`（#1950）は3端末の公開スレッドで、2送信者の連打、他端末の回数表示、Live・会話の切替と期限切れを確認する。開始前に対象の古い投稿を画面内へ移し、本文・添付を通常の再取得操作で準備する。押下はアプリ外のdriverから100ms間隔で送り、入力待ちも含めて表示応答を測る。送信受付はruntime event、描画はDOMの変化から観測し、送信受付と遠隔表示の時間を分けて記録する。通信と画像は合成データだけを使い、外部への告知範囲は上記の `live-images` と同じ。
 
 ## remote-sync 用の環境変数
 ```bash

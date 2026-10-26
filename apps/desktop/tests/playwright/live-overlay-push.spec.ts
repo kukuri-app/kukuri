@@ -30,6 +30,8 @@ test('six tall Push images stay inside the video without overlap in reduced moti
     const thread = await api.createPublicChannel(topic, 'Still Push', '');
     const ref = { kind: 'public_channel' as const, channel_id: thread.channel_id };
     const live = await api.createLiveSession(topic, 'Still Live', '', ref);
+    const session = (await api.getLiveSession(topic, live))!;
+    await api.toggleReaction(topic, session.start_post_id!, { kind: 'emoji', emoji: '👍' }, ref);
     const targets = [];
     for (let index = 0; index < 6; index++) {
       const id = await api.createPost(topic, '', null, [{ file_name: `${index}.png`, mime: 'image/png', byte_size: 2048, data_base64: bytes, role: 'image_original' }], ref);
@@ -40,7 +42,7 @@ test('six tall Push images stay inside the video without overlap in reduced moti
     return targets;
   });
   const pushes = page.locator('.live-stage-pushes');
-  await expect(pushes).toBeVisible();
+  await expect(page.locator('.live-stage')).toBeVisible();
   await page.evaluate(async (targets) => { for (const target of targets) await window.__KUKURI_DESKTOP__!.pushLiveOverlay(target); }, targets);
   await expect(pushes.locator('canvas')).toHaveCount(6);
   await expect.poll(() => pushes.locator('canvas').evaluateAll((nodes) => nodes.every((node) => (node as HTMLCanvasElement).height === 160))).toBe(true);
@@ -48,6 +50,10 @@ test('six tall Push images stay inside the video without overlap in reduced moti
   const boxes = await pushes.locator('canvas').evaluateAll((nodes) => nodes.map((node) => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; }));
   for (const box of boxes) { expect(box.top).toBeGreaterThanOrEqual(video.y); expect(box.bottom).toBeLessThanOrEqual(video.y + video.height); }
   for (let index = 2; index < boxes.length; index++) expect(boxes[index].top).toBeGreaterThanOrEqual(boxes[index - 2].bottom);
+  await expect(page.locator('.live-stage-count')).toHaveCount(1);
+  const reactions = (await page.locator('.live-stage-reactions').boundingBox())!;
+  expect(boxes.at(-1)!.bottom).toBeLessThanOrEqual(reactions.y);
+  expect(boxes.at(-1)!.bottom).toBeGreaterThan(video.y + video.height * 0.75);
 });
 
 for (const width of [1440, 390]) for (const theme of ['dark', 'light']) for (const locale of ['ja', 'en', 'zh-CN']) {
@@ -105,6 +111,9 @@ for (const width of [1440, 390]) for (const theme of ['dark', 'light']) for (con
     await expect(button).toBeFocused();
     expect(await page.evaluate(() => ({ ...(window as unknown as { __overlayReads: Record<string, number> }).__overlayReads }))).toEqual(before);
     const imageBox = (await overlay.boundingBox())!;
+    const videoBox = (await column.locator('.live-stage-layers').boundingBox())!;
+    expect(imageBox.y).toBeGreaterThan(videoBox.y + videoBox.height / 2);
+    expect(videoBox.y + videoBox.height - imageBox.y - imageBox.height).toBeLessThanOrEqual(24);
     const countBox = (await overlay.locator('.live-overlay-push-count').boundingBox())!;
     expect(Math.abs(imageBox.x + imageBox.width - countBox.x - countBox.width)).toBeLessThanOrEqual(1);
     expect(Math.abs(imageBox.y + imageBox.height - countBox.y - countBox.height)).toBeLessThanOrEqual(1);

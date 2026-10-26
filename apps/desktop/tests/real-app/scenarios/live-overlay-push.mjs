@@ -86,17 +86,30 @@ async function pressForOneMinute(instance, index) {
       },50);
       setTimeout(done,1200);
     });
-    const timer=setInterval(()=>{
-      const at=performance.now();
-      const wall=Date.now();
-      const current=document.querySelector(${JSON.stringify(attachmentButton(index))});
-      if(current && !current.disabled)current.click();else m.unavailable++;
-      m.sent++;
-      requestAnimationFrame(()=>{m.paint.push(performance.now()-at);m.wall.push(Date.now()-wall);});
-      if(m.sent===600){clearInterval(timer);m.done=true;}
-    },100);
     return true;
   })()`, { gesture: true });
+  const pending = new Set();
+  const report = { attempted: 0, rejected: 0, peak: 0 };
+  const timer = setInterval(() => {
+    report.attempted++;
+    if (pending.size === 256) report.rejected++;
+    else {
+      const queued = Date.now();
+      const job = instance.evaluate(`(() => {
+        const m=window.__pushSender,at=performance.now();
+        const current=document.querySelector(${JSON.stringify(attachmentButton(index))});
+        if(current && !current.disabled)current.click();else m.unavailable++;
+        m.sent++;
+        requestAnimationFrame(()=>{m.paint.push(performance.now()-at);m.wall.push(Date.now()-${queued});});
+        if(m.sent===600)m.done=true;
+        return true;
+      })()`, { gesture: true }).catch(() => { report.rejected++; }).finally(() => pending.delete(job));
+      pending.add(job);
+      report.peak = Math.max(report.peak, pending.size);
+    }
+    if (report.attempted === 600) clearInterval(timer);
+  }, 100);
+  return { stop: () => clearInterval(timer), report };
 }
 
 export async function run({ launch, log, topic }) {
@@ -144,13 +157,13 @@ export async function run({ launch, log, topic }) {
     for (const indices of [[2, 2], [1, 2]]) {
       await viewer.evaluate('(Object.assign(window.__pushMetrics,{received:0,counts:{},paint:[],wire:[],pending:[],busy:0}),true)');
       const since = Date.now();
-      await Promise.all([host, sender].map((instance, index) => pressForOneMinute(instance, indices[index])));
+      const actors = await Promise.all([host, sender].map((instance, index) => pressForOneMinute(instance, indices[index])));
       try {
         await eventually('both senders to finish 600 accepted presses', async () => (await Promise.all([host, sender].map((instance) => instance.evaluate('window.__pushSender.done && window.__pushSender.acks===600 && window.__pushSender.paint.length===600')))).every(Boolean), 75000);
       } catch (error) {
-        const observed = await Promise.all([host, sender].map((instance) => instance.evaluate('({sent:window.__pushSender.sent,acks:window.__pushSender.acks,unavailable:window.__pushSender.unavailable,paint:window.__pushSender.paint.length,done:window.__pushSender.done})')));
-        throw new Error(`${error.message}; senders=${JSON.stringify(observed)}, remote=${await count(viewer)}`, { cause: error });
-      }
+        const observed = await Promise.all([host, sender].map((instance) => instance.evaluate(`(() => {const m=window.__pushSender,q=(values)=>[...values].sort((a,b)=>a-b)[Math.ceil(values.length*.95)-1];return {sent:m.sent,acks:m.acks,unavailable:m.unavailable,paint:m.paint.length,done:m.done,input:q(m.paint),wall:q(m.wall),idle:q(m.idle)};})()`)));
+        throw new Error(`${error.message}; driver=${JSON.stringify(actors.map((actor) => actor.report))}, senders=${JSON.stringify(observed)}, remote=${await count(viewer)}`, { cause: error });
+      } finally { actors.forEach((actor) => actor.stop()); }
       await eventually('all 1200 Pushes to display remotely', () => viewer.evaluate(`JSON.stringify([...document.querySelectorAll('${STAGE} .live-overlay-push-count')].map(node=>Number(node.textContent.slice(1))).sort())===${JSON.stringify(JSON.stringify(indices[0] === indices[1] ? [1200] : [600, 600]))}`), 5000);
       assert.equal(await viewer.evaluate(`[...document.querySelectorAll('${STAGE} .live-stage-pushes img')].filter(image=>image.naturalWidth===48).length`), new Set(indices).size, 'every pushed attachment remains decoded under load');
       await eventually('all received Pushes to paint', () => viewer.evaluate('window.__pushMetrics.pending.length===0'), 5000);
@@ -160,7 +173,8 @@ export async function run({ launch, log, topic }) {
       assert.equal(receive.paint.length, 1200);
       assert.equal(receive.busy, 0);
       assert.equal(await viewer.evaluate(`document.querySelector('${STAGE} [data-asset-hash="${original.attachments[1].hash}"] img').src.split('#')[0]`), sharedUrl, 'the warmed GIF URL is shared throughout repeated display');
-      for (const send of sends) { assert.equal(send.unavailable, 0); assert.ok(p95(send.paint) <= 100, `input p95 ${p95(send.paint)}ms`); }
+      for (const actor of actors) assert.equal(actor.report.rejected, 0, 'the input driver did not drop or reject presses');
+      for (const send of sends) { assert.equal(send.unavailable, 0); assert.ok(Math.max(p95(send.paint), p95(send.wall)) <= 100, `input p95 ${p95(send.paint)}/${p95(send.wall)}ms`); }
       assert.ok(p95(receive.paint) <= 250, `render p95 ${p95(receive.paint)}ms`);
       assert.ok(p95(receive.wire) <= 1000, `delivery p95 ${p95(receive.wire)}ms`);
       assert.ok((await drawsSince(viewer, Date.now() - 3000)).length >= 15, 'video continues under repeated Push');
