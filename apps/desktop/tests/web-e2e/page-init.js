@@ -2,11 +2,39 @@
 // `index.html` の head の先頭に同じ origin の script として足す。driver の機能（BiDi の addInitScript）に頼らないので、Safari
 // でも、driver が開いた別の tab でも動く。配信の artifact は変えない。
 (() => {
+  // #1943: 本文やAPIの返却値を控えず、Messageの到達と会話列のDOM差分を追う。reloadで消える直近64件だけを保つ。
+  window.__kukuriDirectMessageEvents = [];
+  const recordDirectMessage = event => {
+    window.__kukuriDirectMessageEvents.push({ at: performance.now(), ...event });
+    if (window.__kukuriDirectMessageEvents.length > 64) window.__kukuriDirectMessageEvents.shift();
+  };
+  document.addEventListener('click', event => {
+    const button = event.target.closest?.('.author-detail-action-buttons button');
+    const columnId = button?.closest('section[data-column-id^="column:profile:"]')?.dataset.columnId;
+    if (columnId && button.textContent.trim() === 'Message') recordDirectMessage({
+      phase: 'message-click', columnId, peerPubkey: columnId.split(':').at(-1), isTrusted: event.isTrusted,
+    });
+  }, true);
+  const conversationColumns = (node, phase) => {
+    if (!(node instanceof Element)) return;
+    const selector = 'section[data-column-id^="column:conversation:"]';
+    for (const column of [...(node.matches(selector) ? [node] : []), ...node.querySelectorAll(selector)]) {
+      const columnId = column.dataset.columnId;
+      recordDirectMessage({ phase, columnId, peerPubkey: columnId.split(':').at(-1) });
+    }
+  };
+  new MutationObserver(records => {
+    for (const record of records) {
+      for (const node of record.addedNodes) conversationColumns(node, 'column-added');
+      for (const node of record.removedNodes) conversationColumns(node, 'column-removed');
+    }
+  }).observe(document, { childList: true, subtree: true });
   localStorage.setItem('kukuri:media-debug', '1');
   window.__kukuriMediaEvents = [];
   for (const level of ['info', 'warn']) {
     const log = console[level];
     console[level] = (...args) => {
+      if (args[0] === '[kukuri.e2e.dm]') recordDirectMessage(args[1]);
       if (String(args[0]).startsWith('[kukuri.media]')) {
         window.__kukuriMediaEvents.push(args);
         if (window.__kukuriMediaEvents.length > 32) window.__kukuriMediaEvents.shift();

@@ -604,6 +604,7 @@ async function openAuthorProfile(browser, authorPost, author) {
 /** 開いている `peer` の profile の列に、相互になって「Message」が出たら会話を開く。列を閉じず、開き直さずに待つ
  * （相手の follow は follow の offer で届き、送れなかったら送り直される。届くと開いている列が読み直される。#1521）。 */
 async function messageFromOpenProfile(browser, peer) {
+  console.log(`${browser.label} Message requested`, { peerPubkey: peer });
   const message = columnOf(browser, 'profile', peer).$('.author-detail-action-buttons').$('button=Message');
   await message.waitForExist({ timeout: FOLLOW_BACK_WAIT });
   await message.click();
@@ -2108,7 +2109,12 @@ if (name === '--list') {
     for (const client of clients) await dumpColumns(client).catch(() => undefined);
     throw error;
   } finally {
-    for (const client of clients) await client.deleteSession().catch(() => undefined);
+    for (const client of clients) {
+      const events = await client.execute(() => window.__kukuriDirectMessageEvents)
+        .catch(error => ({ unavailable: String(error) }));
+      console.log(`${client.label} direct message events`, JSON.stringify(events));
+      await client.deleteSession().catch(() => undefined);
+    }
   }
   console.log(`web e2e ${name} on ${BROWSER}: PASS${unconfirmed.length ? ` (unconfirmed: ${unconfirmed.join('; ')})` : ''}`);
 }

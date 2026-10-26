@@ -26,6 +26,7 @@ import {
 } from '@/shell/routes';
 import { setRecordEntry } from '@/shell/stateUpdates';
 import { loadThreadForFocus } from '@/shell/data/loaders/threadFocus';
+import { directMessageOpenTrace } from '@/shell/routing/directMessageOpenTrace';
 import { useRouteSynchronization } from '@/shell/routing/useRouteSynchronization';
 import { useSyncRoute } from '@/shell/routing/useSyncRoute';
 import { useShallow } from 'zustand/react/shallow';
@@ -264,11 +265,12 @@ export function useDesktopShellRouting({
         preservedAuthorPubkey?: string | null;
       }
     ) => {
+      const trace = directMessageOpenTrace(peerPubkey);
       try {
         const [conversation, timeline, status] = await Promise.all([
-          api.openDirectMessage(peerPubkey),
-          api.listDirectMessageMessages(peerPubkey, null, 100),
-          api.getDirectMessageStatus(peerPubkey),
+          trace('openDirectMessage', api.openDirectMessage(peerPubkey)),
+          trace('listDirectMessageMessages', api.listDirectMessageMessages(peerPubkey, null, 100)),
+          trace('getDirectMessageStatus', api.getDirectMessageStatus(peerPubkey)),
         ]);
         const preserveSelectedAuthor =
           options?.preserveAuthorPane ??

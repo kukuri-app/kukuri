@@ -79,16 +79,15 @@ fn web_build(test_community_node: Option<&str>) -> Result<()> {
         wasm.display().to_string(),
     ]);
     run("wasm-bindgen", args, &root)?;
+    let e2e = if test_community_node.is_some() {
+        "1"
+    } else {
+        ""
+    };
     let frontend_env = [
         ("VITE_KUKURI_TARGET", "web"),
-        (
-            "KUKURI_WEB_E2E",
-            if test_community_node.is_some() {
-                "1"
-            } else {
-                ""
-            },
-        ),
+        ("KUKURI_WEB_E2E", e2e),
+        ("VITE_KUKURI_WEB_E2E", e2e),
         // 空なら配布の設定（`webRuntime.ts`）。手元の環境の値を配信の build に持ち込まない。
         (
             "VITE_KUKURI_COMMUNITY_NODE_BASE_URL",
