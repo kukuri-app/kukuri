@@ -14,6 +14,42 @@ async function inkPixel(image: Locator) {
   });
 }
 
+test('six tall Push images stay inside the video without overlap in reduced motion', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await expect(page.getByTestId('control-center-trigger')).toBeVisible();
+  const targets = await page.evaluate(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 10; canvas.height = 160;
+    canvas.getContext('2d')!.fillRect(0, 0, 10, 160);
+    const bytes = canvas.toDataURL('image/png').split(',')[1];
+    const api = window.__KUKURI_DESKTOP__!;
+    api.getBlobMediaPayload = async () => ({ mime: 'image/png', bytes_base64: bytes });
+    const topic = 'kukuri:topic:general';
+    const thread = await api.createPublicChannel(topic, 'Still Push', '');
+    const ref = { kind: 'public_channel' as const, channel_id: thread.channel_id };
+    const live = await api.createLiveSession(topic, 'Still Live', '', ref);
+    const targets = [];
+    for (let index = 0; index < 6; index++) {
+      const id = await api.createPost(topic, '', null, [{ file_name: `${index}.png`, mime: 'image/png', byte_size: 2048, data_base64: bytes, role: 'image_original' }], ref);
+      const post = (await api.listThread(topic, id, null, 1)).items.find((post) => post.object_id === id)!;
+      targets.push({ topic, channel_id: thread.channel_id, object_id: id, attachment_index: 0, attachment_hash: post.attachments[0].hash });
+    }
+    location.hash = `/live?topic=${encodeURIComponent(topic)}&channel=${thread.channel_id}&sessionId=${live}`;
+    return targets;
+  });
+  const pushes = page.locator('.live-stage-pushes');
+  await expect(pushes).toBeVisible();
+  await page.evaluate(async (targets) => { for (const target of targets) await window.__KUKURI_DESKTOP__!.pushLiveOverlay(target); }, targets);
+  await expect(pushes.locator('canvas')).toHaveCount(6);
+  await expect.poll(() => pushes.locator('canvas').evaluateAll((nodes) => nodes.every((node) => (node as HTMLCanvasElement).height === 160))).toBe(true);
+  const video = (await page.locator('.live-stage-layers').boundingBox())!;
+  const boxes = await pushes.locator('canvas').evaluateAll((nodes) => nodes.map((node) => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; }));
+  for (const box of boxes) { expect(box.top).toBeGreaterThanOrEqual(video.y); expect(box.bottom).toBeLessThanOrEqual(video.y + video.height); }
+  for (let index = 2; index < boxes.length; index++) expect(boxes[index].top).toBeGreaterThanOrEqual(boxes[index - 2].bottom);
+});
+
 for (const width of [1440, 390]) for (const theme of ['dark', 'light']) for (const locale of ['ja', 'en', 'zh-CN']) {
   test(`Push an old attachment repeatedly ${width} ${theme} ${locale}`, async ({ page }, info) => {
     if (width === 1440 && theme === 'dark' && locale === 'en') test.setTimeout(100000);

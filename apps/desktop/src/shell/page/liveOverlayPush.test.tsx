@@ -16,9 +16,9 @@ const event = (id: number, overrides: Partial<LiveOverlayPushView> = {}): LiveOv
   sent_at: Date.now(), received_at: Date.now(),
   target: { topic, channel_id: channelId, object_id: 'old-post', attachment_index: 0, attachment_hash: 'gif' }, ...overrides,
 });
-function setup(resolve = vi.fn(async () => post)) {
+function setup(resolve = vi.fn(async () => post), evaluate: DesktopApi['evaluateAuthorTrustGates'] = vi.fn(async () => ({ gates: [] }))) {
   const store = createDesktopShellStore();
-  const api = { resolveLiveOverlayPush: resolve } as unknown as DesktopApi;
+  const api = { resolveLiveOverlayPush: resolve, evaluateAuthorTrustGates: evaluate } as unknown as DesktopApi;
   const hook = renderHook(({ active, hidden }: { active: boolean; hidden?: (post: PostView) => boolean }) => useLiveOverlayPushes(api, source, active, hidden), {
     initialProps: { active: true },
     wrapper: ({ children }) => <DesktopShellStoreContext.Provider value={store}>{children}</DesktopShellStoreContext.Provider>,
@@ -105,4 +105,44 @@ test('a different Live or conversation never renders the previous context while 
   expect(hook.result.current.items).toHaveLength(1);
   hook.rerender({ session: 'second', channel: 'pc-1700000000000-bbbbbbbbbbbbbbbb' });
   expect(rendered.filter((item) => item.session === 'second').every((item) => item.count === 0)).toBe(true);
+});
+
+test('a later event cannot replace the original index/hash binding, including while resolving', async () => {
+  let complete!: (post: PostView) => void;
+  const { result } = setup(vi.fn(() => new Promise<PostView>((done) => { complete = done; })));
+  const mismatched = (id: number) => event(id, { target: { ...event(id).target, attachment_hash: 'another-image' } });
+  act(() => { announceLiveOverlayPush(event(1)); announceLiveOverlayPush(mismatched(2)); });
+  await act(async () => complete(post)); await flush();
+  act(() => announceLiveOverlayPush(mismatched(3))); await flush();
+  expect(result.current.items[0].count).toBe(1);
+  expect(result.current.items[0].event.target.attachment_hash).toBe('gif');
+});
+
+test('evaluates a sender outside visible posts and does not merge a hidden sender', async () => {
+  const evaluate = vi.fn(async () => ({ gates: [{ author_pubkey: 'a', hidden: true, reasons: [], always_visible: false }] }));
+  const { store, result, resolve } = setup(undefined, evaluate);
+  act(() => store.getState().setField('communityNodeConfig', (config) => ({ ...config, trust_node_priority: ['https://cn.example'] })));
+  act(() => announceLiveOverlayPush(event(1))); await flush();
+  expect(evaluate).toHaveBeenCalledWith({ author_pubkeys: ['a'] });
+  expect(result.current.items).toHaveLength(0);
+  expect(resolve).not.toHaveBeenCalled();
+});
+
+test('pending sender checks stay bounded across scope changes and discard late or expired results', async () => {
+  const complete: (() => void)[] = [];
+  const evaluate = vi.fn(() => new Promise<{ gates: [] }>((done) => { complete.push(() => done({ gates: [] })); }));
+  const { store, result, rerender, resolve } = setup(undefined, evaluate);
+  act(() => store.getState().setField('communityNodeConfig', (config) => ({ ...config, trust_node_priority: ['https://cn.example'] })));
+  act(() => { for (let id = 0; id < 256; id++) announceLiveOverlayPush(event(id)); });
+  rerender({ active: false }); rerender({ active: true });
+  act(() => announceLiveOverlayPush(event(257))); await flush();
+  expect(evaluate).toHaveBeenCalledTimes(256);
+  expect(result.current.notice).toBe('busy');
+  await act(async () => complete.splice(0).forEach((done) => done())); await flush();
+  expect(result.current.items).toHaveLength(0);
+  act(() => announceLiveOverlayPush(event(258)));
+  act(() => vi.advanceTimersByTime(10001));
+  await act(async () => complete.splice(0).forEach((done) => done())); await flush();
+  expect(result.current.items).toHaveLength(0);
+  expect(resolve).not.toHaveBeenCalled();
 });

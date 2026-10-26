@@ -189,6 +189,8 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
                 | "commands::live_media::stop_watching_live_media"
                 | "commands::live_media::set_live_volume"
         ),
+        // #1950: 表示中の添付のPush操作と、Live overlayだけが使う短命要求の解決。
+        "gui_live_overlay" => matches!(tauri, "push_live_overlay" | "resolve_live_overlay_push"),
         _ => false,
     }
 }
@@ -221,8 +223,8 @@ fn baseline_inventory_is_classified_once() {
         manifest.baseline,
         "d372c91bdc963bda07308a359fe3baeca8e06150"
     );
-    assert_eq!(manifest.scope_revision, "2026-10-26-live-thumbnails");
-    assert_eq!(manifest.entries.len(), 208);
+    assert_eq!(manifest.scope_revision, "2026-10-27-live-overlay-push");
+    assert_eq!(manifest.entries.len(), 210);
     check_inventory(&gui_commands(), &manifest.entries).expect("全入口の分類");
 }
 

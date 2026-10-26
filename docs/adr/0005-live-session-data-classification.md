@@ -135,12 +135,13 @@ post・リアクションの正本、Live の寿命・権限・視聴の共有�
 
 新しいgossip enum variantは増やさず、既存の`MetaverseRoomEvent { topic_id, room_id, event }`を署名付き短命eventのcarrierとして使う。`room_id`はこのkindでは公開スレッドIDを表す。`event.kind = "live-overlay-push-v1"`で振り分け、旧版のMetaverse handlerは未知のkindを`Ok(None)`で無視する。未知のvariantによるtransportエラーや、投稿の同期hintとしての再解釈を起こさない。
 
-署名対象contentは`version=1`、押下ごとに生成する32桁hexのnonce、`target`（topic、公開スレッドID、元投稿ID、元の添付配列のindexとhash）、元投稿の作成時刻の手がかり、`sent_at`（ms）。event IDはenvelope IDとし、署名者を送信者とする。topic/公開スレッドとcarrierの一致、署名、version/nonce、10秒の寿命と未来2秒以内を検証する。古い投稿もキー指定で解決し、署名検証済みprojectionのscope・添付index/hash・image MIME・role、撤回・mute/block・成人向けgateを照合する。信頼値とadvisoryは通常mediaの共通表示判断を使う。要求をblob取得の任意hash指定経路にしない。
+署名対象contentは`version=1`、押下ごとに生成する32桁hexのnonce、`target`（topic、公開スレッドID、元投稿ID、元の添付配列のindexとhash）、元投稿の作成時刻の手がかり、`sent_at`（ms）。event IDはenvelope IDとし、署名者を送信者とする。topic/公開スレッドとcarrierの一致、署名、version/nonce、10秒の寿命と未来2秒以内を検証する。受理・重複IDの保持・解決の期限は、いずれも`sent_at+10秒`に揃える。古い投稿もキー指定で解決し、署名検証済みprojectionのscope・添付index/hash・image MIME・role、撤回・mute/block・成人向けgateを照合する。合流中も最初のindex/hash結合を変えず、後続要求の不一致を破棄する。信頼値とadvisoryは通常mediaの共通表示判断を使う。要求をblob取得の任意hash指定経路にしない。
 
 #### 所有・上限・回収
 
 - dedupeはaccount runtimeの全体4096件。期限順の索引で回収し、生きたIDを容量都合で追い出さない。満杯は受付不能として通知する。送信側は公開前にIDを予約し、ローカル反映とネットワークから戻る同一要求を二重実行しない。
 - 送信中と表示用post解決は各256件まで。受信通知のchannelも256件で、既存runtime/host channelの取りこぼしも明示的な混雑通知へ変換する。bodyの取得待ちでPushが止まらないよう、既存の公開スレッドgossip購読から独立したstreamを読む。子taskは既存leaseと一緒に止め、押下や画像ごとのnetwork購読を作らない。
+- 採用CNがある場合は送信者も既存のaccount共通信頼評価で確認してから合流する。未評価・照会失敗は既存のfail-openに従う。未完了照会は全stageで256件までとし、scopeを切り替えても完了まで数える。応答後にも表示状態・scope・要求の期限を確認し、不要になった結果は捨てる。採用CNがなければこの照会は行わない。
 - idle時の台帳回収はweak参照を持つaccount単位のtaskが担当する。送信・解決のpermitは完了/取消で返し、解決は要求の残り寿命内だけで行う。初回履歴取得や再接続で台帳を再生しない。
 - 描画は各Live表示面で最大6枠。待ちqueueなし、期限timerと描画通知は表示面に各1つ。連打をevent単位で加算して描画だけをまとめる。同じhashのURL・ファイル・blob取得は既存media ownerへ需要を渡す。GIFはcanonical URLを保持したまま表示用fragmentを分け、再登場の先頭再生と表示中の継続を両立する。新しいobject URLを発行しない。
 - 表示中の元投稿はobserverごとの`liveStagePosts`に置き、通常のadvisory・trust・media需要へ接続する。同じ投稿を複数Liveで使っても、一方の終了で他方の需要を消さない。隠す・背景・終了・scope切替で演出、timer、listener、追加の投稿需要を外し、遅れて返る解決結果は捨てる。共通cacheは既存の予算と回収規則を保つ。

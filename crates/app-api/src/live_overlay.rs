@@ -167,9 +167,7 @@ impl LiveOverlayPushes {
             anyhow::bail!("overlay queue full");
         }
         seen.expiries.insert((
-            view.sent_at
-                .min(now)
-                .saturating_add(LIVE_OVERLAY_PUSH_TTL_MS),
+            view.sent_at.saturating_add(LIVE_OVERLAY_PUSH_TTL_MS),
             view.event_id.clone(),
         ));
         seen.events.insert(view.event_id.clone(), view.clone());
@@ -329,7 +327,6 @@ impl AppService {
         }
         let remaining = view
             .sent_at
-            .min(view.received_at)
             .saturating_add(LIVE_OVERLAY_PUSH_TTL_MS)
             .saturating_sub(Utc::now().timestamp_millis())
             .max(0);
@@ -443,6 +440,20 @@ mod tests {
                 .is_none(),
             "legacy handler ignores the new kind"
         );
+    }
+
+    #[test]
+    fn tolerated_future_time_does_not_allow_replaying_a_pruned_id() {
+        let bus = LiveOverlayPushes::default();
+        let at = 1_000_000;
+        let event = signed(&generate_keys(), 1, at + 2_000);
+        assert!(bus.record("topic", THREAD, &event, at).unwrap().is_some());
+        assert!(
+            bus.record("topic", THREAD, &event, at + 10_500)
+                .unwrap()
+                .is_none()
+        );
+        assert!(bus.record("topic", THREAD, &event, at + 12_000).is_err());
     }
 
     #[test]

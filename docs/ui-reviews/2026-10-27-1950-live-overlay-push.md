@@ -12,5 +12,6 @@
 - GIFの確認: 元画像の緑フレーム再生中にPushすると、別のoverlayは赤い先頭フレームから始まり、元画像は緑のまま継続する。元のobject URLを共用し、overlayごとに安定したfragmentを付けて再生を分ける。reduced motionはAC-1と同じ静止canvasを使う。
 - 性能・回収: 24人相当が各10回/秒、7添付を60秒Pushするブラウザ試験で14,400回を処理し、描画は最大6枠、受付失敗なし、フレーム応答p95は100ms以内。準備済み画像の再取得は増えず、期限切れ後は0枠となる。hookの仮想時間testでも累積12,000回を1枠・1解決処理・1timerで扱い、unmountで回収する。
 - Validation: 対象Vitest、Playwrightの12条件と60秒の負荷試験、TypeScript、対象ESLint。署名・重複・scope・寿命・保持上限はRustのcontractで検証する。実アプリの3端末試験と音声・Linux/WebKitはPRの検証結果へ記録する。
+- 監査で見つかった未達の修正: reduced motionの縦長画像6枚が映像内に収まり、段どうしが重ならないことを実描画で確認した。送信者の信頼判定、後続Pushのindex/hash固定、許容未来時刻での再配送除去は、修正前に失敗するtestで再現してから修正した。
 - Review result: ブラウザの表示と操作を確認済み。独立監査とCIは固定headで判定する。
 - Exceptions: screen readerの実機確認は未実行。ブラウザfixtureは通信・保存の成功を示す証拠にはしない。

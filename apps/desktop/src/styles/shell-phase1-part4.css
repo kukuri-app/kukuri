@@ -738,7 +738,7 @@
 }
 
 .live-stage-pushes .live-overlay-image > img,
-.live-stage-pushes .live-stage-pushes .live-overlay-image > canvas {
+.live-stage-pushes .live-overlay-image > canvas {
   max-height: min(160px, 23cqh);
 }
 

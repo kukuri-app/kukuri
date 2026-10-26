@@ -131,8 +131,8 @@
   "push": {
     "target": "添付{{index}}をPush",
     "delivery": "接続中の視聴者へ再表示を依頼します。到達は保証されません",
-    "loading": "Liveを確認中です",
-    "noLive": "このスレッドに配信中のLiveがありません",
+    "loading": "ライブを確認中です",
+    "noLive": "このスレッドに配信中のライブがありません",
     "sending": "送信中",
     "accepted": "送信を受け付けました",
     "failed": "送信できませんでした",

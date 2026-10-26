@@ -9,6 +9,8 @@ import type { LiveOverlaySource } from './liveOverlay';
 export type OverlayPush = { key: string; event: LiveOverlayPushView; count: number; until: number; post: PostView | null; resolving: boolean };
 type Notice = 'merged' | 'replaced' | 'busy' | null;
 const EMPTY = { items: [] as OverlayPush[], notice: null as Notice, context: '' };
+// 未完了RPCはscopeの切替後も数え、全stageで承認済みの受信上限を共用する。
+let pendingSenderChecks = 0;
 
 /** runtimeで検証・重複除去した押下を、6つの表示枠に合流する。履歴や待ちqueueは持たない。 */
 export function useLiveOverlayPushes(api: DesktopApi | undefined, source: LiveOverlaySource, active: boolean, hidden?: (post: PostView) => boolean) {
@@ -69,15 +71,18 @@ export function useLiveOverlayPushes(api: DesktopApi | undefined, source: LiveOv
       for (const [key, slot] of slots) if (slot.post && hiddenRef.current?.(slot.post)) { slots.delete(key); changed = true; }
       if (changed) { expire(); publish(); }
     };
-    const unsubscribe = subscribeLiveOverlayPush((event) => {
-      expire();
-      if (!event) { showNotice('busy'); expire(); publish(); return; }
-      if (event.target.topic !== topic || event.target.channel_id !== channelId || event.received_at < openedAt || event.sent_at + 10000 <= Date.now()) return;
+    const eligible = (event: LiveOverlayPushView) => {
       const state = store.getState();
-      if (isHiddenAuthor(state.knownAuthorsByPubkey[event.sender_pubkey]) || state.authorTrustGates[event.sender_pubkey]?.hidden) return;
+      return current && event.target.topic === topic && event.target.channel_id === channelId && event.received_at >= openedAt && event.sent_at + 10000 > Date.now() &&
+        !isHiddenAuthor(state.knownAuthorsByPubkey[event.sender_pubkey]) && !state.authorTrustGates[event.sender_pubkey]?.hidden;
+    };
+    const receive = (event: LiveOverlayPushView) => {
+      if (!eligible(event)) return;
+      expire();
       const key = `${event.target.object_id}:${event.target.attachment_index}`;
       const previous = slots.get(key);
       if (previous) {
+        if (previous.event.target.attachment_hash !== event.target.attachment_hash) return;
         previous.count += 1; previous.until = Date.now() + 5000; previous.event = event;
         showNotice('merged');
       } else {
@@ -89,6 +94,18 @@ export function useLiveOverlayPushes(api: DesktopApi | undefined, source: LiveOv
         slots.set(key, slot); resolve(slot);
       }
       expire(); publish();
+    };
+    const unsubscribe = subscribeLiveOverlayPush((event) => {
+      if (!event) { showNotice('busy'); expire(); publish(); return; }
+      if (!eligible(event)) return;
+      if (!store.getState().communityNodeConfig.trust_node_priority?.length) { receive(event); return; }
+      if (pendingSenderChecks === 256) { showNotice('busy'); expire(); publish(); return; }
+      pendingSenderChecks++;
+      // 画面に投稿していない送信者も既存のaccount共通評価cacheで確認する。未評価・失敗は既存どおりfail-open。
+      void api.evaluateAuthorTrustGates({ author_pubkeys: [event.sender_pubkey] }).then(
+        ({ gates }) => { if (!gates.some((gate) => gate.author_pubkey === event.sender_pubkey && gate.hidden)) receive(event); },
+        () => receive(event),
+      ).finally(() => { pendingSenderChecks--; });
     });
     return () => {
       current = false; unsubscribe(); clearTimeout(timer); cancelAnimationFrame(frame);

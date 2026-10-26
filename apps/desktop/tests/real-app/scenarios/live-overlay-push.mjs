@@ -20,7 +20,13 @@ const route = (instance, hash) => instance.evaluate(`(location.hash=${JSON.strin
 async function halfThread(instance) {
   await click(instance, t('stage.split'), { within: ACTIVE });
   await click(instance, t('stage.publicThread'), { within: `${ACTIVE} [role="tablist"]` });
-  await eventually(`${instance.name} to offer Push`, () => instance.evaluate(`Boolean(document.querySelector(${JSON.stringify(button)}) && !document.querySelector(${JSON.stringify(button)}).disabled)`));
+  await eventually(`${instance.name} to offer Push`, () => instance.evaluate(`(() => {
+    const push=document.querySelector(${JSON.stringify(button)});
+    if(push && !push.disabled)return true;
+    const retry=document.querySelector('${ACTIVE} .live-column-side [data-testid^="media-fetch-failure-"] button');
+    if(retry && !retry.disabled)retry.click();
+    return false;
+  })()`, { gesture: true }), 60000);
 }
 
 async function observePushes(instance, objectId) {
@@ -130,6 +136,7 @@ export async function run({ launch, log, topic }) {
         throw new Error(`${error.message}; senders=${JSON.stringify(observed)}, remote=${await count(viewer)}`, { cause: error });
       }
       await eventually('all 1200 Pushes to display remotely', () => viewer.evaluate(`JSON.stringify([...document.querySelectorAll('${STAGE} .live-overlay-push-count')].map(node=>Number(node.textContent.slice(1))).sort())===${JSON.stringify(JSON.stringify(indices[0] === indices[1] ? [1200] : [600, 600]))}`), 5000);
+      assert.equal(await viewer.evaluate(`[...document.querySelectorAll('${STAGE} .live-stage-pushes img')].filter(image=>image.naturalWidth===48).length`), new Set(indices).size, 'every pushed attachment remains decoded under load');
       await eventually('all received Pushes to paint', () => viewer.evaluate('window.__pushMetrics.pending.length===0'), 5000);
       const receive = await viewer.evaluate('({paint:window.__pushMetrics.paint,wire:window.__pushMetrics.wire,busy:window.__pushMetrics.busy})');
       const sends = await Promise.all([host, sender].map((instance) => instance.evaluate('({unavailable:window.__pushSender.unavailable,paint:window.__pushSender.paint})')));
