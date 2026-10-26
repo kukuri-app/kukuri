@@ -212,7 +212,7 @@ export function useDesktopShellData({
   const timelinesByKey = state.timelinesByKey;
   const pendingTimelineSnapshotsByKey = state.pendingTimelineSnapshotsByKey;
   const authorTimelinesByPubkey = state.authorTimelinesByPubkey;
-  const liveStageStartPosts = state.liveStageStartPosts;
+  const liveStagePosts = state.liveStagePosts;
   const publicThreadsById = state.publicThreadsById;
   const advisoryLookupPosts = useMemo(() => {
     const columnPosts = visibleColumns.flatMap((column) => {
@@ -244,7 +244,7 @@ export function useDesktopShellData({
       ...thread,
       ...bookmarkedPosts.map((item) => item.post),
       ...columnPosts,
-      ...Object.values(liveStageStartPosts),
+      ...Object.values(liveStagePosts),
       // #1900: 公開スレッドの一覧の行のサムネイルに出す最初の投稿(覚えたスレッドの分)。
       ...Object.values(publicThreadsById).flatMap((item) => (item.first_post ? [item.first_post] : [])),
     ];
@@ -253,7 +253,7 @@ export function useDesktopShellData({
     activeTimeline,
     authorTimelinesByPubkey,
     bookmarkedPosts,
-    liveStageStartPosts,
+    liveStagePosts,
     pendingTimelineSnapshotsByKey,
     profileTimeline,
     publicThreadsById,

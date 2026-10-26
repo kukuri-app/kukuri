@@ -16,6 +16,7 @@ const SCENARIOS = {
   'spatial-audio': () => import('./scenarios/spatial-audio.mjs'),
   live: () => import('./scenarios/live.mjs'),
   'live-images': () => import('./scenarios/live-images.mjs'),
+  'live-overlay-push': () => import('./scenarios/live-overlay-push.mjs'),
   'live-relay': () => import('./scenarios/live-relay.mjs'),
   'dome-avatar': () => import('./scenarios/dome-avatar.mjs'),
 };

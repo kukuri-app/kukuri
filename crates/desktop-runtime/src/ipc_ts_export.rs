@@ -386,6 +386,9 @@ fn export_ipc_types() {
         SubmitCommunityNodeReportStatus,
         SubmitCommunityNodeReportResult,
         RuntimeEvent,
+        LiveOverlayPushView,
+        PushLiveOverlayRequest,
+        ResolveLiveOverlayPushRequest,
         // 入力方向の request DTO(requests.rs。WP-B6)
         CreatePostRequest,
         WithdrawalReasonVisibilityRequest,

@@ -6,7 +6,7 @@ import type { JoinedPrivateChannelView, PostView, ReactionKeyInput } from '@/lib
 import { isPublicChannelId } from '@/lib/publicChannels';
 import { topicDisplayName } from '@/lib/topicId';
 import { useColumnRuntime } from '@/shell/ColumnRuntimeContext';
-import { knownPublicThreadTitle } from '@/shell/slices/publicThreads';
+import { isHiddenAuthor, knownPublicThreadTitle } from '@/shell/slices/publicThreads';
 import type { ColumnScope, ColumnState } from '@/shell/slices/workspace';
 import { useDesktopShellStore } from '@/shell/store';
 import type { useDesktopShellViewModels } from '@/shell/useDesktopShellViewModels';
@@ -38,11 +38,12 @@ export function ColumnLiveStage({
   const { visible } = useColumnRuntime();
   const { topicId, channelId } = column.scope;
   const live = column.live ?? column.scope;
-  const { recentReactions, owned, bookmarked, threadTitle } = useDesktopShellStore(
+  const { recentReactions, owned, bookmarked, threadTitle, authors } = useDesktopShellStore(
     useShallow((state) => ({
       recentReactions: state.recentReactions,
       owned: state.ownedReactionAssets,
       bookmarked: state.bookmarkedReactionAssets,
+      authors: state.knownAuthorsByPubkey,
       threadTitle: isPublicChannelId(channelId)
         ? knownPublicThreadTitle(state.publicThreadsById, state.knownAuthorsByPubkey, channelId)
         : undefined,
@@ -68,7 +69,7 @@ export function ColumnLiveStage({
       mediaForPost={(post) => buildPostCardView(post, 'timeline', joinedChannels).media}
       hidden={(post) => {
         const view = buildPostCardView(post, 'timeline', joinedChannels);
-        return Boolean(view.adultContentGated || view.trustGate);
+        return Boolean(isHiddenAuthor(authors[post.author_pubkey]) || post.withdrawal || view.adultContentGated || view.trustGate);
       }}
       recentReactions={recentReactions}
       reactionAssets={reactionAssets}

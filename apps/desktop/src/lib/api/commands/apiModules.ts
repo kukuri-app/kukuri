@@ -3,5 +3,6 @@ export { developerLogsApi } from './developerLogsApi';
 export { displayDemandApi } from './displayDemandApi';
 export { domeTransitionApi } from './domeTransitionApi';
 export { liveMediaApi } from './liveMediaApi';
+export { liveOverlayApi } from './liveOverlayApi';
 export { postReloadApi } from './postReloadApi';
 export { socialBlockApi } from './socialBlockApi';

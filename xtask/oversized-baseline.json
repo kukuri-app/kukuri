@@ -13,7 +13,7 @@
       "path": "crates/harness/src/scenarios/community_node.rs"
     },
     {
-      "lines": 1197,
+      "lines": 1198,
       "path": "apps/desktop/src/lib/api/commands/runtimeApi.ts"
     },
     {
@@ -21,15 +21,15 @@
       "path": "crates/metaverse-host/src/lib.rs"
     },
     {
+      "lines": 1155,
+      "path": "apps/desktop/src/lib/api/types.generated.ts"
+    },
+    {
       "lines": 1152,
       "path": "crates/cn-operator/src/docs.rs"
     },
     {
-      "lines": 1149,
-      "path": "apps/desktop/src/lib/api/types.generated.ts"
-    },
-    {
-      "lines": 1145,
+      "lines": 1142,
       "path": "apps/desktop/src/shell/useDesktopShellData.ts"
     },
     {

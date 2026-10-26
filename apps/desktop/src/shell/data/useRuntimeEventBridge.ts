@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
-import type { ReactionReceivedView, RuntimeEvent } from '@/lib/api';
+import type { LiveOverlayPushView, ReactionReceivedView, RuntimeEvent } from '@/lib/api';
 import { isTauriRuntime } from '@/lib/releaseReadiness';
 import { IS_WEB_RUNTIME, listenWebRuntimeEvents } from '@/lib/webRuntime';
 
@@ -10,6 +10,16 @@ export type SyncStatusDelta = Extract<RuntimeEvent, { type: 'sync_status_changed
 
 // #1841: 手元へ反映したリアクションの新しい版。Live の重ねる表示だけが購読し、保存しない。
 const reactionListeners = new Set<(reaction: ReactionReceivedView) => void>();
+const overlayPushListeners = new Set<(push: LiveOverlayPushView | null) => void>();
+
+export function subscribeLiveOverlayPush(listener: (push: LiveOverlayPushView | null) => void) {
+  overlayPushListeners.add(listener);
+  return () => void overlayPushListeners.delete(listener);
+}
+
+export function announceLiveOverlayPush(push: LiveOverlayPushView | null) {
+  overlayPushListeners.forEach((listener) => listener(push));
+}
 
 export function subscribeReactionReceived(listener: (reaction: ReactionReceivedView) => void) {
   reactionListeners.add(listener);
@@ -65,6 +75,9 @@ export function useRuntimeEventBridge(
           break;
         case 'reaction_received':
           announceReactionReceived(payload.reaction);
+          break;
+        case 'live_overlay_push_received':
+          announceLiveOverlayPush(payload.push ?? null);
           break;
       }
     };

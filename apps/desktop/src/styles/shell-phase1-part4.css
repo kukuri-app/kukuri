@@ -638,7 +638,7 @@
 }
 
 .live-stage-layers {
-  container-type: inline-size;
+  container-type: size;
   --live-overlay-text: 0.875rem;
   --live-overlay-reaction: 1.5rem;
   position: absolute;
@@ -711,6 +711,66 @@
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+}
+
+.live-stage-pushes {
+  position: absolute;
+  inset-block-start: var(--space-sm);
+  inset-inline-end: var(--space-sm);
+  width: min(35%, 384px);
+  height: 75%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: var(--space-xs);
+}
+
+.live-stage-layers[data-position='right'] .live-stage-pushes {
+  inset-inline-start: var(--space-sm);
+  inset-inline-end: auto;
+}
+
+.live-stage-pushes .live-overlay-image {
+  height: auto;
+  max-width: 100%;
+  align-self: center;
+  justify-self: end;
+}
+
+.live-stage-pushes .live-overlay-image > img,
+.live-stage-pushes .live-stage-pushes .live-overlay-image > canvas {
+  max-height: min(160px, 23cqh);
+}
+
+.live-overlay-push-count {
+  position: absolute;
+  inset-inline-end: 0;
+  inset-block-end: 0;
+  padding: 0.125rem 0.25rem;
+  border-radius: var(--radius-input);
+  background: rgb(0 0 0 / 78%);
+  color: white;
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.media-push-control {
+  position: absolute;
+  inset-inline-end: var(--space-xs);
+  inset-block-end: var(--space-xs);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: 100%;
+  font-size: 0.75rem;
+}
+
+.media-push-control [role='status'], .live-push-notice {
+  background: var(--surface-overlay);
+  color: var(--foreground-strong);
+  border-radius: var(--radius-input);
+  padding: var(--space-2xs);
 }
 
 .live-stage-post-fresh {

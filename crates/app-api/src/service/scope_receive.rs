@@ -180,7 +180,49 @@ impl AppService {
             .hint_transport
             .subscribe_hints(&hint_topic)
             .await?;
+        // 同じgossip購読のstreamを共用し、本文のremote読取りがPushの受信を待たせないようにする。
+        // leaseを落とすと子taskも止まる。投稿/Pushごとのtask・購読は作らない。
+        let overlay_task = if channel_id
+            .as_ref()
+            .is_some_and(ChannelId::is_public_channel)
+        {
+            let mut stream = self
+                .services
+                .hint_transport
+                .subscribe_hints(&hint_topic)
+                .await?;
+            let overlay_reader = self.scope_reader();
+            let topic = topic.clone();
+            let channel = storage_channel_id.clone();
+            Some(AbortOnDropTask::new(n0_future::task::spawn(async move {
+                while let Some(event) = stream.next().await {
+                    let bus = &overlay_reader.services.live_overlay_pushes;
+                    if event.dropped_before > 0 {
+                        bus.overflow();
+                    }
+                    if let GossipHint::MetaverseRoomEvent {
+                        topic_id,
+                        room_id,
+                        event: envelope,
+                    } = event.hint
+                        && envelope.kind == crate::live_overlay::PUSH_KIND
+                        && topic_id.as_str() == topic
+                        && room_id == channel
+                        && !overlay_reader
+                            .overlay_author_hidden(envelope.pubkey.as_str())
+                            .await
+                            .unwrap_or(true)
+                    {
+                        let _ =
+                            bus.receive(&topic, &channel, &envelope, Utc::now().timestamp_millis());
+                    }
+                }
+            })))
+        } else {
+            None
+        };
         let handle = n0_future::task::spawn(async move {
+            let _overlay_task = overlay_task;
             reread_and_mark(&reader, &topic, &scope, &last_sync).await;
             // 窓あたりの content hint の受付(#1567 AC-1)。`dropped` は、この窓で読まずに捨てた hint の数(transport の
             // 購読 stream が取りこぼした分を含む)。1 件以上なら、何を落としたか分からないので窓の終わりに 1 回読み直す。
@@ -198,6 +240,9 @@ impl AppService {
                     Some(event) = hint_stream.next() => {
                         dropped = dropped.saturating_add(event.dropped_before);
                         if !hint_targets_topic(&event.hint, topic.as_str()) {
+                            continue;
+                        }
+                        if matches!(&event.hint, GossipHint::MetaverseRoomEvent { event, .. } if event.kind == crate::live_overlay::PUSH_KIND) {
                             continue;
                         }
                         // 短命種以外は窓あたり HINT_WINDOW_BUDGET 件まで。超えた分は peer の学習も docs の読みもせずに捨てる。

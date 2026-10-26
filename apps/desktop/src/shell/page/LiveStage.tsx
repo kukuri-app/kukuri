@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from 'react';
+import { useContext, useEffect, useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, Reply, SlidersHorizontal } from 'lucide-react';
 
@@ -28,6 +28,7 @@ import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store'
 
 import { LiveBroadcastStartButtons } from './LiveCard';
 import { LiveOverlayImage } from './LiveOverlayImage';
+import { useLiveOverlayPushes, type OverlayPush } from './liveOverlayPush';
 import { LiveActionsContext } from './liveActions';
 import { type LiveOverlayFloat, type LiveOverlayPost, type LiveOverlaySource, useLiveOverlay } from './liveOverlay';
 import {
@@ -88,14 +89,8 @@ export function LiveStage({
     hidden,
     animate: visible && !prefersReducedMotion(),
   });
-  // 開いている間、開始 post を数の表示の custom reaction の画像の取得の対象にする(#1841 AC-3)。
-  const setStartPosts = useDesktopShellFieldSetter('liveStageStartPosts');
-  useEffect(() => {
-    if (!startPost) return;
-    const id = startPost.object_id;
-    setStartPosts(setRecordEntry(id, startPost));
-    return () => setStartPosts(removeRecordEntry(id));
-  }, [setStartPosts, startPost]);
+  const overlayActive = visible && foreground && session?.status === 'Live';
+  const pushed = useLiveOverlayPushes(actions?.api, source, overlayActive && settings.posts, hidden);
   let body;
   if (session === undefined) body = <Notice>{t('live:loading')}</Notice>;
   else if (session === null) body = <Notice>{t('live:unavailable')}</Notice>;
@@ -111,6 +106,7 @@ export function LiveStage({
         mediaObjectUrls={mediaObjectUrls}
         mediaForPost={mediaForPost}
         imagesEnabled={visible && foreground && session.status === 'Live'}
+        pushes={pushed.items.filter(({ post }) => !post || !hidden?.(post))}
       />
     );
     body = (
@@ -186,7 +182,9 @@ export function LiveStage({
       data-live-session-id={session?.session_id}
       aria-label={t('live:stage.label', { title: session?.title ?? '' })}
     >
+      {startPost && overlayActive ? <OverlayPostDemand post={startPost} /> : null}
       {body}
+      {pushed.notice ? <span className='live-push-notice' role='status'>{t(`live:push.${pushed.notice}`)}</span> : null}
     </section>
   );
 }
@@ -199,10 +197,11 @@ type OverlayLayersProps = {
   mediaObjectUrls: Record<string, string | null>;
   mediaForPost: (post: PostView) => PostMediaView;
   imagesEnabled: boolean;
+  pushes: OverlayPush[];
 };
 
 /// 映像に重ねる層。読み上げない(同じ内容と操作には、スレッドの列から届く)。
-function OverlayLayers({ posts, counts, floats, settings, mediaObjectUrls, mediaForPost, imagesEnabled }: OverlayLayersProps) {
+function OverlayLayers({ posts, counts, floats, settings, mediaObjectUrls, mediaForPost, imagesEnabled, pushes }: OverlayLayersProps) {
   const { t } = useTranslation('live');
   const top = <T extends { count: number }>(items: T[], limit: number) =>
     [...items].sort((left, right) => right.count - left.count).slice(0, limit);
@@ -248,6 +247,11 @@ function OverlayLayers({ posts, counts, floats, settings, mediaObjectUrls, media
           ))}
         </ol>
       ) : null}
+      {settings.posts && imagesEnabled ? <div className='live-stage-pushes'>
+        {pushes.map((slot) => slot.post ? <OverlayPushImage key={slot.key} slot={slot} mediaForPost={mediaForPost} /> : (
+          <span key={slot.key} className='live-stage-post-copy'>{t('loading')}</span>
+        ))}
+      </div> : null}
       {settings.reactions ? (
         <div className='live-stage-reactions'>
           {floats.map((float) => (
@@ -267,6 +271,26 @@ function OverlayLayers({ posts, counts, floats, settings, mediaObjectUrls, media
       ) : null}
     </div>
   );
+}
+
+function OverlayPostDemand({ post }: { post: PostView }) {
+  const observer = useId();
+  const setPosts = useDesktopShellFieldSetter('liveStagePosts');
+  useEffect(() => {
+    setPosts(setRecordEntry(observer, post));
+    return () => setPosts(removeRecordEntry(observer));
+  }, [observer, post, setPosts]);
+  return null;
+}
+
+function OverlayPushImage({ slot, mediaForPost }: { slot: OverlayPush; mediaForPost: (post: PostView) => PostMediaView }) {
+  const post = slot.post!;
+  const media = mediaForPost(post);
+  const selected = media.imageGalleryItems?.find((image) => image.hash === slot.event.target.attachment_hash);
+  return <>
+    <OverlayPostDemand post={post} />
+    <LiveOverlayImage media={{ ...media, imageGalleryItems: selected ? [selected] : [] }} count={slot.count} />
+  </>;
 }
 
 function Glyph({ reaction, mediaObjectUrls }: { reaction: ReactionKeyView; mediaObjectUrls: Record<string, string | null> }) {

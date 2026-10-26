@@ -71,6 +71,7 @@ mod game;
 mod game_projection_freshness;
 mod live;
 mod live_object;
+mod live_overlay;
 mod media;
 mod media_adult_gating;
 mod media_bookmarks;

@@ -116,6 +116,37 @@ post・リアクションの正本、Live の寿命・権限・視聴の共有�
 
 投稿レイヤーoff・画面外・背景・終了で画像DOMと表示需要を外す。他の表示面が同じhashを使用していれば、共通ownerがその需要を保持する。画像の準備や失敗はLive映像・音声を待たせない。Pushの一時network eventはAC-2で追加する。
 
+### 追補: 公開スレッドの添付Push（#1950 AC-2、2026-10-27）
+
+2026-10-27のユーザー承認と[#1950](https://github.com/kukuri-app/kukuri/issues/1950)のScope revision `2026-10-27-r2`に従う。通常の画像表示は先頭1枚だけとし、Pushは添付ごとに選ぶ。表示中の同じ投稿・添付への押下は送信者を問わず加算し、右下へ `x${回数}` と表示する。表示が消えた後はx1から始める。
+
+- Feature 名: 公開スレッドの添付Push
+- Durable / Transient: Transient。要求は10秒、演出は最後の有効な押下から5秒
+- Canonical Source: 署名付きの短命要求。元投稿と添付は既存docs/blobsの正本を参照する
+- Replicated?: 既存gossipによる一時配送。永続複製・outbox・ACK・再接続時の再送は追加しない
+- Rebuildable From: 復元しない。初回表示や履歴取得で過去のPushを再構成しない
+- Public Replica / Private Replica / Local Only: 公開スレッドの既存hint scopeで配送。重複台帳と演出はLocal Only
+- Gossip Hint 必要有無: 既存の署名付きevent carrierを共用。下記のwire互換を保つ
+- Blob / SQLite projection: 新規の正本なし。Pushが元投稿・添付・日時・reaction数を変更せず、画像bytesを送らない
+- 必須contract: 3端末の独立押下、同一eventだけの重複除去、投稿/添付/scope結合、非表示と終了、4096件・期限回収、24署名主体×10回/秒×60秒の保持窓
+- 必須scenario: `live-overlay-push`の実アプリ3端末、対象添付のbrowser実操作、GIFの先頭再生と元表示の維持、12のviewport/theme/locale条件
+
+#### wireと互換
+
+新しいgossip enum variantは増やさず、既存の`MetaverseRoomEvent { topic_id, room_id, event }`を署名付き短命eventのcarrierとして使う。`room_id`はこのkindでは公開スレッドIDを表す。`event.kind = "live-overlay-push-v1"`で振り分け、旧版のMetaverse handlerは未知のkindを`Ok(None)`で無視する。未知のvariantによるtransportエラーや、投稿の同期hintとしての再解釈を起こさない。
+
+署名対象contentは`version=1`、押下ごとに生成する32桁hexのnonce、`target`（topic、公開スレッドID、元投稿ID、元の添付配列のindexとhash）、元投稿の作成時刻の手がかり、`sent_at`（ms）。event IDはenvelope IDとし、署名者を送信者とする。topic/公開スレッドとcarrierの一致、署名、version/nonce、10秒の寿命と未来2秒以内を検証する。古い投稿もキー指定で解決し、署名検証済みprojectionのscope・添付index/hash・image MIME・role、撤回・mute/block・成人向けgateを照合する。信頼値とadvisoryは通常mediaの共通表示判断を使う。要求をblob取得の任意hash指定経路にしない。
+
+#### 所有・上限・回収
+
+- dedupeはaccount runtimeの全体4096件。期限順の索引で回収し、生きたIDを容量都合で追い出さない。満杯は受付不能として通知する。送信側は公開前にIDを予約し、ローカル反映とネットワークから戻る同一要求を二重実行しない。
+- 送信中と表示用post解決は各256件まで。受信通知のchannelも256件で、既存runtime/host channelの取りこぼしも明示的な混雑通知へ変換する。bodyの取得待ちでPushが止まらないよう、既存の公開スレッドgossip購読から独立したstreamを読む。子taskは既存leaseと一緒に止め、押下や画像ごとのnetwork購読を作らない。
+- idle時の台帳回収はweak参照を持つaccount単位のtaskが担当する。送信・解決のpermitは完了/取消で返し、解決は要求の残り寿命内だけで行う。初回履歴取得や再接続で台帳を再生しない。
+- 描画は各Live表示面で最大6枠。待ちqueueなし、期限timerと描画通知は表示面に各1つ。連打をevent単位で加算して描画だけをまとめる。同じhashのURL・ファイル・blob取得は既存media ownerへ需要を渡す。GIFはcanonical URLを保持したまま表示用fragmentを分け、再登場の先頭再生と表示中の継続を両立する。新しいobject URLを発行しない。
+- 表示中の元投稿はobserverごとの`liveStagePosts`に置き、通常のadvisory・trust・media需要へ接続する。同じ投稿を複数Liveで使っても、一方の終了で他方の需要を消さない。隠す・背景・終了・scope切替で演出、timer、listener、追加の投稿需要を外し、遅れて返る解決結果は捨てる。共通cacheは既存の予算と回収規則を保つ。
+
+GUI/Web/CLIが共用するruntime eventへ`live_overlay_push_received`を追加する。既存eventの形は変更しない。保存データ、backup、投稿・Liveのwire、SDK接続の優先順位と映像・音声のbytes/署名/寿命は変えない。
+
 ## Consequences
 - 映像・音声の搬送は [ADR 0067](0067-media-transport-moq.md) に従う。manifest の descriptor は上の追補による（分類は ADR 0067 の Feature Data Classification）。
 - #1262: state/envelopeの到着による個別反映、表示中だけのmanifest取得、未取得候補と検証済みsessionの区別はADR 0052「Session の個別反映と表示要求」に従う。timerによる反映retryはしない。

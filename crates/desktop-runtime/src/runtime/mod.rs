@@ -137,6 +137,9 @@ pub enum RuntimeEvent {
     ReactionReceived {
         reaction: Box<ReactionReceivedView>,
     },
+    LiveOverlayPushReceived {
+        push: Option<Box<kukuri_app_api::LiveOverlayPushView>>,
+    },
 }
 
 /// #1841: 画面へ送るリアクションの新着の上限(1 秒あたり)。画面が浮かべる同時の数と待ちの数の和で、表示できる分は減らさない。
@@ -771,7 +774,7 @@ impl DesktopRuntime {
         let (event_sender, _) = tokio::sync::broadcast::channel(64);
         let notification_event_task = {
             let reactions_app = Arc::downgrade(&app_service);
-            n0_future::task::spawn(forward_runtime_events(
+            let notifications = forward_runtime_events(
                 app_service.notification_inserted_notify(),
                 store.subscribe_adult_label_evictions(),
                 app_service.subscribe_author_relationship_changes(),
@@ -787,7 +790,23 @@ impl DesktopRuntime {
                     }
                 },
                 event_sender.clone(),
-            ))
+            );
+            let mut pushes = app_service.subscribe_live_overlay_pushes();
+            let push_sender = event_sender.clone();
+            n0_future::task::spawn(async move {
+                // reactionの表示データの読みを待つ間も、短命のPushを画面へ渡す。
+                let forward_pushes = async move {
+                    loop {
+                        let push = match pushes.recv().await {
+                            Ok(push) => push.map(Box::new),
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => None,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        };
+                        let _ = push_sender.send(RuntimeEvent::LiveOverlayPushReceived { push });
+                    }
+                };
+                tokio::select! { _ = notifications => {}, _ = forward_pushes => {} }
+            })
         };
 
         Ok(Self {
