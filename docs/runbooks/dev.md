@@ -108,7 +108,7 @@ Cargoの共有source cacheを変更せず、`target/upstream-contracts`内の一
 
 PR作成後は `gh pr checks <番号>` で実際に発生したcheckの成功を確認してからmergeする。文書のみ等でパス条件に該当せずcheckが0件の場合は、その事実を確認して完了できる。CIを発火させるためだけの変更や手動の全suite実行は不要。
 
-Fast の CN と Linux Web E2E は `.github/actions/cn-test-images` で PostgreSQL / Valkey を `mirror.gcr.io` から取得し、既存の image 名へ tag してから同じ Compose とテストを実行する（#1742）。CI 以外の参照名・版・取得先は変えない。
+Fast の CN と Linux Web E2E は `.github/actions/cn-test-images` で PostgreSQL / Valkey を `mirror.gcr.io` から取得し、既存の image 名へ tag してから同じ Compose とテストを実行する（#1742）。ミラーの取得に失敗した場合は、同じタグを Docker Hub から取得する。両方で失敗した場合はジョブを失敗にする（#1952）。CI 以外の参照名・版・取得先は変えない。
 
 ## リファクタリング監査の発火要否（#873）
 
