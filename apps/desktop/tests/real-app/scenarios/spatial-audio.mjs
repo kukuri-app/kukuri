@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 
 import { eventually } from '../../web-e2e/wait.mjs';
 import { hearOwnOutput, isolated, PERIOD_MS, plug, record, speak, unplug } from '../audio.mjs';
+import { echoDiagnostics } from '../echo-diagnostics.mjs';
 import { accept, connect, openTopic, waitForPeers } from '../session.mjs';
 import { audioState, choose, click, createDome, entered, observeAudio, press, pressed, text } from '../ui.mjs';
 
@@ -100,22 +101,32 @@ export async function run({ launch, restart, log, topic }) {
     const echo = record(speaker);
     await micOn(listener);
     const restore = hearOwnOutput(listener);
+    const diagnostics = echoDiagnostics({ listener, speaker, heard, echo, voice: VOICE, reply: REPLY });
     let voice = () => undefined;
+    let measurement;
     try {
       await sleep(4_000);
       voice = speak('listener', REPLY, 'listener_out');
       await sleep(6_000);
-      const own = echo.level(2 * WINDOW_MS, VOICE);
-      const reply = echo.level(2 * WINDOW_MS, REPLY);
+      const window = echo.snapshot(2 * WINDOW_MS);
+      const own = echo.level(2 * WINDOW_MS, VOICE, window);
+      const reply = echo.level(2 * WINDOW_MS, REPLY, window);
+      measurement = { near, own, reply, window, listener: heard.snapshot(2 * WINDOW_MS, window.at) };
       log(`SA-4: the speaker hears the listener as ${reply.toFixed(4)} and its own voice as ${own.toFixed(4)}`);
       // L の声が消されていないこと(エコーの経路の遅れが揺れると、エコーキャンセルは L の声も数秒 1/4 ほどまで弱めるので、
       // 基準は S の声の 10%。2026-10-15 のユーザー判断、#1822)。
       assert.ok(reply > 0.1 * near, 'the speaker hears the listener');
       assert.ok(own < 0.05 * reply, 'the own voice of the speaker does not come back');
+    } catch (error) {
+      if (measurement) {
+        await diagnostics.save(measurement).catch((reason) => log(`SA-4: could not save diagnostics: ${reason}`));
+      }
+      throw error;
     } finally {
       voice();
       restore();
       echo.stop();
+      await diagnostics.stop();
     }
     await micOff(listener);
 

@@ -219,6 +219,7 @@ jobs:
           REAL_APP_AUDIO: pulse
         run: |
           set -euo pipefail
+          node --test apps/desktop/tests/real-app/*.test.mjs
           # #1822: 音声の server は desktop(rtkit の下の PipeWire・PulseAudio)と同じく real-time の優先度で動かす。無いと
           # CPU が埋まったときに server が遅れ、app の出力が作り直されてエコーキャンセルが数秒合わなくなる。
           sudo prlimit --pid $$ --rtprio=95 --nice=40

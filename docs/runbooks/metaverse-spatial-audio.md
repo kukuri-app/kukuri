@@ -19,6 +19,12 @@ Windows の CI では動かさない（GPU の無い runner では、3 つの Do
 | SA-7 | 話者が Dome を出ると 5 秒以内に無音。再起動の後の mic は off | 聞き手の出力・button |
 | SA-8 | log の経路は `direct_p2p`。音声まわりの log に他の端末の識別子が出ない | 各 instance の log |
 
+## 失敗時の診断
+
+SA-4が失敗したときは、既存の失敗artifact `kukuri-real-app-linux` の `spatial-audio/speaker/sa4/` に診断を残す（#1944）。`measurement.json` に丸め前の値、判定窓の時刻・blockの受信時刻、1秒ごと最大12回の帯域の大きさとPulseAudioの入出力遅延を置く。`listener.s16le`・`speaker.s16le` は同じ窓の出力PCM（48 kHz・mono・s16le、各4秒と境界の20 msまで）。受信が一度に届いて保存上限で切れた場合は、`observed_blocks` と保存した `blocks` の件数が異なる。音声出力の再作成は各instanceの `app.log` の時刻と照合する。
+
+成功時は音声を保存しない。診断には既存の録音bufferを使い、録音process・仮想デバイスを増やさない。遅延の取得は1要求500 ms・64 KiBまでとし、取得に失敗した場合はJSONの `error` に残す。診断の保存に失敗しても元のassertion失敗は維持し、保存できなかった理由を試験のlogへ出す。局所testは `node --test apps/desktop/tests/real-app/*.test.mjs`。
+
 ## 試験の音
 
 - 話す音は、帯域の周波数を音ごとに無作為な位相で同時に鳴らす断続音（400 ms ごとに 150 ms）。途切れない音は雑音除去が弱め、1 つの周波数の音はエコーキャンセルが学びきれないか、遅れた自分の声から予測して消してしまうため（どれも実際の声では起きにくい）。

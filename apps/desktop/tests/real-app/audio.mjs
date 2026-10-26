@@ -235,8 +235,12 @@ export function record(instance, device = `${instance.name}_out.monitor`) {
     }
   });
   return {
-    level(ms, band = null) {
-      const inside = values.filter((each) => each.at >= Date.now() - ms).map(({ value }) => value);
+    // SA-4の判定と保存に同じ窓を使う。sampleはコピーせず、後の受信から切り離した一覧を返す。
+    snapshot(ms, at = Date.now()) {
+      return { at, ms, rate: RATE, frames: values.filter((each) => each.at >= at - ms && each.at <= at) };
+    },
+    level(ms, band = null, snapshot = null) {
+      const inside = (snapshot?.frames ?? values.filter((each) => each.at >= Date.now() - ms)).map(({ value }) => value);
       if (!inside.length) return 0;
       const levels = isolated
         ? inside.map((samples) =>
