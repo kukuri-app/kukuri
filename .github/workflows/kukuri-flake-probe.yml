@@ -20,7 +20,6 @@ on:
           - playwright
           - web-safari
           - apt
-          - real-app-sa4
       repeats:
         description: 'Iterations per shard (2 shards run in parallel)'
         required: false
@@ -41,71 +40,6 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
-  real-app-sa4:
-    if: inputs.lane == 'real-app-sa4'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '^22.23.4'
-      - uses: ./.github/actions/apt-install
-        with:
-          upgrade: 'true'
-          extra-packages: xvfb openbox xdotool pulseaudio pulseaudio-utils libasound2-plugins
-      - name: Use the observed release binary
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh run download 40270708434 --repo kukuri-app/kukuri --name kukuri-linux-x86_64-test --dir "$RUNNER_TEMP/package"
-          dpkg-deb -x "$RUNNER_TEMP/package/kukuri_0.4.9_amd64.deb" "$RUNNER_TEMP/app"
-          app="$RUNNER_TEMP/app/usr/bin/kukuri-desktop-tauri"
-          printf '%s  %s\n' 969c63aa04187d452fd3053da8d7cefa0c834bb8b8b3d65aa2e4b1524a418be4 "$app" | sha256sum --check
-          echo "KUKURI_PROBE_APP=$app" >> "$GITHUB_ENV"
-          # 調査用の一時変更。smokeから元のSA-4までを各回で起動し直す。
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('apps/desktop/tests/real-app/scenarios/spatial-audio.mjs')
-          source = path.read_text()
-          assert '    await micOff(listener);' in source
-          path.write_text(source.replace('    await micOff(listener);', '    await micOff(listener);\n    return;', 1))
-          PY
-          mkdir -p "$RUNNER_TEMP/sa4-probe"
-          cat > "$RUNNER_TEMP/sa4-once.sh" <<'SH'
-          set -euo pipefail
-          root=$(mktemp -d "$RUNNER_TEMP/sa4-probe/attempt-XXXXXX")
-          echo "probe root: $root"
-          node apps/desktop/tests/real-app/run.mjs --app "$KUKURI_PROBE_APP" --root "$root" --scenario smoke --scenario spatial-audio | tee "$root/stdout.log"
-          SH
-      - name: Observe the original SA-4 conditions
-        env:
-          REAL_APP_AUDIO: pulse
-          KUKURI_PROBE_REPEATS: ${{ inputs.repeats }}
-          KUKURI_PROBE_LABEL: Linux SA-4 (observed release)
-        run: |
-          set -euo pipefail
-          [[ "$KUKURI_PROBE_REPEATS" =~ ^([1-9]|1[0-2])$ ]]
-          sudo prlimit --pid $$ --rtprio=95 --nice=40
-          xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- bash -c '
-            set -euo pipefail
-            openbox &
-            pulseaudio --start --exit-idle-time=-1
-            ps -L -o cls= -p "$(pgrep -d, -x pulseaudio)" | grep RR > /dev/null
-            bash scripts/ci/flake_probe.sh bash "$RUNNER_TEMP/sa4-once.sh"'
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: kukuri-sa4-probe
-          path: |
-            ${{ runner.temp }}/sa4-probe/**/stdout.log
-            ${{ runner.temp }}/sa4-probe/**/app.log
-            ${{ runner.temp }}/sa4-probe/**/sa4/**
-
   apt:
     if: inputs.lane == 'apt'
     runs-on: ubuntu-24.04
