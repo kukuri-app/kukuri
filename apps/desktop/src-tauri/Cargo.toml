@@ -70,9 +70,9 @@ iroh-gossip = { git = "https://github.com/KingYoSun/iroh-gossip", rev = "23cd6cc
 n0-mainline = { git = "https://github.com/KingYoSun/n0-mainline", rev = "7571f18f69ef03d9ec97ca8d1171e17c8ce4f0c6" }
 iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-address-lookups", rev = "e2740b75997e9e3d0776f6b80846cafc2681fe29" }
 # Match the root workspace's moq fork (#1805 echo cancellation, #1879 moq-tokio and clocks for wasm).
-moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "8c3914dcb1b0b0c44278c1a81cbf43f6dc8b4ab9" }
-moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "8c3914dcb1b0b0c44278c1a81cbf43f6dc8b4ab9" }
-moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "8c3914dcb1b0b0c44278c1a81cbf43f6dc8b4ab9" }
+moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "54dde69f0abd6c00c1faca0dcf77d603b61282ba" }
+moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "54dde69f0abd6c00c1faca0dcf77d603b61282ba" }
+moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "54dde69f0abd6c00c1faca0dcf77d603b61282ba" }
 
 # root と同じく、開発用の build でも str0m の再帰が tokio の worker（2 MiB）を溢れないようにする（#1658）。
 [profile.dev.package.str0m]
