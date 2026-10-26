@@ -133,6 +133,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - `moq-audio` は fork `KingYoSun/moq` の `77553ada566a9b6c3e6bdcf4143f7f9468793086` に固定する（#1805。上流へは PR を出さない）。0.1.11 は echo cancellation の参照の channel を一度も読まないため、再生の mix が canceller へ届かない。fork は 0.1.11 の commit に、channel を作った直後に 1 回読む修正を載せ、moq 系の依存（`hang`・`kio`・`moq-mux`・`moq-net`）を crates.io の同じ版にしたもの（workspace の path のままだと、git の依存では moq-net が crates.io の版と別の crate になる）。moq-audio の版を上げるときは、上流に同じ修正があるかを確かめる。
 - #1879（Web の live）で、同じ fork の branch `kukuri/moq-0.1.11-wasm-transport` の `6573706f68cb7c8244e4e5855400ff80d2fc29a9` に進め、`moq-tokio`・`moq-mux` も fork から取る（上流へは PR を出さない）。moq-tokio は tokio の `full` を要求して wasm32 で build できないので、Web では poll 型への変換（`transport`）だけを含め、その変換の future は Web では Send にしない。moq-mux・moq-audio は `std::time` の `Instant`・`SystemTime` の `now` を使い、ブラウザでは実行時に止まるので、`web-time` の型を使う（native では std と同じ型）。moq-mux・moq-tokio の moq 系の依存も crates.io の同じ版にした。版を上げるときは、上流に同じ修正があるかを確かめる。
 - Linux の build は libasound の開発 package、配布物は libasound を要する。
+- #1944の製品対策では、同じforkの `8f1412a08bd31d59e3520eee4a86f7903f2f378d` に進める。再生参照の受け渡しを時刻付きの有界履歴に置き換え、取り込みとデバイスの再生・収録時刻で対応付ける。参照の受け渡しと履歴はそれぞれ最大256 block（stereo・48 kHz、1 blockは最大10 ms）とし、履歴は参照時に末尾が500 msより古いblockを除去する。micの開始・停止と出力streamの再作成で回収する。マイクのframeの送出、公開API、wire、保存形式、UIは変更しない。`tools/check_media_audio_contract.py` が固定したforkの回帰条件と共有native経路のunit testを実行する。
 - aws-lc は既に desktop の build に入っている（str0m 経由）ため、web-transport-iroh の既定の TLS で新しい C の build は増えない。
 - 輻輳制御と QUIC の stream 数の上限は endpoint の既定のままとし、変える必要は #1033・#1034 の計測で示す。
 - moq 側の版を上げるときは、moq-lite の版（§1）と ALPN の版を同時に見直す。
@@ -158,6 +159,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 
 - 音声は Rust 側（`moq-audio`）で取り込み・圧縮（Opus、20 ms）・decode・mix・再生を行い、echo cancellation（`sonora`）は再生中の音を参照に使う。画面側の音声の取り込み・再生（`getUserMedia`・WebAudio）は削除する。live の音声も同じ経路を使う。
   - 既知の制約（#1822、2026-10-15）: 両方が同時に話し、スピーカーから mic への経路の遅れが揺れると、echo cancellation が相手の声も数秒弱める（試験の環境で 1/4 ほどまで。遅れが一定なら弱めない）。再生の参照に再生の時刻を付けて渡すなどの改善は、今は行わない。
+  - #1944（2026-10-26のユーザー判断）で、上の見送りのうちデバイス時刻による入出力バッファ遅延への対策を採用した。再生・収録時刻を参照の対応付けに使う。反響経路自体の変化など、デバイス時刻で説明できないずれによる声の弱まりは、引き続き既知の制約とする。
 - metaverse の距離減衰: 聞き手の端末の Rust が、話者の位置の track と、画面から受ける聞き手の位置・ready な隣接 Dome の opening の位置から既存の距離関数で gain を求め、話者ごとの音量に反映する。gain の関数は Rust の 1 か所に残し、TypeScript の gain の関数は #1033 で削除した（画面は話者を近い順に並べるための距離と opening の位置だけを持つ）。
 - 映像（#1034 AC-1、D5〜D7）: 配信者の画面が `getUserMedia`（camera）か `getDisplayMedia`（画面）のどちらか 1 つを取り込み、`VideoEncoder`（VP8、`latencyMode: realtime`）で圧縮し、chunk を Tauri の IPC（raw の `invoke`）で Rust へ渡す。Rust は署名・moq の公開・転送・認可だけを行う。視聴者の画面は、受けた chunk を raw の応答で取りに来て（`next_live_video`。届くまで最大 1 秒待ち、送りかけは §4 の 1 秒分まで）、画面の `VideoDecoder` で復号して描画する。`ipc::Channel` は 1 KiB 以上の raw の payload を画面側の上限の無い queue に積むため使わない（#1034 AC-2a）。映像の frame は Rust の音声の再生時刻（再生中の音声の timestamp）に合わせて出す。映像の取り込みでは mic を使わず、live の音声は上の Rust の経路で取り込む。
   - 復号済みframeの保持は30枚まで。音声時計に対して表示できるframeが2枚以上ある場合は最古を捨て、それ以外は最新の到着を捨てて次の表示候補を残す。音声の進みを待つframeが、到着のたびに追い出されて描画が止まることを防ぐ。同期の基準と、reset・closeでの全解放は維持する。

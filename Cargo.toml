@@ -140,9 +140,9 @@ iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-addres
 # #1879（同じ fork の続き）: moq-tokio を Web（wasm）でも build できるようにし、Web では poll 型への変換
 # （`transport`）だけを含める。moq-mux・moq-audio の時刻を web-time にする（ブラウザには std の時計が無い。
 # native では std と同じ型）。
-moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "6573706f68cb7c8244e4e5855400ff80d2fc29a9" }
-moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "6573706f68cb7c8244e4e5855400ff80d2fc29a9" }
-moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "6573706f68cb7c8244e4e5855400ff80d2fc29a9" }
+moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "8f1412a08bd31d59e3520eee4a86f7903f2f378d" }
+moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "8f1412a08bd31d59e3520eee4a86f7903f2f378d" }
+moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "8f1412a08bd31d59e3520eee4a86f7903f2f378d" }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"

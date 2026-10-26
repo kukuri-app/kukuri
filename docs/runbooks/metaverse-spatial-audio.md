@@ -8,6 +8,10 @@
 
 Windows の CI では動かさない（GPU の無い runner では、3 つの Dome の 3D の描画が CPU を埋める。2026-10-14 のユーザー判断）。Windows の音声の機器の経路は、[live の試験](live-media.md)で確かめる（同じ Rust の音声の部品）。
 
+製品のAECには、入出力のバッファ遅延が変わる回帰条件もある（#1944）。`python tools/check_media_audio_contract.py` は、固定したmoq forkを専用の一時checkoutへ取得し、consumerと同じDSP・デバイス依存で関連するnative音声のunit testを実行する。git・Rust・Python・cargo-nextestを使い、Cargoの共有source cacheは変更しない。Linux package CIにも同じ入口を置く。
+
+再現条件は、48 kHz・stereo・10 ms frame、元の帯域の断続音、4秒の学習と6秒の発話。デバイスの遅延を120 msから90／150 msへ1秒ごとに切り替え、固定seed 1・2の最後の4秒を5%・10%基準で判定する。AECを無効にした対照でも、自己音声の戻りを検出することを確認する。デバイス時刻で参照音を対応付け、マイクのframeの送出を保つ。
+
 | 項目 | 確かめること | 観測 |
 | --- | --- | --- |
 | SA-1 | 入室した直後の mic は off | HUD の mic の button |
@@ -34,4 +38,4 @@ SA-4が失敗したときは、既存の失敗artifact `kukuri-real-app-linux` �
 
 - Linux の cpal は PipeWire・PulseAudio の環境に未修正の不具合がある（cpal #1390、PR #1387）。
 - 版の違う kukuri の間では音声が届かない（moq-lite の版を kukuri の版ごとに固定する。ADR 0067 §1）。
-- 両方が同時に話し、スピーカーから mic への経路の遅れが揺れると、エコーキャンセルが相手の声も数秒弱める（試験の環境で 1/4 ほどまで。遅れが一定なら弱めない。#1822）。
+- 入出力バッファの遅延はデバイス時刻で対応付ける（#1944）。反響経路自体が変わるなど、デバイス時刻で説明できないずれがある場合は、両方が同時に話すとエコーキャンセルが相手の声も弱める制約が残る（#1822では数秒、1/4ほどまで弱まった）。
