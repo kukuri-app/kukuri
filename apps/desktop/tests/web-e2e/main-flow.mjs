@@ -22,6 +22,7 @@ import path from 'node:path';
 import { Key, remote } from 'webdriverio';
 import { androidClick } from './android-click.mjs';
 import { eventually } from './wait.mjs';
+import { card, columnOf, publicColumn, reopenAuthorProfile, showNewPosts } from './post-ui.mjs';
 import { installPwa, openPwaFromHome, pwaEntry } from './pwa-entry.mjs';
 import { pwaShellFlow } from './pwa-shell-flow.mjs';
 import { pwaInputFlow } from './pwa-input-flow.mjs';
@@ -251,22 +252,12 @@ const dialogWith = (browser, text) => eventually(`dialog "${text}"`, () => findD
 
 const pageText = (browser) => browser.execute(() => document.body.innerText);
 
-/** 先頭にいないときの新着は「Show N new post(s)」を押すと並ぶ。列の待機では、その列のボタンだけを押す。 */
-async function showNewPosts(root) {
-  const button = root.$('.//button[starts-with(normalize-space(.), "Show ") and contains(., "new post")]');
-  if (await button.isExisting()) await button.click().catch(() => undefined);
-}
-
 const sees = (browser, text, root = browser) =>
   eventually(`${browser.label} sees "${text}"`, async () => {
     await showNewPosts(root);
     return (root === browser ? await pageText(browser) : await root.getText()).includes(text);
   });
 
-/** 列（id は `column:<kind>:<topic>:<channel>:<相手>`。channel と相手は無ければ `-`）。 */
-const columnOf = (browser, kind, tail) =>
-  browser.$(`section[data-column-id^="column:${kind}:"][data-column-id$=":${tail}"]`);
-const publicColumn = (browser) => columnOf(browser, 'timeline', '-:-');
 const channelColumn = (browser, channelId) => columnOf(browser, 'timeline', `${channelId}:-`);
 
 async function openComposer(column) {
@@ -316,8 +307,6 @@ async function attach(browser, column, file) {
   }
   await column.$(`img[alt="draft preview ${path.basename(file)}"]`).waitForDisplayed({ timeout: WAIT });
 }
-
-const card = (browser, text) => browser.$(`article*=${text}`);
 
 async function reply(browser, target, content) {
   await (await card(browser, target)).$('button[aria-label="Reply"]').click();
@@ -595,22 +584,6 @@ async function joinChannel(browser, token, label) {
   await open.waitForClickable({ timeout: WAIT });
   await open.click();
   await channelDialogClosed(browser);
-}
-
-/** 投稿の作者（`author`）の profile の列を開く。開いていれば閉じて開き直す（列の中の設定は開いたときに読む）。 */
-async function reopenAuthorProfile(browser, authorPost, author) {
-  const opened = columnOf(browser, 'profile', author);
-  if (await opened.isExisting()) {
-    // 列の menu から閉じる（電話の幅では列の見出しの閉じる button は出ない）。
-    await opened.$('button[aria-label^="Open "][aria-label$=" menu"]').click();
-    await browser.$('//button[@role="menuitem"][starts-with(normalize-space(.), "Close ")]').click();
-    await opened.waitForExist({ reverse: true, timeout: WAIT });
-  }
-  await showNewPosts(browser);
-  await (await card(browser, authorPost)).$('button.post-meta-author').click();
-  const profile = columnOf(browser, 'profile', author);
-  await profile.waitForExist({ timeout: WAIT });
-  return profile;
 }
 
 /** 投稿の作者（`author`）の profile を開き、まだなら follow する。profile の操作の欄を返す。 */
