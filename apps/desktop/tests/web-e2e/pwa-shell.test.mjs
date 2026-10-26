@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
 import { chromium } from '@playwright/test';
 import { pwaWorkerSource } from '../../scripts/webPwaShell.mjs';
+import { waitForUnusedShellCache } from './pwa-shell-cache.mjs';
 
 // 静的shellのcontract。SNS/WASM/Androidの受入試験は別の実scenarioで行う。
 test('offline shell, explicit update, live-client retention, and static-only cache', { timeout: 45_000 }, async () => {
@@ -77,7 +78,7 @@ test('offline shell, explicit update, live-client retention, and static-only cac
     assert.equal(await old.evaluate(() => fetch('/app-one.js').then(response => response.text())), 'globalThis.shellScriptLoaded = true;');
     await context.setOffline(false);
     await old.close();
-    await report(first);
+    await waitForUnusedShellCache({ execute: callback => first.evaluate(callback) });
     assert.deepEqual(await cacheNames(first), ['kukuri-shell-two']);
 
     version = 'three'; failPreparation = true;

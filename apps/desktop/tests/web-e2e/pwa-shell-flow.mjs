@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { eventually } from './wait.mjs';
 import { webInvoke } from './web-invoke.mjs';
 import { installPwa } from './pwa-entry.mjs';
+import { waitForUnusedShellCache } from './pwa-shell-cache.mjs';
 
 export async function pwaShellFlow({ openClient, greetNative, native, fixture, openDirectMessage,
   nativeCreatesChannel, joinChannel, openSettings, publicColumn, channelColumn, openComposer, replaceValue, openChannelDialog, channelDialogClosed, seesInChannel,
@@ -161,8 +162,7 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
       await browser.$('button=Check for updates').waitForClickable({ timeout: 90_000 });
       await browser.$('button=Check for updates').click();
     }
-    await eventually('unused prior shell cache is reclaimed', () => browser.execute(async () =>
-      (await caches.keys()).filter(name => name.startsWith('kukuri-shell-')).length === 1));
+    await waitForUnusedShellCache(browser);
     // 一時Columnは再起動で閉じる。保存済みの所属からchannelを開き、既存の有効需要を戻す。
     const closeSettings = browser.$('#shell-settings-drawer .shell-settings-close');
     if (await closeSettings.isDisplayed()) await closeSettings.click();
