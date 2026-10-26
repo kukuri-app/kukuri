@@ -18,7 +18,7 @@
  *   assert しない(H6 耐性)。
  */
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import type {
   AuthorSocialView,
@@ -173,6 +173,7 @@ function renderRoutingHook(options: RenderRoutingHookOptions) {
 }
 
 describe('useDesktopShellRouting', () => {
+  afterEach(() => vi.unstubAllEnvs());
   test('a newer thread focus request wins over a delayed older read', async () => {
     const api = createDesktopMockApi();
     let finish!: (value: Awaited<ReturnType<DesktopApi['listThread']>>) => void;
@@ -457,7 +458,9 @@ describe('useDesktopShellRouting', () => {
     view.unmount();
   });
 
-  test('openDirectMessagePane fetches conversation, timeline and status and opens the messages pane', async () => {
+  test.each([false, true])('openDirectMessagePane opens the messages pane, E2E trace=%s', async (traceEnabled) => {
+    vi.stubEnv('VITE_KUKURI_WEB_E2E', traceEnabled ? '1' : '');
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {});
     const baseApi = createDesktopMockApi({
       authorSocialViews: {
         [DM_PEER_PUBKEY]: { name: 'dana', following: true, followed_by: true, mutual: true },
@@ -488,6 +491,19 @@ describe('useDesktopShellRouting', () => {
     expect(api.openDirectMessage).toHaveBeenCalledWith(DM_PEER_PUBKEY);
     expect(api.listDirectMessageMessages).toHaveBeenCalledWith(DM_PEER_PUBKEY, null, 100);
     expect(api.getDirectMessageStatus).toHaveBeenCalledWith(DM_PEER_PUBKEY);
+    const events = log.mock.calls.filter(([prefix]) => prefix === '[kukuri.e2e.dm]').map(([, event]) => event);
+    if (traceEnabled) {
+      const methods = ['openDirectMessage', 'listDirectMessageMessages', 'getDirectMessageStatus'];
+      expect(events.map(event => event.phase)).toEqual([
+        'api-start', 'api-start', 'api-start', 'api-fulfilled', 'api-fulfilled', 'api-fulfilled',
+      ]);
+      expect(events.slice(0, 3).map(event => event.method)).toEqual(methods);
+      expect(events.slice(3).map(event => event.method)).toEqual(methods);
+      expect(events.every(event => event.peerPubkey === DM_PEER_PUBKEY && event.openId === events[0].openId)).toBe(true);
+      expect(Object.keys(events[3]).sort()).toEqual(['method', 'openId', 'peerPubkey', 'phase']);
+    } else {
+      expect(events).toEqual([]);
+    }
 
     await waitFor(() => {
       expect(harness.store.getState().selectedDirectMessagePeerPubkey).toBe(DM_PEER_PUBKEY);
@@ -525,6 +541,29 @@ describe('useDesktopShellRouting', () => {
     });
     view.unmount();
   });
+
+  test.each(['openDirectMessage', 'listDirectMessageMessages', 'getDirectMessageStatus'] as const)(
+    'E2E trace records %s failure without changing the open error or logging its payload', async (method) => {
+      vi.stubEnv('VITE_KUKURI_WEB_E2E', '1');
+      const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+      const api = createDesktopMockApi({ authorSocialViews: {
+        [DM_PEER_PUBKEY]: { following: true, followed_by: true, mutual: true },
+      } });
+      vi.spyOn(api, method).mockRejectedValue(new Error('private error payload'));
+      const { view, harness } = renderRoutingHook({ hash: BASE_TIMELINE_HASH, api });
+      await act(async () => { await view.result.current.openDirectMessagePane(DM_PEER_PUBKEY); });
+      const events = log.mock.calls.filter(([prefix]) => prefix === '[kukuri.e2e.dm]').map(([, event]) => event);
+      expect(events.filter(event => event.phase === 'api-start')).toHaveLength(3);
+      expect(events.filter(event => event.phase === 'api-fulfilled')).toHaveLength(2);
+      expect(events.filter(event => event.phase === 'api-rejected')).toEqual([
+        { openId: expect.any(Number), peerPubkey: DM_PEER_PUBKEY, method, phase: 'api-rejected', code: 'command_failed' },
+      ]);
+      expect(JSON.stringify(events)).not.toContain('private error payload');
+      expect(harness.store.getState().directMessageError).toBe('private error payload');
+      expect(harness.store.getState().workspaceState.columns.some(column => column.kind === 'conversation')).toBe(false);
+      view.unmount();
+    }
+  );
 
   test('openDirectMessagePane failure with normalizeOnError replaces to a peer-less messages URL', async () => {
     // mutual でない peer への openDirectMessage は mock api が reject する。
