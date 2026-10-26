@@ -66,19 +66,29 @@ async function observePushes(instance, objectId) {
 async function pressForOneMinute(instance, index) {
   const pubkey = (await instance.invoke('get_sync_status')).local_author_pubkey;
   await instance.evaluate(`(async()=>{
-    const m=window.__pushSender={sent:0,acks:0,unavailable:0,paint:[],done:false};
+    const m=window.__pushSender={sent:0,acks:0,unavailable:0,paint:[],wall:[],idle:[],done:false};
     const internal=window.__TAURI_INTERNALS__;
     m.listener=await internal.invoke('plugin:event|listen',{event:'kukuri://runtime-event',target:{kind:'Any'},handler:internal.transformCallback((event)=>{
       if(event.payload.type==='live_overlay_push_received' && event.payload.push?.sender_pubkey===${JSON.stringify(pubkey)})m.acks++;
     })});
     const node=document.querySelector(${JSON.stringify(attachmentButton(index))});
     node.scrollIntoView({block:'center'});
+    await new Promise((done)=>{
+      let samples=0;
+      const idle=setInterval(()=>{
+        const at=performance.now();
+        requestAnimationFrame(()=>m.idle.push(performance.now()-at));
+        if(++samples===20)clearInterval(idle);
+      },50);
+      setTimeout(done,1200);
+    });
     const timer=setInterval(()=>{
       const at=performance.now();
+      const wall=Date.now();
       const current=document.querySelector(${JSON.stringify(attachmentButton(index))});
       if(current && !current.disabled)current.click();else m.unavailable++;
       m.sent++;
-      requestAnimationFrame(()=>m.paint.push(performance.now()-at));
+      requestAnimationFrame(()=>{m.paint.push(performance.now()-at);m.wall.push(Date.now()-wall);});
       if(m.sent===600){clearInterval(timer);m.done=true;}
     },100);
     return true;
@@ -112,7 +122,7 @@ export async function run({ launch, log, topic }) {
   await Promise.all(all.map((instance) => route(instance, liveRoute(live))));
   await Promise.all(all.map((instance) => eventually(`${instance.name} to show Live A`, () => instance.evaluate(`document.querySelector('${STAGE}')?.dataset.liveSessionId===${JSON.stringify(live)}`), 60000)));
   await Promise.all([host, sender].map((instance) => halfThread(instance, postId)));
-  await Promise.all([host, sender].map(injectCapture));
+  await injectCapture(host);
   await Promise.all([sender, viewer].map(observeDraws));
   await startBroadcast(host);
   await Promise.all([sender, viewer].map(watch));
@@ -141,7 +151,8 @@ export async function run({ launch, log, topic }) {
       assert.equal(await viewer.evaluate(`[...document.querySelectorAll('${STAGE} .live-stage-pushes img')].filter(image=>image.naturalWidth===48).length`), new Set(indices).size, 'every pushed attachment remains decoded under load');
       await eventually('all received Pushes to paint', () => viewer.evaluate('window.__pushMetrics.pending.length===0'), 5000);
       const receive = await viewer.evaluate('({paint:window.__pushMetrics.paint,wire:window.__pushMetrics.wire,busy:window.__pushMetrics.busy})');
-      const sends = await Promise.all([host, sender].map((instance) => instance.evaluate('({unavailable:window.__pushSender.unavailable,paint:window.__pushSender.paint})')));
+      const sends = await Promise.all([host, sender].map((instance) => instance.evaluate('({unavailable:window.__pushSender.unavailable,paint:window.__pushSender.paint,wall:window.__pushSender.wall,idle:window.__pushSender.idle})')));
+      log(`${indices[0] === indices[1] ? 'same' : 'different'} attachment measurements: ${JSON.stringify({input:sends.map((send)=>p95(send.paint)),wall:sends.map((send)=>p95(send.wall)),idle:sends.map((send)=>p95(send.idle)),render:p95(receive.paint),delivery:p95(receive.wire),busy:receive.busy})}`);
       assert.equal(receive.paint.length, 1200);
       assert.equal(receive.busy, 0);
       assert.equal(await viewer.evaluate(`document.querySelector('${STAGE} [data-asset-hash="${original.attachments[1].hash}"] img').src.split('#')[0]`), sharedUrl, 'the warmed GIF URL is shared throughout repeated display');
@@ -165,6 +176,7 @@ export async function run({ launch, log, topic }) {
     await route(sender, liveRoute(otherLive));
     await eventually('the second broadcaster to select Live B', () => sender.evaluate(`document.querySelector('${STAGE}')?.dataset.liveSessionId===${JSON.stringify(otherLive)}`));
     await halfThread(sender, postId);
+    await injectCapture(sender);
     await startBroadcast(sender);
     await route(viewer, liveRoute(otherLive));
     await eventually('the viewer to select Live B', () => viewer.evaluate(`document.querySelector('${STAGE}')?.dataset.liveSessionId===${JSON.stringify(otherLive)}`));
