@@ -741,6 +741,9 @@
 }
 
 .live-stage-pushes .live-overlay-image {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
   height: 100%;
   max-height: min(160px, 23cqh);
   max-width: 100%;

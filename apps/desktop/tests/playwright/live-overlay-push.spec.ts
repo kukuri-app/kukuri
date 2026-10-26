@@ -14,7 +14,7 @@ async function inkPixel(image: Locator) {
   });
 }
 
-test('six tall Push images stay inside the video without overlap in reduced motion', async ({ page }) => {
+test('six mixed Push images stay inside the video without overlap in reduced motion', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
@@ -24,8 +24,12 @@ test('six tall Push images stay inside the video without overlap in reduced moti
     canvas.width = 10; canvas.height = 160;
     canvas.getContext('2d')!.fillRect(0, 0, 10, 160);
     const bytes = canvas.toDataURL('image/png').split(',')[1];
+    canvas.width = 48; canvas.height = 48;
+    canvas.getContext('2d')!.fillRect(0, 0, 48, 48);
+    const square = canvas.toDataURL('image/png').split(',')[1];
+    const payloads = new Map<string, string>();
     const api = window.__KUKURI_DESKTOP__!;
-    api.getBlobMediaPayload = async () => ({ mime: 'image/png', bytes_base64: bytes });
+    api.getBlobMediaPayload = async (hash) => ({ mime: 'image/png', bytes_base64: payloads.get(hash)! });
     const topic = 'kukuri:topic:general';
     const thread = await api.createPublicChannel(topic, 'Still Push', '');
     const ref = { kind: 'public_channel' as const, channel_id: thread.channel_id };
@@ -34,8 +38,10 @@ test('six tall Push images stay inside the video without overlap in reduced moti
     await api.toggleReaction(topic, session.start_post_id!, { kind: 'emoji', emoji: '👍' }, ref);
     const targets = [];
     for (let index = 0; index < 6; index++) {
-      const id = await api.createPost(topic, '', null, [{ file_name: `${index}.png`, mime: 'image/png', byte_size: 2048, data_base64: bytes, role: 'image_original' }], ref);
+      const data = index === 0 ? square : bytes;
+      const id = await api.createPost(topic, '', null, [{ file_name: `${index}.png`, mime: 'image/png', byte_size: 2048, data_base64: data, role: 'image_original' }], ref);
       const post = (await api.listThread(topic, id, null, 1)).items.find((post) => post.object_id === id)!;
+      payloads.set(post.attachments[0].hash, data);
       targets.push({ topic, channel_id: thread.channel_id, object_id: id, attachment_index: 0, attachment_hash: post.attachments[0].hash });
     }
     location.hash = `/live?topic=${encodeURIComponent(topic)}&channel=${thread.channel_id}&sessionId=${live}`;
@@ -45,7 +51,13 @@ test('six tall Push images stay inside the video without overlap in reduced moti
   await expect(page.locator('.live-stage')).toBeVisible();
   await page.evaluate(async (targets) => { for (const target of targets) await window.__KUKURI_DESKTOP__!.pushLiveOverlay(target); }, targets);
   await expect(pushes.locator('canvas')).toHaveCount(6);
-  await expect.poll(() => pushes.locator('canvas').evaluateAll((nodes) => nodes.every((node) => (node as HTMLCanvasElement).height === 160))).toBe(true);
+  await expect.poll(() => pushes.locator('canvas').evaluateAll((nodes) => nodes.map((node) => (node as HTMLCanvasElement).height))).toEqual([48, 160, 160, 160, 160, 160]);
+  for (const image of await pushes.locator('.live-overlay-image').all()) {
+    const picture = (await image.locator('canvas').boundingBox())!;
+    const counter = (await image.locator('.live-overlay-push-count').boundingBox())!;
+    expect(Math.abs(picture.x + picture.width - counter.x - counter.width)).toBeLessThanOrEqual(1);
+    expect(Math.abs(picture.y + picture.height - counter.y - counter.height)).toBeLessThanOrEqual(1);
+  }
   const video = (await page.locator('.live-stage-layers').boundingBox())!;
   const boxes = await pushes.locator('canvas').evaluateAll((nodes) => nodes.map((node) => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; }));
   for (const box of boxes) { expect(box.top).toBeGreaterThanOrEqual(video.y); expect(box.bottom).toBeLessThanOrEqual(video.y + video.height); }
