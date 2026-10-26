@@ -17,14 +17,16 @@ const p95 = (values) => [...values].sort((a, b) => a - b)[Math.ceil(values.lengt
 const count = (instance) => instance.evaluate(`Number(document.querySelector('${STAGE} .live-overlay-push-count')?.textContent.slice(1) ?? 0)`);
 const route = (instance, hash) => instance.evaluate(`(location.hash=${JSON.stringify(hash)},true)`);
 
-async function halfThread(instance) {
+async function halfThread(instance, objectId) {
   await click(instance, t('stage.split'), { within: ACTIVE });
   await click(instance, t('stage.publicThread'), { within: `${ACTIVE} [role="tablist"]` });
   await eventually(`${instance.name} to offer Push`, () => instance.evaluate(`(() => {
+    const card=document.querySelector('${ACTIVE} .live-column-side article[data-post-object-id="${objectId}"]');
+    card?.scrollIntoView({block:'center'});
     const push=document.querySelector(${JSON.stringify(button)});
     if(push && !push.disabled)return true;
-    const retry=document.querySelector('${ACTIVE} .live-column-side [data-testid^="media-fetch-failure-"] button');
-    if(retry && !retry.disabled)retry.click();
+    const retry=card?.querySelector('.media-fetch-retry:not([aria-disabled="true"])');
+    retry?.click();
     return false;
   })()`, { gesture: true }), 60000);
 }
@@ -109,7 +111,7 @@ export async function run({ launch, log, topic }) {
   const liveRoute = (id) => `/live?topic=${encodeURIComponent(topic)}&channel=${channel.channel_id}&sessionId=${id}`;
   await Promise.all(all.map((instance) => route(instance, liveRoute(live))));
   await Promise.all(all.map((instance) => eventually(`${instance.name} to show Live A`, () => instance.evaluate(`document.querySelector('${STAGE}')?.dataset.liveSessionId===${JSON.stringify(live)}`), 60000)));
-  await Promise.all([host, sender].map(halfThread));
+  await Promise.all([host, sender].map((instance) => halfThread(instance, postId)));
   await Promise.all([host, sender].map(injectCapture));
   await Promise.all([sender, viewer].map(observeDraws));
   await startBroadcast(host);
@@ -162,7 +164,7 @@ export async function run({ launch, log, topic }) {
     assert.equal(await count(viewer), 0, 'showing overlays does not replay past Pushes');
     await route(sender, liveRoute(otherLive));
     await eventually('the second broadcaster to select Live B', () => sender.evaluate(`document.querySelector('${STAGE}')?.dataset.liveSessionId===${JSON.stringify(otherLive)}`));
-    await halfThread(sender);
+    await halfThread(sender, postId);
     await startBroadcast(sender);
     await route(viewer, liveRoute(otherLive));
     await eventually('the viewer to select Live B', () => viewer.evaluate(`document.querySelector('${STAGE}')?.dataset.liveSessionId===${JSON.stringify(otherLive)}`));
