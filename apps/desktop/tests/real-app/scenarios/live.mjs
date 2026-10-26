@@ -36,36 +36,6 @@ const WINDOW_MS = 5 * PERIOD_MS;
 const logOf = (instance) => readFileSync(instance.log, 'utf8');
 const JOIN = text('common', 'actions.join');
 
-// 投稿→保存blob→別端末の通常media取得→WebViewのimgまで、元のPNG/GIFを保つ（#1950 AC-1）。
-async function overlayImages(host, viewers, topic) {
-  for (const kind of ['png', 'gif']) {
-    const bytes = readFileSync(new URL(`../../fixtures/overlay-${kind === 'png' ? 'transparent.png' : 'animated.gif'}`, import.meta.url));
-    const attachment = { file_name: `overlay.${kind}`, mime: `image/${kind}`, byte_size: bytes.length, data_base64: bytes.toString('base64'), role: 'image_original' };
-    const id = await host.invoke('create_post', { request: { topic, content: kind === 'png' ? 'Overlay PNG' : '', reply_to: null, attachments: [attachment, attachment] } });
-    const saved = (await host.invoke('list_thread', { request: { topic, thread_id: id, cursor: null, limit: 1 } })).items.find((post) => post.object_id === id);
-    assert.ok(saved, 'the source post is available');
-    for (const viewer of viewers) {
-      if (process.platform === 'win32') await viewer.send('Page.bringToFront');
-      else viewer.focus();
-      const selector = `.live-stage [data-post-object-id="${id}"] .live-overlay-image img`;
-      let observed;
-      try {
-        await eventually(`${viewer.name} to display the first ${kind}`, async () => {
-          observed = await viewer.evaluate(`(() => {
-            const images = document.querySelectorAll(${JSON.stringify(selector)});
-            return { visibility: document.visibilityState, images: [...images].map((image) => ({ width: image.naturalWidth, complete: image.complete, src: image.src })),
-              post: document.querySelector('.live-stage [data-post-object-id="${id}"]')?.textContent };
-          })()`);
-          return observed.images.length === 1 && observed.images[0].width === 48;
-        }, 60_000);
-      } catch (error) { throw new Error(`${error.message}; overlay=${JSON.stringify(observed)}`); }
-      // asset URLのfetchはCSPのconnect-src外。通常APIで取得済みblobを照合し、表示URLを読み直さない。
-      const payload = await viewer.invoke('get_blob_media_payload', { request: { hash: saved.attachments[0].hash, mime: attachment.mime, source_object_id: id } });
-      assert.equal(payload.bytes_base64, attachment.data_base64, `${viewer.name} preserves ${kind} bytes through storage and fetch`);
-    }
-  }
-}
-
 /// (Linux)instance の window を最小化する。返す関数で戻す。
 function minimize(instance) {
   const [id] = execFileSync('xdotool', ['search', '--sync', '--onlyvisible', '--pid', String(instance.pid), '--classname', '.'], {
@@ -139,11 +109,6 @@ export async function run({ launch, restart, log, topic }) {
     const frames = await expectDrawing(first, 'the camera');
     unit = await expectSound('the host');
     log(`LV-2: the viewer draws the camera (${frames} frames in 3 s)${unit === null ? '' : ` and hears the host as ${unit.toFixed(4)}`}`);
-
-    await overlayImages(host, [first, second], topic);
-    await expectDrawing(first, 'the camera under PNG/GIF overlays');
-    await expectSound('the host under PNG/GIF overlays');
-    log('LV-2 images: both viewers display the first PNG/GIF from the stored original bytes while video/audio continue');
 
     // LV-11(#1839 AC-3): H が live の列を閉じても、配信は続き、視聴者に描かれて音が出る。
     await closeLiveColumn(host);

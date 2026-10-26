@@ -15,6 +15,7 @@ const SCENARIOS = {
   smoke: () => import('./scenarios/smoke.mjs'),
   'spatial-audio': () => import('./scenarios/spatial-audio.mjs'),
   live: () => import('./scenarios/live.mjs'),
+  'live-images': () => import('./scenarios/live-images.mjs'),
   'live-relay': () => import('./scenarios/live-relay.mjs'),
   'dome-avatar': () => import('./scenarios/dome-avatar.mjs'),
 };

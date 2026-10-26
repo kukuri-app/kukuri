@@ -11,6 +11,7 @@
 - 描画と操作: PNGの透明部分の画面pixelが背後の表示と一致する。GIFの画面画像が時間経過で変わり、reduced motionでは変わらない。既存の投稿切替ボタンから画像を隠して再表示できる。overlayはaria-hidden・pointer-events noneを維持し、画像に操作やfocusを増やさない。
 - 性能・回収: 画像の自動表示は最大5枚。映像高を5投稿で分け、文字領域を残して画像だけを縮める。先頭以外の画像需要と画像切替timerを作らない。通常media ownerへhashの需要を渡し、gate・非表示・unmountで返す。
 - Validation: 対象Vitest 29件、Playwright 12条件と通常寸法5投稿の回帰試験、対象ESLint、TypeScript。変更前は添付表示testが失敗し、変更後は成功。
-- 未確認: Tauri/WebView・別端末の保存blobからの表示はPR CIと複数端末scenarioで確認する。ブラウザfixtureは通信・保存の成功を示す証拠にはしない。screen readerの実機確認は未実行。PushはAC-2の対象。
+- 実アプリ: Windows/WebView2のlive-imagesで3端末を起動し、2視聴者の先頭PNG/GIF表示、保存blobの元bytes一致、映像の継続を確認（20.1秒）。画像取得の通信ログを既存Live単体の識別子秘匿検査へ混ぜず、別scenarioで検証する。
+- 未確認: 音声とLinux/WebKitのlive-imagesはPR CIで確認する。ブラウザfixtureは通信・保存の成功を示す証拠にはしない。screen readerの実機確認は未実行。PushはAC-2の対象。
 - Review result: ブラウザの透明表示・GIF・静止表示を確認済み。独立監査とCIはPR headで判定する。
 - Exceptions: なし。
