@@ -101,7 +101,7 @@ export async function run({ launch, restart, log, topic }) {
     const echo = record(speaker);
     await micOn(listener);
     const restore = hearOwnOutput(listener);
-    const diagnostics = echoDiagnostics({ listener, speaker, heard, echo, voice: VOICE, reply: REPLY });
+    const diagnostics = echoDiagnostics({ listener, speaker, echo, voice: VOICE, reply: REPLY });
     let voice = () => undefined;
     let measurement;
     try {

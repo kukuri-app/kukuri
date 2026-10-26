@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-export function echoDiagnostics({ listener, speaker, heard, echo, voice, reply }) {
+export function echoDiagnostics({ listener, speaker, echo, voice, reply }) {
   const instances = [listener, speaker];
   const snapshots = [];
   const startedAt = Date.now();
