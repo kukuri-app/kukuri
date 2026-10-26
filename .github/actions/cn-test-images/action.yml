@@ -1,11 +1,15 @@
 name: Prepare community-node test images
-description: Load the existing fixture images from the Docker Hub cache before Compose starts.
+description: Load fixture images from the Docker Hub cache, falling back to Docker Hub if the cache fails.
 runs:
   using: composite
   steps:
     - shell: bash
       run: |
-        docker pull mirror.gcr.io/library/postgres:17-bookworm
-        docker tag mirror.gcr.io/library/postgres:17-bookworm postgres:17-bookworm
-        docker pull mirror.gcr.io/valkey/valkey:8-alpine
-        docker tag mirror.gcr.io/valkey/valkey:8-alpine valkey/valkey:8-alpine
+        for image in library/postgres:17-bookworm valkey/valkey:8-alpine; do
+          if docker pull "mirror.gcr.io/$image"; then
+            docker tag "mirror.gcr.io/$image" "${image#library/}"
+          else
+            echo "Mirror pull failed; pulling $image from Docker Hub" >&2
+            docker pull "$image"
+          fi
+        done
