@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Check, Reply, SlidersHorizontal } from 'lucide-react';
 
 import { ReactionGlyph } from '@/components/core/ReactionGlyph';
+import type { PostMediaView } from '@/components/core/types';
 import { ReactionPickerPopover } from '@/components/core/ReactionPickerPopover';
 import { LiveViewer } from '@/components/extended/LiveSessionMedia';
 import { LiveBroadcastPreview } from '@/components/extended/LiveBroadcastPreview';
@@ -26,6 +27,7 @@ import { removeRecordEntry, setRecordEntry } from '@/shell/stateUpdates';
 import { useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
 
 import { LiveBroadcastStartButtons } from './LiveCard';
+import { LiveOverlayImage } from './LiveOverlayImage';
 import { LiveActionsContext } from './liveActions';
 import { type LiveOverlayFloat, type LiveOverlayPost, type LiveOverlaySource, useLiveOverlay } from './liveOverlay';
 import {
@@ -47,6 +49,7 @@ type LiveStageProps = {
   visible: boolean;
   // 通常の投稿の表示と同じ判定で隠す投稿(成人向け・信頼値の評価)。
   hidden?: (post: PostView) => boolean;
+  mediaForPost: (post: PostView) => PostMediaView;
   recentReactions: RecentReactionView[];
   reactionAssets: CustomReactionAssetView[];
   onReactionPickerOpen: () => void;
@@ -64,6 +67,7 @@ export function LiveStage({
   conversationLabel,
   visible,
   hidden,
+  mediaForPost,
   recentReactions,
   reactionAssets,
   onReactionPickerOpen,
@@ -73,6 +77,12 @@ export function LiveStage({
   const { t } = useTranslation(['live', 'common']);
   const actions = useContext(LiveActionsContext);
   const [settings, updateSettings] = useLiveOverlaySettings();
+  const [foreground, setForeground] = useState(() => !document.hidden);
+  useEffect(() => {
+    const changed = () => setForeground(!document.hidden);
+    document.addEventListener('visibilitychange', changed);
+    return () => document.removeEventListener('visibilitychange', changed);
+  }, []);
   const mediaObjectUrls = useDesktopShellStore((state) => state.mediaObjectUrls);
   const { element, session, startPost, conversation, posts, floats } = useLiveOverlay(actions?.api, source, {
     hidden,
@@ -99,6 +109,8 @@ export function LiveStage({
         floats={floats}
         settings={settings}
         mediaObjectUrls={mediaObjectUrls}
+        mediaForPost={mediaForPost}
+        imagesEnabled={visible && foreground && session.status === 'Live'}
       />
     );
     body = (
@@ -185,10 +197,12 @@ type OverlayLayersProps = {
   floats: LiveOverlayFloat[];
   settings: LiveOverlaySettings;
   mediaObjectUrls: Record<string, string | null>;
+  mediaForPost: (post: PostView) => PostMediaView;
+  imagesEnabled: boolean;
 };
 
 /// 映像に重ねる層。読み上げない(同じ内容と操作には、スレッドの列から届く)。
-function OverlayLayers({ posts, counts, floats, settings, mediaObjectUrls }: OverlayLayersProps) {
+function OverlayLayers({ posts, counts, floats, settings, mediaObjectUrls, mediaForPost, imagesEnabled }: OverlayLayersProps) {
   const { t } = useTranslation('live');
   const top = <T extends { count: number }>(items: T[], limit: number) =>
     [...items].sort((left, right) => right.count - left.count).slice(0, limit);
@@ -208,25 +222,28 @@ function OverlayLayers({ posts, counts, floats, settings, mediaObjectUrls }: Ove
               className={fresh ? 'live-stage-post live-stage-post-fresh' : 'live-stage-post'}
               data-post-object-id={post.object_id}
             >
-              <span className='live-stage-author'>
-                {authorDisplayLabel(post.author_pubkey, post.author_display_name, post.author_name)}
-              </span>
-              {liveReply ? <span className='live-stage-badge'>{t('stage.liveReply')}</span> : null}
-              <span>
-                {post.content.trim()
-                  ? post.content.replace(MENTION_PATTERN, '@$1')
-                  : t('stage.attachments', { count: post.attachments.length })}
-              </span>
-              {post.reaction_summary?.length ? (
-                <span className='live-stage-chips'>
-                  {top(post.reaction_summary, POST_CHIP_LIMIT).map((reaction) => (
-                    <span key={reaction.normalized_reaction_key} className='live-stage-chip'>
-                      <Glyph reaction={reaction} mediaObjectUrls={mediaObjectUrls} />
-                      {reaction.count}
-                    </span>
-                  ))}
+              <div className='live-stage-post-copy'>
+                <span className='live-stage-author'>
+                  {authorDisplayLabel(post.author_pubkey, post.author_display_name, post.author_name)}
                 </span>
-              ) : null}
+                {liveReply ? <span className='live-stage-badge'>{t('stage.liveReply')}</span> : null}
+                <span>
+                  {post.content.trim()
+                    ? post.content.replace(MENTION_PATTERN, '@$1')
+                    : t('stage.attachments', { count: post.attachments.length })}
+                </span>
+                {post.reaction_summary?.length ? (
+                  <span className='live-stage-chips'>
+                    {top(post.reaction_summary, POST_CHIP_LIMIT).map((reaction) => (
+                      <span key={reaction.normalized_reaction_key} className='live-stage-chip'>
+                        <Glyph reaction={reaction} mediaObjectUrls={mediaObjectUrls} />
+                        {reaction.count}
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
+              </div>
+              {imagesEnabled ? <LiveOverlayImage media={mediaForPost(post)} /> : null}
             </li>
           ))}
         </ol>

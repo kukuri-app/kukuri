@@ -10,6 +10,7 @@ import { liveBroadcastFor } from '@/components/extended/liveBroadcast';
 import type { DesktopApi, LiveSessionView, PostView, ReactionReceivedView, ReactionSummaryView } from '@/lib/api';
 import { announceReactionReceived } from '@/shell/data/useRuntimeEventBridge';
 import { createDesktopShellStore, DesktopShellStoreContext, timelineStorageKeyForChannel } from '@/shell/store';
+import { buildPostMediaView } from '@/shell/viewModels/postMediaView';
 
 import { LiveActionsContext, type LiveActions } from './liveActions';
 import { resetLiveOverlaySettingsForTest } from './liveOverlaySettings';
@@ -139,6 +140,7 @@ function setup({
           source={{ live: { session_id: 'live-1', topic_id: TOPIC, channel_id: THREAD }, conversation: { topic: TOPIC, channelId: conversationChannel } }}
           conversationLabel='v0.5 の確認'
           visible
+          mediaForPost={(post) => buildPostMediaView(post, { mediaObjectUrls: store.getState().mediaObjectUrls, adultContentGated: false, unsupportedVideoManifests: {} })}
           recentReactions={[]}
           reactionAssets={[]}
           onReactionPickerOpen={() => undefined}
@@ -205,6 +207,24 @@ test('falls back to the name of a custom reaction whose image is not available',
   const custom = layers(container).querySelector('.live-stage-count')!;
   expect(custom.querySelector('img')).toBeNull();
   expect(custom).toHaveTextContent('ne3');
+});
+
+test('overlays only the first image of each post, including animated GIFs and attachment-only posts', async () => {
+  const attachment = (hash: string, mime: string) => ({ hash, mime, bytes: 100, role: 'image_original', status: 'Available' as const });
+  const { container } = setup({
+    posts: [
+      post('png', { attachments: [attachment('transparent', 'image/png'), attachment('second', 'image/png')] }),
+      post('gif', { content: '', attachments: [attachment('animated', 'image/gif')] }),
+    ],
+    mediaObjectUrls: { transparent: 'blob:transparent-png', second: 'blob:second', animated: 'blob:animated-gif' },
+  });
+  await screen.findByText('body of png');
+  const images = layers(container).querySelectorAll('.live-overlay-image img');
+  expect([...images].map((image) => image.getAttribute('src'))).toEqual(['blob:animated-gif', 'blob:transparent-png']);
+  expect(within(layers(container)).getByText('author-gif')).toBeInTheDocument();
+  expect(layers(container).querySelector('[data-post-object-id="png"] .live-stage-post-copy')).toHaveTextContent('body of png');
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Posts' }));
+  expect(layers(container).querySelector('.live-overlay-image')).toBeNull();
 });
 
 test('turning the layers off leaves only the video, and the settings are kept on the device', async () => {

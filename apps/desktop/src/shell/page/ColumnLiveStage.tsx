@@ -65,6 +65,7 @@ export function ColumnLiveStage({
       }}
       conversationLabel={conversationLabel}
       visible={visible}
+      mediaForPost={(post) => buildPostCardView(post, 'timeline', joinedChannels).media}
       hidden={(post) => {
         const view = buildPostCardView(post, 'timeline', joinedChannels);
         return Boolean(view.adultContentGated || view.trustGate);
