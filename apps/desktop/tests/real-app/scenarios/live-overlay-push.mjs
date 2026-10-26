@@ -140,7 +140,7 @@ export async function run({ launch, log, topic }) {
   await Promise.all(all.map((instance) => eventually(`${instance.name} to show Live A`, () => instance.evaluate(`document.querySelector('${STAGE}')?.dataset.liveSessionId===${JSON.stringify(live)}`), 60000)));
   await Promise.all([host, sender].map((instance) => halfThread(instance, postId)));
   await injectCapture(host);
-  await Promise.all([sender, viewer].map(observeDraws));
+  await Promise.all([sender, viewer].map((instance) => observeDraws(instance, { readPixels: false })));
   await startBroadcast(host);
   await Promise.all([sender, viewer].map(watch));
   const heard = audioMode ? record(viewer) : null;
@@ -178,6 +178,9 @@ export async function run({ launch, log, topic }) {
       assert.ok(p95(receive.paint) <= 250, `render p95 ${p95(receive.paint)}ms`);
       assert.ok(p95(receive.wire) <= 1000, `delivery p95 ${p95(receive.wire)}ms`);
       assert.ok((await drawsSince(viewer, Date.now() - 3000)).length >= 15, 'video continues under repeated Push');
+      const samplePixel = () => viewer.evaluate(`(() => {const canvas=document.querySelector('${STAGE} canvas[aria-label="${t('media.video')}"]');return [...canvas.getContext('2d').getImageData(2,2,1,1).data].join(',');})()`);
+      const pixel = await samplePixel();
+      await eventually('the video pixels to keep changing after the load', async () => await samplePixel() !== pixel, 3000);
       if (heard) assert.ok(heard.level(5 * PERIOD_MS) > baseline * 0.3, 'audio continues under repeated Push');
       const after = (await host.invoke('list_thread', { request: { topic, thread_id: postId, cursor: null, limit: 1 } })).items.find((post) => post.object_id === postId);
       for (const key of ['content', 'created_at', 'attachments', 'reaction_summary']) assert.deepEqual(after[key], original[key], `Push leaves ${key} unchanged`);

@@ -74,8 +74,8 @@ export async function injectCapture(host) {
   await host.evaluate(INJECTION);
 }
 
-/// 視聴者の canvas に描かれた frame を記録し始める(描いた時刻・左上の画素の色・frame の大きさ)。
-export const observeDraws = (viewer) =>
+/// 視聴者のcanvasへ描いたframeの時刻・大きさを記録する。readPixels=falseなら画素の読み戻しを省く。
+export const observeDraws = (viewer, { readPixels = true } = {}) =>
   viewer.evaluate(`(() => {
     if (window.__draws) return true;
     const draws = [];
@@ -83,7 +83,7 @@ export const observeDraws = (viewer) =>
     CanvasRenderingContext2D.prototype.drawImage = function (source, ...rest) {
       const result = drawImage.call(this, source, ...rest);
       if (source instanceof VideoFrame && this.canvas.getAttribute('aria-label') === ${JSON.stringify(VIDEO)}) {
-        const [red, , blue] = this.getImageData(2, 2, 1, 1).data;
+        const [red, , blue] = ${readPixels} ? this.getImageData(2, 2, 1, 1).data : [];
         draws.push({ at: performance.timeOrigin + performance.now(), red, blue, size: source.displayWidth + 'x' + source.displayHeight,
           details: Boolean(this.canvas.closest('.live-details-dialog')), stage: Boolean(this.canvas.closest('.live-stage')) });
         if (draws.length > 3000) draws.shift();
