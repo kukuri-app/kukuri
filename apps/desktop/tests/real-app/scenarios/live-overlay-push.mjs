@@ -22,6 +22,10 @@ async function halfThread(instance, objectId) {
   await click(instance, t('stage.publicThread'), { within: `${ACTIVE} [role="tablist"]` });
   await eventually(`${instance.name} to offer Push`, () => instance.evaluate(`(() => {
     const card=document.querySelector('${ACTIVE} .live-column-side article[data-post-object-id="${objectId}"]');
+    if(!card){
+      document.querySelector('${ACTIVE} .live-column-side .timeline-feed-refresh-banner')?.click();
+      return false;
+    }
     card?.scrollIntoView({block:'center'});
     const push=document.querySelector(${JSON.stringify(button)});
     if(push && !push.disabled)return true;
