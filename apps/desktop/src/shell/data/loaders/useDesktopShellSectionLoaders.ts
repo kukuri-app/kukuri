@@ -261,6 +261,7 @@ export function useDesktopShellSectionLoaders({
 
   const loadAuthorSection = useCallback(
     async (pubkey: string, options: { resetToLatest?: boolean } = {}) => {
+      const followingAtStart = storeApi.getState().knownAuthorsByPubkey[pubkey]?.following;
       const requestId = (authorRequestIds.current.get(pubkey) ?? 0) + 1;
       authorRequestIds.current.set(pubkey, requestId);
       const savedHead = !options.resetToLatest && (storeApi.getState().authorTimelinesByPubkey[pubkey]?.length ?? 0) === 0
@@ -273,6 +274,9 @@ export function useDesktopShellSectionLoaders({
         if (requestId !== authorRequestIds.current.get(pubkey)) return;
         startTransition(() => {
           const current = storeApi.getState();
+          // 取得中のfollow操作を、古い関係で戻してMessageの押下を失わせない。
+          const currentFollowing = current.knownAuthorsByPubkey[pubkey]?.following;
+          const applyAuthor = currentFollowing === followingAtStart || author?.following === currentFollowing;
           const currentTimeline = current.authorTimelinesByPubkey[pubkey] ?? [];
           const preserveOlderPages = !options.resetToLatest && hasReadPastHeadPage(
             currentTimeline,
@@ -289,7 +293,7 @@ export function useDesktopShellSectionLoaders({
           const resolvedCursor = preserveOlderPages
             ? (current.authorTimelineNextCursorByPubkey[pubkey] ?? null)
             : (timeline.next_cursor ?? null);
-          if (current.selectedAuthorPubkey === pubkey) {
+          if (current.selectedAuthorPubkey === pubkey && applyAuthor) {
             setSelectedAuthor(author);
             setAuthorError(null);
           }
@@ -303,7 +307,7 @@ export function useDesktopShellSectionLoaders({
           setAuthorTimelineLoadingMoreByPubkey(setRecordEntry(pubkey, false));
           setAuthorTimelineLoadMoreErrorsByPubkey(setRecordEntry(pubkey, null));
           setAuthorErrorsByPubkey(setRecordEntry(pubkey, null));
-          if (author) {
+          if (author && applyAuthor) {
             setKnownAuthorsByPubkey((current) => mergeKnownAuthors(current, [author]));
           }
         });
