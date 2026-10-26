@@ -42,18 +42,26 @@ async function overlayImages(host, viewers, topic) {
     const bytes = readFileSync(new URL(`../../fixtures/overlay-${kind === 'png' ? 'transparent.png' : 'animated.gif'}`, import.meta.url));
     const attachment = { file_name: `overlay.${kind}`, mime: `image/${kind}`, byte_size: bytes.length, data_base64: bytes.toString('base64'), role: 'image_original' };
     const id = await host.invoke('create_post', { request: { topic, content: kind === 'png' ? 'Overlay PNG' : '', reply_to: null, attachments: [attachment, attachment] } });
+    const saved = (await host.invoke('list_thread', { request: { topic, thread_id: id, cursor: null, limit: 1 } })).items.find((post) => post.object_id === id);
+    assert.ok(saved, 'the source post is available');
     for (const viewer of viewers) {
+      if (process.platform === 'win32') await viewer.send('Page.bringToFront');
+      else viewer.focus();
       const selector = `.live-stage [data-post-object-id="${id}"] .live-overlay-image img`;
-      await eventually(`${viewer.name} to display the first ${kind}`, () => viewer.evaluate(`(() => {
-        const images = document.querySelectorAll(${JSON.stringify(selector)});
-        return images.length === 1 && images[0].naturalWidth === 48;
-      })()`), 60_000);
-      const shownBytes = await viewer.evaluate(`(async () => {
-        const image = document.querySelector(${JSON.stringify(selector)});
-        const bytes = new Uint8Array(await (await fetch(image.src)).arrayBuffer());
-        return btoa(String.fromCharCode(...bytes));
-      })()`);
-      assert.equal(shownBytes, attachment.data_base64, `${viewer.name} preserves ${kind} bytes through storage and fetch`);
+      let observed;
+      try {
+        await eventually(`${viewer.name} to display the first ${kind}`, async () => {
+          observed = await viewer.evaluate(`(() => {
+            const images = document.querySelectorAll(${JSON.stringify(selector)});
+            return { visibility: document.visibilityState, images: [...images].map((image) => ({ width: image.naturalWidth, complete: image.complete, src: image.src })),
+              post: document.querySelector('.live-stage [data-post-object-id="${id}"]')?.textContent };
+          })()`);
+          return observed.images.length === 1 && observed.images[0].width === 48;
+        }, 60_000);
+      } catch (error) { throw new Error(`${error.message}; overlay=${JSON.stringify(observed)}`); }
+      // asset URLのfetchはCSPのconnect-src外。通常APIで取得済みblobを照合し、表示URLを読み直さない。
+      const payload = await viewer.invoke('get_blob_media_payload', { request: { hash: saved.attachments[0].hash, mime: attachment.mime, source_object_id: id } });
+      assert.equal(payload.bytes_base64, attachment.data_base64, `${viewer.name} preserves ${kind} bytes through storage and fetch`);
     }
   }
 }
