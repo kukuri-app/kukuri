@@ -6,6 +6,7 @@ import { audioMode, PERIOD_MS, record, speak } from '../audio.mjs';
 import { accept, connect, openTopic, waitForPeers } from '../session.mjs';
 import { drawsSince, injectCapture, observeDraws, startBroadcast, t, watch, VOICE } from '../live-media.mjs';
 import { click } from '../ui.mjs';
+import { startVirtualDisplay } from '../virtual-display.mjs';
 
 const ACTIVE = '.shell-column-surface[data-active="true"]';
 const STAGE = `${ACTIVE} .live-stage`;
@@ -113,9 +114,20 @@ async function pressForOneMinute(instance, index) {
 }
 
 export async function run({ launch, log, topic }) {
-  const all = await launch('host', 'first', 'second');
+  const displays = [];
+  let all;
+  try {
+    if (process.platform === 'linux') for (let index = 0; index < 3; index++) displays.push(await startVirtualDisplay());
+    const env = Object.fromEntries(['host', 'first', 'second'].map((name, index) => [name, displays[index]?.env ?? {}]));
+    all = await launch(env, 'host', 'first', 'second');
+  } catch (error) { await Promise.all(displays.map((display) => display.close())); throw error; }
+  displays.forEach((display, index) => {
+    const close = all[index].close;
+    all[index].close = async () => { try { await close(); } finally { await display.close(); } };
+  });
   const [host, sender, viewer] = all;
   await Promise.all(all.map(accept));
+  log(`viewports: ${JSON.stringify(await Promise.all(all.map((instance) => instance.evaluate('({width:innerWidth,height:innerHeight,focus:document.hasFocus(),hidden:document.hidden})'))))}`);
   for (const instance of all) assert.equal(await instance.evaluate('Boolean(window.__KUKURI_DESKTOP__)'), false, 'use the native runtime');
   if (process.platform === 'win32') for (const instance of all) await instance.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
   await connect(all);

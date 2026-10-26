@@ -41,10 +41,11 @@ for (const name of names) {
   const started = [];
   let port = 9500;
   const context = {
-    /// 名前ごとに instance を起動する(終わったら止める)。
+    /// 名前ごとに起動する。先頭に{name: env}を渡すと、そのinstanceの環境を分ける。
     async launch(...instanceNames) {
+      const environments = typeof instanceNames[0] === 'object' ? instanceNames.shift() : {};
       const instances = await Promise.all(
-        instanceNames.map((instanceName) => launch({ app, root: dir, name: instanceName, port: port++ }))
+        instanceNames.map((instanceName) => launch({ app, root: dir, name: instanceName, port: port++, env: environments[instanceName] ?? {} }))
       );
       started.push(...instances);
       return instances;
