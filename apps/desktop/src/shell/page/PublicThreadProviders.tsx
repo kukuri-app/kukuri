@@ -344,10 +344,10 @@ function CreatePublicThreadDialog({
             ) : null}
             <ComposerDraftPreviewList items={composerDraftMediaViews(media)} onRemove={removeFile} />
             <ComposerAdultLabelToggle checked={adultLabeled} onChange={setAdultLabeled} />
-            <Label className='flex items-center gap-2'>
+            <label className='flex items-center gap-2'>
               <input type='checkbox' checked={startLive} disabled={pending || Boolean(createdThread)} onChange={(event) => setStartLive(event.target.checked)} />
               <span>{t('live:actions.start')}</span>
-            </Label>
+            </label>
             {startLive ? <LiveThumbnailField value={thumbnail} onChange={setThumbnail} disabled={pending} /> : null}
             {failed ? <p className='error error-inline'>{t('shell:publicThreads.create.failed')}</p> : null}
             <Button type='submit' disabled={pending || !title.trim()}>
