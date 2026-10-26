@@ -22,6 +22,7 @@ import path from 'node:path';
 import { Key, remote } from 'webdriverio';
 import { androidClick } from './android-click.mjs';
 import { eventually } from './wait.mjs';
+import { watchWithoutMicrophone } from './live-watch.mjs';
 import { card, columnOf, publicColumn, reopenAuthorProfile, showNewPosts } from './post-ui.mjs';
 import { installPwa, openPwaFromHome, pwaEntry } from './pwa-entry.mjs';
 import { pwaShellFlow } from './pwa-shell-flow.mjs';
@@ -2032,12 +2033,7 @@ async function live() {
   await bar.$('button[aria-label="Disable microphone"]').click();
   await bar.$('button[aria-label="Enable microphone"]').waitForExist({ timeout: WAIT });
   await new Promise((resolve) => setTimeout(resolve, 3_000));
-  const muted = await watch({ restart: true, ms: 4_000 });
-  assert.ok(muted.chunks > 0, `native still receives the video: ${JSON.stringify(muted)}`);
-  assert.ok(
-    muted.audio_clock_us === 0 || muted.video_us - muted.audio_clock_us > 2_000_000,
-    `native receives no sound while the microphone is off: ${JSON.stringify(muted)}`
-  );
+  await watchWithoutMicrophone(watch);
   await bar.$('button[aria-label="Enable microphone"]').click();
   await bar.$('button[aria-label="Disable microphone"]').waitForExist({ timeout: WAIT });
   await hear('native receives the sound again');
