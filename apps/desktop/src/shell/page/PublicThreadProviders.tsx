@@ -37,7 +37,7 @@ import {
 } from '@/shell/slices/publicThreads';
 import { type DraftMediaItem, useDesktopShellStore, useDesktopShellStoreApi } from '@/shell/store';
 
-import { PublicThreadActionsContext, type PublicThreadActions, useLiveSurfacesEnabled } from './publicThreadActions';
+import { PublicThreadActionsContext, type PublicThreadActions } from './publicThreadActions';
 import { PublicThreadLinkCard } from './PublicThreadLinkCard';
 import { LiveThumbnailField } from './LiveThumbnailField';
 
@@ -237,7 +237,6 @@ function CreatePublicThreadDialog({
   const [attachmentInputKey, setAttachmentInputKey] = useState(0);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [adultLabeled, setAdultLabeled] = useState(false);
-  const liveEnabled = useLiveSurfacesEnabled();
   const [startLive, setStartLive] = useState(false);
   const [thumbnail, setThumbnail] = useState<string | null>(null);
   const [createdLiveId, setCreatedLiveId] = useState<string | null>(null);
@@ -345,11 +344,11 @@ function CreatePublicThreadDialog({
             ) : null}
             <ComposerDraftPreviewList items={composerDraftMediaViews(media)} onRemove={removeFile} />
             <ComposerAdultLabelToggle checked={adultLabeled} onChange={setAdultLabeled} />
-            {liveEnabled ? <Label className='flex items-center gap-2'>
+            <label className='flex items-center gap-2'>
               <input type='checkbox' checked={startLive} disabled={pending || Boolean(createdThread)} onChange={(event) => setStartLive(event.target.checked)} />
               <span>{t('live:actions.start')}</span>
-            </Label> : null}
-            {liveEnabled && startLive ? <LiveThumbnailField value={thumbnail} onChange={setThumbnail} disabled={pending} /> : null}
+            </label>
+            {startLive ? <LiveThumbnailField value={thumbnail} onChange={setThumbnail} disabled={pending} /> : null}
             {failed ? <p className='error error-inline'>{t('shell:publicThreads.create.failed')}</p> : null}
             <Button type='submit' disabled={pending || !title.trim()}>
               {t('shell:publicThreads.create.submit')}

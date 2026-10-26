@@ -156,7 +156,6 @@ export function DesktopShellColumnWorkspace({
   useThreadFocusScroll();
   const { t } = useTranslation('shell');
   const workspaceState = useDesktopShellStore((state) => state.workspaceState);
-  const developerModeEnabled = useDesktopShellStore((state) => state.developerModeEnabled);
   const trackedTopics = useDesktopShellStore((state) => state.trackedTopics);
   const joinedChannelsByTopic = useDesktopShellStore((state) => state.joinedChannelsByTopic);
   const directMessages = useDesktopShellStore((state) => state.directMessages);
@@ -650,7 +649,7 @@ export function DesktopShellColumnWorkspace({
               scopeControl={renderScopeControl(column)}
               scopeActions={renderScopeActions(column)}
               headerDetails={
-                showsThreadLives(column, developerModeEnabled) && column.scope?.channelId && !isDeletedThread(column) ? (
+                showsThreadLives(column) && column.scope?.channelId && !isDeletedThread(column) ? (
                   <PublicThreadLiveRows topic={column.scope.topicId} channelId={column.scope.channelId} />
                 ) : undefined
               }

@@ -22,7 +22,7 @@ import { isHiddenAuthor, knownPublicThreadTitle } from '@/shell/slices/publicThr
 import { setColumnPublicThreadOrder, type ColumnState } from '@/shell/slices/workspace';
 import { REFRESH_INTERVAL_MS, useDesktopShellFieldSetter, useDesktopShellStore } from '@/shell/store';
 
-import { PublicThreadActionsContext, useLiveSurfacesEnabled } from './publicThreadActions';
+import { PublicThreadActionsContext } from './publicThreadActions';
 import { INITIAL_PUBLIC_THREAD_LIST, withHeadPage, withNextPage } from './publicThreadListState';
 
 const ORDERS = [
@@ -204,7 +204,6 @@ function PublicThreadRow({
   postMedia?: PostMediaBuilder;
 }) {
   const { t } = useTranslation('shell');
-  const liveSurfaces = useLiveSurfacesEnabled();
   const actions = useContext(PublicThreadActionsContext);
   const load = actions?.load;
   const author = useDesktopShellStore((state) => state.knownAuthorsByPubkey[row.creator_pubkey]);
@@ -236,7 +235,7 @@ function PublicThreadRow({
             })}
           </span>
           {/* 配信中の印(判断 2。#1840 AC-4)。 */}
-          {liveSurfaces && row.live_now ? (
+          {row.live_now ? (
             <>
               {' '}
               <span className='public-thread-row-live'>

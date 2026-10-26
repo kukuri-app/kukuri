@@ -1,6 +1,4 @@
-// #1840 AC-4: 公開スレッドの詳細の列の上部に、そのスレッドで配信中の Live を新しく始まった順に 3 件まで出し、押すとスレッドの
-// 「ライブ」の列を開く。終わった Live と、非表示の主催者(mute・CN の評価)の Live は出さない。一覧の行の配信中の印と、詳細の
-// 上部の「ライブ」は、Live の画面と同じく開発者モードでだけ出す。
+// 公開スレッドのライブを通常モードでも表示し、終了済み・非表示の配信者は除く。
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
@@ -108,29 +106,16 @@ const LIST: ColumnState = {
   preferredDesktopSpan: 1,
 };
 
-test('the list row is marked live without an unselected live column entry', async () => {
+test.each([true, false])('the list row is marked live with developer mode %s without an unselected live column entry', async (developerMode) => {
   const { openLive } = setup(
     <>
       <PublicThreadList column={LIST} />
       <PublicThreadScopeActions topic={TOPIC} channelId={THREAD} />
     </>,
-    []
+    [],
+    developerMode
   );
   expect(await screen.findByRole('button', { name: /^Watch party .* Live$/ })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Live' })).toBeNull();
   expect(openLive).not.toHaveBeenCalled();
-});
-
-test('without developer mode the list row has no live mark and the header has no live button', async () => {
-  setup(
-    <>
-      <PublicThreadList column={LIST} />
-      <PublicThreadScopeActions topic={TOPIC} channelId={THREAD} />
-    </>,
-    [],
-    false
-  );
-  const row = await screen.findByRole('button', { name: /^Watch party/ });
-  expect(row).not.toHaveTextContent(/Live$/);
-  expect(screen.queryByRole('button', { name: 'Live' })).toBeNull();
 });

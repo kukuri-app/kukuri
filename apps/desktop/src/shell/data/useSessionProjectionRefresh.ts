@@ -31,7 +31,7 @@ export function useSessionProjectionRefresh(
         for (const column of state.workspaceState.columns) {
           if (!visible.has(column.id) || !column.scope) continue;
           // 公開スレッドの詳細の列は、上部の配信中の Live のためにそのスレッドの Live を読む(#1840 AC-4)。
-          const section = showsThreadLives(column, state.developerModeEnabled)
+          const section = showsThreadLives(column)
             ? 'live'
             : primarySectionForColumn(column);
           if (section !== 'live' && section !== 'game') continue;

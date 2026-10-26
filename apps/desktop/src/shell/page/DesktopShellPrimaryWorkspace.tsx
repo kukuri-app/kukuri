@@ -52,7 +52,6 @@ import {
 } from '@/shell/presentation';
 import { useDesktopShellViewModels } from '@/shell/useDesktopShellViewModels';
 import { ColumnLiveStage } from './ColumnLiveStage';
-import { useLiveSurfacesEnabled } from './publicThreadActions';
 import type { OpenAuthorDetail, OpenThread, Translate } from '@/shell/actions/shared';
 import { useShallow } from 'zustand/react/shallow';
 import { DEFAULT_ASYNC_PANEL_STATE } from '@/shell/slices/shared';
@@ -328,9 +327,8 @@ export function DesktopShellPrimarySurface({
     }))
   );
   // #1061: 配信一覧の折りたたみと、この一覧だけの「表示する」。
-  // #1841: ライブの列の左側に列の Live を大きく出す(開発者モードでだけ)。一覧のカードの「大きく表示」は、この列を置き換える。
-  const liveSurfaces = useLiveSurfacesEnabled();
-  const stagedColumn = liveSurfaces && column.scope && column.entityId
+  // ライブの列に選択中のLiveを大きく表示する。
+  const stagedColumn = column.scope && column.entityId
     ? { ...column, scope: column.scope, entityId: column.entityId }
     : null;
   const setGameTitle = useDesktopShellFieldSetter('gameTitle');

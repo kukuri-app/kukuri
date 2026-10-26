@@ -52,8 +52,8 @@ export function knownPublicThreadTitle(
 }
 
 /// 公開スレッドの詳細の列で、上部にそのスレッドで配信中の Live を出すか(#1840 AC-4)。出す列は、そのスレッドの Live を読む。
-export function showsThreadLives(column: Pick<ColumnState, 'kind' | 'scope'>, developerModeEnabled: boolean): boolean {
+export function showsThreadLives(column: Pick<ColumnState, 'kind' | 'scope'>): boolean {
   return (
-    developerModeEnabled && column.kind === 'timeline' && isPublicChannelId(column.scope?.channelId)
+    column.kind === 'timeline' && isPublicChannelId(column.scope?.channelId)
   );
 }

@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
+import { DEVELOPER_MODE_STORAGE_KEY } from '@/lib/developerMode';
 import { announceReactionReceived } from '@/shell/data/useRuntimeEventBridge';
 import type { ColumnState } from '@/shell/slices/workspace';
 import { WORKSPACE_LAYOUT_STORAGE_KEY } from '@/shell/workspacePersistence';
@@ -20,6 +21,7 @@ vi.mock('@/components/extended/liveMedia', async (importOriginal) => ({
 const TOPIC = 'kukuri:topic:general';
 
 beforeEach(() => {
+  window.localStorage.setItem(DEVELOPER_MODE_STORAGE_KEY, 'false');
   setViewportWidth(1024);
   window.history.replaceState(null, '', '/');
 });

@@ -6,7 +6,7 @@ const activeColumn = (page: Page, title: string) =>
   page.getByRole('region', { name: new RegExp(`^${title} Column,.*Active,`) });
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript((key) => localStorage.setItem(key, 'true'), DEVELOPER_MODE_STORAGE_KEY);
+  await page.addInitScript((key) => localStorage.setItem(key, 'false'), DEVELOPER_MODE_STORAGE_KEY);
 });
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
@@ -17,7 +17,19 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     const create = page.getByRole('dialog', { name: 'Create a public thread' });
     await create.getByRole('textbox', { name: 'Title' }).fill('Watch party');
     await create.getByRole('textbox', { name: 'First post (optional)' }).fill('Let’s watch together');
-    await create.getByRole('checkbox', { name: 'Start Live' }).check();
+    await page.screenshot({ path: info.outputPath('start.png') });
+    const liveToggle = create.getByRole('checkbox', { name: 'Start Live' });
+    const liveLabel = create.getByText('Start Live', { exact: true });
+    const toggleBox = (await liveToggle.boundingBox())!;
+    const labelBox = (await liveLabel.boundingBox())!;
+    expect(toggleBox.x + toggleBox.width).toBeLessThan(labelBox.x);
+    expect(Math.abs(toggleBox.y + toggleBox.height / 2 - labelBox.y - labelBox.height / 2)).toBeLessThanOrEqual(2);
+    await liveLabel.click();
+    await expect(liveToggle).toBeChecked();
+    await liveToggle.press('Space');
+    await expect(liveToggle).not.toBeChecked();
+    await liveToggle.press('Space');
+    await expect(liveToggle).toBeChecked();
     await create.getByRole('button', { name: 'Create', exact: true }).click();
     const detail = activeColumn(page, 'Public thread');
     await expect(detail.getByRole('list', { name: 'Live now' }).getByRole('button', { name: /^Live Watch party / })).toBeVisible();

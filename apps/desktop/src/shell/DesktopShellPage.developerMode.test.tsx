@@ -20,7 +20,7 @@ beforeEach(() => {
   window.localStorage.setItem(DEVELOPER_MODE_STORAGE_KEY, 'false');
 });
 
-test('developer mode off hides Live/Game tabs and shell status badges by default', async () => {
+test('developer mode off hides Game and diagnostics by default', async () => {
   const user = userEvent.setup();
   const { container } = render(<App api={createDesktopMockApi()} />);
 
@@ -34,13 +34,32 @@ test('developer mode off hides Live/Game tabs and shell status badges by default
   expect(container.querySelector('.shell-status-badges')).toBeNull();
 });
 
-test('developer mode off falls back to timeline for live and game hash routes', async () => {
+test('developer mode off keeps the live hash route', async () => {
   renderAtHash('#/live?topic=kukuri%3Atopic%3Ageneral');
 
   await waitFor(() => {
-    expect(window.location.hash).toMatch(/^#\/timeline/);
+    expect(getActiveColumn('Live')).toHaveAttribute('aria-current', 'true');
   });
+  expect(window.location.hash).toMatch(/^#\/live/);
+});
+
+test('developer mode off still falls back to timeline for game hash routes', async () => {
+  renderAtHash('#/game?topic=kukuri%3Atopic%3Ageneral');
+  await waitFor(() => expect(window.location.hash).toMatch(/^#\/timeline/));
   expect(getActiveColumn('Timeline')).toHaveAttribute('aria-current', 'true');
+});
+
+test('developer mode off opens an internal live link in its Live column', async () => {
+  const api = createDesktopMockApi();
+  const topic = 'kukuri:topic:general';
+  const id = await api.createLiveSession(topic, 'Linked live', '');
+  const route = `#/live?topic=kukuri%3Atopic%3Ageneral&sessionId=${id}`;
+  await api.createPost(topic, route, null, [], { kind: 'public' });
+  const user = userEvent.setup();
+  render(<App api={api} />);
+  await user.click(await screen.findByTitle(route));
+  await waitFor(() => expect(getActiveColumn('Live')).toHaveAttribute('aria-current', 'true'));
+  expect(window.location.hash).toBe(route);
 });
 
 test('developer mode toggle reveals WIP tabs and badges and persists across reloads', async () => {
@@ -68,7 +87,7 @@ test('developer mode toggle reveals WIP tabs and badges and persists across relo
   expect(within(restoredControlCenter).queryByRole('button', { name: 'Add Live Column' })).not.toBeInTheDocument();
 });
 
-test('disabling developer mode while on Live routes back to timeline', async () => {
+test('disabling developer mode keeps the selected Live column', async () => {
   window.localStorage.setItem(DEVELOPER_MODE_STORAGE_KEY, 'true');
   const user = userEvent.setup();
   renderAtHash('#/live?topic=kukuri%3Atopic%3Ageneral&sessionId=selected', createDesktopMockApi());
@@ -78,8 +97,8 @@ test('disabling developer mode while on Live routes back to timeline', async () 
   await user.click(within(drawer).getByRole('checkbox', { name: 'Enable developer mode' }));
 
   await waitFor(() => {
-    expect(window.location.hash).toMatch(/^#\/timeline/);
-    expect(getActiveColumn('Timeline')).toHaveAttribute('aria-current', 'true');
+    expect(window.location.hash).toMatch(/^#\/live/);
+    expect(getActiveColumn('Live')).toHaveAttribute('aria-current', 'true');
   });
   const controlCenter = await openControlCenter(user);
   expect(within(controlCenter).queryByRole('button', { name: 'Add Live Column' })).not.toBeInTheDocument();

@@ -11,7 +11,6 @@ import { channelComposeTarget, messageFromError } from '@/shell/presentation';
 import type { ColumnScope } from '@/shell/slices/workspace';
 
 import { LiveActionsContext } from './liveActions';
-import { useLiveSurfacesEnabled } from './publicThreadActions';
 import { LiveThumbnailField } from './LiveThumbnailField';
 
 /** 投稿先を固定して開始する。開く・閉じるだけでは通常の投稿の下書きを変えない。 */
@@ -21,10 +20,9 @@ export function LiveStartButton({ scope, audienceLabel, disabled }: {
   disabled?: boolean;
 }) {
   const { t } = useTranslation('live');
-  const enabled = useLiveSurfacesEnabled();
   const actions = useContext(LiveActionsContext);
   const [open, setOpen] = useState(false);
-  if (!enabled || !actions) return null;
+  if (!actions) return null;
   return <>
     <Button variant='secondary' type='button' disabled={disabled} onClick={() => setOpen(true)}>
       <Radio className='size-4' aria-hidden='true' />{t('actions.start')}
