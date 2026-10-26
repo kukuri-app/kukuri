@@ -1,7 +1,6 @@
 import { createContext } from 'react';
 
 import type { DesktopApi, PublicChannelView } from '@/lib/api';
-import { useDesktopShellStore } from '@/shell/store';
 
 /** 公開スレッド(#1840)の一覧・詳細の列と本文のリンクの表示が使う操作。shell が 1 か所で渡す。 */
 export type PublicThreadActions = {
@@ -28,8 +27,3 @@ export type PublicThreadActions = {
 };
 
 export const PublicThreadActionsContext = createContext<PublicThreadActions | null>(null);
-
-/// Live の画面を出すか(Live・Stream の画面は開発者モードでだけ出す。README の Experimental。Web も同じ、#1879)。
-export function useLiveSurfacesEnabled(): boolean {
-  return useDesktopShellStore((state) => state.developerModeEnabled);
-}

@@ -6,7 +6,7 @@ const activeColumn = (page: Page, title: string) =>
   page.getByRole('region', { name: new RegExp(`^${title} Column,.*Active,`) });
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript((key) => localStorage.setItem(key, 'true'), DEVELOPER_MODE_STORAGE_KEY);
+  await page.addInitScript((key) => localStorage.setItem(key, 'false'), DEVELOPER_MODE_STORAGE_KEY);
 });
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
@@ -17,6 +17,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
     const create = page.getByRole('dialog', { name: 'Create a public thread' });
     await create.getByRole('textbox', { name: 'Title' }).fill('Watch party');
     await create.getByRole('textbox', { name: 'First post (optional)' }).fill('Let’s watch together');
+    await page.screenshot({ path: info.outputPath('start.png') });
     await create.getByRole('checkbox', { name: 'Start Live' }).check();
     await create.getByRole('button', { name: 'Create', exact: true }).click();
     const detail = activeColumn(page, 'Public thread');

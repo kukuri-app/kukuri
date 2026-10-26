@@ -259,7 +259,7 @@ export function useDesktopShellDataEffects({
           // #1841: 左側に Live を大きく出している表示中のライブの列は、会話の場所を読み直す(参加していない private channel は除く)。
           const channelId = column.scope.channelId;
           const staged = column.kind === 'stream' && Boolean(column.entityId) && visibleIds.has(column.id) &&
-            currentState.developerModeEnabled && (!channelId || isPublicChannelId(channelId) ||
+            (!channelId || isPublicChannelId(channelId) ||
               (currentState.joinedChannelsByTopic[column.scope.topicId] ?? []).some((channel) => channel.channel_id === channelId));
           if (!staged && (column.kind !== 'timeline' || (!column.timelineFlow && !visibleIds.has(column.id)))) return [];
           const key = `${column.scope.topicId}\u0000${column.scope.channelId ?? ''}`;

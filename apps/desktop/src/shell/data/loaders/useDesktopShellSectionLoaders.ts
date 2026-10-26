@@ -673,7 +673,7 @@ export function useDesktopShellSectionLoaders({
       tasks.push(loadCommunityIndexCapability());
 
       // 公開スレッドの詳細の列は、上部の配信中の Live のためにそのスレッドの Live を読む(#1840 AC-4)。
-      if (activePrimarySection === 'live' || showsThreadLives(activeColumn, state.developerModeEnabled)) {
+      if (activePrimarySection === 'live' || showsThreadLives(activeColumn)) {
         tasks.push(loadLiveSection(topic, selectedChannelId));
       }
       // 別の場所の Live を左側に出すライブの列は、列の下部の参加のために Live の場所の一覧も読む(#1841)。

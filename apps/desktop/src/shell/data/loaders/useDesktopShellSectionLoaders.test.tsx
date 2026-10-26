@@ -478,8 +478,8 @@ describe('useDesktopShellSectionLoaders', () => {
     expect(listGameRooms).not.toHaveBeenCalled();
   });
 
-  // #1840 AC-4: active な公開スレッドの詳細の列は、上部の配信中の Live のためにそのスレッドの Live を読む(開発者モードだけ)。
-  test.each([true, false])('an active public thread detail column loads its lives in developer mode (%s)', async (developerMode) => {
+  // 公開スレッドの詳細は、開発者モードにかかわらず配信中のLiveを読む。
+  test.each([true, false])('an active public thread detail column loads its lives with developer mode %s', async (developerMode) => {
     const { api, hook, store } = setup();
     const listLiveSessions = vi.spyOn(api, 'listLiveSessions').mockResolvedValue([]);
     const scope = { topicId: 'topic', channelId: 'pc-1700000000000-0123456789abcdef' };
@@ -495,11 +495,7 @@ describe('useDesktopShellSectionLoaders', () => {
 
     await act(async () => hook.result.current.loadShellSections('topic'));
 
-    if (developerMode) {
-      expect(listLiveSessions).toHaveBeenCalledWith('topic', channelTimelineScope(scope.channelId));
-    } else {
-      expect(listLiveSessions).not.toHaveBeenCalled();
-    }
+    expect(listLiveSessions).toHaveBeenCalledWith('topic', channelTimelineScope(scope.channelId));
   });
 
   test('keeps fulfilled DM status when the timeline branch fails', async () => {

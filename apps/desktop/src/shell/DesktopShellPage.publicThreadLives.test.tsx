@@ -5,12 +5,14 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
+import { DEVELOPER_MODE_STORAGE_KEY } from '@/lib/developerMode';
 
 import { getActiveColumn, renderAtHash, setViewportWidth } from './DesktopShellPage.testHelpers';
 
 const TOPIC = 'kukuri:topic:general';
 
 beforeEach(() => {
+  window.localStorage.setItem(DEVELOPER_MODE_STORAGE_KEY, 'false');
   setViewportWidth(1024);
   window.history.replaceState(null, '', '/');
 });

@@ -71,6 +71,8 @@ W8 は Web の entry と build、共有 UI の adapter、capability matrix、配
 - 2026-10-03 のユーザー判断（W8 AC-2a）: 「画面で未対応と示す」は、Web では使えない機能（live・game・metaverse・Dome、device backup・restore、アプリの更新、ウィンドウを閉じるときの設定、OS 通知の設定、開発者ログの閲覧）の入口を出さず、設定の About に短い説明を 1 つ出す形で満たす。
 - 2026-10-19 のユーザー判断（#1879）: live を Web でも使い、desktop と同じ条件で配信と視聴を出す（live の列・作成・公開スレッドの印・大きな表示は開発者モードの間だけ、投稿の中の Live は開発者モードに関係なく出す。映像・音声の処理は ADR 0067 §9 の Web の項）。live の command は Web の dispatch の表へ移し、設定の About の説明から live を外す。game・metaverse・Dome は今のまま使えない。live の動きの自動試験は Chrome だけで行い、PR の CI の merge の条件にする（Firefox・Safari・Android の Chrome では確かめない。§4 の夜間の実行では未確認の制約として示す）。
 
+- 2026-10-26 のユーザー判断（#1934）: LiveをDesktop・Webとも通常機能へ移す。2026-10-19の判断のうち、列・作成・公開スレッドの印・拡大表示を開発者モードに限定する条件は失効する。URLと本文内のリンクも通常モードでLiveを開き、開発者モードを無効にしてもLive列を維持する。参加資格・公開範囲・明示操作による取り込み、メディア方式、対応ブラウザの検証範囲、game・metaverse・Domeの未対応は変更しない。
+
 ### 4. 実ブラウザの検証環境
 
 | browser | 実行先 | 判定する範囲 |

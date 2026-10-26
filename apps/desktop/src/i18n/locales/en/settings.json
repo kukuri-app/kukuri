@@ -478,7 +478,7 @@
   },
   "developer": {
     "mode": {
-      "description": "Shows work-in-progress features (Live, Game) and detailed diagnostics intended for developers.",
+      "description": "Shows work-in-progress features (Game) and detailed diagnostics intended for developers.",
       "label": "Enable developer mode",
       "enabled": "Developer mode is on.",
       "disabled": "Developer mode is off."

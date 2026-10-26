@@ -4,10 +4,12 @@ import { beforeEach, expect, test, vi } from 'vitest';
 
 import { App } from '@/App';
 import { createDesktopMockApi } from '@/mocks/desktopApiMock';
+import { DEVELOPER_MODE_STORAGE_KEY } from '@/lib/developerMode';
 
 import { openLiveCreateDialog, setViewportWidth } from './DesktopShellPage.testHelpers';
 
 beforeEach(() => {
+  window.localStorage.setItem(DEVELOPER_MODE_STORAGE_KEY, 'false');
   setViewportWidth(1024);
   window.history.replaceState(null, '', '/');
 });

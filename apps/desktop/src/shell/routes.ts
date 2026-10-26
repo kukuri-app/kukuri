@@ -71,10 +71,8 @@ export const PRIMARY_SECTION_ITEMS: Array<{
   { id: 'profile', label: 'Profile' },
 ];
 
-/// 出さない欄。live・game は開発者モードでだけ出し(README の Experimental)、game は Web では使えない(ADR 0060 §3。
-/// live は #1879 で Web でも使う)。
+/// gameは開発者モードでだけ表示し、Webでは使えない。LiveはDesktop・Webとも通常機能。
 export function primarySectionHidden(section: PrimarySection, developerModeEnabled: boolean): boolean {
-  if (section === 'live') return !developerModeEnabled;
   if (section === 'game') return !developerModeEnabled || IS_WEB_RUNTIME;
   return false;
 }

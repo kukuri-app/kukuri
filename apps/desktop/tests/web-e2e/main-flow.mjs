@@ -1976,7 +1976,7 @@ function observeLivePlayback() {
   window.__livePlaybackClosed = () => taps.length > 0 && taps.every((analyser) => analyser.context.state === 'closed');
 }
 
-/** `live`（#1879 AC-1・AC-2）: 開発者モードの Web が Live を作り、camera と mic で配信する。native の相手は映像と音声を受ける。
+/** `live`（#1879 AC-1・AC-2）: 通常モードのWebがLiveを作り、cameraとmicで配信する。nativeの相手は映像と音声を受ける。
  * 別の Web は参加すると映像が描かれ、音がブラウザの出力へ渡り、音量 0 で無音になり、退出で受信が止まる。mic を止めた間は音声
  * だけが届かず、戻すとまた届き、配信を止めると視聴が終わる。公開スレッドの Live は一覧に配信中の印が付き、終わると消える。
  * 偽の camera・mic は Chrome の起動の引数で作るので、Chrome だけで確かめる（2026-10-19 のユーザー判断）。 */
@@ -1986,8 +1986,6 @@ async function live() {
     return;
   }
   const browser = await openClient('web-live', { ice: true, media: true });
-  await enableDeveloperMode(browser);
-  await browser.$('button[aria-label="Close settings"]').click();
   await browser.execute((topic) => {
     location.hash = `#/timeline?topic=${encodeURIComponent(topic)}`;
   }, TOPIC);
@@ -2028,8 +2026,6 @@ async function live() {
 
   // 別の Web が投稿のサムネイルから詳細を開いて参加すると、映像が描かれ、音がブラウザの出力へ渡る。音量 0 で無音になり、退出で受信が止まる。
   const viewer = await openClient('web-viewer', { ice: true, media: true });
-  await enableDeveloperMode(viewer);
-  await viewer.$('button[aria-label="Close settings"]').click();
   await viewer.execute(observeLivePlayback);
   await viewer.execute((topic) => {
     location.hash = `#/timeline?topic=${encodeURIComponent(topic)}`;

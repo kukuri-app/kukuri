@@ -53,7 +53,8 @@ The default diagnostic report omits secret keys, authentication tokens, private-
 - Preview targets are Windows NSIS, Linux x86_64 AppImage / Deb, and Linux x86_64/aarch64 CLI. Availability follows the published Release asset list; generation alone is not publication. Deb updates require explicit application and OS authorization; cancellation does not trigger another authentication method. macOS has no package.
 - The first launch requires an age self-attestation and acceptance of the app terms; each Community Node additionally requires explicit consent to its own documents before the app uses it. Adult-labeled posts are hidden until you allow them in `Settings -> Safety`.
 - A direct message needs another test peer and a mutual relationship. P2P behavior is easiest to evaluate with two devices or two isolated app instances.
-- Live, Game, Stream, and Metaverse surfaces are hidden by default and appear only after enabling developer mode in `Settings -> Developer`. Metaverse Domes (Dome hosting, seamless transition, spatial audio, follow camera, connection map, and Dome management) are experimental: their data formats have no backward-compatible decoding or migration guarantee. The Stream surface does not yet include a media player.
+- Live is available without developer mode on desktop and web. Start a live session from a post composer or when creating a public thread, then open its thumbnail to view details, join, or show it in a large column. Camera, screen, and microphone capture require an explicit broadcast action.
+- Game and Metaverse surfaces appear only after enabling developer mode in `Settings -> Developer`. Metaverse Domes (Dome hosting, seamless transition, spatial audio, follow camera, connection map, and Dome management) are experimental: their data formats have no backward-compatible decoding or migration guarantee.
 - Your account key is stored only on your device. There is no central reissue or recovery; use the encrypted key export or the device backup to keep a copy.
 - Preview updates are expected to preserve your account-identifying key, profile, follows, posts, local database state, Iroh data, Community Node settings, private-channel access, and the notification inbox. A device backup does not carry Community Node tokens, consent state, the age attestation, or the adult-content setting; you redo those after a restore. Keep a backup before uninstalling or resetting if you need to retain local state.
 - This is testing software. Please attach a sanitized diagnostic report when reporting connectivity, upgrade, or recovery problems.
@@ -79,11 +80,12 @@ The durable responsibility boundary is documented in [P2P-first Community Node r
 | Private conversation | Invite-only, mutual-follow, and mutual-follow-plus channels with epoch-aware membership; pairwise mutual-only direct messages |
 | People and activity | Public profiles, follow/unfollow, block with two-way hiding, mutual follows and connections through people you follow, local and OS notifications |
 | Media | Image and video attachments in posts and direct messages |
+| Live | Camera or screen broadcasts with audio, thumbnail previews, public-thread discovery, and a large viewing column on desktop and web |
 | Safety and account portability | Age self-attestation, adult self-labels hidden by default, encrypted account-key export/import, multi-account switching, and encrypted device backup/restore |
 | Localization and appearance | Japanese, English, and Simplified Chinese UI; light and dark themes tuned for WCAG 2.2 AA contrast |
 | Connectivity and recovery | Static-peer links, seeded DHT discovery, assistance only from Community Nodes you explicitly consented to, offline-capable local state, restart recovery, and late-join backfill |
 | Preview operations | In-app update checks, in-app tester feedback, sanitized diagnostics and an in-app log viewer in developer mode, provenance display, and distributed report routing |
-| Experimental (developer mode) | Live sessions, game rooms, the Stream column, and Metaverse Domes |
+| Experimental (developer mode) | Game rooms and Metaverse Domes |
 
 The [foundation progress record](./docs/progress/2026-03-10-foundation.md) defines the Phase 6 baseline; later changes are tracked in the [CHANGELOG](./CHANGELOG.md), accepted [ADRs](./docs/adr/), tests, and [harness scenarios](./harness/scenarios/).
 
@@ -91,7 +93,7 @@ The [foundation progress record](./docs/progress/2026-03-10-foundation.md) defin
 
 - Optional search, discovery, recommendation, gateway, and bridge services can grow around the P2P core without becoming mandatory canonical stores.
 - Community Node trust, moderation, policy-assist, and operator tooling can evolve within each node's declared capability and authority scope.
-- Live, game, Stream, and Metaverse experiences are accepted and implemented as experimental features (ADR 0035 to 0045); promoting them into the product scope must not change the topic-first ownership and synchronization boundaries.
+- Game and Metaverse experiences remain experimental (ADR 0035 to 0045). Live is available in the product scope and preserves the topic-first ownership and synchronization boundaries.
 
 These are directions, not a promise that every capability is available in the current Preview.
 
