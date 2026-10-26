@@ -192,7 +192,7 @@ test('production Columns retain a pinned causal chain and close back through its
   await expect(page).not.toHaveURL(/context=thread/);
 });
 
-test('developer mode off falls back from live deep link to the timeline', async ({ page }) => {
+test('developer mode off keeps the live deep link', async ({ page }) => {
   // beforeEach の seed より後に登録した init script が勝つため、既定 OFF を再現できる。
   await page.addInitScript((key) => {
     window.localStorage.setItem(key, 'false');
@@ -200,8 +200,8 @@ test('developer mode off falls back from live deep link to the timeline', async 
   await page.setViewportSize({ width: 1400, height: 980 });
 
   await page.goto('/#/live');
-  await expect(page).toHaveURL(/#\/timeline\?topic=/);
+  await expect(page).toHaveURL(/#\/live\?topic=/);
   const controlCenter = await openControlCenter(page);
   await expect(controlCenter.getByRole('button', { name: 'Add Live Sessions Column' })).toHaveCount(0);
-  await expect(activeColumn(page, 'Timeline')).toBeVisible();
+  await expect(activeColumn(page, 'Live')).toBeVisible();
 });
