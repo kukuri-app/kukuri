@@ -1,13 +1,12 @@
 import { readFileSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 const png = readFileSync(new URL('../fixtures/overlay-transparent.png', import.meta.url)).toString('base64');
 const gif = readFileSync(new URL('../fixtures/overlay-animated.gif', import.meta.url)).toString('base64');
 
-for (const width of [1440, 390]) for (const theme of ['dark', 'light']) for (const locale of ['ja', 'en', 'zh-CN']) {
-  test(`transparent PNG and animated GIF ${width} ${theme} ${locale}`, async ({ page }, info) => {
+async function openImages(page: Page, width: number, theme: string, locale: string, large = false) {
     await page.setViewportSize({ width, height: 900 });
-    await page.addInitScript(({ png, gif, theme, locale }) => {
+    await page.addInitScript(({ png, gif, theme, locale, large }) => {
       localStorage.setItem('kukuri.desktop.theme', theme);
       localStorage.setItem('kukuri.desktop.locale', locale);
       let api: typeof window.__KUKURI_DESKTOP__;
@@ -20,23 +19,34 @@ for (const width of [1440, 390]) for (const theme of ['dark', 'light']) for (con
             const result = await original(...args);
             const base = result.items[0];
             if (!base) return result;
-            return { ...result, items: ['png', 'gif'].map((kind) => ({
-              ...base, object_id: `overlay-${kind}`, content: kind === 'png' ? 'Transparent PNG' : '',
-              attachments: [{ hash: kind, mime: `image/${kind}`, bytes: 2048, role: 'image_original', status: 'Available' as const },
+            return { ...result, items: (large ? Array.from({ length: 5 }, (_, index) => `large-${index}`) : ['png', 'gif']).map((kind) => ({
+              ...base, object_id: `overlay-${kind}`, content: large ? `Author ${kind}: ${'A normal size image must leave this post and its author visible. '.repeat(4)}` : kind === 'png' ? 'Transparent PNG' : '',
+              attachments: [{ hash: kind, mime: `image/${kind === 'gif' ? 'gif' : 'png'}`, bytes: large ? 200000 : 2048, role: 'image_original', status: 'Available' as const },
                 { hash: 'second', mime: 'image/png', bytes: 100, role: 'image_original', status: 'Available' as const }],
               withdrawal: null, live: null, reply_to: null,
             })) };
           };
+          if (large) {
+            const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1200;
+            const context = canvas.getContext('2d')!;
+            context.fillStyle = '#ed2020'; context.fillRect(0, 0, 600, 1200);
+            png = canvas.toDataURL().split(',')[1];
+          }
           value.getBlobMediaPayload = async (_hash, mime) => ({ mime, bytes_base64: mime === 'image/gif' ? gif : png });
         },
       });
-    }, { png, gif, theme, locale });
+    }, { png, gif, theme, locale, large });
     await page.goto('/');
     await page.waitForFunction(() => Boolean(window.__KUKURI_DESKTOP__));
     await page.evaluate(async () => {
       const id = await window.__KUKURI_DESKTOP__!.createLiveSession('kukuri:topic:general', 'Overlay images', '');
       location.hash = `/live?topic=kukuri%3Atopic%3Ageneral&sessionId=${encodeURIComponent(id)}`;
     });
+}
+
+for (const width of [1440, 390]) for (const theme of ['dark', 'light']) for (const locale of ['ja', 'en', 'zh-CN']) {
+  test(`transparent PNG and animated GIF ${width} ${theme} ${locale}`, async ({ page }, info) => {
+    await openImages(page, width, theme, locale);
     const stage = page.locator('.live-stage');
     const images = stage.locator('.live-overlay-image img');
     await expect(images).toHaveCount(2);
@@ -66,5 +76,21 @@ for (const width of [1440, 390]) for (const theme of ['dark', 'light']) for (con
     await expect(frozen).toBeVisible();
     await page.waitForTimeout(550);
     expect(await frozen.screenshot()).toEqual(frame);
+
   });
 }
+
+test('five normal-size images preserve every post and author inside a narrow video', async ({ page }, info) => {
+  await openImages(page, 390, 'dark', 'ja', true);
+  const stage = page.locator('.live-stage');
+  const images = stage.locator('.live-overlay-image img');
+  await expect(images).toHaveCount(5);
+  await expect.poll(() => images.evaluateAll((images) => images.every((image) => (image as HTMLImageElement).naturalWidth === 1200))).toBe(true);
+  const bounds = (await stage.locator('.live-viewer-screen').boundingBox())!;
+  for (const copy of await stage.locator('.live-stage-post-copy').all()) {
+    const box = (await copy.boundingBox())!;
+    expect(box.y).toBeGreaterThanOrEqual(bounds.y);
+    expect(box.y + box.height).toBeLessThanOrEqual(bounds.y + bounds.height);
+  }
+  await page.screenshot({ path: info.outputPath('five-large-images.png') });
+});
