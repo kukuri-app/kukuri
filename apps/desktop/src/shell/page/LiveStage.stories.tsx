@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import type { DesktopApi, LiveSessionView, PostView, ReactionSummaryView } from '@/lib/api';
 import { announceReactionReceived } from '@/shell/data/useRuntimeEventBridge';
 import { createDesktopShellStore, DesktopShellStoreContext, timelineStorageKeyForChannel } from '@/shell/store';
+import { buildPostMediaView } from '@/shell/viewModels/postMediaView';
 
 import { LiveActionsContext, type LiveActions } from './liveActions';
 import { LiveStage } from './LiveStage';
@@ -156,6 +157,7 @@ function LiveStageStory({
             }}
             conversationLabel='v0.5 の配布候補の確認'
             visible
+            mediaForPost={(post) => buildPostMediaView(post, { mediaObjectUrls: store.getState().mediaObjectUrls, adultContentGated: false, unsupportedVideoManifests: {} })}
             recentReactions={[]}
             reactionAssets={[]}
             onReactionPickerOpen={() => undefined}

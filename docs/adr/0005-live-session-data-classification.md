@@ -101,6 +101,21 @@ post・リアクションの正本、Live の寿命・権限・視聴の共有�
   channel は足さない）。重ねる投稿と開始 post は、成人向けの判定・信頼値の評価・画像の取得の対象に通常の投稿と同じく入れる。列を閉じる・Live を切り替えると、
   これらと演出の待ち・timer を外す。列の下部の参加は、Live の場所の一覧で Live を探す。
 
+### 追補: 投稿添付の画像とGIFを重ねる表示（#1950 AC-1、2026-10-27）
+
+2026-10-27のユーザー判断で、通常表示は複数添付の先頭の画像1枚だけとする。本文の有無にかかわらず描画し、本文・作者・返信の文脈は既存のまま保つ。画像の透明部分をカード背景で塞がず、GIFは元のbytesとMIMEを使って再生する。reduced motionでは表示寸法以内のcanvasへ1フレームだけ描き、元画像の読み込みを解放する。
+
+- Feature 名: Liveの投稿添付overlay
+- Durable / Transient: Transient（表示状態のみ）
+- Canonical Source / Rebuildable From: 既存のpost headerと添付blob。表示のための写しや再エンコードを作らない
+- Replicated?: 表示状態は複製しない。投稿・添付は従来どおり
+- Public Replica / Private Replica / Local Only: 表示はLocal Only。会話の既存の閲覧条件を適用する
+- Gossip Hint / Blob / SQLite projection: 新規追加なし。既存の投稿media需要・URLとcacheを共用する
+- 必須contract: 先頭画像のみ、本文あり/なし、表示gateと需要回収、映像・音声の共有を維持する対象component test
+- 必須scenario: 透過PNGと透明色付きanimated GIFの実描画、reduced motion、広幅/狭幅・dark/light・ja/en/zh-CN
+
+投稿レイヤーoff・画面外・背景・終了で画像DOMと表示需要を外す。他の表示面が同じhashを使用していれば、共通ownerがその需要を保持する。画像の準備や失敗はLive映像・音声を待たせない。Pushの一時network eventはAC-2で追加する。
+
 ## Consequences
 - 映像・音声の搬送は [ADR 0067](0067-media-transport-moq.md) に従う。manifest の descriptor は上の追補による（分類は ADR 0067 の Feature Data Classification）。
 - #1262: state/envelopeの到着による個別反映、表示中だけのmanifest取得、未取得候補と検証済みsessionの区別はADR 0052「Session の個別反映と表示要求」に従う。timerによる反映retryはしない。

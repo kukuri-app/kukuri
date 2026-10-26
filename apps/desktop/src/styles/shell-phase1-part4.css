@@ -638,6 +638,7 @@
 }
 
 .live-stage-layers {
+  container-type: inline-size;
   --live-overlay-text: 0.875rem;
   --live-overlay-reaction: 1.5rem;
   position: absolute;
@@ -671,7 +672,7 @@
   line-height: 1.4;
 }
 
-.live-stage-post {
+.live-stage-post-copy {
   display: -webkit-box;
   overflow: hidden;
   /* 上下の余白は border で取る(padding だと、3 行で切った次の行が余白に見える)。 */
@@ -683,6 +684,22 @@
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+}
+
+.live-overlay-image {
+  position: relative;
+  display: block;
+  width: fit-content;
+  max-width: min(192px, 33cqw);
+  background: transparent;
+}
+
+.live-overlay-image > img,
+.live-overlay-image > canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 160px;
+  object-fit: contain;
 }
 
 .live-stage-post-fresh {
