@@ -22,8 +22,8 @@ function profilePost(base: PostView, objectId: string, createdAt: number): PostV
   return { ...base, object_id: objectId, envelope_id: `envelope-${objectId}`, created_at: createdAt };
 }
 
-function setup() {
-  const api = createDesktopMockApi();
+function setup(options?: Parameters<typeof createDesktopMockApi>[0]) {
+  const api = createDesktopMockApi(options);
   const store = createDesktopShellStore();
   const loadReactionCatalogData = vi.fn().mockResolvedValue(undefined);
   const translate = (key: string) => key;
@@ -49,6 +49,30 @@ function setup() {
 }
 
 describe('useDesktopShellSectionLoaders', () => {
+  test.each([false, true])('an older author read does not undo a local follow change from %s', async (following) => {
+    const peer = 'b'.repeat(64);
+    const { api, hook, store } = setup({ authorSocialViews: {
+      [peer]: { following, followed_by: true, mutual: following },
+    } });
+    const old = await api.getAuthorSocialView(peer);
+    store.setState({ selectedAuthorPubkey: peer, selectedAuthor: old, knownAuthorsByPubkey: { [peer]: old } });
+    const pending = createDeferred<TimelineView>();
+    const read = vi.spyOn(api, 'listProfileTimeline').mockReturnValueOnce(pending.promise);
+    let loading!: Promise<void>;
+    act(() => { loading = hook.result.current.loadAuthorSection(peer); });
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    const next = following ? await api.unfollowAuthor(peer) : await api.followAuthor(peer);
+    act(() => { store.setState({ selectedAuthor: next, knownAuthorsByPubkey: { [peer]: next } }); });
+    await act(async () => { pending.resolve({ items: [], next_cursor: null }); await loading; });
+    expect(store.getState().knownAuthorsByPubkey[peer].following).toBe(!following);
+    expect(store.getState().knownAuthorsByPubkey[peer].mutual).toBe(!following);
+    expect(store.getState().selectedAuthor?.following).toBe(!following);
+    // 変更後に始めた読み直しは反映する。
+    vi.spyOn(api, 'getAuthorSocialView').mockResolvedValue({ ...next, name: 'updated peer' });
+    await act(async () => hook.result.current.loadAuthorSection(peer));
+    expect(store.getState().knownAuthorsByPubkey[peer].name).toBe('updated peer');
+  });
+
   test('reopens an evicted profile from its saved window head', async () => {
     const { api, hook, store } = setup();
     const head = { created_at: 20, object_id: 'before-window' };
