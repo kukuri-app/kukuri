@@ -134,6 +134,7 @@ function setup({
   });
   const onReply = vi.fn();
   const onToggleReaction = vi.fn();
+  const mediaForPost = vi.fn((post: PostView) => buildPostMediaView(post, { mediaObjectUrls: store.getState().mediaObjectUrls, adultContentGated: false, unsupportedVideoManifests: {} }));
   const view = () => (
     <DesktopShellStoreContext.Provider value={store}>
       <LiveActionsContext.Provider value={actions}>
@@ -141,7 +142,7 @@ function setup({
           source={{ live: { session_id: 'live-1', topic_id: TOPIC, channel_id: THREAD }, conversation: { topic: TOPIC, channelId: conversationChannel } }}
           conversationLabel='v0.5 の確認'
           visible
-          mediaForPost={(post) => buildPostMediaView(post, { mediaObjectUrls: store.getState().mediaObjectUrls, adultContentGated: false, unsupportedVideoManifests: {} })}
+          mediaForPost={mediaForPost}
           recentReactions={[]}
           reactionAssets={[]}
           onReactionPickerOpen={() => undefined}
@@ -158,6 +159,7 @@ function setup({
     key,
     onReply,
     onToggleReaction,
+    mediaForPost,
     rerender: () => rendered.rerender(view()),
     unmount: rendered.unmount,
     container: rendered.container,
@@ -230,6 +232,27 @@ test('shows every sender\'s Push count as x20 at the requested attachment, inclu
   expect(api.resolveLiveOverlayPush).toHaveBeenCalledTimes(1);
   await userEvent.setup().click(screen.getByRole('button', { name: 'Posts' }));
   expect(layers(container).querySelector('.live-overlay-push-count')).toBeNull();
+});
+
+test('repeated Push counts do not rebuild normal post media and keep notices outside the hidden layer', async () => {
+  const { container, api, mediaForPost } = setup({ mediaObjectUrls: { gif: 'blob:isolated-gif' } });
+  api.resolveLiveOverlayPush.mockResolvedValue(post('pushed', { attachments: [
+    { hash: 'gif', mime: 'image/gif', bytes: 100, role: 'image_original', status: 'Available' },
+  ] }));
+  await screen.findByText('body of chat');
+  const press = (id: number) => announceLiveOverlayPush({
+    event_id: `isolated-${id}`, sender_pubkey: CAT,
+    target: { topic: TOPIC, channel_id: THREAD, object_id: 'pushed', attachment_index: 0, attachment_hash: 'gif' },
+    post_created_at: 1, sent_at: Date.now(), received_at: Date.now(),
+  });
+  act(() => press(1));
+  await waitFor(() => expect(api.resolveLiveOverlayPush).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(mediaForPost).toHaveBeenCalledWith(expect.objectContaining({ object_id: 'pushed' })));
+  mediaForPost.mockClear();
+  act(() => { for (let id = 2; id <= 20; id++) press(id); });
+  await waitFor(() => expect(container.querySelector('.live-push-notice')).not.toBeNull());
+  expect(mediaForPost.mock.calls.filter(([post]) => post.object_id !== 'pushed')).toHaveLength(0);
+  expect(container.querySelector('.live-push-notice')!.closest('[aria-hidden="true"]')).toBeNull();
 });
 
 test('overlays only the first image of each post, including animated GIFs and attachment-only posts', async () => {

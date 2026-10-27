@@ -1,4 +1,5 @@
-import { useContext, useEffect, useId, useState } from 'react';
+import { type ReactNode, useCallback, useContext, useEffect, useId, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Check, Reply, SlidersHorizontal } from 'lucide-react';
 
@@ -90,7 +91,6 @@ export function LiveStage({
     animate: visible && !prefersReducedMotion(),
   });
   const overlayActive = visible && foreground && session?.status === 'Live';
-  const pushed = useLiveOverlayPushes(actions?.api, source, overlayActive && settings.posts, hidden);
   let body;
   if (session === undefined) body = <Notice>{t('live:loading')}</Notice>;
   else if (session === null) body = <Notice>{t('live:unavailable')}</Notice>;
@@ -106,7 +106,7 @@ export function LiveStage({
         mediaObjectUrls={mediaObjectUrls}
         mediaForPost={mediaForPost}
         imagesEnabled={visible && foreground && session.status === 'Live'}
-        pushes={pushed.items.filter(({ post }) => !post || !hidden?.(post))}
+        pushes={<LivePushImages source={source} hidden={hidden} mediaForPost={mediaForPost} />}
       />
     );
     body = (
@@ -184,7 +184,6 @@ export function LiveStage({
     >
       {startPost && overlayActive ? <OverlayPostDemand post={startPost} /> : null}
       {body}
-      {pushed.notice ? <span className='live-push-notice' role='status'>{t(`live:push.${pushed.notice}`)}</span> : null}
     </section>
   );
 }
@@ -197,7 +196,7 @@ type OverlayLayersProps = {
   mediaObjectUrls: Record<string, string | null>;
   mediaForPost: (post: PostView) => PostMediaView;
   imagesEnabled: boolean;
-  pushes: OverlayPush[];
+  pushes: ReactNode;
 };
 
 /// 映像に重ねる層。読み上げない(同じ内容と操作には、スレッドの列から届く)。
@@ -248,11 +247,7 @@ function OverlayLayers({ posts, counts, floats, settings, mediaObjectUrls, media
         </ol>
       ) : null}
       {(settings.posts && imagesEnabled) || settings.reactions ? <div className='live-stage-aside'>
-        {settings.posts && imagesEnabled ? <div className='live-stage-pushes'>
-          {pushes.map((slot) => slot.post ? <OverlayPushImage key={slot.key} slot={slot} mediaForPost={mediaForPost} /> : (
-            <span key={slot.key} className='live-stage-post-copy'>{t('loading')}</span>
-          ))}
-        </div> : null}
+        {settings.posts && imagesEnabled ? pushes : null}
         {settings.reactions ? (
           <div className='live-stage-reactions'>
             {floats.map((float) => (
@@ -283,6 +278,23 @@ function OverlayPostDemand({ post }: { post: PostView }) {
     return () => setPosts(removeRecordEntry(observer));
   }, [observer, post, setPosts]);
   return null;
+}
+
+/** 回数だけの更新で、映像・通常投稿・操作部を再計算しない。 */
+function LivePushImages({ source, hidden, mediaForPost }: Pick<LiveStageProps, 'source' | 'hidden' | 'mediaForPost'>) {
+  const { t } = useTranslation('live');
+  const actions = useContext(LiveActionsContext);
+  const pushed = useLiveOverlayPushes(actions?.api, source, true, hidden);
+  const [host, setHost] = useState<Element | null>(null);
+  const attach = useCallback((element: HTMLDivElement | null) => setHost(element?.closest('.live-stage') ?? null), []);
+  return <>
+    <div className='live-stage-pushes' ref={attach}>
+      {pushed.items.filter(({ post }) => !post || !hidden?.(post)).map((slot) => slot.post ? <OverlayPushImage key={slot.key} slot={slot} mediaForPost={mediaForPost} /> : (
+        <span key={slot.key} className='live-stage-post-copy'>{t('loading')}</span>
+      ))}
+    </div>
+    {pushed.notice && host ? createPortal(<span className='live-push-notice' role='status'>{t(`push.${pushed.notice}`)}</span>, host) : null}
+  </>;
 }
 
 function OverlayPushImage({ slot, mediaForPost }: { slot: OverlayPush; mediaForPost: (post: PostView) => PostMediaView }) {
