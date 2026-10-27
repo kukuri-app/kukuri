@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useContext, useEffect, useId, useState } from 'react';
+import { useContext, useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Check, Reply, SlidersHorizontal } from 'lucide-react';
@@ -80,6 +80,7 @@ export function LiveStage({
   const actions = useContext(LiveActionsContext);
   const [settings, updateSettings] = useLiveOverlaySettings();
   const [foreground, setForeground] = useState(() => !document.hidden);
+  const [pushHost, setPushHost] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
     const changed = () => setForeground(!document.hidden);
     document.addEventListener('visibilitychange', changed);
@@ -106,7 +107,7 @@ export function LiveStage({
         mediaObjectUrls={mediaObjectUrls}
         mediaForPost={mediaForPost}
         imagesEnabled={visible && foreground && session.status === 'Live'}
-        pushes={<LivePushImages source={source} hidden={hidden} mediaForPost={mediaForPost} />}
+        pushRef={setPushHost}
       />
     );
     body = (
@@ -184,6 +185,7 @@ export function LiveStage({
     >
       {startPost && overlayActive ? <OverlayPostDemand post={startPost} /> : null}
       {body}
+      <LivePushImages source={source} hidden={hidden} mediaForPost={mediaForPost} host={pushHost} active={overlayActive && settings.posts} />
     </section>
   );
 }
@@ -196,11 +198,11 @@ type OverlayLayersProps = {
   mediaObjectUrls: Record<string, string | null>;
   mediaForPost: (post: PostView) => PostMediaView;
   imagesEnabled: boolean;
-  pushes: ReactNode;
+  pushRef: (element: HTMLDivElement | null) => void;
 };
 
 /// 映像に重ねる層。読み上げない(同じ内容と操作には、スレッドの列から届く)。
-function OverlayLayers({ posts, counts, floats, settings, mediaObjectUrls, mediaForPost, imagesEnabled, pushes }: OverlayLayersProps) {
+function OverlayLayers({ posts, counts, floats, settings, mediaObjectUrls, mediaForPost, imagesEnabled, pushRef }: OverlayLayersProps) {
   const { t } = useTranslation('live');
   const top = <T extends { count: number }>(items: T[], limit: number) =>
     [...items].sort((left, right) => right.count - left.count).slice(0, limit);
@@ -247,7 +249,7 @@ function OverlayLayers({ posts, counts, floats, settings, mediaObjectUrls, media
         </ol>
       ) : null}
       {(settings.posts && imagesEnabled) || settings.reactions ? <div className='live-stage-aside'>
-        {settings.posts && imagesEnabled ? pushes : null}
+        {settings.posts && imagesEnabled ? <div className='live-stage-pushes' ref={pushRef} /> : null}
         {settings.reactions ? (
           <div className='live-stage-reactions'>
             {floats.map((float) => (
@@ -281,19 +283,17 @@ function OverlayPostDemand({ post }: { post: PostView }) {
 }
 
 /** 回数だけの更新で、映像・通常投稿・操作部を再計算しない。 */
-function LivePushImages({ source, hidden, mediaForPost }: Pick<LiveStageProps, 'source' | 'hidden' | 'mediaForPost'>) {
+function LivePushImages({ source, hidden, mediaForPost, host, active }: Pick<LiveStageProps, 'source' | 'hidden' | 'mediaForPost'> & { host: HTMLDivElement | null; active: boolean }) {
   const { t } = useTranslation('live');
   const actions = useContext(LiveActionsContext);
-  const pushed = useLiveOverlayPushes(actions?.api, source, true, hidden);
-  const [host, setHost] = useState<Element | null>(null);
-  const attach = useCallback((element: HTMLDivElement | null) => setHost(element?.closest('.live-stage') ?? null), []);
+  const pushed = useLiveOverlayPushes(actions?.api, source, active, hidden);
   return <>
-    <div className='live-stage-pushes' ref={attach}>
+    {host ? createPortal(<>
       {pushed.items.filter(({ post }) => !post || !hidden?.(post)).map((slot) => slot.post ? <OverlayPushImage key={slot.key} slot={slot} mediaForPost={mediaForPost} /> : (
         <span key={slot.key} className='live-stage-post-copy'>{t('loading')}</span>
       ))}
-    </div>
-    {pushed.notice && host ? createPortal(<span className='live-push-notice' role='status'>{t(`push.${pushed.notice}`)}</span>, host) : null}
+    </>, host) : null}
+    {pushed.notice ? <span className='live-push-notice' role='status'>{t(`push.${pushed.notice}`)}</span> : null}
   </>;
 }
 

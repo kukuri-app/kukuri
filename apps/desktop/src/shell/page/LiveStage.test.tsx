@@ -255,6 +255,28 @@ test('repeated Push counts do not rebuild normal post media and keep notices out
   expect(container.querySelector('.live-push-notice')!.closest('[aria-hidden="true"]')).toBeNull();
 });
 
+test('keeps an active Push when joining replaces the placeholder with the live viewer', async () => {
+  const found = session();
+  const { container, api, store, rerender } = setup({ found, mediaObjectUrls: { gif: 'blob:joining-gif' } });
+  api.resolveLiveOverlayPush.mockResolvedValue(post('pushed', { attachments: [
+    { hash: 'gif', mime: 'image/gif', bytes: 100, role: 'image_original', status: 'Available' },
+  ] }));
+  await screen.findByText('body of chat');
+  act(() => announceLiveOverlayPush({
+    event_id: 'joining', sender_pubkey: CAT,
+    target: { topic: TOPIC, channel_id: THREAD, object_id: 'pushed', attachment_index: 0, attachment_hash: 'gif' },
+    post_created_at: 1, sent_at: Date.now(), received_at: Date.now(),
+  }));
+  await waitFor(() => expect(container.querySelector('.live-overlay-push-count')).toHaveTextContent('x1'));
+  found.joined_by_me = true;
+  rerender();
+  await waitFor(() => expect(api.watchLiveMedia).toHaveBeenCalledTimes(1));
+  expect(container.querySelector('.live-stage-placeholder')).toBeNull();
+  expect(container.querySelector('.live-overlay-push-count')).toHaveTextContent('x1');
+  expect(api.resolveLiveOverlayPush).toHaveBeenCalledTimes(1);
+  expect(Object.values(store.getState().liveStagePosts).map((post) => post.object_id)).toContain('pushed');
+});
+
 test('overlays only the first image of each post, including animated GIFs and attachment-only posts', async () => {
   const attachment = (hash: string, mime: string) => ({ hash, mime, bytes: 100, role: 'image_original', status: 'Available' as const });
   const { container } = setup({
