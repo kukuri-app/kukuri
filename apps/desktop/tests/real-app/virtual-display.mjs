@@ -24,7 +24,8 @@ export async function startVirtualDisplay() {
         if (lines.length >= 3) {
           child.stdout.off('data', collect);
           child.stdout.resume();
-          resolve({ DISPLAY: lines[0], XAUTHORITY: lines[1] });
+          // Waylandがあっても、端末ごとに用意したXvfbの画面を使う。
+          resolve({ DISPLAY: lines[0], XAUTHORITY: lines[1], GDK_BACKEND: 'x11' });
         }
       };
       child.stdout.on('data', collect);

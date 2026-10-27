@@ -127,6 +127,7 @@ export async function run({ launch, log, topic }) {
   });
   const [host, sender, viewer] = all;
   await Promise.all(all.map(accept));
+  await Promise.all(all.map((instance) => eventually(`${instance.name} to be in the foreground`, () => instance.evaluate('document.hasFocus() && !document.hidden'), 10000)));
   log(`viewports: ${JSON.stringify(await Promise.all(all.map((instance) => instance.evaluate('({width:innerWidth,height:innerHeight,focus:document.hasFocus(),hidden:document.hidden})'))))}`);
   for (const instance of all) assert.equal(await instance.evaluate('Boolean(window.__KUKURI_DESKTOP__)'), false, 'use the native runtime');
   if (process.platform === 'win32') for (const instance of all) await instance.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
