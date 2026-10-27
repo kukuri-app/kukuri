@@ -18,6 +18,38 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.5.0-preview.1] - 2026-10-27
+
+### Features
+
+- 添付ごとのPushと全参加者の回数表示を追加 ([#1954](https://github.com/kukuri-app/kukuri/pull/1954))
+- 開発者モードなしでライブを利用できるようにする ([#1935](https://github.com/kukuri-app/kukuri/pull/1935))
+- ライブ開始とサムネイルからの視聴導線を整理 ([#1933](https://github.com/kukuri-app/kukuri/pull/1933))
+- 画像・動画のブックマーク、blob再利用と出典表示を追加 ([#1929](https://github.com/kukuri-app/kukuri/pull/1929))
+
+### Fixes
+
+- preserve consumed render order as capture advances ([#1960](https://github.com/kukuri-app/kukuri/pull/1960))
+- allow Android image checks to finish display retries ([#1959](https://github.com/kukuri-app/kukuri/pull/1959))
+- keep a render frame for late capture callbacks ([#1958](https://github.com/kukuri-app/kukuri/pull/1958))
+- Android IME editorへの重複タップを削除する ([#1957](https://github.com/kukuri-app/kukuri/pull/1957))
+- reject cancelled display responses ([#1956](https://github.com/kukuri-app/kukuri/pull/1956))
+- fall back to Docker Hub when fixture mirror fails ([#1953](https://github.com/kukuri-app/kukuri/pull/1953))
+- デバイス時刻でエコー参照と取り込みを合わせる ([#1948](https://github.com/kukuri-app/kukuri/pull/1948))
+- follow後の作者情報を古いプロフィール応答で戻さない ([#1947](https://github.com/kukuri-app/kukuri/pull/1947))
+- wait for the public post before reopening its author profile ([#1940](https://github.com/kukuri-app/kukuri/pull/1940))
+- カラムのトピック表示と選択を対象別に揃える ([#1931](https://github.com/kukuri-app/kukuri/pull/1931))
+
+### Other
+
+- リリースの版を 0.5.0 にする ([#1961](https://github.com/kukuri-app/kukuri/pull/1961))
+- 投稿の先頭画像・透過GIFをLiveに重ねる ([#1951](https://github.com/kukuri-app/kukuri/pull/1951))
+- DM会話を開く操作・API・列の記録を追加する ([#1946](https://github.com/kukuri-app/kukuri/pull/1946))
+- SA-4失敗時の音声と入出力遅延を保存する ([#1945](https://github.com/kukuri-app/kukuri/pull/1945))
+- mic停止後の映像到達を待ってから無音を確認する ([#1942](https://github.com/kukuri-app/kukuri/pull/1942))
+- 旧client終了後のshell cache回収を待つ ([#1939](https://github.com/kukuri-app/kukuri/pull/1939))
+- 0.4.9 preview の公開と LP・本番更新記録 ([#1927](https://github.com/kukuri-app/kukuri/pull/1927))
+
 ## [v0.4.9-preview.1] - 2026-10-23
 
 ### Features
