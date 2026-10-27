@@ -111,8 +111,8 @@ export function PostMedia({
     );
   }
 
-  const withActions = (attachment: AttachmentView | undefined, content: React.ReactNode, key?: string, bookmarkHash?: string) =>
-    attachment && media.bookmarkTarget ? <MediaAssetActions key={key} attachment={attachment} target={media.bookmarkTarget} bookmarkHash={bookmarkHash}>{content}</MediaAssetActions> : content;
+  const withActions = (attachment: AttachmentView | undefined, content: React.ReactNode, key?: string, bookmarkHash?: string, pushTarget?: import('@/lib/api').PushLiveOverlayRequest) =>
+    attachment && media.bookmarkTarget ? <MediaAssetActions key={key} attachment={attachment} target={media.bookmarkTarget} bookmarkHash={bookmarkHash} pushTarget={pushTarget}>{content}</MediaAssetActions> : content;
   const imageTiles = tiles.map((tile, index) => withActions(tile.attachment,
     tile.src ? (
       <button
@@ -146,7 +146,7 @@ export function PostMedia({
         data-testid={`media-skeleton-${media.objectId}`}
         aria-hidden='true'
       />
-    ), `${index}:${tile.hash}`)
+    ), `${index}:${tile.hash}`, undefined, tile.src ? tile.pushTarget : undefined)
   );
 
   return (

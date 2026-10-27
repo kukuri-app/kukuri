@@ -1,6 +1,21 @@
 use super::*;
 
 impl DesktopRuntime {
+    pub async fn push_live_overlay(
+        &self,
+        request: kukuri_app_api::PushLiveOverlayRequest,
+    ) -> Result<()> {
+        self.app_service.push_live_overlay(request).await
+    }
+
+    pub async fn resolve_live_overlay_push(
+        &self,
+        request: kukuri_app_api::ResolveLiveOverlayPushRequest,
+    ) -> Result<Option<PostView>> {
+        self.app_service
+            .resolve_live_overlay_push(&request.event_id)
+            .await
+    }
     pub async fn list_session_candidates(
         &self,
         request: ListLiveSessionsRequest,

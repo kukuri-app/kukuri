@@ -17,8 +17,8 @@ export type LiveGameSliceState = {
   livePanelStateByScopeKey: Record<string, AsyncPanelState>;
   livePendingBySessionId: Record<string, true>;
   selectedLiveSessionId: string | null;
-  // #1841: ライブの列の左側に出している Live の開始 post(id ごと)。数の表示の custom reaction の画像を取得の対象にする。
-  liveStageStartPosts: Record<string, PostView>;
+  // Liveの開始postとPushで表示中のpost。表示面のobserverごとに持ち、通常のmedia/gate ownerと共用する。
+  liveStagePosts: Record<string, PostView>;
   gameTitle: string;
   gameDescription: string;
   gameParticipantsInput: string;
@@ -38,7 +38,7 @@ export function createInitialLiveGameSlice(): LiveGameSliceState {
     livePanelStateByScopeKey: {},
     livePendingBySessionId: {},
     selectedLiveSessionId: null,
-    liveStageStartPosts: {},
+    liveStagePosts: {},
     gameTitle: '',
     gameDescription: '',
     gameParticipantsInput: '',

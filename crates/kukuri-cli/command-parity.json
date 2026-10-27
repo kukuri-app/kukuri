@@ -1,6 +1,6 @@
 {
   "baseline": "d372c91bdc963bda07308a359fe3baeca8e06150",
-  "scope_revision": "2026-10-26-live-thumbnails",
+  "scope_revision": "2026-10-27-live-overlay-push",
   "entries": [
     {"tauri":"get_desktop_startup_status","cli":"get_desktop_startup_status","inventory":"INV-1"},
     {"tauri":"commands::system_locale::get_system_locales","excluded":"os","reason":"#917: desktopの同意前UI言語を選ぶOS local read。UIを持たないCLIの業務commandには追加しない。"},
@@ -19,6 +19,8 @@
     {"tauri":"commands::metaverse_audio::set_metaverse_audio","excluded":"gui_media_device","reason":"#1033: Dome内の空間音声のためにGUIのmic・speakerを開き、画面の位置と話者の候補を渡す。CLI／daemonには機器と3D表示がなく、音声を扱わない。"},
     {"tauri":"commands::live_media::set_live_broadcast","excluded":"gui_media_device","reason":"#1034: live配信のためにGUIのcamera・画面をwebviewで取り込み・圧縮し、micをRustで開く。CLI／daemonには機器と映像の表示がなく、配信しない。"},
     {"tauri":"commands::live_media::push_live_video","excluded":"gui_media_device","reason":"#1034: live配信のためにGUIのcamera・画面をwebviewで取り込み・圧縮し、micをRustで開く。CLI／daemonには機器と映像の表示がなく、配信しない。"},
+    {"tauri":"push_live_overlay","excluded":"gui_live_overlay","reason":"#1950: 表示中の添付を選ぶPushボタンから、Live表示面へ短命の再表示要求を送る。今回の対象はGUI/Webの添付操作と映像overlayであり、CLI操作の追加は含めない。"},
+    {"tauri":"resolve_live_overlay_push","excluded":"gui_live_overlay","reason":"#1950: 表示中のLiveが短命要求を元投稿へ解決する内部照会。CLI／daemonはoverlay表示面とその需要を持たない。"},
     {"tauri":"commands::live_media::stop_live_broadcast","excluded":"gui_media_device","reason":"#1034: live配信のためにGUIのcamera・画面をwebviewで取り込み・圧縮し、micをRustで開く。CLI／daemonには機器と映像の表示がなく、配信しない。"},
     {"tauri":"commands::live_media::watch_live_media","excluded":"gui_media_device","reason":"#1034: live視聴のために配信者の端末へ購読し、音声をspeakerで再生し、映像をGUIで復号・描画する。CLI／daemonには機器と映像の表示がなく、視聴しない。"},
     {"tauri":"commands::live_media::next_live_video","excluded":"gui_media_device","reason":"#1034: live視聴のために配信者の端末へ購読し、音声をspeakerで再生し、映像をGUIで復号・描画する。CLI／daemonには機器と映像の表示がなく、視聴しない。"},

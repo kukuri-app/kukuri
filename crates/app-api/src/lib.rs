@@ -32,6 +32,11 @@ mod dome_move;
 mod dome_session;
 mod game;
 mod live;
+mod live_overlay;
+pub use live_overlay::{
+    LIVE_OVERLAY_PUSH_TTL_MS, LiveOverlayPushView, PushLiveOverlayRequest,
+    ResolveLiveOverlayPushRequest,
+};
 mod live_thumbnail;
 pub use live_thumbnail::{LiveThumbnailView, SetLiveThumbnailInput};
 mod session_display;

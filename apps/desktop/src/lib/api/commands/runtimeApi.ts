@@ -166,7 +166,7 @@ import type {
 import { invokeDesktop } from '../invoke/desktop';
 import { command } from '../invoke/dispatch';
 import { commitDomeLayoutRequest, resyncDomeSnapshotsRequest } from './domeHostingRequests';
-import { developerLogsApi, displayDemandApi, domeTransitionApi, liveMediaApi, postReloadApi, socialBlockApi } from './apiModules';
+import { developerLogsApi, displayDemandApi, domeTransitionApi, liveMediaApi, liveOverlayApi, postReloadApi, socialBlockApi } from './apiModules';
 
 import { mediaBookmarksApi } from './mediaBookmarksApi';
 
@@ -793,6 +793,7 @@ export const runtimeApi: DesktopApi = {
   ...postReloadApi,
   ...displayDemandApi,
   ...liveMediaApi,
+  ...liveOverlayApi,
   commitDomeLayout: command('commitDomeLayout', async (
     spatialContext,
     instanceId,

@@ -42,11 +42,16 @@ export function buildPostMediaView(
   }: BuildPostMediaViewOptions
 ): PostMediaView {
   const images = selectPostImages(post);
+  const ordinals = new Map(post.attachments.map((attachment, index) => [attachment, index]));
   // #1690: カードには先頭 4 枚を並べる。
   const cardImages = images.slice(0, POST_CARD_IMAGE_LIMIT);
   const videoPoster = selectVideoPoster(post);
   const videoManifest = selectVideoManifest(post);
   const imageGalleryItems = images.map((attachment) => ({
+    pushTarget: post.origin_topic_id && post.channel_id && isPublicChannelId(post.channel_id) && !post.local_state && !post.withdrawal ? {
+      topic: post.origin_topic_id, channel_id: post.channel_id, object_id: post.object_id,
+      attachment_index: ordinals.get(attachment)!, attachment_hash: attachment.hash,
+    } : undefined,
     attachment,
     hash: attachment.hash,
     src:

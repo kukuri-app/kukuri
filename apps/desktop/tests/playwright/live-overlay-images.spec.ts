@@ -51,6 +51,9 @@ for (const width of [1440, 390]) for (const theme of ['dark', 'light']) for (con
     const images = stage.locator('.live-overlay-image img');
     await expect(images).toHaveCount(2);
     await expect.poll(() => images.first().evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(48);
+    const videoBox = (await stage.locator('.live-stage-layers').boundingBox())!;
+    const lastImage = (await images.last().boundingBox())!;
+    expect(videoBox.y + videoBox.height - lastImage.y - lastImage.height).toBeLessThanOrEqual(24);
     const animated = stage.locator('[data-post-object-id="overlay-gif"] .live-overlay-image');
     const initial = await animated.screenshot();
     await expect.poll(async () => (await animated.screenshot()).equals(initial), { timeout: 3000 }).toBe(false);
@@ -87,6 +90,12 @@ test('five normal-size images preserve every post and author inside a narrow vid
   await expect(images).toHaveCount(5);
   await expect.poll(() => images.evaluateAll((images) => images.every((image) => (image as HTMLImageElement).naturalWidth === 1200))).toBe(true);
   const bounds = (await stage.locator('.live-viewer-screen').boundingBox())!;
+  for (const image of await images.all()) {
+    const box = (await image.boundingBox())!;
+    expect(box.height).toBeGreaterThan(0);
+    expect(box.y).toBeGreaterThanOrEqual(bounds.y);
+    expect(box.y + box.height).toBeLessThanOrEqual(bounds.y + bounds.height);
+  }
   for (const copy of await stage.locator('.live-stage-post-copy').all()) {
     const box = (await copy.boundingBox())!;
     expect(box.y).toBeGreaterThanOrEqual(bounds.y);

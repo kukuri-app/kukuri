@@ -127,5 +127,17 @@
   "carousel": {
     "previous": "上一组直播",
     "next": "下一组直播"
+  },
+  "push": {
+    "target": "Push 附件 {{index}}",
+    "delivery": "请求向已连接的观众重新显示，不保证送达",
+    "loading": "正在检查直播状态",
+    "noLive": "此讨论串没有正在进行的直播",
+    "sending": "正在发送",
+    "accepted": "已接受发送请求",
+    "failed": "无法发送",
+    "merged": "已累计同一附件的 Push 次数",
+    "replaced": "新的 Push 已替换最早的图片",
+    "busy": "由于拥挤，部分 Push 无法显示"
   }
 }

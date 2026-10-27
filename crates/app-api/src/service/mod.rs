@@ -411,6 +411,7 @@ pub struct ServiceHandles {
     pub(crate) author_relationship_changes: tokio::sync::broadcast::Sender<String>,
     /// 検証済みのリアクションを手元へ反映したときの、新しい版の行(#1841)。同じ版の置き直しと古い版は送らない。
     pub(crate) reaction_changes: ReactionChanges,
+    pub(crate) live_overlay_pushes: Arc<crate::live_overlay::LiveOverlayPushes>,
     /// 保持する公開 topic と取り込みの続きの位置(#1909)。native の runtime が入れる。無ければ保持の操作は失敗する。
     pub(crate) topic_retention: Option<crate::topic_retention::TopicRetentionHandles>,
 }
@@ -593,6 +594,7 @@ impl ServiceHandles {
             link_preview_reads: Arc::default(),
             author_relationship_changes: tokio::sync::broadcast::channel(64).0,
             reaction_changes: tokio::sync::broadcast::channel(64).0,
+            live_overlay_pushes: Arc::default(),
             topic_retention: None,
         }
     }

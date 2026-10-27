@@ -3855,6 +3855,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "ts-rs",
+ "uuid",
 ]
 
 [[package]]

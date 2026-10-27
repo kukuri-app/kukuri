@@ -8,7 +8,7 @@ import { LiveSessionMedia } from '@/components/extended/LiveSessionMedia';
 import { createLivePlayer } from '@/components/extended/liveMedia';
 import { liveBroadcastFor } from '@/components/extended/liveBroadcast';
 import type { DesktopApi, LiveSessionView, PostView, ReactionReceivedView, ReactionSummaryView } from '@/lib/api';
-import { announceReactionReceived } from '@/shell/data/useRuntimeEventBridge';
+import { announceLiveOverlayPush, announceReactionReceived } from '@/shell/data/useRuntimeEventBridge';
 import { createDesktopShellStore, DesktopShellStoreContext, timelineStorageKeyForChannel } from '@/shell/store';
 import { buildPostMediaView } from '@/shell/viewModels/postMediaView';
 
@@ -118,6 +118,7 @@ function setup({
     createPost: vi.fn(),
     setLiveBroadcast: vi.fn(),
     pushLiveVideo: vi.fn(),
+    resolveLiveOverlayPush: vi.fn(async () => null as PostView | null),
   };
   const actions = {
     api: api as unknown as DesktopApi,
@@ -133,6 +134,7 @@ function setup({
   });
   const onReply = vi.fn();
   const onToggleReaction = vi.fn();
+  const mediaForPost = vi.fn((post: PostView) => buildPostMediaView(post, { mediaObjectUrls: store.getState().mediaObjectUrls, adultContentGated: false, unsupportedVideoManifests: {} }));
   const view = () => (
     <DesktopShellStoreContext.Provider value={store}>
       <LiveActionsContext.Provider value={actions}>
@@ -140,7 +142,7 @@ function setup({
           source={{ live: { session_id: 'live-1', topic_id: TOPIC, channel_id: THREAD }, conversation: { topic: TOPIC, channelId: conversationChannel } }}
           conversationLabel='v0.5 の確認'
           visible
-          mediaForPost={(post) => buildPostMediaView(post, { mediaObjectUrls: store.getState().mediaObjectUrls, adultContentGated: false, unsupportedVideoManifests: {} })}
+          mediaForPost={mediaForPost}
           recentReactions={[]}
           reactionAssets={[]}
           onReactionPickerOpen={() => undefined}
@@ -157,6 +159,7 @@ function setup({
     key,
     onReply,
     onToggleReaction,
+    mediaForPost,
     rerender: () => rendered.rerender(view()),
     unmount: rendered.unmount,
     container: rendered.container,
@@ -207,6 +210,71 @@ test('falls back to the name of a custom reaction whose image is not available',
   const custom = layers(container).querySelector('.live-stage-count')!;
   expect(custom.querySelector('img')).toBeNull();
   expect(custom).toHaveTextContent('ne3');
+});
+
+test('shows every sender\'s Push count as x20 at the requested attachment, including an old post outside the window', async () => {
+  const { container, api } = setup({ mediaObjectUrls: { gif: 'blob:original-gif', png: 'blob:first-png' } });
+  const old = post('old', { channel_id: THREAD, attachments: [
+    { hash: 'png', mime: 'image/png', bytes: 100, role: 'image_original', status: 'Available' },
+    { hash: 'gif', mime: 'image/gif', bytes: 100, role: 'image_original', status: 'Available' },
+  ] });
+  api.resolveLiveOverlayPush.mockResolvedValue(old);
+  await screen.findByText('body of chat');
+  act(() => {
+    for (let id = 0; id < 20; id++) announceLiveOverlayPush({
+      event_id: `push-${id}`, sender_pubkey: (id % 2 ? 'a' : 'b').repeat(64),
+      target: { topic: TOPIC, channel_id: THREAD, object_id: 'old', attachment_index: 1, attachment_hash: 'gif' },
+      post_created_at: 1, sent_at: Date.now(), received_at: Date.now(),
+    });
+  });
+  await waitFor(() => expect(layers(container).querySelector('.live-overlay-push-count')).toHaveTextContent('x20'));
+  expect(layers(container).querySelector('.live-stage-pushes img')?.getAttribute('src')).toMatch(/^blob:original-gif#kukuri-overlay-/);
+  expect(api.resolveLiveOverlayPush).toHaveBeenCalledTimes(1);
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Posts' }));
+  expect(layers(container).querySelector('.live-overlay-push-count')).toBeNull();
+});
+
+test('repeated Push counts do not rebuild normal post media and keep notices outside the hidden layer', async () => {
+  const { container, api, mediaForPost } = setup({ mediaObjectUrls: { gif: 'blob:isolated-gif' } });
+  api.resolveLiveOverlayPush.mockResolvedValue(post('pushed', { attachments: [
+    { hash: 'gif', mime: 'image/gif', bytes: 100, role: 'image_original', status: 'Available' },
+  ] }));
+  await screen.findByText('body of chat');
+  const press = (id: number) => announceLiveOverlayPush({
+    event_id: `isolated-${id}`, sender_pubkey: CAT,
+    target: { topic: TOPIC, channel_id: THREAD, object_id: 'pushed', attachment_index: 0, attachment_hash: 'gif' },
+    post_created_at: 1, sent_at: Date.now(), received_at: Date.now(),
+  });
+  act(() => press(1));
+  await waitFor(() => expect(api.resolveLiveOverlayPush).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(mediaForPost).toHaveBeenCalledWith(expect.objectContaining({ object_id: 'pushed' })));
+  mediaForPost.mockClear();
+  act(() => { for (let id = 2; id <= 20; id++) press(id); });
+  await waitFor(() => expect(container.querySelector('.live-push-notice')).not.toBeNull());
+  expect(mediaForPost.mock.calls.filter(([post]) => post.object_id !== 'pushed')).toHaveLength(0);
+  expect(container.querySelector('.live-push-notice')!.closest('[aria-hidden="true"]')).toBeNull();
+});
+
+test('keeps an active Push when joining replaces the placeholder with the live viewer', async () => {
+  const found = session();
+  const { container, api, store, rerender } = setup({ found, mediaObjectUrls: { gif: 'blob:joining-gif' } });
+  api.resolveLiveOverlayPush.mockResolvedValue(post('pushed', { attachments: [
+    { hash: 'gif', mime: 'image/gif', bytes: 100, role: 'image_original', status: 'Available' },
+  ] }));
+  await screen.findByText('body of chat');
+  act(() => announceLiveOverlayPush({
+    event_id: 'joining', sender_pubkey: CAT,
+    target: { topic: TOPIC, channel_id: THREAD, object_id: 'pushed', attachment_index: 0, attachment_hash: 'gif' },
+    post_created_at: 1, sent_at: Date.now(), received_at: Date.now(),
+  }));
+  await waitFor(() => expect(container.querySelector('.live-overlay-push-count')).toHaveTextContent('x1'));
+  found.joined_by_me = true;
+  rerender();
+  await waitFor(() => expect(api.watchLiveMedia).toHaveBeenCalledTimes(1));
+  expect(container.querySelector('.live-stage-placeholder')).toBeNull();
+  expect(container.querySelector('.live-overlay-push-count')).toHaveTextContent('x1');
+  expect(api.resolveLiveOverlayPush).toHaveBeenCalledTimes(1);
+  expect(Object.values(store.getState().liveStagePosts).map((post) => post.object_id)).toContain('pushed');
 });
 
 test('overlays only the first image of each post, including animated GIFs and attachment-only posts', async () => {
@@ -282,9 +350,9 @@ function received(id: string, overrides: Partial<ReactionReceivedView> = {}): Re
 // #1841 AC-3: 開いている間だけ、開始 post を数の表示の custom reaction の画像の取得の対象に載せる。
 test('lists the start post for image fetching while open and drops it when closed', async () => {
   const { store, unmount } = setup();
-  await waitFor(() => expect(Object.keys(store.getState().liveStageStartPosts)).toEqual(['start']));
+  await waitFor(() => expect(Object.values(store.getState().liveStagePosts).map((post) => post.object_id)).toEqual(['start']));
   unmount();
-  expect(store.getState().liveStageStartPosts).toEqual({});
+  expect(store.getState().liveStagePosts).toEqual({});
 });
 
 test('floats a new reaction once, even across re-renders and a repeated announcement', async () => {

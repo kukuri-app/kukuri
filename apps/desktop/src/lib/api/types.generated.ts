@@ -829,7 +829,13 @@ reference_id?: string | null,
  */
 disputed_risk_signal_id?: string | null, };
 
-export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "startup_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, } | { "type": "author_relationship_changed", pubkey?: string | null, } | { "type": "reaction_received", reaction: ReactionReceivedView, };
+export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "startup_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, } | { "type": "author_relationship_changed", pubkey?: string | null, } | { "type": "reaction_received", reaction: ReactionReceivedView, } | { "type": "live_overlay_push_received", push?: LiveOverlayPushView | null, };
+
+export type LiveOverlayPushView = { event_id: string, sender_pubkey: string, target: PushLiveOverlayRequest, post_created_at: number, sent_at: number, received_at: number, };
+
+export type PushLiveOverlayRequest = { topic: string, channel_id: string, object_id: string, attachment_index: number, attachment_hash: string, };
+
+export type ResolveLiveOverlayPushRequest = { event_id: string, };
 
 export type CreatePostRequest = { topic: string, content: string, reply_to?: string | null, channel_ref: ChannelRef, attachments: Array<CreateAttachmentRequest>, 
 /**

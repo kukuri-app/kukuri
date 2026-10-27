@@ -84,7 +84,7 @@ export async function launch({ app, root, name, port, env = {}, fresh = true }) 
         // WM_CLASS を持つのは toplevel の window だけ(GTK・WebKit の子の window は持たない)。
         execFileSync('xdotool', [
           'search', '--sync', '--onlyvisible', '--pid', String(child.pid), '--classname', '.', 'windowactivate', '--sync',
-        ]);
+        ], { env: { ...process.env, ...env }, timeout: 10000 });
       }
     },
     /// Tauri の command を画面から呼ぶ(画面と Rust の受け渡しの経路を通す)。

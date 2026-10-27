@@ -162,6 +162,69 @@ describe('live media', () => {
   });
 
   // #1834: WebKitGTK 2.50 は `<video>` から作った frame の encode に失敗するので、`<video>` の frame は canvas から作る。
+  test('takes worker frames without a canvas readback and releases the retained heartbeat frame on stop', () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    const workers: Array<{ onmessage: ((event: { data: object }) => void) | null; postMessage: ReturnType<typeof vi.fn>; terminate: ReturnType<typeof vi.fn> }> = [];
+    vi.stubGlobal('MediaStreamTrackProcessor', undefined);
+    vi.stubGlobal('Worker', class {
+      onmessage = null;
+      postMessage = vi.fn();
+      terminate = vi.fn();
+      constructor() { workers.push(this); }
+    });
+    const sources: unknown[] = [];
+    const encoded: number[] = [];
+    class Frame {
+      displayWidth = 640;
+      displayHeight = 360;
+      close = vi.fn();
+      constructor(source?: unknown) { if (source) sources.push(source); }
+    }
+    vi.stubGlobal('VideoFrame', Frame);
+    vi.stubGlobal('VideoEncoder', class {
+      state = 'configured'; encodeQueueSize = 0;
+      configure() {}
+      encode() { encoded.push(performance.now()); }
+      close() { this.state = 'closed'; }
+    });
+    const context = vi.spyOn(HTMLCanvasElement.prototype, 'getContext');
+    const clone = { stop: vi.fn() };
+    const track = { addEventListener: vi.fn(), stop: vi.fn(), clone: vi.fn(() => clone) };
+    const capture = encodeVideo({
+      stream: { getVideoTracks: () => [track], getTracks: () => [track] } as unknown as MediaStream,
+      limits: { width: 640, height: 360, framerate: 15, bitrate: 1_000_000 },
+      preview: { play: async () => {}, requestVideoFrameCallback: vi.fn(), videoWidth: 640, videoHeight: 360 } as unknown as HTMLVideoElement,
+      push: async () => {}, onEnded: vi.fn(),
+    });
+    try {
+      expect(workers).toHaveLength(1);
+      const worker = workers[0];
+      worker.onmessage!({ data: { supported: true } });
+      expect(worker.postMessage).toHaveBeenCalledWith({ track: clone }, [clone]);
+      const first = new Frame();
+      worker.onmessage!({ data: { frame: first } });
+      vi.advanceTimersByTime(1000);
+      expect(encoded).toEqual([0, 1000]);
+      expect(sources).toEqual([first, first]);
+      expect(context).not.toHaveBeenCalled();
+      expect(first.close).not.toHaveBeenCalled();
+      const second = new Frame();
+      vi.advanceTimersByTime(100);
+      worker.onmessage!({ data: { frame: second } });
+      expect(first.close).toHaveBeenCalledTimes(1);
+      capture.stop();
+      expect(second.close).toHaveBeenCalledTimes(1);
+      expect(worker.terminate).toHaveBeenCalledTimes(1);
+      expect(track.stop).toHaveBeenCalledTimes(1);
+      const late = new Frame();
+      worker.onmessage!({ data: { frame: late } });
+      expect(late.close).toHaveBeenCalledTimes(1);
+      expect(encoded).toHaveLength(3);
+    } finally {
+      capture.stop(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks();
+    }
+  });
+
   test('makes the frames of the preview video from a canvas', () => {
     const sources: unknown[] = [];
     vi.stubGlobal(

@@ -10,14 +10,16 @@ import { IconButton } from '@/components/ui/icon-button';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { MediaBookmarksContext, MEDIA_BOOKMARK_CHANGED } from '@/components/core/mediaBookmarksContext';
 import type { MediaBookmarkTarget } from '@/components/core/types';
+import { LiveOverlayPushButton } from './LiveOverlayPushButton';
 
 
-export function MediaAssetActions({ attachment, bookmarkHash, target, children, className = '' }: {
+export function MediaAssetActions({ attachment, bookmarkHash, target, children, className = '', pushTarget }: {
   attachment: AttachmentView;
   bookmarkHash?: string;
   target: MediaBookmarkTarget;
   children: ReactNode;
   className?: string;
+  pushTarget?: import('@/lib/api').PushLiveOverlayRequest;
 }) {
   const { t, i18n } = useTranslation('common');
   const api = useContext(MediaBookmarksContext)?.api;
@@ -76,6 +78,7 @@ export function MediaAssetActions({ attachment, bookmarkHash, target, children, 
       }
     }}>
     {children}
+    {pushTarget ? <LiveOverlayPushButton target={pushTarget} /> : null}
     {api ? <IconButton type='button' variant='ghost' className='media-bookmark-button'
       label={t(saved ? 'mediaBookmarks.remove' : 'mediaBookmarks.save')} aria-pressed={saved} aria-busy={pending} disabled={pending}
       onClick={(event) => { event.stopPropagation(); void toggle(); }}>

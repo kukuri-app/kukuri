@@ -20,6 +20,7 @@ import {
   withLiveSessionDefaults,
 } from '../desktopMockModel';
 import { type MockRuntime } from '../mockRuntime';
+import { announceLiveOverlayPush } from '@/shell/data/useRuntimeEventBridge';
 
 type LiveGameMock = Pick<
   DesktopApi,
@@ -28,6 +29,8 @@ type LiveGameMock = Pick<
   | 'setScopeDisplay'
   | 'listLiveSessions'
   | 'createLiveSession'
+  | 'pushLiveOverlay'
+  | 'resolveLiveOverlayPush'
   | 'getLiveThumbnail'
   | 'setLiveThumbnail'
   | 'getLiveSession'
@@ -81,6 +84,7 @@ export function createLiveGameMock(runtime: MockRuntime): LiveGameMock {
     mutedAuthorPubkeys,
   } = runtime;
   const thumbnails = new Map<string, import('@/lib/api').LiveThumbnailView>();
+  const overlayPushes = new Map<string, { post: import('@/lib/api').PostView; expires: number }>();
   const connectionProposals = new Map<string, DomeConnectionProposalView>();
   const connectionViews = new Map<string, DomeConnectionView>();
   const hostingViews = new Map<string, DomeHostingView>();
@@ -185,6 +189,20 @@ export function createLiveGameMock(runtime: MockRuntime): LiveGameMock {
   };
 
   return {
+    async pushLiveOverlay(target) {
+      const now = Date.now();
+      for (const [id, entry] of overlayPushes) if (entry.expires <= now) overlayPushes.delete(id);
+      if (overlayPushes.size >= 4096) throw new Error('overlay queue full');
+      const post = runtime.postsByTopic[target.topic]?.find((post) => post.object_id === target.object_id && post.channel_id === target.channel_id && !post.withdrawal);
+      if (!post || post.attachments[target.attachment_index]?.hash !== target.attachment_hash) throw new Error('overlay target unavailable');
+      const id = crypto.randomUUID();
+      overlayPushes.set(id, { post, expires: now + 10000 });
+      announceLiveOverlayPush({ event_id: id, sender_pubkey: syncStatus.local_author_pubkey, target, post_created_at: post.created_at, sent_at: now, received_at: now });
+    },
+    async resolveLiveOverlayPush(eventId) {
+      const found = overlayPushes.get(eventId);
+      return found && found.expires > Date.now() ? found.post : null;
+    },
     async listSessionCandidates() { return []; },
     async setSessionDisplay() {},
     async setScopeDisplay() {},

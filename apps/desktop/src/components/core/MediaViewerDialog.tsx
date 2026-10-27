@@ -18,6 +18,7 @@ type MediaViewerDialogProps = {
     retrying?: boolean;
     mime: string;
     attachment?: import('@/lib/api').AttachmentView;
+    pushTarget?: import('@/lib/api').PushLiveOverlayRequest;
   }>;
   target?: MediaBookmarkTarget;
   index: number;
@@ -138,7 +139,7 @@ export function MediaViewerDialog({
             {/* #1690: 表示中の画像を取得する。カードに並ばない 5 枚目以降はここでだけ取得する。 */}
             <MediaDemandObserver hash={currentItem?.hash ?? null} />
             {currentItem?.src && currentItem.attachment && target ? (
-              <MediaAssetActions attachment={currentItem.attachment} target={target} className='media-viewer-asset'>
+              <MediaAssetActions attachment={currentItem.attachment} target={target} pushTarget={currentItem.pushTarget} className='media-viewer-asset'>
                 <img className='media-viewer-image' src={currentItem.src} alt={t('media.imageAlt')} />
               </MediaAssetActions>
             ) : currentItem?.src ? (

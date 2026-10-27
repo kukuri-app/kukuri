@@ -378,6 +378,8 @@ dispatch_table! { runtime_commands, dispatch_runtime(runtime: &Arc<DesktopRuntim
     create_custom_reaction_asset(request: CreateCustomReactionAssetRequest) => runtime.create_custom_reaction_asset(request).await.map_err(map_error);
     create_custom_reaction_set(request: CreateCustomReactionSetRequest) => runtime.create_custom_reaction_set(request).await.map_err(map_error);
     create_live_session(request: CreateLiveSessionRequest) => runtime.create_live_session(request).await.map_err(map_error);
+    push_live_overlay(request: kukuri_app_api::PushLiveOverlayRequest) => runtime.push_live_overlay(request).await.map_err(map_error);
+    resolve_live_overlay_push(request: kukuri_app_api::ResolveLiveOverlayPushRequest) => runtime.resolve_live_overlay_push(request).await.map_err(map_error);
     get_live_thumbnail(request: LiveSessionCommandRequest) => runtime.get_live_thumbnail(request).await.map_err(map_error);
     set_live_thumbnail(request: kukuri_app_api::SetLiveThumbnailInput) => runtime.set_live_thumbnail(request).await.map_err(map_error);
     create_post(request: CreatePostRequest) => runtime.create_post(request).await.map_err(map_error);

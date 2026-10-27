@@ -81,6 +81,7 @@ export type PostMediaView = {
   metaBytesLabel?: string | null;
   // 投稿の画像のすべて(拡大表示の順)。カードには先頭 4 枚を並べる(#1690)。
   imageGalleryItems?: Array<{
+    pushTarget?: import('@/lib/api').PushLiveOverlayRequest;
     attachment?: import('@/lib/api').AttachmentView;
     hash: string;
     src: string | null;

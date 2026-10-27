@@ -526,6 +526,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::resolve_community_index_posts),
         ),
         (
+            "resolve_live_overlay_push",
+            size1(DesktopRuntime::resolve_live_overlay_push),
+        ),
+        (
             "resync_dome_snapshots",
             size1(DesktopRuntime::resync_dome_snapshots),
         ),
@@ -538,6 +542,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::set_live_broadcast),
         ),
         ("push_live_video", size4(DesktopRuntime::push_live_video)),
+        (
+            "push_live_overlay",
+            size1(DesktopRuntime::push_live_overlay),
+        ),
         (
             "stop_live_broadcast",
             size1(DesktopRuntime::stop_live_broadcast),

@@ -127,5 +127,17 @@
   "carousel": {
     "previous": "Previous live sessions",
     "next": "Next live sessions"
+  },
+  "push": {
+    "target": "Push attachment {{index}}",
+    "delivery": "Request redisplay for connected viewers. Delivery is not guaranteed",
+    "loading": "Checking Live availability",
+    "noLive": "No live session is broadcasting in this thread",
+    "sending": "Sending",
+    "accepted": "Accepted for sending",
+    "failed": "Could not send",
+    "merged": "Added Pushes for the same attachment",
+    "replaced": "A new Push replaced the oldest image",
+    "busy": "Some Pushes could not be displayed due to congestion"
   }
 }

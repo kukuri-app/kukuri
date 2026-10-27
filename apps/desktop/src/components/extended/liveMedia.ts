@@ -82,8 +82,8 @@ export async function captureVideo(source: LiveVideoSource, limits: LiveVideoLim
     : navigator.mediaDevices.getDisplayMedia({ video, audio: false });
 }
 
-type FrameReader = { read(): Promise<{ done: boolean; value?: VideoFrame }>; cancel(): Promise<void> };
-type TrackProcessor = new (init: { track: MediaStreamTrack }) => { readable: { getReader(): FrameReader } };
+export type FrameReader = { read(): Promise<{ done: boolean; value?: VideoFrame }>; cancel(): Promise<void> };
+export type TrackProcessor = new (init: { track: MediaStreamTrack; maxBufferSize?: number }) => { readable: { getReader(): FrameReader } };
 
 /// 取り込んだ映像を VP8 に圧縮して `push` へ順に渡す。`preview` は自分の映像の表示で、`MediaStreamTrackProcessor` の無い
 /// WebKitGTK では frame の取り出しにも使う。取り込みが終わったら(画面の共有の停止など)`onEnded`。
@@ -105,6 +105,9 @@ export function encodeVideo(options: {
   let lastFrameUs = -Infinity;
   let lastKeyframeUs = -Infinity;
   let reader: FrameReader | null = null;
+  let worker: Worker | null = null;
+  let workerCapturing = false;
+  let latestFrame: VideoFrame | null = null;
 
   const send = async () => {
     if (pushing) return;
@@ -185,28 +188,57 @@ export function encodeVideo(options: {
     if (!stopped) onEnded();
   });
   const Processor = (window as unknown as { MediaStreamTrackProcessor?: TrackProcessor }).MediaStreamTrackProcessor;
+  const received = (frame: VideoFrame) => {
+    if (stopped) { frame.close(); return; }
+    latestFrame?.close();
+    latestFrame = frame;
+    encode(frame, frame.displayWidth, frame.displayHeight);
+  };
   if (Processor) {
     reader = new Processor({ track }).readable.getReader();
     void (async () => {
       while (!stopped) {
         const { done, value } = await reader.read().catch(() => ({ done: true, value: undefined }));
         if (done || !value) return;
-        encode(value, value.displayWidth, value.displayHeight);
-        value.close();
+        received(value);
       }
     })();
   } else {
     const onFrame = () => {
-      if (stopped) return;
+      if (stopped || workerCapturing) return;
       encode(preview, preview.videoWidth, preview.videoHeight);
       preview.requestVideoFrameCallback(onFrame);
     };
     preview.requestVideoFrameCallback(onFrame);
+    if (typeof Worker !== 'undefined') {
+      const source = worker = new Worker(new URL('./liveFrameSource.worker.ts', import.meta.url), { type: 'module' });
+      source.onmessage = ({ data }: MessageEvent<{ supported?: boolean; frame?: VideoFrame; done?: boolean; failed?: boolean }>) => {
+        if (stopped) { data.frame?.close(); return; }
+        if (data.supported === false) { source.terminate(); worker = null; }
+        else if (data.supported) {
+          const copy = track.clone();
+          try {
+            source.postMessage({ track: copy }, [copy as unknown as Transferable]);
+            workerCapturing = true;
+            source.postMessage({ read: true });
+          } catch {
+            copy.stop(); source.terminate(); worker = null; workerCapturing = false;
+          }
+        } else if (data.frame) {
+          received(data.frame);
+          source.postMessage({ read: true });
+        } else if (data.done || data.failed) onEnded();
+      };
+      source.onerror = () => {
+        source.terminate(); worker = null;
+        if (workerCapturing && !stopped) onEnded();
+      };
+    }
   }
   // tick ごとに 1 枚送る(直前の frame に近すぎる分は encode が捨てる)。前の frame からの時間で決めると、tick の直前に
   // 画面が変わったときや tick の揺れで、次の送り直しまで 2 秒近くあく。
   const heartbeat = window.setInterval(
-    () => encode(preview, preview.videoWidth, preview.videoHeight),
+    () => encode(latestFrame ?? preview, latestFrame?.displayWidth ?? preview.videoWidth, latestFrame?.displayHeight ?? preview.videoHeight),
     HEARTBEAT_US / 1000
   );
   return {
@@ -214,6 +246,10 @@ export function encodeVideo(options: {
       stopped = true;
       window.clearInterval(heartbeat);
       void reader?.cancel().catch(() => undefined);
+      worker?.terminate();
+      worker = null;
+      latestFrame?.close();
+      latestFrame = null;
       stream.getTracks().forEach((each) => each.stop());
       preview.srcObject = null;
       if (encoder.state !== 'closed') encoder.close();

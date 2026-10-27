@@ -294,6 +294,8 @@ export type DesktopLogSnapshot = {
 export type BlobMediaFile = { path: string; request_id: string; bytes: number };
 
 export interface DesktopApi {
+  pushLiveOverlay(request: import('./types.generated').PushLiveOverlayRequest): Promise<void>;
+  resolveLiveOverlayPush(eventId: string): Promise<PostView | null>;
   createPost(
     topic: string,
     content: string,
