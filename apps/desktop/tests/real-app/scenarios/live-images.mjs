@@ -31,6 +31,13 @@ async function overlayImages(host, viewers, topic) {
           return observed.images.length === 1 && observed.images[0].width === 48;
         }, 60_000);
       } catch (error) { throw new Error(`${error.message}; overlay=${JSON.stringify(observed)}`, { cause: error }); }
+      const drawn = await viewer.evaluate(`(() => {
+        const image=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+        const video=document.querySelector('.live-stage-layers').getBoundingClientRect();
+        return {width:image.width,height:image.height,videoWidth:video.width};
+      })()`);
+      assert.ok(drawn.width > 0 && drawn.height > 0, `${viewer.name} paints ${kind}: ${JSON.stringify(drawn)}`);
+      assert.ok(drawn.width <= Math.min(192, drawn.videoWidth / 3) && drawn.height <= 160, 'the overlay preserves its size limits');
       // asset URLのfetchはCSPのconnect-src外。通常APIで取得済みblobを照合し、表示URLを読み直さない。
       const payload = await viewer.invoke('get_blob_media_payload', { request: { hash: saved.attachments[0].hash, mime: attachment.mime, source_object_id: id } });
       assert.equal(payload.bytes_base64, attachment.data_base64, `${viewer.name} preserves ${kind} bytes through storage and fetch`);

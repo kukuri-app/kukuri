@@ -675,12 +675,13 @@
 }
 
 .live-stage-post {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 
 .live-stage-post-copy {
+  flex-shrink: 0;
   display: -webkit-box;
   overflow: hidden;
   /* 上下の余白は border で取る(padding だと、3 行で切った次の行が余白に見える)。 */
@@ -700,7 +701,7 @@
   width: fit-content;
   max-width: min(192px, 33cqw);
   min-height: 0;
-  height: 100%;
+  height: auto;
   max-height: 160px;
   background: transparent;
 }

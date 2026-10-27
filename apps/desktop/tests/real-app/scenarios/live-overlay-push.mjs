@@ -1,6 +1,6 @@
 // #1950 AC-2: 2送信者が各10回/秒を60秒押し、別の視聴者へx1200として届く。
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { eventually } from '../../web-e2e/wait.mjs';
 import { audioMode, PERIOD_MS, record, speak } from '../audio.mjs';
 import { accept, connect, openTopic, waitForPeers } from '../session.mjs';
@@ -114,6 +114,7 @@ async function pressForOneMinute(instance, index) {
 }
 
 export async function run({ launch, log, topic }) {
+  if (process.platform === 'linux') log(`graphics devices: ${JSON.stringify({ dri: existsSync('/dev/dri') ? readdirSync('/dev/dri') : [], dxg: existsSync('/dev/dxg'), nvidia: existsSync('/dev/nvidiactl') })}`);
   const displays = [];
   let all;
   try {
@@ -165,6 +166,13 @@ export async function run({ launch, log, topic }) {
     await click(host, label, { within: `${ACTIVE} .live-column-side` });
     await eventually('a remote Push to display', async () => await count(viewer) === 1, 30000);
     await eventually('the GIF to decode', () => viewer.evaluate(`document.querySelector('${STAGE} .live-stage-pushes img')?.naturalWidth===48`), 30000);
+    const drawn = await viewer.evaluate(`(() => {
+      const image=document.querySelector('${STAGE} .live-stage-pushes img').getBoundingClientRect();
+      const count=document.querySelector('${STAGE} .live-overlay-push-count').getBoundingClientRect();
+      return {width:image.width,height:image.height,right:image.right,bottom:image.bottom,countRight:count.right,countBottom:count.bottom};
+    })()`);
+    assert.ok(drawn.width > 0 && drawn.height > 0, `Push paints its image: ${JSON.stringify(drawn)}`);
+    assert.ok(Math.abs(drawn.right-drawn.countRight)<1 && Math.abs(drawn.bottom-drawn.countBottom)<1, 'the count stays at the image bottom right');
     const sharedUrl = await viewer.evaluate(`document.querySelector('${STAGE} .live-stage-pushes img').src.split('#')[0]`);
     await eventually('the warmup Push to expire', async () => await count(viewer) === 0, 10000);
     await observePushes(viewer, postId);

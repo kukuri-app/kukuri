@@ -14,4 +14,5 @@
 - Validation: 対象Vitest、Playwrightの12条件と60秒の負荷試験、TypeScript、対象ESLint。署名・重複・scope・寿命・保持上限はRustのcontractで検証する。実アプリの3端末試験と音声・Linux/WebKitはPRの検証結果へ記録する。
 - 監査で見つかった未達の修正: reduced motionの縦長画像6枚が映像内に収まり、段どうしが重ならないことを実描画で確認した。送信者の信頼判定、後続Pushのindex/hash固定、許容未来時刻での再配送除去は、修正前に失敗するtestで再現してから修正した。
 - Review result: ブラウザの表示と操作を確認済み。独立監査とCIは固定headで判定する。
+- WebKitの実寸確認: decode成功後も通常画像が高さ0へ縮む状態をnative試験で再現した。通常投稿の縦配置をflexへ統合し、本文を縮めず画像だけを残りの高さへ収める。実アプリは画像の正の描画寸法・寸法上限と、Push回数の右下配置も検査する。
 - Exceptions: screen readerの実機確認は未実行。ブラウザfixtureは通信・保存の成功を示す証拠にはしない。

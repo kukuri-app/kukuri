@@ -4,9 +4,14 @@ use std::{ffi::OsStr, path::Path};
 
 fn renderer_override(devices: &Path, explicit: Option<&OsStr>) -> Option<&'static str> {
     (explicit.is_none()
-        && !["dri", "dxg", "nvidiactl"]
+        && !["dxg", "nvidiactl"]
             .iter()
-            .any(|name| devices.join(name).exists()))
+            .any(|name| devices.join(name).exists())
+        && !std::fs::read_dir(devices.join("dri"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| entry.file_name().as_encoded_bytes().starts_with(b"renderD")))
     .then_some("1")
 }
 
@@ -35,11 +40,14 @@ mod tests {
                 None
             );
         }
-        for name in ["dri", "dxg", "nvidiactl"] {
+        std::fs::create_dir(devices.path().join("dri")).unwrap();
+        std::fs::write(devices.path().join("dri/card0"), []).unwrap();
+        assert_eq!(renderer_override(devices.path(), None), Some("1"));
+        for name in ["dri/renderD128", "dxg", "nvidiactl"] {
             let device = devices.path().join(name);
-            std::fs::create_dir(&device).unwrap();
+            std::fs::write(&device, []).unwrap();
             assert_eq!(renderer_override(devices.path(), None), None);
-            std::fs::remove_dir(device).unwrap();
+            std::fs::remove_file(device).unwrap();
         }
     }
 }

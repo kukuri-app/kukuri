@@ -90,6 +90,12 @@ test('five normal-size images preserve every post and author inside a narrow vid
   await expect(images).toHaveCount(5);
   await expect.poll(() => images.evaluateAll((images) => images.every((image) => (image as HTMLImageElement).naturalWidth === 1200))).toBe(true);
   const bounds = (await stage.locator('.live-viewer-screen').boundingBox())!;
+  for (const image of await images.all()) {
+    const box = (await image.boundingBox())!;
+    expect(box.height).toBeGreaterThan(0);
+    expect(box.y).toBeGreaterThanOrEqual(bounds.y);
+    expect(box.y + box.height).toBeLessThanOrEqual(bounds.y + bounds.height);
+  }
   for (const copy of await stage.locator('.live-stage-post-copy').all()) {
     const box = (await copy.boundingBox())!;
     expect(box.y).toBeGreaterThanOrEqual(bounds.y);
