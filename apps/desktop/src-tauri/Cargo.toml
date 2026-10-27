@@ -47,6 +47,7 @@ notify-rust = "4"
 gtk = "0.18.2"
 webkit2gtk = { version = "2.0.2", features = ["v2_40"] }
 rustix = { version = "1.1.5", features = ["fs", "process"] }
+libloading = "0.7.4"
 # Keep zbus's blocking Secret Service client compatible with async startup.
 # Enabling ashpd/tokio also enables zbus/tokio through Cargo feature unification.
 ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "open_uri"] }

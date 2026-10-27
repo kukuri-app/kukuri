@@ -4271,6 +4271,7 @@ dependencies = [
  "kukuri-app-api",
  "kukuri-core",
  "kukuri-desktop-runtime",
+ "libloading",
  "minisign-verify 0.3.0",
  "notify-rust",
  "open",

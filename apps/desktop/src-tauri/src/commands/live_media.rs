@@ -2,7 +2,8 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use kukuri_desktop_runtime::{
-    LiveBroadcastStatus, LiveMediaRequest, LiveVideoSource, LiveVolumeRequest, SetLiveBroadcastRequest,
+    LiveBroadcastStatus, LiveMediaRequest, LiveVideoSource, LiveVolumeRequest,
+    SetLiveBroadcastRequest,
 };
 use tauri::webview::{PermissionKind, PermissionResponse};
 
@@ -41,8 +42,49 @@ pub fn enable_media_stream<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> taur
     window.with_webview(|platform| {
         if let Some(settings) = platform.inner().settings() {
             settings.set_enable_media_stream(true);
+            let _ = enable_track_processing(&settings);
         }
     })
+}
+
+/// WebKitGTKのWorker用取得APIだけを有効にする。2.42未満は既存のpreview経路を使う。
+#[cfg(target_os = "linux")]
+fn enable_track_processing(settings: &webkit2gtk::Settings) -> Option<()> {
+    use gtk::glib::translate::ToGlibPtr;
+    use std::ffi::{CStr, c_char, c_int, c_void};
+    type Ptr = *mut c_void;
+    let settings_pointer: *mut webkit2gtk::ffi::WebKitSettings = settings.to_glib_none().0;
+    // APIはWebKitFeature.h/WebKitSettings.hのC ABI。全symbolを解決してから所有listを作る。
+    unsafe {
+        let library = libloading::os::unix::Library::this();
+        let all = library
+            .get::<unsafe extern "C" fn() -> Ptr>(b"webkit_settings_get_all_features\0")
+            .ok()?;
+        let length = library
+            .get::<unsafe extern "C" fn(Ptr) -> usize>(b"webkit_feature_list_get_length\0")
+            .ok()?;
+        let get = library
+            .get::<unsafe extern "C" fn(Ptr, usize) -> Ptr>(b"webkit_feature_list_get\0")
+            .ok()?;
+        let identifier = library
+            .get::<unsafe extern "C" fn(Ptr) -> *const c_char>(b"webkit_feature_get_identifier\0")
+            .ok()?;
+        let set = library
+            .get::<unsafe extern "C" fn(Ptr, Ptr, c_int)>(b"webkit_settings_set_feature_enabled\0")
+            .ok()?;
+        let unref = library
+            .get::<unsafe extern "C" fn(Ptr)>(b"webkit_feature_list_unref\0")
+            .ok()?;
+        let list = all();
+        for index in 0..length(list) {
+            let feature = get(list, index);
+            if CStr::from_ptr(identifier(feature)).to_bytes() == b"MediaStreamTrackProcessing" {
+                set(settings_pointer.cast(), feature, 1);
+            }
+        }
+        unref(list);
+    }
+    Some(())
 }
 
 /// live の配信を始める・source と mic を切り替える。画面は返った上限で camera か画面を取り込み、VP8 に圧縮して
