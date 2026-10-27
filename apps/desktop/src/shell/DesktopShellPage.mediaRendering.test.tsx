@@ -362,6 +362,50 @@ test('scrolling an image card back into view shows it without fetching it again'
   await waitFor(() => expect(releaseBlobMediaFile).toHaveBeenCalledOnce());
 });
 
+test.each(['file', 'payload'])('cancelled %s response cannot replace a new display request', async (kind) => {
+  let visibilityChanged: IntersectionObserverCallback | null = null;
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(private callback: IntersectionObserverCallback) {}
+    observe(target: Element) {
+      if (target.classList.contains('media-frame')) visibilityChanged = this.callback;
+    }
+    disconnect() {}
+  });
+  if (kind === 'file') installNativeMediaRuntime();
+  else installObjectUrlMocks();
+  const post = buildImagePost({ content: 'caption', content_status: 'Available' });
+  const api = createDesktopMockApi({ seedPosts: { 'kukuri:topic:general': [post] } });
+  const old = createDeferred<void>();
+  const fresh = createDeferred<void>();
+  const requests = [old, fresh];
+  const getMedia = vi.fn(async () => requests.shift()!.promise);
+  api.getBlobMediaFile = async (_hash, _mime, _source, requestId) => {
+    const index = getMedia.mock.calls.length;
+    await getMedia();
+    return { path: `preview-${index}.png`, request_id: requestId, bytes: 4096 };
+  };
+  api.releaseBlobMediaFile = vi.fn(async () => undefined);
+  api.getBlobMediaPayload = async () => {
+    await getMedia();
+    return { bytes_base64: 'ZmFrZS1pbWFnZQ==', mime: 'image/png' };
+  };
+  const setVisible = (isIntersecting: boolean) =>
+    act(() => visibilityChanged?.([{ isIntersecting } as IntersectionObserverEntry], {} as IntersectionObserver));
+
+  render(<App api={api} />);
+  await within(getActiveColumn('Timeline')).findByTestId('media-skeleton-image-post');
+  setVisible(true);
+  await waitFor(() => expect(getMedia).toHaveBeenCalledTimes(1));
+  setVisible(false);
+  setVisible(true);
+  await waitFor(() => expect(getMedia).toHaveBeenCalledTimes(2));
+  await act(async () => old.resolve());
+  expect(screen.queryAllByTestId('media-preview-image-post')).toHaveLength(0);
+  await act(async () => fresh.resolve());
+  const preview = await within(getActiveColumn('Timeline')).findByTestId('media-preview-image-post');
+  if (kind === 'file') expect(preview).toHaveAttribute('src', 'asset://localhost/preview-1.png');
+});
+
 // #1690: 複数枚の画像は先頭 4 枚を並べて取得し、5 枚目以降は拡大表示で表示したときだけ取得する。
 test('a multi-image post shows its first four images and fetches the rest in the viewer', async () => {
   installObjectUrlMocks();

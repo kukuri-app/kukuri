@@ -152,9 +152,6 @@ export function useDesktopShellDataEffects({
   const mediaFetchAccountRef = useRef<string | null>(null);
   const mediaRetryTimerRef = useRef<number | null>(null);
   const [mediaRetryTick, setMediaRetryTick] = useState(0);
-  // #1107: ゲートで取得を無効にした回数を hash ごとに持ち、ゲート前に始まった取得の結果は
-  // 表示に使わない。
-  const mediaGateEpochRef = useRef(new Map<string, number>());
   const gatedMediaHashesRef = useRef<ReadonlySet<string>>(new Set());
   const mediaFetchMountedRef = useRef(true);
   useEffect(() => {
@@ -189,7 +186,6 @@ export function useDesktopShellDataEffects({
     const hashes = [...values];
     if (hashes.length === 0) return;
     for (const hash of hashes) {
-      mediaGateEpochRef.current.set(hash, (mediaGateEpochRef.current.get(hash) ?? 0) + 1);
       mediaFetchLedgerRef.current.forget(hash);
     }
     setMediaObjectUrls((current) => {
@@ -631,18 +627,7 @@ export function useDesktopShellDataEffects({
       mediaFetchApiRef.current = api;
       mediaFetchAccountRef.current = notificationAccount;
       ledger.clear();
-      mediaGateEpochRef.current.clear();
       setMediaObjectUrls({});
-    }
-    const currentHashes = new Set(previewableMediaAttachments.map((attachment) => attachment.hash));
-    for (const hash of mediaGateEpochRef.current.keys()) {
-      if (
-        !currentHashes.has(hash) &&
-        !ledger.isInFlight(hash) &&
-        !gatedMediaHashesRef.current.has(hash)
-      ) {
-        mediaGateEpochRef.current.delete(hash);
-      }
     }
 
     const now = Date.now();
@@ -685,13 +670,13 @@ export function useDesktopShellDataEffects({
           return next;
         });
       };
-      const gateEpoch = mediaGateEpochRef.current.get(attachment.hash) ?? 0;
-      // 完了した結果を使ってよいか。取得後に一度でもゲートされた hash の bytes は使わない。
+      // 取消はこの試行だけに結び付ける。同じhashを再取得しても古い結果を復活させない。
+      let cancelled = false;
       const resultUsable = () =>
+        !cancelled &&
         mediaFetchMountedRef.current &&
         mediaFetchApiRef.current === api &&
         mediaFetchAccountRef.current === notificationAccount &&
-        (mediaGateEpochRef.current.get(attachment.hash) ?? 0) === gateEpoch &&
         !gatedMediaHashesRef.current.has(attachment.hash);
       // 失敗を台帳へ記録し、上限に達したときだけ取得不可を表示へ出す。
       const recordFailure = () => {
@@ -719,11 +704,10 @@ export function useDesktopShellDataEffects({
       const requestId = nativeFile
         ? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`)
         : null;
-      if (requestId) {
-        ledger.trackCancel(attachment.hash, () => {
-          void api.releaseBlobMediaFile?.(requestId).catch(() => undefined);
-        });
-      }
+      ledger.trackCancel(attachment.hash, () => {
+        cancelled = true;
+        if (requestId) void api.releaseBlobMediaFile?.(requestId).catch(() => undefined);
+      });
       const resourceRequest: Promise<{ kind: 'file'; resource: MediaResource } | { kind: 'payload'; payload: BlobMediaPayload } | null> = requestId && api.getBlobMediaFile
         ? api.getBlobMediaFile(attachment.hash, attachment.mime, attachment.source_object_id, requestId)
             .then((file) => file ? {
