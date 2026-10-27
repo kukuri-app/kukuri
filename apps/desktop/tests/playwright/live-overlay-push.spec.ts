@@ -48,7 +48,7 @@ test('six mixed Push images stay inside the video without overlap in reduced mot
     return targets;
   });
   const pushes = page.locator('.live-stage-pushes');
-  await expect(page.locator('.live-stage')).toBeVisible();
+  await expect(pushes).toBeAttached();
   await page.evaluate(async (targets) => { for (const target of targets) await window.__KUKURI_DESKTOP__!.pushLiveOverlay(target); }, targets);
   await expect(pushes.locator('canvas')).toHaveCount(6);
   await expect.poll(() => pushes.locator('canvas').evaluateAll((nodes) => nodes.map((node) => (node as HTMLCanvasElement).height))).toEqual([48, 160, 160, 160, 160, 160]);
