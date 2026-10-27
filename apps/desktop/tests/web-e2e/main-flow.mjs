@@ -1558,6 +1558,16 @@ async function webrtcLoss() {
 
 /** 失敗したときの手がかり（CI だけで落ちたとき用）: 各 client の列の id・画面内か・本文の先頭と、WebRTC の session の状態。 */
 async function dumpColumns(browser) {
+  console.log('PROBE RTC', JSON.stringify(await browser.executeAsync(async done => {
+    const peers = await Promise.all((window.__kukuriPeers ?? []).map(async pc => {
+      const stats = await pc.getStats();
+      return [...stats.values()].filter(stat => ['data-channel', 'candidate-pair', 'transport'].includes(stat.type));
+    }));
+    done({ received: window.__kukuriReceivedBytes, peers });
+  })));
+  const bounded = promise => Promise.race([promise, new Promise(resolve => setTimeout(() => resolve('diagnostic timeout'), 3000))]);
+  console.log('PROBE web sync', JSON.stringify(await bounded(webInvoke(browser, 'get_sync_status')).catch(String)));
+  console.log('PROBE native sync', JSON.stringify(await bounded(native('get_sync_status')).catch(String)));
   const columns = await browser.execute(() =>
     [...document.querySelectorAll('section.shell-column-surface')].map(
       (node) => `[${node.dataset.columnId} visible=${node.dataset.runtimeVisible ?? 'false'}]\n${node.innerText.slice(0, 800)}`
