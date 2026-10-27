@@ -86,20 +86,11 @@ async function reviewTalkBack(browser, openSettings, adb) {
   await browser.$('#shell-settings-drawer .shell-settings-close').click();
 }
 
-// getBoundingClientRectはlayout viewport基準。keyboardでpanした分を引いて実画面へ写す。
-export function editorTapPoint(element) {
-  const { left, top, width, height } = element.getBoundingClientRect();
-  return { x: (left + width / 2 - visualViewport.offsetLeft) * devicePixelRatio,
-    y: (top + height / 2 - visualViewport.offsetTop) * devicePixelRatio + 106 };
-}
-
 async function typeJapanese(browser, field, adb) {
   if (!(await browser.execute(element => document.activeElement === element && visualViewport.height < innerHeight * .8, field))) {
     await field.click();
-    const point = await browser.execute(editorTapPoint, field);
-    // 同じAPI35/320px/200%画像で確認したstatus barの106pxを含む実field位置。
-    await adb('shell', 'input', 'tap', String(Math.round(point.x)), String(Math.round(point.y)));
-    await eventually('Japanese editor keyboard is visible', () => browser.execute(() => visualViewport.height < innerHeight * .8));
+    await eventually('Japanese editor has focus and its keyboard is visible', () =>
+      browser.execute(element => document.activeElement === element && visualViewport.height < innerHeight * .8, field));
   }
   await browser.execute(element => {
     window.__pwaImeEvents = [];
