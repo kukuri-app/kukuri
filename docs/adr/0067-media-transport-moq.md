@@ -134,7 +134,9 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
 - #1879（Web の live）で、同じ fork の branch `kukuri/moq-0.1.11-wasm-transport` の `6573706f68cb7c8244e4e5855400ff80d2fc29a9` に進め、`moq-tokio`・`moq-mux` も fork から取る（上流へは PR を出さない）。moq-tokio は tokio の `full` を要求して wasm32 で build できないので、Web では poll 型への変換（`transport`）だけを含め、その変換の future は Web では Send にしない。moq-mux・moq-audio は `std::time` の `Instant`・`SystemTime` の `now` を使い、ブラウザでは実行時に止まるので、`web-time` の型を使う（native では std と同じ型）。moq-mux・moq-tokio の moq 系の依存も crates.io の同じ版にした。版を上げるときは、上流に同じ修正があるかを確かめる。
 - Linux の build は libasound の開発 package、配布物は libasound を要する。
 - #1944の製品対策では、同じforkの `54dde69f0abd6c00c1faca0dcf77d603b61282ba` に進める。再生参照の受け渡しを時刻付きの有界履歴に置き換え、取り込みとデバイスの再生・収録時刻で対応付ける。参照の受け渡しと履歴はそれぞれ最大256 block（stereo・48 kHz、1 blockは最大10 ms）とし、履歴は参照時に末尾が500 msより古いblockを除去する。micの開始・停止と出力streamの再作成で回収する。マイクのframeの送出、公開API、wire、保存形式、UIは変更しない。`tools/check_media_audio_contract.py` が固定したforkの回帰条件と共有native経路のunit testを実行する。
-- #1955ではforkを `3c9533d2839094151014e2991fa6237331d4fee5` へ進める。収録時刻の推定が利用可能な再生参照より先の場合、完全な参照が2 frame以上あれば次の収録callback用に1 frame残す。実際の再生・収録は待たせず、参照の上限・回収・消費済みframeを繰り返さない規則と、SA-4の5%・10%基準を維持する。
+- #1955ではforkを `03bae00ab0db6a373142fb20bc95a40fdd6c1274` へ進める。収録時刻の推定が利用可能な再生参照より先の場合、完全な参照が2 frame以上あれば次の収録callback用に1 frame残す。
+  収録時刻が後退していない間は、消費済みPCMより前へ再配置しない。デバイスbufferの変動で収録時刻が後退した場合は、保持した履歴への再配置を維持する。
+  実際の再生・収録は待たせず、参照の上限・回収とSA-4の5%・10%基準を維持する。
 - aws-lc は既に desktop の build に入っている（str0m 経由）ため、web-transport-iroh の既定の TLS で新しい C の build は増えない。
 - 輻輳制御と QUIC の stream 数の上限は endpoint の既定のままとし、変える必要は #1033・#1034 の計測で示す。
 - moq 側の版を上げるときは、moq-lite の版（§1）と ALPN の版を同時に見直す。
