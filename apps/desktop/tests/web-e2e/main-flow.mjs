@@ -413,7 +413,7 @@ async function exchangeBetweenWeb(x, y, reactions) {
 /** `publish` が画像を添えて送ってから、受け手がその画像を読み込むまでに relay が中継した bytes と、画像の bytes
  * （`publish` の返り値。受け手が表示するのは添えた原本）を返す。画像が届く前に投稿の card と操作が出ていたか（欠けた
  * media があっても表示と操作が成り立つ）も返す。 */
-async function relayedWhileLoading(browser, content, publish) {
+async function relayedWhileLoading(browser, content, publish, timeout) {
   const before = await relayedBytes();
   const received = await browser.execute(() => window.__kukuriReceivedBytes);
   const size = await publish();
@@ -431,7 +431,7 @@ async function relayedWhileLoading(browser, content, publish) {
     }, content);
     shownBeforeImage ||= state === 'card';
     return state === 'loaded';
-  });
+  }, timeout);
   return { relayed: (await relayedBytes()) - before, received: (await browser.execute(() => window.__kukuriReceivedBytes)) - received, size, shownBeforeImage };
 }
 
@@ -1233,7 +1233,8 @@ async function nativeImageGoesDirect(browser, tag) {
   for (let attempt = 1; ; attempt++) {
     await directPathOpens(browser);
     const image = `${tag}: native image ${attempt} ${RUN}`;
-    const result = await relayedWhileLoading(browser, image, postNativeImage(image));
+    // Androidの接続・復帰は既存の自動取得4回と待機（最大275秒）を待つ。損失後10秒の判定には使わない。
+    const result = await relayedWhileLoading(browser, image, postNativeImage(image), BROWSER === 'android' ? 300_000 : undefined);
     console.log(`native→web after ${tag} (${attempt})`, result);
     if (result.relayed < result.size / 4) return;
     // Android の emulator の NAT の上では、復帰の直後の直接経路が揺れて relay へ流れることがある（ADR 0060 §4 の作れない組）。
