@@ -4126,7 +4126,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-app-api"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4154,7 +4154,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-blob-service"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4172,7 +4172,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-protocol"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "kukuri-cn-safety",
@@ -4184,7 +4184,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-cn-safety"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -4194,7 +4194,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-core"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -4217,7 +4217,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-desktop-runtime"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4261,7 +4261,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-desktop-tauri"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -4297,7 +4297,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-docs-sync"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4323,7 +4323,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-iroh-node"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4358,7 +4358,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-metaverse-host"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "kukuri-core",
@@ -4369,7 +4369,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-store"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4386,7 +4386,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-transport"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4411,7 +4411,7 @@ dependencies = [
 
 [[package]]
 name = "kukuri-webrtc-transport"
-version = "0.4.9"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "bytes",
