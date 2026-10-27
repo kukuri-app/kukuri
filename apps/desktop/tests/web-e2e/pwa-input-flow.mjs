@@ -89,13 +89,8 @@ async function reviewTalkBack(browser, openSettings, adb) {
 async function typeJapanese(browser, field, adb) {
   if (!(await browser.execute(element => document.activeElement === element && visualViewport.height < innerHeight * .8, field))) {
     await field.click();
-    const point = await browser.execute(element => {
-      const { left, top, width, height } = element.getBoundingClientRect();
-      return { x: (left + width / 2) * devicePixelRatio, y: (top + height / 2) * devicePixelRatio + 106 };
-    }, field);
-    // 同じAPI35/320px/200%画像で確認したstatus barの106pxを含む実field位置。
-    await adb('shell', 'input', 'tap', String(Math.round(point.x)), String(Math.round(point.y)));
-    await eventually('Japanese editor keyboard is visible', () => browser.execute(() => visualViewport.height < innerHeight * .8));
+    await eventually('Japanese editor has focus and its keyboard is visible', () =>
+      browser.execute(element => document.activeElement === element && visualViewport.height < innerHeight * .8, field));
   }
   await browser.execute(element => {
     window.__pwaImeEvents = [];
