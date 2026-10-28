@@ -211,6 +211,7 @@ async fn fetch_into(
         hasher.finalize().as_bytes() == hash.as_bytes(),
         "cached blob hash mismatch"
     );
+    output.flush().await?;
     connection.close(0u32.into(), b"cached blob complete");
     Ok(Some(length))
 }
@@ -259,7 +260,8 @@ mod tests {
             .await?,
             Some(bytes.len() as u64)
         );
-        assert_eq!(tokio::fs::read(path).await?, bytes);
+        // 戻った時点で書き終わっている（背景の書込みを待たずに読む）。
+        assert_eq!(std::fs::read(&path)?, bytes);
         provider.shutdown().await?;
         requester.shutdown().await?;
         Ok(())
