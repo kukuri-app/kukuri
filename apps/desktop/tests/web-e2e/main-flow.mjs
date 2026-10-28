@@ -2099,7 +2099,8 @@ const [name, selected] = process.argv.slice(2);
 if (name === '--list') {
   const requested = selected ? (selected.startsWith('[') ? JSON.parse(selected) : [selected]) : [];
   assert.ok(Array.isArray(requested) && requested.every((item) => Object.hasOwn(scenarios, item)), `unknown scenario "${selected}"`);
-  console.log(JSON.stringify(requested.length ? requested : Object.keys(scenarios)));
+  // PWA shell の受入れは Chrome だけ（pwa-shell-flow.mjs）。Firefox・Safari の全部の一覧には載せない。
+  console.log(JSON.stringify(requested.length ? requested : Object.keys(scenarios).filter(item => CHROMEDRIVER || item !== 'pwa-shell')));
 } else {
   assert.ok(Object.hasOwn(scenarios, name), `unknown scenario "${name}" (one of ${Object.keys(scenarios).join(', ')})`);
   await nativeShows(TOPIC);
