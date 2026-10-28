@@ -52,7 +52,7 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
     Android の emulator の Chrome では blob の転送が止まった。§8 の E2 では、損失の無い経路で 1000 個のうち、送る前に捨てた分を除いても
     4〜5 割しか届かなかった（`maxRetransmits=0` では、送る前に捨てた分のほかは全部届く）。
   - 戻すときの確認: #1575 より前の `maxRetransmits=0` は、W10 AC-2 の J3（`the_route_moves_to_the_custom_path_and_falls_back_to_the_relay`、debug build）で
-    1 MiB を custom で受け取る段が期限（20 秒）を超えることがあった（140 回中 5 回）。sctp-proto 0.10.7 で同じ条件を 140 回繰り返し、J3_RESULT。
+    1 MiB を custom で受け取る段が期限（20 秒）を超えることがあった（140 回中 5 回）。sctp-proto 0.10.7 で同じ条件を 140 回繰り返し、すべて成功した（2026-10-28、Windows の手元）。
   - sctp-proto を 0.10.7 より前へ戻すとき、または寿命の設定を使うときは、再送 0 回と寿命の扱いを確かめ直す。
 - DataChannel の 1 message に QUIC の datagram を 1 つだけ載せる。`segment_size` のある `Transmit` は segment ごとに 1 message へ分けて送る（各 segment は独立した QUIC の datagram なので、再組立ては要らない）。
   `max_transmit_segments` は 64 にする。iroh は Endpoint の GSO の batch 数を全 transport の最小値にする（`socket/transports.rs` の `max_transmit_segments`）ので、1 にすると native の UDP の GSO まで止まる。
