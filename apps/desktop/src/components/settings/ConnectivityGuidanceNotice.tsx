@@ -14,7 +14,7 @@ export function ConnectivityGuidanceNotice({ guidance, onRefreshDiagnostics, onO
   const { t } = useTranslation('settings');
   if (!guidance) return null;
   return <div className='min-w-0 space-y-3 [overflow-wrap:anywhere]'>
-    <p>{guidance.description}</p>
+    {guidance.description ? <p>{guidance.description}</p> : null}
     {guidance.readError ? <Notice tone='destructive'>{guidance.readError}</Notice> : null}
     {guidance.errorSummary ? <p className='text-sm text-muted-foreground'>
       {t('connectionGuidance.lastRecordedError', { error: guidance.errorSummary })}

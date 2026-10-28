@@ -12,7 +12,6 @@ import { type SettingsSection } from './types';
 type SettingsDrawerSection = {
   id: SettingsSection;
   label: string;
-  description: string;
   content: React.ReactNode;
   keepMounted?: boolean;
 };

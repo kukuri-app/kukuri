@@ -1,7 +1,6 @@
 {
   "accountKey": {
     "title": "账户",
-    "summary": "账户密钥迁移与账户切换。",
     "transferOut": "将账户迁移到其他设备",
     "openBackup": "打开备份与恢复",
     "accountsTitle": "此设备上的账户",
@@ -169,7 +168,6 @@
   },
   "deviceBackup": {
     "title": "设备备份",
-    "summary": "保存并恢复本设备数据。",
     "oneFileNotice": "一个备份文件只包含当前使用的一个账户。多个账户请分别创建备份。与仅导出账户密钥不同，此备份还包含本地帖子、草稿、附件、偏好设置和私密频道密钥。",
     "secretNotice": "获得此文件和密码短语的人可能冒充您并读取私密数据。请安全保存。恢复不会删除旧设备或 P2P 网络上的副本。",
     "keyOnlyHint": "如果只想把代表你身份的账户密钥迁移到另一台设备，请在设置的「账户」中导出。整机迁移或为设备故障做准备时，请使用此备份。",
@@ -181,7 +179,6 @@
     "cancel": "取消",
     "create": {
       "title": "创建备份",
-      "description": "选择保存位置后，kukuri 会短暂停止运行时并加密一致的快照。",
       "acknowledge": "我了解备份包含敏感数据，且没有密码短语就无法恢复",
       "submit": "选择位置并创建",
       "pending": "正在创建…",
@@ -189,7 +186,7 @@
     },
     "restore": {
       "title": "从备份恢复",
-      "description": "kukuri 会先在暂存区解密并验证，仅在验证成功后切换账户。",
+      "description": "仅在恢复成功后切换账户。",
       "choose": "选择备份文件",
       "preview": "检查内容",
       "fingerprint": "账户公钥",
@@ -209,7 +206,6 @@
   },
   "appearance": {
     "darkSelected": "已选择深色主题",
-    "languageHint": "更改立即生效，并保存在此设备上。",
     "languageLabel": "语言 / Language",
     "languageOptions": {
       "en": "English",
@@ -217,15 +213,12 @@
       "zh-CN": "简体中文"
     },
     "lightSelected": "已选择浅色主题",
-    "themeHint": "主题更改会立即在此设备生效，并仅保存在本地。",
     "themeLabel": "主题模式",
     "themeOptions": {
       "dark": {
-        "description": "适合低光环境的高对比纯色界面。",
         "label": "深色"
       },
       "light": {
-        "description": "适合白天阅读的明亮纯色界面。",
         "label": "浅色"
       }
     },
@@ -369,7 +362,6 @@
     "noNodes": "尚未配置社区节点。",
     "nodesHint": "每个社区节点都有基础 URL，并且在使用前需要单独同意。",
     "nodesLabel": "已配置的节点",
-    "nodeSummary": "此节点的认证、同意和连接状态。",
     "sessionPhases": {
       "accepting": "处理同意中",
       "authenticating": "认证中",
@@ -561,7 +553,6 @@
     "searchKeyPlaceholder": "party",
     "searchKeyRequired": "搜索关键词为必填项。",
     "preview": "预览",
-    "previewHint": "保存时会标准化为 128x128。",
     "noOwnedAssets": "还没有自定义回应。",
     "savedReactions": "已保存回应",
     "savedReactionsHint": "把别人的自定义回应保存下来以便复用。",
@@ -587,9 +578,6 @@
   },
   "release": {
     "title": "发布",
-    "summary": "预览频道、更新、诊断和资源。",
-    "storeSummary": "Microsoft Store 版本的更新、诊断和资源。",
-    "webSummary": "预览频道、诊断和资源。",
     "update": {
       "title": "更新",
       "version": "版本",
@@ -683,7 +671,6 @@
   },
   "keyboard": {
     "title": "键盘操作",
-    "summary": "当前已分配的按键，以及每个按键生效的界面与焦点条件。所有操作也都可以用鼠标完成。",
     "columns": {
       "keys": "按键",
       "action": "操作",
@@ -749,7 +736,6 @@
   },
   "safety": {
     "title": "安全",
-    "summary": "成人内容显示设置，以及用户静音与屏蔽。",
     "adultContent": {
       "label": "显示被发布者标记为成人内容的媒体和帖子",
       "description": "关闭期间,kukuri 不会获取或显示发布者标记为成人内容的帖子所附媒体,而是显示占位符。标签由发布者自我声明,未带标签的帖子并不保证不含成人内容。该设置仅保存在本设备上,与年满 18 周岁的自我声明相互独立。"
@@ -859,8 +845,7 @@
     },
     "discovery": {
       "found": "发现路径已连接",
-      "waiting": "等待发现路径连接",
-      "description": "这里显示对等节点发现情况，与各话题的传递状态不同。种子和辅助节点是候选，允许中继不代表正在通过中继传输。"
+      "waiting": "等待发现路径连接"
     },
     "stale": "无法刷新诊断。正在显示上次获取的信息，当前状态未确认。",
     "failed": "无法获取诊断，请再次刷新。",
@@ -877,7 +862,6 @@
   },
   "system": {
     "title": "系统",
-    "summary": "选择关闭主窗口时的行为。",
     "windowCloseBehavior": "关闭窗口时",
     "options": {
       "ask": "每次询问",

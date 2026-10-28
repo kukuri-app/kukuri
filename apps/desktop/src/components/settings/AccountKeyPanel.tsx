@@ -123,7 +123,6 @@ export function AccountKeyPanel({ onOpenDeviceBackup, showBrowserStorage, accoun
     <Card className='space-y-4'>
       <CardHeader>
         <h3>{t('settings:accountKey.title')}</h3>
-        <small>{t('settings:accountKey.summary')}</small>
       </CardHeader>
 
       {/* #1629: 3 つの方法の一覧に代えて、アカウントメニューの「別の端末へ移す」の dialog を開く。 */}

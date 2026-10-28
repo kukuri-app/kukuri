@@ -65,7 +65,7 @@
     "errors": {
       "trust_not_configured": "该社区节点不提供信任提示读取。",
       "trust_not_activated": "当前节点会话尚未启用信任提示读取。",
-      "relation_unavailable": "该社区节点无法提供关系信息；不会推测或披露具体原因。",
+      "relation_unavailable": "该社区节点无法提供关系信息。",
       "relation_visibility_not_configured": "该社区节点不提供距离停用设置。",
       "relation_visibility_not_activated": "该社区节点的距离停用设置暂时不可用。",
       "auth_required": "请先对所选社区节点完成认证。",
@@ -74,7 +74,6 @@
     },
     "trust": {
       "title": "信任提示",
-      "continuousNotice": "显示连续值及其依据，不分配固定风险标签。",
       "trust": "对你而言的信任值",
       "reasonsLabel": "降低原因",
       "reasons": {

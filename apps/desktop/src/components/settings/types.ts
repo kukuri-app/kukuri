@@ -147,7 +147,6 @@ export type CommunityNodePanelView = {
 export type AppearanceOptionView = {
   value: DesktopTheme;
   label: string;
-  description: string;
 };
 
 export type AppearancePanelView = {

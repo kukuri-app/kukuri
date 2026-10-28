@@ -314,7 +314,6 @@
     "loadFailed": "无法加载收藏。",
     "saveFailed": "无法更新收藏。",
     "details": "媒体资料",
-    "sourceDescription": "来源帖子和附件的资料。",
     "copyField": "复制{{field}}",
     "copyAll": "复制所有元数据",
     "copied": "已复制。",

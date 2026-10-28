@@ -27,7 +27,6 @@ export function SystemPanelView({ value, pending, error, onChange }: SystemPanel
     <Card className='space-y-4'>
       <CardHeader>
         <h3>{t('system.title')}</h3>
-        <small>{t('system.summary')}</small>
       </CardHeader>
       <label className='grid gap-2 text-sm font-semibold text-foreground'>
         <span>{t('system.windowCloseBehavior')}</span>

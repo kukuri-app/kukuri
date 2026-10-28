@@ -81,6 +81,7 @@ test('picker pages replace the window and reuse the video and poster without loa
   expect(screen.queryByRole('button', { name: '画像添付' })).not.toBeInTheDocument();
   expect(list).toHaveBeenLastCalledWith(cursor, false);
   await userEvent.click(choice);
+  expect(select.mock.calls[0][0].source_name).toBe('動画');
   expect(select.mock.calls[0][0].attachments[0]).toMatchObject({ data_base64: '', bookmarked_media_hash: 'video', reused_attachments: video.attachments });
   expect(getBlobMediaPayload.mock.calls.some((call) => call[0] === 'video')).toBe(false);
   await waitFor(() => expect(screen.getByRole('button', { name: 'ブックマークから選択' })).toHaveFocus());

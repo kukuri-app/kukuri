@@ -1,7 +1,6 @@
 {
   "accountKey": {
     "title": "Account",
-    "summary": "Key migration and account switching.",
     "transferOut": "Move your account to another device",
     "openBackup": "Open backup & restore",
     "accountsTitle": "Accounts on this device",
@@ -169,7 +168,6 @@
   },
   "deviceBackup": {
     "title": "Device backup",
-    "summary": "Save and restore this device's data.",
     "oneFileNotice": "One backup file contains one active account. Create a separate file for each account. Unlike key-only export, this also includes local posts, drafts, attachments, preferences, and private-channel secrets.",
     "secretNotice": "Anyone with this file and passphrase may impersonate you and read private data. Store both safely. Restoring does not delete copies on the old device or the P2P network.",
     "keyOnlyHint": "To move only your account key to another device, export it under Settings > Account. Use this backup to migrate a whole device or to prepare for device failure.",
@@ -181,7 +179,6 @@
     "cancel": "Cancel",
     "create": {
       "title": "Create backup",
-      "description": "After you choose a destination, kukuri briefly stops the runtime and encrypts a consistent snapshot.",
       "acknowledge": "I understand this contains sensitive data and cannot be restored without the passphrase",
       "submit": "Choose destination and create",
       "pending": "Creating…",
@@ -189,7 +186,7 @@
     },
     "restore": {
       "title": "Restore from backup",
-      "description": "kukuri decrypts and validates the backup in staging, then switches accounts only after validation succeeds.",
+      "description": "Accounts are switched only after the restore succeeds.",
       "choose": "Choose backup file",
       "preview": "Review contents",
       "fingerprint": "Account public key",
@@ -209,7 +206,6 @@
   },
   "appearance": {
     "darkSelected": "dark theme selected",
-    "languageHint": "Changes apply immediately and are saved on this device.",
     "languageLabel": "Language",
     "languageOptions": {
       "en": "English",
@@ -217,15 +213,12 @@
       "zh-CN": "简体中文"
     },
     "lightSelected": "light theme selected",
-    "themeHint": "Theme changes apply immediately on this device and stay local to this desktop.",
     "themeLabel": "Theme mode",
     "themeOptions": {
       "dark": {
-        "description": "High-contrast solid surfaces for low-light work.",
         "label": "Dark"
       },
       "light": {
-        "description": "Brighter solid surfaces for daytime readability.",
         "label": "Light"
       }
     },
@@ -369,7 +362,6 @@
     "noNodes": "No community nodes configured.",
     "nodesHint": "Each community node has a base URL and requires separate consent before use.",
     "nodesLabel": "Configured Nodes",
-    "nodeSummary": "Auth, consent, and connectivity state for this node.",
     "sessionPhases": {
       "accepting": "accepting",
       "authenticating": "authenticating",
@@ -561,7 +553,6 @@
     "searchKeyPlaceholder": "party",
     "searchKeyRequired": "Search key is required.",
     "preview": "Reaction preview",
-    "previewHint": "The final asset is normalized to 128x128.",
     "noOwnedAssets": "No custom reactions yet.",
     "savedReactions": "Saved reactions",
     "savedReactionsHint": "Bookmark custom reactions from other people to reuse them.",
@@ -587,9 +578,6 @@
   },
   "release": {
     "title": "Release",
-    "summary": "Preview channel, updater, diagnostics, and resources.",
-    "storeSummary": "Microsoft Store updates, diagnostics, and resources.",
-    "webSummary": "Preview channel, diagnostics, and resources.",
     "update": {
       "title": "Updates",
       "version": "Version",
@@ -683,7 +671,6 @@
   },
   "keyboard": {
     "title": "Keyboard",
-    "summary": "Keys that are assigned today, and the screen or focus each one needs. Every action is also available with the mouse.",
     "columns": {
       "keys": "Keys",
       "action": "Action",
@@ -749,7 +736,6 @@
   },
   "safety": {
     "title": "Safety",
-    "summary": "Adult material display, plus user mute and block.",
     "adultContent": {
       "label": "Show media and posts self-labeled as adult material",
       "description": "While this is off, kukuri does not download or display media attached to posts that were self-labeled as adult material, and shows a placeholder instead. Labels are self-declared by the people who post; an unlabeled post is not guaranteed to be free of adult material. This preference is stored only on this device and is separate from the age self-attestation."
@@ -859,8 +845,7 @@
     },
     "discovery": {
       "found": "Discovery connection available",
-      "waiting": "Waiting for discovery connections",
-      "description": "This shows peer discovery, not individual topic delivery. Seeds and assistance peers are candidates. Allowing relay does not mean data is currently relayed."
+      "waiting": "Waiting for discovery connections"
     },
     "stale": "Diagnostics could not be refreshed. Showing the previous snapshot; the current state is unconfirmed.",
     "failed": "Diagnostics could not be loaded. Try refreshing again.",
@@ -877,7 +862,6 @@
   },
   "system": {
     "title": "System",
-    "summary": "Choose what happens when you close the main window.",
     "windowCloseBehavior": "When closing the window",
     "options": {
       "ask": "Ask every time",

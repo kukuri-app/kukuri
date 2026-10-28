@@ -202,12 +202,10 @@ export function useSettingsViewModels({
         {
           value: 'dark',
           label: t('settings:appearance.themeOptions.dark.label'),
-          description: t('settings:appearance.themeOptions.dark.description'),
         },
         {
           value: 'light',
           label: t('settings:appearance.themeOptions.light.label'),
-          description: t('settings:appearance.themeOptions.light.description'),
         },
       ],
     }),

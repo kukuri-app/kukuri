@@ -23,11 +23,10 @@ test.each(['en', 'ja', 'zh-CN'])('the web client describes the transmissions of 
     </DesktopShellStoreContext.Provider>
   );
   const shown = (key: string) => screen.queryByText(i18n.t(`settings:release.${key}`));
-  expect(shown('webSummary')).toBeInTheDocument();
   expect(shown('externalTransmission.webOriginDestination')).toBeInTheDocument();
   expect(shown('externalTransmission.webP2pDestination')).toBeInTheDocument();
   expect(shown('externalTransmission.webP2pRetention')).toBeInTheDocument();
-  for (const native of ['summary', 'externalTransmission.updateDestination', 'externalTransmission.p2pDestination', 'externalTransmission.p2pRetention']) {
+  for (const native of ['externalTransmission.updateDestination', 'externalTransmission.p2pDestination', 'externalTransmission.p2pRetention']) {
     expect(shown(native)).not.toBeInTheDocument();
   }
 });

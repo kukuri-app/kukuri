@@ -235,7 +235,6 @@ export function ReactionsPanel({
                   style={{ backgroundImage: `url(${draftPreviewUrl})` }}
                   aria-label={t('reactions.preview')}
                 />
-                <small>{t('reactions.previewHint')}</small>
               </div>
               <Button
                 variant='secondary'

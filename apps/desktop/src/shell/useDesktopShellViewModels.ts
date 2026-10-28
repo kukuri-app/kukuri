@@ -359,7 +359,6 @@ export function useDesktopShellViewModels({
       SETTINGS_SECTION_COPY.map((section) => ({
         ...section,
         label: t(`shell:settingsSections.${section.id}.label`),
-        description: t(`shell:settingsSections.${section.id}.description`),
       })),
     [t]
   );

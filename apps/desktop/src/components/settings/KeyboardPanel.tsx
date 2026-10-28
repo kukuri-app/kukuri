@@ -50,7 +50,6 @@ export function KeyboardPanel() {
     <Card className='space-y-4'>
       <CardHeader>
         <h3>{t('settings:keyboard.title')}</h3>
-        <small>{t('settings:keyboard.summary')}</small>
       </CardHeader>
 
       {KEYBOARD_GROUPS.map((group) => {

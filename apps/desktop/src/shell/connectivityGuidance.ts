@@ -5,7 +5,7 @@ import { diagnosticErrorSummary, diagnosticValueLabel } from './diagnosticLabels
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 export type ConnectivityGuidance = {
   label: string;
-  description: string;
+  description: string | null;
   nextStep: string;
   tone: 'accent' | 'warning';
   loaded: boolean;
@@ -56,7 +56,7 @@ export function discoveryGuidance(sync: SyncStatus, read: SyncStatusRead, t: Tra
     label: read.loaded ? (read.error
       ? t('settings:connectionGuidance.previousLabel', { state: t(`settings:connectionGuidance.discovery.${connected ? 'found' : 'waiting'}`) })
       : t(`settings:connectionGuidance.discovery.${connected ? 'found' : 'waiting'}`)) : base.label,
-    description: read.loaded ? t('settings:connectionGuidance.discovery.description') : base.description,
+    description: read.loaded ? null : base.description,
     nextStep: read.loaded ? t('settings:connectionGuidance.steps.offline') : base.nextStep,
     tone: connected && read.loaded && !read.error ? 'accent' : 'warning',
     errorSummary: read.loaded ? diagnosticErrorSummary(error, t) : null,

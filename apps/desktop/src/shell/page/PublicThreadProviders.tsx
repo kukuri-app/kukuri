@@ -391,10 +391,9 @@ function RenamePublicThreadDialog({
   };
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>{t('shell:publicThreads.rename.title')}</DialogTitle>
-          <DialogDescription>{t('shell:publicThreads.rename.description')}</DialogDescription>
         </DialogHeader>
         <DialogBody>
           <form className='composer composer-compact' onSubmit={(event) => void submit(event)} aria-busy={pending}>

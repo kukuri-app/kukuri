@@ -40,7 +40,6 @@
     "failedShareChannel": "分享私密频道失败",
     "failedTakeController": "切换失败"
   },
-  "inspectHint": "在这里查看谁可以加入以及可执行的操作。",
   "joined": "已加入 {{count}} 个",
   "loading": "正在加载私密频道…",
   "latestInvite": "最新邀请",

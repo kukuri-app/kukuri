@@ -314,7 +314,6 @@
     "loadFailed": "ブックマークを読み込めませんでした。",
     "saveFailed": "ブックマークを更新できませんでした。",
     "details": "メディアの情報",
-    "sourceDescription": "ブックマーク元の投稿と添付の情報です。",
     "copyField": "{{field}}をコピー",
     "copyAll": "すべてのメタデータをコピー",
     "copied": "コピーしました。",

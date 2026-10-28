@@ -24,7 +24,7 @@ export function LocaleSelect({ value, onChange, disabled = false, saveFailed = f
           value={value}
           disabled={disabled}
           aria-label={t('appearance.languageLabel')}
-          aria-describedby={hintId}
+          aria-describedby={saveFailed ? hintId : undefined}
           onChange={(event) => onChange(event.target.value as SupportedLocale)}
         >
           <option value='ja'>{t('appearance.languageOptions.ja')}</option>
@@ -32,13 +32,15 @@ export function LocaleSelect({ value, onChange, disabled = false, saveFailed = f
           <option value='zh-CN'>{t('appearance.languageOptions.zh-CN')}</option>
         </Select>
       </Label>
-      <p id={hintId} className='text-sm leading-5 text-muted-foreground' role={saveFailed ? 'status' : undefined}>
-        {t(saveFailed ? 'appearance.languageSaveFailed' : 'appearance.languageHint')}
-      </p>
       {saveFailed ? (
-        <Button type='button' variant='secondary' disabled={disabled} onClick={() => onChange(value)}>
-          {t('appearance.retryLanguageSave')}
-        </Button>
+        <>
+          <p id={hintId} className='text-sm leading-5 text-muted-foreground' role='status'>
+            {t('appearance.languageSaveFailed')}
+          </p>
+          <Button type='button' variant='secondary' disabled={disabled} onClick={() => onChange(value)}>
+            {t('appearance.retryLanguageSave')}
+          </Button>
+        </>
       ) : null}
     </div>
   );
