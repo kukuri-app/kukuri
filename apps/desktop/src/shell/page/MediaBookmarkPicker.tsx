@@ -8,7 +8,7 @@ import { resolvePostAdvisory } from '@/shell/contentAdvisories';
 import { createObjectUrlFromPayload } from '@/shell/media';
 import { IconButton } from '@/components/ui/icon-button';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { MediaBookmarksContext, MEDIA_BOOKMARK_CHANGED } from '@/components/core/mediaBookmarksContext';
 
 const EMPTY_HASHES: readonly string[] = [];
@@ -103,14 +103,12 @@ export function MediaBookmarkPicker({ disabled, onSelect }: { disabled?: boolean
   if (!api) return null;
   return <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (next) void load(); else { request.current += 1; setPage(null); } }}>
     <DialogTrigger asChild><Button type='button' variant='secondary' disabled={disabled}><Bookmark className='size-4' aria-hidden='true' />{t('mediaBookmarks.choose')}</Button></DialogTrigger>
-    <DialogContent className='media-bookmark-picker'>
-      <DialogHeader><DialogTitle>{t('mediaBookmarks.title')}</DialogTitle><DialogDescription>{t('mediaBookmarks.description')}</DialogDescription></DialogHeader>
+    <DialogContent className='media-bookmark-picker' aria-describedby={undefined}>
+      <DialogHeader><DialogTitle>{t('mediaBookmarks.title')}</DialogTitle></DialogHeader>
       <DialogBody>
         {loading ? <p role='status'>{t('mediaBookmarks.loading')}</p> : failed ? <div role='alert'><p>{t('mediaBookmarks.loadFailed')}</p><Button type='button' variant='secondary' onClick={() => void load()}>{t('actions.retry')}</Button></div> : page?.items.length === 0 ? <p>{t('mediaBookmarks.empty')}</p> : null}
-        <div className='media-bookmark-grid' aria-busy={loading}>{page?.items.map((item) => <div key={item.hash} className='relative min-w-0'><Button type='button' variant='ghost' className='media-bookmark-choice' disabled={loading || disabled || removing} onClick={() => select(item)}>
+        <div className='media-bookmark-grid' aria-busy={loading}>{page?.items.map((item) => <div key={item.hash} className='relative min-w-0'><Button type='button' variant='ghost' className='media-bookmark-choice' aria-label={t(item.attachments.some((asset) => asset.role === 'video_manifest') ? 'media.video' : 'media.imageAlt')} disabled={loading || disabled || removing} onClick={() => select(item)}>
           {previewItems.some((row) => row.hash === item.hash) && previews[item.hash] ? <img src={previews[item.hash]} alt='' /> : <span className='media-bookmark-placeholder'><Bookmark aria-hidden='true' /></span>}
-          <span>{item.attachments.some((asset) => asset.role === 'video_manifest') ? t('media.video') : t('media.imageAlt')} · {item.hash.slice(0, 12)}</span>
-          <small>{item.source.author_pubkey.slice(0, 16)}</small>
         </Button><IconButton className='media-bookmark-button' type='button' variant='ghost' label={t('mediaBookmarks.remove')} aria-pressed='true' disabled={loading || removing} onClick={() => void remove(item)}><Bookmark className='size-4 fill-current' aria-hidden='true' /></IconButton></div>)}</div>
         <div className='flex justify-between gap-2'>
           <Button type='button' variant='secondary' disabled={loading || !page?.newer_cursor} onClick={() => void load(page?.newer_cursor, true)}>{t('mediaBookmarks.newer')}</Button>

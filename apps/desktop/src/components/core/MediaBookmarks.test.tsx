@@ -72,10 +72,13 @@ test('picker pages replace the window and reuse the video and poster without loa
   const getBlobMediaPayload = vi.fn<(hash: string, mime: string) => Promise<null>>(async () => null);
   await setup(<MediaBookmarkPicker onSelect={select} />, { listBookmarkedMedia: list, getBlobMediaPayload });
   await userEvent.click(screen.getByRole('button', { name: 'ブックマークから選択' }));
-  await screen.findByText(`画像添付 · ${image.hash.slice(0, 12)}`);
+  await screen.findByRole('button', { name: '画像添付' });
+  const dialog = screen.getByRole('dialog', { name: '画像・動画のブックマーク' });
+  expect(dialog).not.toHaveAttribute('aria-describedby');
+  expect(within(dialog).queryByText(new RegExp(`${image.hash.slice(0, 12)}|${source.author_pubkey.slice(0, 16)}`))).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: '次のページ' }));
-  const choice = await screen.findByRole('button', { name: /動画 · video/ });
-  expect(screen.queryByText(`画像添付 · ${image.hash.slice(0, 12)}`)).not.toBeInTheDocument();
+  const choice = await screen.findByRole('button', { name: '動画' });
+  expect(screen.queryByRole('button', { name: '画像添付' })).not.toBeInTheDocument();
   expect(list).toHaveBeenLastCalledWith(cursor, false);
   await userEvent.click(choice);
   expect(select.mock.calls[0][0].attachments[0]).toMatchObject({ data_base64: '', bookmarked_media_hash: 'video', reused_attachments: video.attachments });
@@ -125,7 +128,7 @@ test.each(['post_id', 'blob_cid'] as const)('picker blocks previews while adviso
   });
   act(() => api.store.getState().setField('timelineAdvisoryLookup', { active: true, settled: {} }));
   await userEvent.click(screen.getByRole('button', { name: 'ブックマークから選択' }));
-  await screen.findByText(`画像添付 · ${image.hash.slice(0, 12)}`);
+  await screen.findByRole('button', { name: '画像添付' });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
   expect(payload).not.toHaveBeenCalled();
   expect(api.store.getState().mediaBookmarkPreviews[0].object_id).toBe(row.bookmarked_from_object_id);
@@ -153,7 +156,7 @@ test('picker applies the shared hash gate even without an advisory on the bookma
     listBookmarkedMedia: async () => ({ items: [saved], newer_cursor: null, older_cursor: null }), getBlobMediaPayload: payload,
   }, [image.hash]);
   await userEvent.click(screen.getByRole('button', { name: 'ブックマークから選択' }));
-  await screen.findByText(`画像添付 · ${image.hash.slice(0, 12)}`);
+  await screen.findByRole('button', { name: '画像添付' });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
   expect(payload).not.toHaveBeenCalled();
 });
