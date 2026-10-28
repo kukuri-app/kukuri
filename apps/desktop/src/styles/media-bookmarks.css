@@ -31,7 +31,6 @@
 .media-bookmark-picker .media-bookmark-choice { width: 100%; border-radius: var(--radius); display: flex; flex-direction: column; align-items: stretch; height: auto; padding: 0.5rem; white-space: normal; }
 .media-bookmark-choice img, .media-bookmark-placeholder { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius-sm); }
 .media-bookmark-placeholder { display: grid; place-items: center; background: var(--surface-panel-muted); }
-.media-bookmark-choice small { overflow-wrap: anywhere; color: var(--muted-foreground); }
 @media (max-width: 479px) { .media-bookmark-grid { grid-template-columns: minmax(0, 1fr); } }
 
 .public-thread-row-item { position: relative; }

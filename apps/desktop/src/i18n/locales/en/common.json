@@ -309,7 +309,6 @@
     "remove": "Remove media bookmark",
     "choose": "Choose from bookmarks",
     "title": "Image and video bookmarks",
-    "description": "Choose saved media to attach it to this post. The source user and post will be included.",
     "loading": "Loading bookmarks…",
     "empty": "No image or video bookmarks yet.",
     "loadFailed": "Could not load bookmarks.",
