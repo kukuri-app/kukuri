@@ -284,7 +284,7 @@ impl Tx {
     }
 
     /// 内容（行と chunk）を消す。保護参照は残す。
-    pub(super) async fn forget(&self, row: &Row) -> Result<()> {
+    pub(crate) async fn forget(&self, row: &Row) -> Result<()> {
         self.drop_item(&row.kind, &row.key).await?;
         if !row.protected {
             self.set_used(self.used().await? - row.charge)?;
@@ -386,6 +386,8 @@ impl Tx {
             "adult_marker" if self.row(kind, key).await?.is_some() => {
                 self.evicted_label(key.to_owned())
             }
+            // #1949: 主 hash か poster が外れた画像・動画は、キャッシュの一覧から外す。
+            "blob" => crate::account::forget_cached_media(self, key).await?,
             _ => {}
         }
         self.delete(kind, key)

@@ -22,6 +22,8 @@ pub(crate) const DOME_HOSTING: &str = "dome_hosting";
 pub(crate) const REACTIONS: &str = "reactions";
 pub(crate) const REACTION_BOOKMARKS: &str = "reaction_bookmarks";
 pub(crate) const MEDIA_BOOKMARKS: &str = "media_bookmarks";
+/// 表示のために手元へ置いた他人の画像・動画の一覧（#1949）。
+pub(crate) const CACHED_MEDIA: &str = "cached_media";
 pub(crate) const POST_BOOKMARKS: &str = "post_bookmarks";
 pub(crate) const MUTES: &str = "mutes";
 pub(crate) const DOCS_AUTHORS: &str = "docs_authors";
@@ -208,12 +210,6 @@ pub(super) fn create_projection_stores(db: &IdbDatabase) -> Result<(), JsValue> 
         &["r.source_object_id"],
         &[("order", &["r.bookmarked_at", "r.source_object_id"])],
     )?;
-    table(
-        db,
-        MEDIA_BOOKMARKS,
-        &["r.hash"],
-        &[("order", &["r.bookmarked_at", "r.hash"])],
-    )?;
     table(db, MUTES, &["r.author_pubkey"], &[])?;
     table(db, DOCS_AUTHORS, &["r.author_pubkey"], &[])?;
     table(
@@ -374,7 +370,26 @@ pub(super) fn create_projection_stores(db: &IdbDatabase) -> Result<(), JsValue> 
     )?;
     create_public_refs(db)?;
     create_public_channels(db)?;
-    create_live_now(db)
+    create_live_now(db)?;
+    create_media_shelves(db)
+}
+
+/// 画像・動画の bookmark（版 5）とキャッシュの一覧（版 6、#1949）。無いものだけを作る。キャッシュの行だけが `poster`
+/// （動画の poster の hash）を持ち、poster の回収から行を引く。
+pub(super) fn create_media_shelves(db: &IdbDatabase) -> Result<(), JsValue> {
+    let order: (&str, &[&str]) = ("order", &["r.bookmarked_at", "r.hash"]);
+    if !db.object_store_names().contains(MEDIA_BOOKMARKS) {
+        table(db, MEDIA_BOOKMARKS, &["r.hash"], &[order])?;
+    }
+    if !db.object_store_names().contains(CACHED_MEDIA) {
+        table(
+            db,
+            CACHED_MEDIA,
+            &["r.hash"],
+            &[order, ("poster", &["poster"])],
+        )?;
+    }
+    Ok(())
 }
 
 /// 公開参照の索引（版 2 で足した store。版 1 の database には、これだけを足す）。

@@ -24,6 +24,7 @@ const COLUMN_KINDS = new Set<ColumnKind>([
   'game',
   'metaverse',
   'publicThreads',
+  'media',
 ]);
 
 type PersistedWorkspaceLayout = {
@@ -90,6 +91,9 @@ function parseColumn(value: unknown): ColumnState | null {
   if (kind === 'publicThreads' && (value.publicThreadOrder === 'last_post' || value.publicThreadOrder === 'created')) {
     column.publicThreadOrder = value.publicThreadOrder;
   }
+  if (kind === 'media' && (value.mediaShelf === 'cache' || value.mediaShelf === 'bookmarks' || value.mediaShelf === 'posts')) {
+    column.mediaShelf = value.mediaShelf;
+  }
   const live = kind === 'stream' ? parseScope(value.live) : undefined;
   if (live) column.live = live;
   return column;
@@ -110,6 +114,7 @@ export function captureWorkspaceLayoutSnapshot(
       ...(column.timelineFlow ? { timelineFlow: true } : {}),
       ...(column.timelineFilter ? { timelineFilter: column.timelineFilter } : {}),
       ...(column.publicThreadOrder ? { publicThreadOrder: column.publicThreadOrder } : {}),
+      ...(column.mediaShelf ? { mediaShelf: column.mediaShelf } : {}),
       ...(column.live ? { live: column.live } : {}),
       pinned: column.pinned,
       preferredDesktopSpan: normalizeColumnSpan(column.kind, column.preferredDesktopSpan),

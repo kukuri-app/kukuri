@@ -7,8 +7,8 @@ export const mediaBookmarksApi: Pick<DesktopApi, 'bookmarkMedia' | 'getBookmarke
     invokeDesktop<BookmarkedMediaView>('bookmark_media', { request: { topic, object_id: objectId, hash, channel_ref: channelRef } })),
   getBookmarkedMedia: command('getBookmarkedMedia', (hash) =>
     invokeDesktop<BookmarkedMediaView | null>('get_bookmarked_media', { request: { hash } })),
-  listBookmarkedMedia: command('listBookmarkedMedia', (cursor = null, before = false) =>
-    invokeDesktop<BookmarkedMediaPageView>('list_bookmarked_media', { request: { cursor, before } })),
-  removeBookmarkedMedia: command('removeBookmarkedMedia', (hash) =>
-    invokeDesktop<void>('remove_bookmarked_media', { request: { hash } })),
+  listBookmarkedMedia: command('listBookmarkedMedia', (cursor = null, before = false, shelf = 'bookmarks') =>
+    invokeDesktop<BookmarkedMediaPageView>('list_bookmarked_media', { request: { cursor, before, shelf } })),
+  removeBookmarkedMedia: command('removeBookmarkedMedia', (hash, shelf = 'bookmarks') =>
+    invokeDesktop<void>('remove_bookmarked_media', { request: { hash, shelf } })),
 };

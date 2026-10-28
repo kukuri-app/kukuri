@@ -27,6 +27,7 @@ mod envelopes;
 mod ledgers;
 mod live_game;
 mod media_bookmarks;
+pub(crate) use media_bookmarks::forget_cached_media;
 mod notifications;
 mod peer_candidates;
 mod private_channels;

@@ -263,7 +263,7 @@ export function useDesktopShellData({
     timelinesByKey,
     visibleColumns,
   ]);
-  const allAdvisoryPosts = useMemo(() => [...advisoryLookupPosts, ...mediaBookmarkPreviews], [advisoryLookupPosts, mediaBookmarkPreviews]);
+  const allAdvisoryPosts = useMemo(() => [...advisoryLookupPosts, ...Object.values(mediaBookmarkPreviews).flat()], [advisoryLookupPosts, mediaBookmarkPreviews]);
   const visibleBookmarkIds = useMemo(() => [
     ...new Set([...advisoryLookupPosts, ...communityIndexResolvedPosts].map((post) => post.object_id)),
   ].slice(0, 1600), [advisoryLookupPosts, communityIndexResolvedPosts]);

@@ -701,7 +701,7 @@ export type DesktopShellDetailSurfaceStackProps = {
   beginColumnQuoteRepost: (post: PostView) => void;
   handleRetryLocalPost: (post: PostView) => void;
   handleRestoreLocalPost: (post: PostView) => void;
-  handleWithdrawPost: (post: PostView) => Promise<void>;
+  handleWithdrawPost: (post: PostView) => Promise<boolean>;
   handleToggleReaction: (post: PostView, reactionKey: ReactionKeyInput) => Promise<void>;
   handleBookmarkCustomReaction: (
     asset: Parameters<import('@/lib/api').DesktopApi['bookmarkCustomReaction']>[0]

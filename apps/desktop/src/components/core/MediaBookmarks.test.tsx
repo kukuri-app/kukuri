@@ -132,7 +132,7 @@ test.each(['post_id', 'blob_cid'] as const)('picker blocks previews while adviso
   await screen.findByRole('button', { name: '画像添付' });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
   expect(payload).not.toHaveBeenCalled();
-  expect(api.store.getState().mediaBookmarkPreviews[0].object_id).toBe(row.bookmarked_from_object_id);
+  expect(api.store.getState().mediaBookmarkPreviews.picker[0].object_id).toBe(row.bookmarked_from_object_id);
   const id = kind === 'post_id' ? row.bookmarked_from_object_id : image.hash;
   act(() => {
     api.store.getState().setField('timelineContentAdvisories', { [`${kind}:${id}`]: [{ nodeBaseUrl: 'https://node.example', advisory: {
@@ -148,7 +148,7 @@ test.each(['post_id', 'blob_cid'] as const)('picker blocks previews while adviso
   expect(document.querySelector('.media-bookmark-choice img')).toBeNull();
   await waitFor(() => expect(revoke).toHaveBeenCalled());
   await userEvent.click(document.querySelector('.ui-dialog-close') as HTMLButtonElement);
-  await waitFor(() => expect(api.store.getState().mediaBookmarkPreviews).toEqual([]));
+  await waitFor(() => expect(Object.values(api.store.getState().mediaBookmarkPreviews).flat()).toEqual([]));
 });
 
 test('picker applies the shared hash gate even without an advisory on the bookmarked post', async () => {

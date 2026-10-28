@@ -163,6 +163,7 @@ fn export_ipc_types() {
         ProfileAssetView,
         kukuri_core::MediaOrigin,
         kukuri_store::MediaBookmarkCursor,
+        kukuri_store::MediaShelf,
         BookmarkedMediaView,
         BookmarkedMediaPageView,
         BookmarkMediaRequest,

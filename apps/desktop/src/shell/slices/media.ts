@@ -9,7 +9,8 @@ import {
 /// メディア(blob object URL・非対応動画)(WP-H6 PR3 のドメインスライス)。
 export type MediaSliceState = {
   mediaObjectUrls: Record<string, string | null>;
-  mediaBookmarkPreviews: AdvisoryPostSource[];
+  // 画像・動画の一覧(ブックマークの選択・メディアの列)が表示中の行。advisory の照会に加える。key は一覧の持ち主。
+  mediaBookmarkPreviews: Record<string, AdvisoryPostSource[]>;
   // #1207: 失敗が確定した hash のうち、再取得を試行中のもの。失敗表示を残したまま操作を止める。
   mediaRetryingHashes: Record<string, true>;
   unsupportedVideoManifests: Record<string, true>;
@@ -37,7 +38,7 @@ export type MediaSliceState = {
 export function createInitialMediaSlice(): MediaSliceState {
   return {
     mediaObjectUrls: {},
-    mediaBookmarkPreviews: [],
+    mediaBookmarkPreviews: {},
     mediaRetryingHashes: {},
     unsupportedVideoManifests: {},
     adultContentEnabled: false,

@@ -654,5 +654,24 @@
       "label": "正在直播",
       "all": "全部直播"
     }
+  },
+  "mediaColumn": {
+    "title": "媒体",
+    "shelves": "媒体视图",
+    "loading": "正在加载…",
+    "loadFailed": "无法加载。",
+    "cache": {
+      "title": "缓存",
+      "empty": "没有缓存的图片或视频。",
+      "remove": "从缓存中删除"
+    },
+    "bookmarks": {
+      "title": "书签",
+      "empty": "没有收藏的图片或视频。"
+    },
+    "posts": {
+      "title": "帖子",
+      "empty": "没有带图片或视频的帖子。"
+    }
   }
 }

@@ -654,5 +654,24 @@
       "label": "Live now",
       "all": "All live sessions"
     }
+  },
+  "mediaColumn": {
+    "title": "Media",
+    "shelves": "Media views",
+    "loading": "Loading…",
+    "loadFailed": "Could not load.",
+    "cache": {
+      "title": "Cache",
+      "empty": "No cached images or videos.",
+      "remove": "Delete from cache"
+    },
+    "bookmarks": {
+      "title": "Bookmarks",
+      "empty": "No bookmarked images or videos."
+    },
+    "posts": {
+      "title": "Posts",
+      "empty": "No posts with images or videos."
+    }
   }
 }

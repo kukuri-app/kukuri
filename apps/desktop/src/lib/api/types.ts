@@ -17,6 +17,7 @@ import type {
   BookmarkedMediaView,
   BookmarkedMediaPageView,
   MediaBookmarkCursor,
+  MediaShelf,
   BookmarkedPostPageView,
   BookmarkCursor,
   ChannelAccessTokenExport,
@@ -349,8 +350,9 @@ export interface DesktopApi {
   removeBookmarkedPost(objectId: string): Promise<void>;
   bookmarkMedia(topic: string, objectId: string, hash: string, channelRef?: ChannelRef): Promise<BookmarkedMediaView>;
   getBookmarkedMedia(hash: string): Promise<BookmarkedMediaView | null>;
-  listBookmarkedMedia(cursor?: MediaBookmarkCursor | null, before?: boolean): Promise<BookmarkedMediaPageView>;
-  removeBookmarkedMedia(hash: string): Promise<void>;
+  // shelf は一覧の種類(既定はブックマーク。キャッシュは #1949)。
+  listBookmarkedMedia(cursor?: MediaBookmarkCursor | null, before?: boolean, shelf?: MediaShelf): Promise<BookmarkedMediaPageView>;
+  removeBookmarkedMedia(hash: string, shelf?: MediaShelf): Promise<void>;
   resolveCommunityIndexPosts(
     entries: CommunityIndexPostResolveInput[]
   ): Promise<CommunityIndexPostResolveResponse>;

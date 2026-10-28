@@ -10,6 +10,7 @@ import {
 
 import { cloneSyncStatus } from '../desktopMockModel';
 import { type MockRuntime } from '../mockRuntime';
+import { recordCachedMedia } from './mediaBookmarks';
 
 type ConnectivityMock = Pick<
   DesktopApi,
@@ -609,7 +610,8 @@ export function createConnectivityMock(runtime: MockRuntime): ConnectivityMock {
     async getLocalPeerTicket() {
       return 'peer1@127.0.0.1:7777';
     },
-    async getBlobMediaPayload(hash, mime): Promise<BlobMediaPayload | null> {
+    async getBlobMediaPayload(hash, mime, sourceObjectId): Promise<BlobMediaPayload | null> {
+      if (sourceObjectId) recordCachedMedia(runtime, sourceObjectId, hash);
       const stored = metaverseAssetPayloads[hash] ?? runtime.options?.seedBlobPayloads?.[hash];
       if (stored) {
         return stored;

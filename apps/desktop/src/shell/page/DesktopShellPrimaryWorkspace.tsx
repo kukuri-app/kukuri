@@ -133,7 +133,7 @@ export type DesktopShellPrimarySurfaceProps = {
     asset: Parameters<DesktopApi['bookmarkCustomReaction']>[0]
   ) => Promise<void>;
   handleToggleBookmarkedPost: (post: PostView) => Promise<void>;
-  handleWithdrawPost: (post: PostView) => Promise<void>;
+  handleWithdrawPost: (post: PostView) => Promise<boolean>;
   handleActivateReference: (reference: InternalSmartReference) => Promise<void>;
   handleCopyInternalLink: (link: string) => void;
   handleCreateGameRoom: (event: FormEvent<HTMLFormElement>) => Promise<void>;

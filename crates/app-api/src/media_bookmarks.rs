@@ -1,7 +1,7 @@
 use crate::service::*;
 use crate::views::*;
 use kukuri_core::{AssetRole, MediaOrigin};
-use kukuri_store::{BookmarkedMediaRow, MEDIA_BOOKMARK_PAGE_SIZE, MediaBookmarkCursor};
+use kukuri_store::{BookmarkedMediaRow, MEDIA_BOOKMARK_PAGE_SIZE, MediaBookmarkCursor, MediaShelf};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -20,6 +20,67 @@ pub struct BookmarkedMediaPageView {
     pub items: Vec<BookmarkedMediaView>,
     pub newer_cursor: Option<MediaBookmarkCursor>,
     pub older_cursor: Option<MediaBookmarkCursor>,
+}
+
+/// 投稿の行から、`hash` の画像・動画（動画は本体と poster の組）の一覧の行を作る。`hash` は poster でもよい。
+pub(crate) fn media_shelf_row(row: &ObjectProjectionRow, hash: &str) -> Result<BookmarkedMediaRow> {
+    anyhow::ensure!(
+        matches!(row.object_kind.as_str(), "post" | "comment"),
+        "media bookmark target must be a post"
+    );
+    let asset = row
+        .attachments
+        .iter()
+        .find(|asset| asset.hash.as_str() == hash)
+        .context("media bookmark attachment was not found")?;
+    let video = matches!(
+        asset.role,
+        AssetRole::VideoManifest | AssetRole::VideoPoster
+    );
+    anyhow::ensure!(
+        video || (asset.mime.starts_with("image/") && asset.role != AssetRole::VideoPoster),
+        "media bookmark requires image or video"
+    );
+    let attachments: Vec<_> = if video {
+        let ordinal = row
+            .attachments
+            .iter()
+            .take_while(|item| item.hash.as_str() != hash)
+            .filter(|item| item.role == asset.role)
+            .count();
+        let main = row
+            .attachments
+            .iter()
+            .filter(|item| item.role == AssetRole::VideoManifest)
+            .nth(ordinal)
+            .context("video attachment was not found")?;
+        let poster = row
+            .attachments
+            .iter()
+            .filter(|item| item.role == AssetRole::VideoPoster)
+            .nth(ordinal);
+        std::iter::once(main).chain(poster).cloned().collect()
+    } else {
+        vec![asset.clone()]
+    };
+    let primary = attachments
+        .iter()
+        .find(|asset| asset.role == AssetRole::VideoManifest)
+        .unwrap_or(&attachments[0]);
+    let source = primary.origin.clone().unwrap_or(MediaOrigin {
+        topic_id: row.topic_id.clone(),
+        object_id: row.object_id.as_str().into(),
+        author_pubkey: row.author_pubkey.clone(),
+        created_at: row.created_at,
+    });
+    Ok(BookmarkedMediaRow {
+        bookmarked_from_object_id: row.object_id.as_str().into(),
+        hash: primary.hash.as_str().into(),
+        source,
+        attachments,
+        content_labels: row.content_labels.clone(),
+        bookmarked_at: Utc::now().timestamp_millis(),
+    })
 }
 
 impl AppService {
@@ -68,63 +129,7 @@ impl AppService {
                     == channel_ref,
             "media bookmark scope does not match"
         );
-        anyhow::ensure!(
-            matches!(row.object_kind.as_str(), "post" | "comment"),
-            "media bookmark target must be a post"
-        );
-        let asset = row
-            .attachments
-            .iter()
-            .find(|asset| asset.hash.as_str() == hash)
-            .context("media bookmark attachment was not found")?;
-        let video = matches!(
-            asset.role,
-            AssetRole::VideoManifest | AssetRole::VideoPoster
-        );
-        anyhow::ensure!(
-            video || (asset.mime.starts_with("image/") && asset.role != AssetRole::VideoPoster),
-            "media bookmark requires image or video"
-        );
-        let attachments: Vec<_> = if video {
-            let ordinal = row
-                .attachments
-                .iter()
-                .take_while(|item| item.hash.as_str() != hash)
-                .filter(|item| item.role == asset.role)
-                .count();
-            let main = row
-                .attachments
-                .iter()
-                .filter(|item| item.role == AssetRole::VideoManifest)
-                .nth(ordinal)
-                .context("video attachment was not found")?;
-            let poster = row
-                .attachments
-                .iter()
-                .filter(|item| item.role == AssetRole::VideoPoster)
-                .nth(ordinal);
-            std::iter::once(main).chain(poster).cloned().collect()
-        } else {
-            vec![asset.clone()]
-        };
-        let primary = attachments
-            .iter()
-            .find(|asset| asset.role == AssetRole::VideoManifest)
-            .unwrap_or(&attachments[0]);
-        let source = primary.origin.clone().unwrap_or(MediaOrigin {
-            topic_id: row.topic_id,
-            object_id: row.object_id.as_str().into(),
-            author_pubkey: row.author_pubkey,
-            created_at: row.created_at,
-        });
-        let saved = BookmarkedMediaRow {
-            bookmarked_from_object_id: row.object_id.as_str().into(),
-            hash: primary.hash.as_str().into(),
-            source,
-            attachments,
-            content_labels: row.content_labels,
-            bookmarked_at: Utc::now().timestamp_millis(),
-        };
+        let saved = media_shelf_row(&row, hash)?;
         self.services
             .projection_store
             .put_bookmarked_media(saved.clone())
@@ -144,22 +149,25 @@ impl AppService {
         }
     }
 
-    pub async fn remove_bookmarked_media(&self, hash: &str) -> Result<()> {
-        self.services
-            .projection_store
-            .remove_bookmarked_media(hash)
-            .await
+    /// ブックマークを外す。キャッシュ（#1949）では一覧から外し、保護の無い部分を手元の cache から消す。
+    pub async fn remove_bookmarked_media(&self, shelf: MediaShelf, hash: &str) -> Result<()> {
+        let store = &self.services.projection_store;
+        match shelf {
+            MediaShelf::Bookmarks => store.remove_bookmarked_media(hash).await,
+            MediaShelf::Cache => store.remove_cached_media(hash).await,
+        }
     }
 
     pub async fn list_bookmarked_media(
         &self,
+        shelf: MediaShelf,
         cursor: Option<&MediaBookmarkCursor>,
         before: bool,
     ) -> Result<BookmarkedMediaPageView> {
         let mut rows = self
             .services
             .projection_store
-            .list_bookmarked_media(cursor, before)
+            .list_bookmarked_media(shelf, cursor, before)
             .await?;
         let more = rows.len() > MEDIA_BOOKMARK_PAGE_SIZE;
         rows.truncate(MEDIA_BOOKMARK_PAGE_SIZE);

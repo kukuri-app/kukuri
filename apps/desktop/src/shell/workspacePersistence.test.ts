@@ -208,6 +208,26 @@ describe('workspace layout persistence', () => {
     expect(readWorkspaceLayout(storage, fallback).columns[0].live).toEqual(live);
   });
 
+  it('round-trips the shelf of a media column only (#1949)', () => {
+    const fallback = createInitialWorkspaceState();
+    const storage = memoryStorage(
+      JSON.stringify({
+        version: 1,
+        activeColumnId: 'media',
+        columns: [
+          { id: 'media', kind: 'media', mediaShelf: 'posts', pinned: true, preferredDesktopSpan: 1 },
+          { id: 'timeline', kind: 'timeline', mediaShelf: 'posts', pinned: true, preferredDesktopSpan: 1 },
+          { id: 'broken', kind: 'media', mediaShelf: 'trash', pinned: true, preferredDesktopSpan: 1 },
+        ],
+      })
+    );
+
+    const restored = readWorkspaceLayout(storage, fallback);
+    expect(restored.columns.map((column) => column.mediaShelf)).toEqual(['posts', undefined, undefined]);
+    expect(writeWorkspaceLayout(storage, restored)).toBe(true);
+    expect(readWorkspaceLayout(storage, fallback).columns[0].mediaShelf).toBe('posts');
+  });
+
   it('drops invalid persisted timelineView values', () => {
     const fallback = createInitialWorkspaceState();
     const storage = memoryStorage(

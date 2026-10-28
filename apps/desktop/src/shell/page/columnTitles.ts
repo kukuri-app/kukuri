@@ -23,6 +23,7 @@ export function columnTitlesFor(t: TFunction): ColumnTitles {
     metaverse: 'Metaverse',
     publicThreads: t('shell:publicThreads.listTitle'),
     publicThread: t('shell:publicThreads.title'),
+    media: t('shell:mediaColumn.title'),
   };
 }
 

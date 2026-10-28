@@ -46,14 +46,15 @@ use tx::{RecordMeta, delete_step, make_room, put_content, record_key};
 pub(crate) use tx::{Tx, place};
 
 /// 版 2（#1632 AC-6）で公開参照の索引を、版 3（#1840）で公開 channel の一覧の行を、版 4（#1879）で配信中の Live の行を
-/// 足した。版 5 で画像・動画のbookmarkを追加した。既存のstoreは変えない。
-const VERSION: u32 = 5;
+/// 足した。版 5 で画像・動画のbookmarkを、版 6（#1949）でキャッシュの画像・動画の一覧を足した。版 5 は既存の database
+/// に bookmark の store を作らなかったので、版 6 で無ければ作る。既存のstoreは変えない。
+const VERSION: u32 = 6;
 /// 1 つの chunk の上限（`/kukuri/remote-blob/1` の 1 回の単位と同じ）。
 const CHUNK_BYTES: usize = 1024 * 1024;
 /// 内容の transaction が触る object store。remote の投稿の projection（`projection` の内容）を消すときは、その行と
-/// 成人向けの印・公開の参照も同じ transaction で消す。他人の公開 channel の行（`public_channel` の内容）も同じ
-/// （native の `delete_cache_item`）。
-const STORES: [&str; 9] = [
+/// 成人向けの印・公開の参照も同じ transaction で消す。他人の公開 channel の行（`public_channel` の内容）、キャッシュの
+/// 画像・動画の一覧の行（`blob` の内容）も同じ（native の `delete_cache_item`）。
+const STORES: [&str; 10] = [
     "contents",
     "chunks",
     "refs",
@@ -63,6 +64,7 @@ const STORES: [&str; 9] = [
     ADULT_REFS,
     PUBLIC_REFS,
     PUBLIC_CHANNELS,
+    CACHED_MEDIA,
 ];
 const USAGE: &str = "usage";
 /// 表示設定 ON の間に置いた成人向けの blob の `scope`（native の `REMOTE_ADULT_BLOB_SCOPE`）。
@@ -231,8 +233,10 @@ async fn quota_capacity() -> Result<i64> {
 }
 
 pub(crate) fn create_stores(db: &IdbDatabase) -> std::result::Result<(), JsValue> {
-    // 既存の database には、まだ無い store だけを足す(版 2 の公開参照、版 3 の公開 channel の一覧、版 4 の配信中の Live)。
+    // 既存の database には、まだ無い store だけを足す(版 2 の公開参照、版 3 の公開 channel の一覧、版 4 の配信中の Live、
+    // 版 6 の画像・動画の bookmark とキャッシュの一覧)。
     if db.object_store_names().contains("contents") {
+        schema::create_media_shelves(db)?;
         if !db.object_store_names().contains(PUBLIC_REFS) {
             schema::create_public_refs(db)?;
         }

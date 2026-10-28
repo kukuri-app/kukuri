@@ -1,3 +1,4 @@
+use crate::media_bookmarks::media_shelf_row;
 use crate::service::*;
 
 struct MediaSourceAccess {
@@ -6,6 +7,8 @@ struct MediaSourceAccess {
     channel: String,
     generation: u64,
     adult_labeled: bool,
+    /// #1949: 表示した投稿の行（キャッシュの一覧の行を作る）。
+    row: ObjectProjectionRow,
 }
 
 struct MediaAccess {
@@ -120,6 +123,7 @@ impl AppService {
                 "media hash changed before storage"
             );
         }
+        self.record_cached_media(&blob_hash, &access).await;
         Ok(Some(BlobMediaPayload {
             bytes_base64: BASE64_STANDARD.encode(bytes),
             mime: mime.to_string(),
@@ -183,7 +187,26 @@ impl AppService {
                 .put_remote_blob_file(path, &blob_hash, adult)
                 .await?;
         }
+        self.record_cached_media(&blob_hash, &access).await;
         Ok(Some(length))
+    }
+
+    /// #1949: 投稿の画像・動画を手元の cache に置いていれば、キャッシュの一覧へ載せる。載せられなくても表示は続ける。
+    async fn record_cached_media(&self, hash: &kukuri_core::BlobHash, access: &MediaAccess) {
+        let Some(source) = &access.source else {
+            return;
+        };
+        let Ok(row) = media_shelf_row(&source.row, hash.as_str()) else {
+            return;
+        };
+        if let Err(error) = self
+            .services
+            .projection_store
+            .record_cached_media(row)
+            .await
+        {
+            tracing::warn!(%error, "failed to record cached media");
+        }
     }
 
     /// 投稿の添付を取らないか(成人向けで表示設定が OFF、取り下げた投稿、行に無い添付)。公開 topic の保持(#1909)が使う。
@@ -235,10 +258,11 @@ impl AppService {
             };
             Some(MediaSourceAccess {
                 object_id,
-                topic: row.topic_id,
-                channel: row.channel_id,
+                topic: row.topic_id.clone(),
+                channel: row.channel_id.clone(),
                 generation,
                 adult_labeled: kukuri_core::has_adult_content_label(&row.content_labels),
+                row,
             })
         } else {
             None

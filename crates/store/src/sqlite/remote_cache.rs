@@ -88,6 +88,11 @@ pub(super) async fn delete_cache_item(
     }
     if kind == "blob" {
         super::public_blobs::forget_public_blob_announcement(tx, key).await?;
+        // #1949: 主 hash か poster が cache から外れた画像・動画は、キャッシュの一覧から外す。
+        sqlx::query("DELETE FROM cached_media WHERE hash = ?1 OR poster_hash = ?1")
+            .bind(key)
+            .execute(&mut **tx)
+            .await?;
     }
     let deleted =
         sqlx::query("DELETE FROM remote_content_cache WHERE kind = ?1 AND cache_key = ?2")
