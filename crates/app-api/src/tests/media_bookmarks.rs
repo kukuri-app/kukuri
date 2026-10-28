@@ -1,6 +1,6 @@
 use super::*;
 use kukuri_core::BlobHash;
-use kukuri_store::MediaBookmarkStore;
+use kukuri_store::{MediaBookmarkStore, MediaShelf};
 
 #[derive(Default)]
 struct CountedBlobs {
@@ -155,7 +155,9 @@ async fn media_bookmarks_reuse_image_and_video_without_writing_blobs_and_keep_or
             .source,
         image.source
     );
-    app.remove_bookmarked_media(&image.hash).await.unwrap();
+    app.remove_bookmarked_media(MediaShelf::Bookmarks, &image.hash)
+        .await
+        .unwrap();
     assert!(
         app.get_bookmarked_media(&image.hash)
             .await
@@ -169,4 +171,72 @@ async fn media_bookmarks_reuse_image_and_video_without_writing_blobs_and_keep_or
             .unwrap()
             .is_some()
     );
+}
+
+/// #1949: 投稿の画像・動画を表示のために取得すると、キャッシュの一覧へ載る（poster の取得は動画の組で載る）。ブックマーク
+/// するとキャッシュから外れ、外すと戻る。キャッシュから外せる。自分の添付を除くのは保存の側（SQLite・IndexedDB）が行う。
+#[tokio::test]
+async fn displayed_media_enters_the_cache_shelf_and_moves_with_bookmarks() {
+    let store = Arc::new(MemoryStore::default());
+    let transport = Arc::new(FakeTransport::new("media", FakeNetwork::default()));
+    let app = app_service_from_dependencies(
+        store.clone(),
+        store.clone(),
+        transport.clone(),
+        transport,
+        Arc::new(MemoryDocsSync::default()),
+        Arc::new(MemoryBlobService::default()),
+        generate_keys(),
+    );
+    let topic = "kukuri:topic:media-cache";
+    let source = app
+        .create_post_with_attachments(
+            topic,
+            "source",
+            None,
+            vec![
+                pending_video_attachment(AssetRole::VideoManifest, "video/mp4", b"video"),
+                pending_video_attachment(AssetRole::VideoPoster, "image/jpeg", b"poster"),
+            ],
+        )
+        .await
+        .unwrap();
+    let post = app
+        .list_timeline(topic, None, 10)
+        .await
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|post| post.object_id == source)
+        .unwrap();
+    let (video, poster) = (&post.attachments[0].hash, &post.attachments[1].hash);
+    let cached = async || {
+        app.list_bookmarked_media(MediaShelf::Cache, None, false)
+            .await
+            .unwrap()
+            .items
+    };
+    assert!(
+        app.blob_media_payload_for_post(poster, "image/jpeg", Some(&source))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let items = cached().await;
+    assert_eq!(items.len(), 1);
+    assert_eq!(&items[0].hash, video);
+    assert_eq!(items[0].attachments.len(), 2);
+
+    app.bookmark_media(topic, &source, video, ChannelRef::Public)
+        .await
+        .unwrap();
+    assert!(cached().await.is_empty());
+    app.remove_bookmarked_media(MediaShelf::Bookmarks, video)
+        .await
+        .unwrap();
+    assert_eq!(cached().await.len(), 1);
+    app.remove_bookmarked_media(MediaShelf::Cache, video)
+        .await
+        .unwrap();
+    assert!(cached().await.is_empty());
 }

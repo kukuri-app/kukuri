@@ -102,6 +102,7 @@ type DesktopShellControlCenterProps = TopicListProps & {
 const ADDABLE_COLUMN_KINDS: ColumnKind[] = [
   'timeline',
   'publicThreads',
+  'media',
   'explore',
   'notifications',
   'messages',

@@ -43,15 +43,25 @@ export type MediaOrigin = { topic_id: string, object_id: string, author_pubkey: 
 
 export type MediaBookmarkCursor = { bookmarked_at: number, hash: string, };
 
+export type MediaShelf = "bookmarks" | "cache";
+
 export type BookmarkedMediaView = { hash: string, source: MediaOrigin, bookmarked_from_object_id: string, attachments: Array<AttachmentView>, content_labels: Array<string>, bookmarked_at: number, };
 
 export type BookmarkedMediaPageView = { items: Array<BookmarkedMediaView>, newer_cursor: MediaBookmarkCursor | null, older_cursor: MediaBookmarkCursor | null, };
 
 export type BookmarkMediaRequest = { topic: string, object_id: string, hash: string, channel_ref: ChannelRef, };
 
-export type MediaBookmarkRequest = { hash: string, };
+export type MediaBookmarkRequest = { hash: string, 
+/**
+ * 外す一覧（#1949）。省略はブックマーク。取得（`get_bookmarked_media`）はブックマークだけを読む。
+ */
+shelf: MediaShelf, };
 
-export type ListBookmarkedMediaRequest = { cursor: MediaBookmarkCursor | null, before: boolean, };
+export type ListBookmarkedMediaRequest = { cursor: MediaBookmarkCursor | null, before: boolean, 
+/**
+ * 読む一覧（#1949）。省略はブックマーク。
+ */
+shelf: MediaShelf, };
 
 export type AttachmentView = { hash: string, mime: string, bytes: number, role: string, status: BlobViewStatus, provenance?: ContentProvenanceView | null, origin?: MediaOrigin | null, };
 

@@ -11,11 +11,13 @@ pub(super) fn input(name: &str) -> Value {
             json!({"topic": {"type": "string"}, "object_id": {"type": "string"}, "hash": {"type": "string"}, "channel_ref": channel_ref()}),
             &["topic", "object_id", "hash", "channel_ref"],
         ),
-        "get_bookmarked_media" | "remove_bookmarked_media" => {
-            object(json!({"hash": {"type": "string"}}), &["hash"])
-        }
+        "get_bookmarked_media" => object(json!({"hash": {"type": "string"}}), &["hash"]),
+        "remove_bookmarked_media" => object(
+            json!({"hash": {"type": "string"}, "shelf": {"enum": ["bookmarks", "cache"]}}),
+            &["hash"],
+        ),
         "list_bookmarked_media" => object(
-            json!({"cursor": media_bookmark_cursor(), "before": {"type": "boolean"}}),
+            json!({"cursor": media_bookmark_cursor(), "before": {"type": "boolean"}, "shelf": {"enum": ["bookmarks", "cache"]}}),
             &[],
         ),
         "create_post" => object(

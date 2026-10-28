@@ -29,9 +29,12 @@
 .media-metadata-list dd > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .media-bookmark-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
 .media-bookmark-picker .media-bookmark-choice { width: 100%; border-radius: var(--radius); display: flex; flex-direction: column; align-items: stretch; height: auto; padding: 0.5rem; white-space: normal; }
-.media-bookmark-choice img, .media-bookmark-placeholder { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius-sm); }
+.media-bookmark-choice img, .media-shelf-thumbnail img, .media-bookmark-placeholder { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: var(--radius-sm); }
 .media-bookmark-placeholder { display: grid; place-items: center; background: var(--surface-panel-muted); }
 @media (max-width: 479px) { .media-bookmark-grid { grid-template-columns: minmax(0, 1fr); } }
+/* #1949: メディアの列は、1 行の数を列の幅に合わせる。 */
+.media-column .media-bookmark-grid { grid-template-columns: repeat(auto-fill, minmax(6rem, 1fr)); gap: 0.5rem; }
+.media-shelf-thumbnail { display: block; }
 
 .public-thread-row-item { position: relative; }
 .public-thread-row-item > .public-thread-row-thumbnail { position: absolute; top: var(--space-md); right: var(--space-md); }

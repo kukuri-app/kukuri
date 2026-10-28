@@ -21,7 +21,7 @@
       "path": "crates/metaverse-host/src/lib.rs"
     },
     {
-      "lines": 1155,
+      "lines": 1165,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {
@@ -41,16 +41,16 @@
       "path": "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts"
     },
     {
+      "lines": 1065,
+      "path": "crates/store/fixtures/schema/store_schema_full.txt"
+    },
+    {
       "lines": 1054,
       "path": "crates/metaverse-host/src/tests.rs"
     },
     {
       "lines": 1052,
       "path": "crates/desktop-runtime/src/tests/community_node/index_query.rs"
-    },
-    {
-      "lines": 1050,
-      "path": "crates/store/fixtures/schema/store_schema_full.txt"
     },
     {
       "lines": 1047,

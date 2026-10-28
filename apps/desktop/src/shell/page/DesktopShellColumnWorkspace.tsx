@@ -62,6 +62,7 @@ import {
   PublicThreadOrderMenu,
   PublicThreadScopeActions,
 } from '@/shell/page/PublicThreadList';
+import { MediaColumn, MediaShelfTabs } from '@/shell/page/MediaColumn';
 import { PublicThreadLiveRows } from '@/shell/page/PublicThreadLive';
 import { showsThreadLives } from '@/shell/slices/publicThreads';
 import { columnTitle, usePublicThreadColumnTitles, type ColumnTitles } from '@/shell/page/columnTitles';
@@ -386,6 +387,7 @@ export function DesktopShellColumnWorkspace({
     if (column.kind === 'conversation') return renderConversationSurface(column);
     if (column.kind === 'messages') return renderMessagesSurface(column);
     if (column.kind === 'notifications') return renderNotificationsSurface(column);
+    if (column.kind === 'media') return <MediaColumn column={column} />;
     // 並びを変えたら、読み込んだ行と続きの位置を捨てて作り直す。
     if (column.kind === 'publicThreads') {
       return (
@@ -522,6 +524,7 @@ export function DesktopShellColumnWorkspace({
       );
     }
     if (column.kind === 'publicThreads') return <PublicThreadOrderMenu column={column} />;
+    if (column.kind === 'media') return <MediaShelfTabs column={column} />;
     if (column.kind === 'timeline' && !isPublicChannelId(column.scope?.channelId)) {
       return (
         <TimelineViewIconTabs

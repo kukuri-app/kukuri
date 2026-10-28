@@ -55,6 +55,11 @@ table bookmarked_posts
   column cid=12 name=root_object_id type=TEXT notnull=0 default=None pk=0
   column cid=13 name=repost_of_json type=TEXT notnull=0 default=None pk=0
   column cid=14 name=bookmarked_at type=INTEGER notnull=1 default=None pk=0
+table cached_media
+  column cid=0 name=hash type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=poster_hash type=TEXT notnull=0 default=None pk=0
+  column cid=2 name=cached_at type=INTEGER notnull=1 default=None pk=0
+  column cid=3 name=snapshot_json type=TEXT notnull=1 default=None pk=0
 table cn_private_index_grants
   column cid=0 name=base_url type=TEXT notnull=1 default=None pk=1
   column cid=1 name=topic_id type=TEXT notnull=1 default=None pk=2
@@ -463,6 +468,13 @@ index bookmarked_media_order table=bookmarked_media unique=0 origin=c partial=0
   key seqno=0 cid=1 name=Some("bookmarked_at")
   key seqno=1 cid=0 name=Some("hash")
   sql=Some("CREATE INDEX bookmarked_media_order ON bookmarked_media (bookmarked_at DESC, hash DESC)")
+index cached_media_order table=cached_media unique=0 origin=c partial=0
+  key seqno=0 cid=2 name=Some("cached_at")
+  key seqno=1 cid=0 name=Some("hash")
+  sql=Some("CREATE INDEX cached_media_order ON cached_media (cached_at DESC, hash DESC)")
+index cached_media_poster table=cached_media unique=0 origin=c partial=1
+  key seqno=0 cid=1 name=Some("poster_hash")
+  sql=Some("CREATE INDEX cached_media_poster ON cached_media (poster_hash) WHERE poster_hash IS NOT NULL")
 index cn_private_index_grants_due table=cn_private_index_grants unique=0 origin=c partial=0
   key seqno=0 cid=0 name=Some("base_url")
   key seqno=1 cid=7 name=Some("active")
@@ -829,6 +841,9 @@ index sqlite_autoindex_bookmarked_media_1 table=bookmarked_media unique=1 origin
   sql=None
 index sqlite_autoindex_bookmarked_posts_1 table=bookmarked_posts unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("source_object_id")
+  sql=None
+index sqlite_autoindex_cached_media_1 table=cached_media unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("hash")
   sql=None
 index sqlite_autoindex_cn_private_index_grants_1 table=cn_private_index_grants unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("base_url")

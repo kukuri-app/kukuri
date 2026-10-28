@@ -353,11 +353,12 @@ export function createMessageReactionSocialActions({
     }
   }
 
-  async function handleWithdrawPost(post: PostView) {
+  // 取り下げたら true(メディアの列は、そのときだけ一覧から外す。#1949)。
+  async function handleWithdrawPost(post: PostView): Promise<boolean> {
     const topicId = publishedTopicIdForPost(post);
     if (!topicId) {
       setError(translate('common:errors.failedToPublish'));
-      return;
+      return false;
     }
     try {
       await api.withdrawPost(
@@ -367,8 +368,10 @@ export function createMessageReactionSocialActions({
       );
       await Promise.all([loadTopics(trackedTopics, activeTopic, selectedThread), refreshProfile()]);
       setError(null);
+      return true;
     } catch (withdrawError) {
       setError(messageFromError(withdrawError, translate('common:errors.failedToPublish')));
+      return false;
     }
   }
 

@@ -16,7 +16,12 @@ export type ColumnKind =
   | 'game'
   | 'metaverse'
   // topic の公開スレッドの一覧(#1840)。詳細は、この列を親にした timeline の列(scope は公開スレッド)。
-  | 'publicThreads';
+  | 'publicThreads'
+  // 手元の画像・動画の一覧(#1949)。キャッシュ・ブックマーク・自分の投稿を切り替える。
+  | 'media';
+
+// メディアの列の表示(#1949)。未設定はキャッシュ。
+export type ColumnMediaShelf = 'cache' | 'bookmarks' | 'posts';
 
 export type ColumnScope = {
   topicId: string;
@@ -45,6 +50,8 @@ export type ColumnState = {
   timelineFilter?: ColumnTimelineFilter;
   // kind === 'publicThreads' の Column のみ意味を持つ。未設定は最後の投稿の新しい順(#1840 判断 2)。
   publicThreadOrder?: PublicChannelOrder;
+  // kind === 'media' の Column のみ意味を持つ(#1949)。
+  mediaShelf?: ColumnMediaShelf;
   // kind === 'stream' の Column のみ意味を持つ。左側に出す Live の場所(Live を作った topic・channel)。列の scope と違うとき
   // (別の場所の紹介 post から開いたとき)だけ持つ(#1841)。
   live?: ColumnScope;
@@ -97,6 +104,7 @@ const COLUMN_SPAN_POLICIES: Record<ColumnKind, ColumnSpanPolicy> = {
   game: FIXED_COLUMN_SPAN_POLICY,
   metaverse: { default: 3, min: 1, max: 4 },
   publicThreads: FIXED_COLUMN_SPAN_POLICY,
+  media: FIXED_COLUMN_SPAN_POLICY,
 };
 
 export function columnSpanPolicy(kind: ColumnKind): ColumnSpanPolicy {
@@ -466,6 +474,21 @@ export function setColumnPublicThreadOrder(
     if ((column.publicThreadOrder ?? 'last_post') === order) return column;
     changed = true;
     return { ...column, publicThreadOrder: order };
+  });
+  return changed ? { ...state, columns } : state;
+}
+
+export function setColumnMediaShelf(
+  state: WorkspaceState,
+  columnId: string,
+  shelf: ColumnMediaShelf
+): WorkspaceState {
+  let changed = false;
+  const columns = state.columns.map((column) => {
+    if (column.id !== columnId || column.kind !== 'media') return column;
+    if ((column.mediaShelf ?? 'cache') === shelf) return column;
+    changed = true;
+    return { ...column, mediaShelf: shelf };
   });
   return changed ? { ...state, columns } : state;
 }

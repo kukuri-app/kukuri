@@ -25,6 +25,8 @@ mod history_tests;
 #[cfg(test)]
 mod live_now_tests;
 #[cfg(test)]
+mod media_shelf_tests;
+#[cfg(test)]
 mod public_channels_tests;
 #[cfg(test)]
 mod public_refs_tests;
