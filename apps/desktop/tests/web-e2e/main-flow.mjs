@@ -637,8 +637,10 @@ const sendWebImage = (browser, peer, text) => async () => {
 
 const nativeSeesDirectMessage = (pubkey, text) =>
   eventually(`native receives the message "${text}"`, async () => {
-    const page = await native('list_direct_message_messages', { request: { pubkey, cursor: null, limit: 50 } });
-    return page.items.some((item) => item.text === text);
+    // native の読みが相手の author を購読し、相手の follow の edge が追いつくまでは相互にならない（direct_messages.rs）。
+    const page = await native('list_direct_message_messages', { request: { pubkey, cursor: null, limit: 50 } })
+      .catch((error) => { if (error.message.includes('requires a mutual relationship')) return null; throw error; });
+    return page?.items.some((item) => item.text === text);
   });
 
 /** native との DM: 互いに follow し、Web と native が送り合い、native の画像の経路を判定する。`nativeParty` は native の

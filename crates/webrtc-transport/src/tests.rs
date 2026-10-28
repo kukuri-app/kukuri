@@ -157,7 +157,12 @@ async fn e2_datagram_boundaries_survive_the_data_channel() {
         stats.dropped_send,
         answerer.stats().dropped_recv
     );
-    assert!(!seen.is_empty(), "no datagram arrived");
+    // 損失の無い経路では、送る前に捨てた datagram のほかは全部届く（送信を待つ間に SCTP が捨てない）。
+    assert_eq!(
+        seen.len() as u64 + stats.dropped_send,
+        u64::from(COUNT),
+        "accepted datagrams were lost on a lossless path"
+    );
 }
 
 /// E3: 受信側が読まない間に 8 MiB を送る。待ちと未送信 bytes が上限に収まり、読み出しの再開で完走する。
