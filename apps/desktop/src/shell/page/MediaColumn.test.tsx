@@ -67,8 +67,8 @@ test('posts list own image and video media, skips reposts and withdrawn posts, a
   const video = { ...image, hash: 'e'.repeat(64), mime: 'video/mp4', role: 'video_manifest' };
   const poster = { ...image, hash: '9'.repeat(64), role: 'video_poster' };
   const listProfileTimeline = vi.fn(async () => ({ items: [
-    post('own', [image, video, poster]), post('repost', [image], { repost_of: { object_id: 'x' } as PostView['repost_of'] }),
-    post('withdrawn', [image], { withdrawal: {} as PostView['withdrawal'] }), post('text', []),
+    post('own', [image, video, poster]), post('repost', [image], { repost_of: { source_object_id: 'x' } as unknown as PostView['repost_of'] }),
+    post('withdrawn', [image], { withdrawal: {} as unknown as PostView['withdrawal'] }), post('text', []),
   ], next_cursor: null, unavailable_count: 0 }));
   const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
   const { store, withdrawPost } = await setup({ listProfileTimeline });
@@ -82,4 +82,19 @@ test('posts list own image and video media, skips reposts and withdrawn posts, a
   expect(withdrawPost).toHaveBeenCalledWith(expect.objectContaining({ object_id: 'own' }));
   await screen.findByText('画像・動画のある投稿はありません。');
   confirm.mockRestore();
+});
+
+test('posts pages hold at most 20 media and continue inside a read batch', async () => {
+  const posts = Array.from({ length: 15 }, (_, index) => ({ object_id: `p${index}`, author_pubkey: me, created_at: 15 - index, published_topic_id: 'topic',
+    attachments: [0, 1].map((n) => ({ ...image, hash: `${index}-${n}` })) }) as PostView);
+  const listProfileTimeline = vi.fn(async () => ({ items: posts, next_cursor: null, unavailable_count: 0 }));
+  const { store } = await setup({ listProfileTimeline });
+  store.getState().setField('workspaceState', (current) => ({ ...current, columns: current.columns.map((candidate) => candidate.id === column.id ? { ...candidate, mediaShelf: 'posts' as const } : candidate) }));
+  await waitFor(() => expect(screen.getAllByRole('img', { name: '画像添付' })).toHaveLength(20));
+  await userEvent.click(screen.getByRole('button', { name: '次のページ' }));
+  await waitFor(() => expect(screen.getAllByRole('img', { name: '画像添付' })).toHaveLength(10));
+  expect(listProfileTimeline).toHaveBeenLastCalledWith(me, null, 20);
+  expect(screen.getByRole('button', { name: '次のページ' })).toBeDisabled();
+  await userEvent.click(screen.getByRole('button', { name: '前のページ' }));
+  await waitFor(() => expect(screen.getAllByRole('img', { name: '画像添付' })).toHaveLength(20));
 });

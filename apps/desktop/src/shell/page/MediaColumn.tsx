@@ -61,27 +61,32 @@ function MediaShelfBody({ column, shelfId }: { column: ColumnState; shelfId: Col
   const api = context?.api;
   const localAuthor = useDesktopShellStore((state) => state.syncStatus.local_author_pubkey);
   const [busy, setBusy] = useState(false);
-  // 「投稿」の各ページの読み始めの位置。ページの位置は 1 から数えたこの配列の番号。
-  const starts = useRef<Array<TimelineCursor | null>>([null]);
+  // 「投稿」の各ページの読み始めの位置(プロフィールの読む位置と、その 1 回分の画像・動画の何件目からか)。ページの位置は
+  // 1 から数えたこの配列の番号。
+  const starts = useRef<Array<{ at: TimelineCursor | null; skip: number } | null>>([{ at: null, skip: 0 }]);
   // 表示中の「投稿」の行の元の投稿(取り下げに使う)。
   const posts = useRef(new Map<string, PostView>());
   const shelf = useMediaShelf<MediaBookmarkCursor | number>(column.id, true, async (cursor, before) => {
     if (shelfId !== 'posts') return api!.listBookmarkedMedia(cursor as MediaBookmarkCursor | null, before, shelfId);
     const page = (cursor as number | null) ?? 1;
-    let at = starts.current[page - 1] ?? null;
+    let { at, skip } = starts.current[page - 1] ?? { at: null, skip: 0 };
     const items: BookmarkedMediaView[] = [];
-    for (let read = 0; read < POST_READS_PER_PAGE && items.length < PAGE_ITEMS; read += 1) {
+    let next = null;
+    for (let read = 0; read < POST_READS_PER_PAGE; read += 1) {
       const timeline = await api!.listProfileTimeline(localAuthor, at, POST_READ_LIMIT);
-      for (const post of timeline.items) {
-        if (post.author_pubkey !== localAuthor || post.repost_of || post.withdrawal) continue;
+      const media = timeline.items.filter((post) => post.author_pubkey === localAuthor && !post.repost_of && !post.withdrawal).flatMap((post) => {
         posts.current.set(post.object_id, post);
-        items.push(...postMediaItems(post));
-      }
-      at = timeline.next_cursor ?? null;
-      if (!at) break;
+        return postMediaItems(post);
+      });
+      const taken = media.slice(skip, skip + PAGE_ITEMS - items.length);
+      items.push(...taken);
+      // 20 件で切り、残りは同じ読む位置の続きから次のページにする。
+      next = skip + taken.length < media.length ? { at, skip: skip + taken.length } : timeline.next_cursor ? { at: timeline.next_cursor, skip: 0 } : null;
+      if (!next || items.length === PAGE_ITEMS) break;
+      ({ at, skip } = next);
     }
-    starts.current[page] = at;
-    return { items, newer_cursor: page > 1 ? page - 1 : null, older_cursor: at ? page + 1 : null };
+    starts.current[page] = next;
+    return { items, newer_cursor: page > 1 ? page - 1 : null, older_cursor: next ? page + 1 : null };
   });
   useEffect(() => {
     if (api) void shelf.load();
