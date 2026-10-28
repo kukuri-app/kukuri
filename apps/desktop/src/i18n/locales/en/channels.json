@@ -40,7 +40,6 @@
     "failedShareChannel": "failed to share private channel",
     "failedTakeController": "failed to switch the device"
   },
-  "inspectHint": "Review who can join and what you can do here.",
   "joined": "{{count}} joined",
   "loading": "Loading private channels…",
   "latestInvite": "Latest invite",

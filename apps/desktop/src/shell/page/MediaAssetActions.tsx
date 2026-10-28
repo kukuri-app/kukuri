@@ -7,7 +7,7 @@ import { buildPostLink } from '@/lib/internalLinks';
 import { copyTextToClipboard } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { MediaBookmarksContext, MEDIA_BOOKMARK_CHANGED } from '@/components/core/mediaBookmarksContext';
 import type { MediaBookmarkTarget } from '@/components/core/types';
 import { LiveOverlayPushButton } from './LiveOverlayPushButton';
@@ -86,8 +86,8 @@ export function MediaAssetActions({ attachment, bookmarkHash, target, children, 
     </IconButton> : null}
     {error ? <span className='media-bookmark-error' role='alert'>{t('mediaBookmarks.saveFailed')}</span> : null}
     <Dialog open={details} onOpenChange={setDetails}>
-      <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); trigger.current?.focus(); }}>
-        <DialogHeader><DialogTitle>{t('mediaBookmarks.details')}</DialogTitle><DialogDescription>{t('mediaBookmarks.sourceDescription')}</DialogDescription></DialogHeader>
+      <DialogContent aria-describedby={undefined} onCloseAutoFocus={(event) => { event.preventDefault(); trigger.current?.focus(); }}>
+        <DialogHeader><DialogTitle>{t('mediaBookmarks.details')}</DialogTitle></DialogHeader>
         <DialogBody>
           <dl className='media-metadata-list'>{values.map(([key, value]) => <div key={key}>
             <dt>{t(`mediaBookmarks.fields.${key}`)}</dt>

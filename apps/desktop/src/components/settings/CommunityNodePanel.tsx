@@ -296,11 +296,11 @@ export function CommunityNodePanel({
                     className='font-mono text-[0.8rem]'
                   />
                 </div>
-                <p className='text-sm text-[var(--muted-foreground)]'>
-                  {node.saved
-                    ? t('settings:communityNode.nodeSummary')
-                    : t('settings:communityNode.unsavedNodeSummary')}
-                </p>
+                {node.saved ? null : (
+                  <p className='text-sm text-[var(--muted-foreground)]'>
+                    {t('settings:communityNode.unsavedNodeSummary')}
+                  </p>
+                )}
                 {admissionCode ? (
                   <Notice tone={admissionCode === 'BANNED' ? 'destructive' : 'warning'}>
                     <span className='block font-semibold'>

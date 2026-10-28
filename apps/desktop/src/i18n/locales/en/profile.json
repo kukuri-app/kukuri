@@ -65,7 +65,7 @@
     "errors": {
       "trust_not_configured": "This Community Node does not provide trust advisory reads.",
       "trust_not_activated": "Trust advisory reads are not active for your current node session.",
-      "relation_unavailable": "Relation information is unavailable from this Community Node. The reason is intentionally not disclosed.",
+      "relation_unavailable": "Relation information is unavailable from this Community Node.",
       "relation_visibility_not_configured": "This Community Node does not provide relation distance opt-out.",
       "relation_visibility_not_activated": "Relation distance opt-out is temporarily unavailable on this Community Node.",
       "auth_required": "Authenticate with the selected Community Node first.",
@@ -74,7 +74,6 @@
     },
     "trust": {
       "title": "Trust advisory",
-      "continuousNotice": "Continuous values with their basis; no fixed risk label is assigned.",
       "trust": "Trust for you",
       "reasonsLabel": "Lowered by",
       "reasons": {

@@ -314,7 +314,6 @@
     "loadFailed": "Could not load bookmarks.",
     "saveFailed": "Could not update the bookmark.",
     "details": "Media information",
-    "sourceDescription": "Information about the source post and attachment.",
     "copyField": "Copy {{field}}",
     "copyAll": "Copy all metadata",
     "copied": "Copied.",

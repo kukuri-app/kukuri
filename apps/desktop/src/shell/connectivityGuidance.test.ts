@@ -57,7 +57,7 @@ test('discovery does not inherit the live topic result and unknown errors retain
   sync.discovery.last_discovery_error = 'do not translate <raw> failure';
   const view = discoveryGuidance(sync, ready, t);
   expect(view.label).toBe('Waiting for discovery connections');
-  expect(view.description).toContain('not individual topic delivery');
+  expect(view.description).toBeNull();
   expect(view.errorSummary).toBe(t('settings:diagnostics.error'));
   expect(sync.discovery.last_discovery_error).toBe('do not translate <raw> failure');
 });

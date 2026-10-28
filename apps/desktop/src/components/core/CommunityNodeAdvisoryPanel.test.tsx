@@ -283,7 +283,7 @@ describe('CommunityNodeAdvisoryPanel', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /Load relationship and trust|取得/ }));
 
-    expect(await screen.findByText(/reason is intentionally not disclosed|理由は推測・開示しません/)).toBeInTheDocument();
+    expect(await screen.findByText(/^(Relation information is unavailable from this Community Node\.|このコミュニティノードでは関係値情報を利用できません。)$/)).toBeInTheDocument();
     expect(screen.queryByText(/hidden by target opt-out/)).not.toBeInTheDocument();
   });
 

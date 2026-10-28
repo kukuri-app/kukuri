@@ -20,12 +20,10 @@ export function createAppearancePanelFixture(): AppearancePanelView {
       {
         value: 'dark',
         label: i18n.t('settings:appearance.themeOptions.dark.label'),
-        description: i18n.t('settings:appearance.themeOptions.dark.description'),
       },
       {
         value: 'light',
         label: i18n.t('settings:appearance.themeOptions.light.label'),
-        description: i18n.t('settings:appearance.themeOptions.light.description'),
       },
     ],
   };

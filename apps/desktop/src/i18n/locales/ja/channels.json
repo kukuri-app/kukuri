@@ -40,7 +40,6 @@
     "failedShareChannel": "プライベートチャンネルの共有に失敗しました",
     "failedTakeController": "切り替えに失敗しました"
   },
-  "inspectHint": "ここで参加できるユーザーと利用可能な操作を確認できます。",
   "joined": "{{count}} 件参加中",
   "loading": "プライベートチャンネルを読み込み中…",
   "latestInvite": "最新の招待",

@@ -186,11 +186,6 @@ export function ReleasePanel({
     <Card className='min-w-0 space-y-5'>
       <CardHeader>
         <h3>{t('settings:release.title')}</h3>
-        <small>
-          {t(IS_WEB_RUNTIME
-            ? 'settings:release.webSummary'
-            : selfManagedUpdater ? 'settings:release.summary' : 'settings:release.storeSummary')}
-        </small>
       </CardHeader>
 
       {externalLink.pending ? <Notice role='status'>{t('common:externalLink.opening')}</Notice> : null}

@@ -165,7 +165,6 @@ export function DeviceBackupPanel({ onOpenAccountKeys }: DeviceBackupPanelProps 
     <Card className='space-y-5'>
       <CardHeader>
         <h3>{t('settings:deviceBackup.title')}</h3>
-        <small>{t('settings:deviceBackup.summary')}</small>
       </CardHeader>
 
       <Notice>{t('settings:deviceBackup.oneFileNotice')}</Notice>
@@ -183,9 +182,6 @@ export function DeviceBackupPanel({ onOpenAccountKeys }: DeviceBackupPanelProps 
         <h4 className='text-sm font-semibold text-foreground'>
           {t('settings:deviceBackup.create.title')}
         </h4>
-        <p className='text-sm text-[var(--muted-foreground)]'>
-          {t('settings:deviceBackup.create.description')}
-        </p>
         <label className='flex min-w-0 items-start gap-3 text-sm text-foreground'>
           <input
             type='checkbox'

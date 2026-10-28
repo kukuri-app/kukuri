@@ -65,7 +65,7 @@
     "errors": {
       "trust_not_configured": "このコミュニティノードは信頼度情報の読み取りを提供していません。",
       "trust_not_activated": "現在のノードセッションでは信頼度情報が有効になっていません。",
-      "relation_unavailable": "このコミュニティノードでは関係値情報を利用できません。理由は推測・開示しません。",
+      "relation_unavailable": "このコミュニティノードでは関係値情報を利用できません。",
       "relation_visibility_not_configured": "このコミュニティノードは距離利用停止を提供していません。",
       "relation_visibility_not_activated": "このコミュニティノードの距離利用停止は一時的に利用できません。",
       "auth_required": "選択したコミュニティノードへの認証が必要です。",
@@ -74,7 +74,6 @@
     },
     "trust": {
       "title": "信頼評価情報",
-      "continuousNotice": "固定的な危険ラベルを付けず、連続値とその根拠を表示します。",
       "trust": "あなたから見た信頼度",
       "reasonsLabel": "低下の理由",
       "reasons": {

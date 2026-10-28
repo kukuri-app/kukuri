@@ -200,60 +200,46 @@
   },
   "settingsSections": {
     "about": {
-      "description": "服务条款、隐私政策、应用版本与同意状态。",
       "label": "关于 / 法律信息"
     },
     "account": {
-      "label": "账户",
-      "description": "仅导出、导入代表你身份的账户密钥，以及切换账户。"
+      "label": "账户"
     },
     "appearance": {
-      "description": "本地亮色、暗色与语言选择。",
       "label": "外观与语言"
     },
     "system": {
-      "description": "窗口关闭行为与桌面集成。",
       "label": "系统"
     },
     "keyboard": {
-      "description": "已分配的按键，以及每个按键生效的界面与焦点条件。",
       "label": "键盘操作"
     },
     "community-node": {
-      "description": "社区节点配置、认证、同意与刷新操作。",
       "label": "社区节点"
     },
     "connectivity": {
-      "description": "同步摘要、peer ticket 和全局错误可见性。",
       "label": "连接"
     },
     "developer": {
-      "description": "开发者模式与开发中功能的显示设置。",
       "label": "开发者"
     },
     "discovery": {
-      "description": "seeded DHT 配置与 discovery diagnostics。",
       "label": "发现"
     },
     "reactions": {
-      "description": "创建自定义回应并管理已保存回应。",
       "label": "回应"
     },
     "release": {
-      "description": "预览更新、诊断和资源。",
       "label": "发布"
     },
     "safety": {
-      "label": "安全",
-      "description": "成人内容显示设置、静音与屏蔽。"
+      "label": "安全"
     },
     "notifications": {
-      "label": "通知",
-      "description": "系统通知类别、静音模式和预览文本设置。"
+      "label": "通知"
     },
     "backup": {
-      "label": "备份与恢复",
-      "description": "创建并恢复本设备数据的加密备份。"
+      "label": "备份与恢复"
     }
   },
   "workspace": {
@@ -398,7 +384,6 @@
     "unavailableNodeOption": "不可用 · {{baseUrl}}",
     "selectedNodeUnavailable": "明确选择的社区节点不可用，查询已暂停。",
     "title": "社区索引",
-    "topicSummary": "通过可用的社区节点搜索当前话题或私密频道。",
     "nodeLabel": "搜索来源",
     "surfaces": "社区索引功能",
     "operations": {
@@ -490,10 +475,10 @@
       "admissionDenied": "此节点未允许您加入。请在社区节点设置中检查加入条件，或选择其他节点。",
       "manifestError": "无法加载节点信息。请检查连接后重试。",
       "manifestAbsent": "此节点未公开功能信息。请检查设置或选择其他节点。",
-      "indexNotProvided": "此节点不提供搜索或发现功能。这些功能与连接辅助不同，请选择提供搜索的节点。",
+      "indexNotProvided": "此节点不提供搜索或发现功能。请选择提供搜索的节点。",
       "authRequired": "节点认证尚未完成，请重新检查连接。",
       "connectionFailed": "与节点通信失败。请重新检查连接，或在社区节点设置中检查此节点。",
-      "manualStopped": "为避免擅自更改您选择的节点，搜索已暂停。您可以选择其他节点或恢复自动选择。",
+      "manualStopped": "已暂停对此节点的搜索。您可以选择其他节点或恢复自动选择。",
       "retryAfter": "约 {{seconds}} 秒后可以重试。",
       "retryFailed": "无法更新状态，请检查连接后重试。",
       "retry": "重新检查状态",
@@ -638,7 +623,6 @@
     "rename": {
       "action": "更改标题",
       "title": "更改标题",
-      "description": "新标题会在送达各设备后生效。",
       "submit": "更改",
       "failed": "无法更改标题，请重试。"
     },

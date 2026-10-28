@@ -80,77 +80,62 @@ export function primarySectionHidden(section: PrimarySection, developerModeEnabl
 export const SETTINGS_SECTION_COPY: Array<{
   id: SettingsSection;
   label: string;
-  description: string;
 }> = [
   {
     id: 'about',
     label: 'About / Legal',
-    description: 'Terms, privacy, app version, and consent status.',
   },
   {
     id: 'appearance',
     label: 'Appearance',
-    description: 'Local light and dark theme selection.',
   },
   {
     id: 'system',
     label: 'System',
-    description: 'Window close behavior and desktop integration.',
   },
   {
     id: 'keyboard',
     label: 'Keyboard',
-    description: 'Assigned keys and the screen or focus each one needs.',
   },
   {
     id: 'safety',
     label: 'Safety',
-    description: 'Adult material display preference.',
   },
   {
     id: 'notifications',
     label: 'Notifications',
-    description: 'OS notification categories, quiet mode, and preview text.',
   },
   {
     id: 'backup',
     label: 'Backup & restore',
-    description: 'Create and restore an encrypted backup of this device\'s data.',
   },
   {
     id: 'account',
     label: 'Account',
-    description: 'Key-only export, import, and account switching.',
   },
   {
     id: 'connectivity',
     label: 'Connectivity',
-    description: 'Sync summary, peer tickets, and global error visibility.',
   },
   {
     id: 'discovery',
     label: 'Discovery',
-    description: 'Seeded DHT configuration and discovery diagnostics.',
   },
   {
     id: 'community-node',
     label: 'Community Node',
-    description: 'Configured community nodes, auth, consent, and refresh actions.',
   },
   {
     id: 'reactions',
     label: 'Reactions',
-    description: 'Custom reaction creation and saved reaction management.',
   },
   {
     id: 'release',
     label: 'Release',
-    description: 'Preview updates, diagnostics, and resources.',
   },
   {
     id: 'developer',
     label: 'Developer',
-    description: 'Developer mode and work-in-progress feature visibility.',
   },
 ];
 

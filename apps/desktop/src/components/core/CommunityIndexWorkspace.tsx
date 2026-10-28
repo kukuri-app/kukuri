@@ -758,12 +758,7 @@ export function CommunityIndexWorkspace({
           カード内の見出しと説明文を出さない。トピック内カードは従来どおり。 */}
       {mode === 'topic' ? (
         <div className='flex flex-wrap items-start justify-between gap-3'>
-          <div className='space-y-1'>
-            <h3 className='text-lg font-semibold'>{t('shell:communityIndex.title')}</h3>
-            <p className='text-sm text-[var(--muted-foreground)]'>
-              {t('shell:communityIndex.topicSummary')}
-            </p>
-          </div>
+          <h3 className='text-lg font-semibold'>{t('shell:communityIndex.title')}</h3>
         </div>
       ) : null}
 

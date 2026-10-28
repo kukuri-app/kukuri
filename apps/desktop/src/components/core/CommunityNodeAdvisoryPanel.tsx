@@ -366,12 +366,7 @@ export function CommunityNodeAdvisoryPanel({
 
       {trust.status === 'ready' ? (
         <section className='w-full min-w-0 max-w-full space-y-3 overflow-hidden rounded-[16px] bg-[var(--surface-panel-soft)] p-4'>
-          <div>
-            <h4 className='font-semibold'>{t('profile:communityNodeAdvisory.trust.title')}</h4>
-            <p className='text-sm text-[var(--muted-foreground)]'>
-              {t('profile:communityNodeAdvisory.trust.continuousNotice')}
-            </p>
-          </div>
+          <h4 className='font-semibold'>{t('profile:communityNodeAdvisory.trust.title')}</h4>
           {/* #1061: trust はノードが合算した「あなたから見た信頼度」。内訳から再計算しない。 */}
           <dl className='space-y-1 text-sm'>
             <div>

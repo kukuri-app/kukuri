@@ -208,7 +208,7 @@ test('failed language storage leaves a usable translated consent screen and perm
   }
   await user.click(screen.getByRole('button', { name:'言語の保存を再試行' }));
   expect(localStorage.getItem(DESKTOP_LOCALE_STORAGE_KEY)).toBe('ja');
-  expect(language).toHaveAccessibleDescription('変更はすぐに反映され、この端末に保存されます。');
+  expect(language).not.toHaveAccessibleDescription();
   expect(invokeMock.mock.calls.filter(([command]) => command === 'accept_app_consents')).toHaveLength(0);
 });
 

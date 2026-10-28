@@ -95,7 +95,7 @@ export function MediaBookmarkPicker({ disabled, onSelect }: { disabled?: boolean
     const canPreview = previewItems.some((row) => row.hash === item.hash);
     const preview = canPreview ? urls.current.get(item.hash) ?? '' : '';
     if (canPreview) urls.current.delete(item.hash); // 選んだURLの所有を下書きへ渡す。
-    onSelect({ id: crypto.randomUUID(), source_name: `${t(primary.mime.startsWith('video/') ? 'media.video' : 'media.imageAlt')} · ${item.hash.slice(0, 12)}`,
+    onSelect({ id: crypto.randomUUID(), source_name: t(primary.mime.startsWith('video/') ? 'media.video' : 'media.imageAlt'),
       preview_url: preview, attachments: [{ mime: primary.mime, byte_size: primary.bytes, role: primary.role, data_base64: '', bookmarked_media_hash: item.hash,
         reused_attachments: item.attachments.map((asset) => ({ ...asset, origin: asset.origin ?? item.source })) }] });
     setOpen(false);

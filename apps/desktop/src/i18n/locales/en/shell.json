@@ -200,60 +200,46 @@
   },
   "settingsSections": {
     "about": {
-      "description": "Terms, privacy, app version, and consent status.",
       "label": "About / Legal"
     },
     "account": {
-      "label": "Account",
-      "description": "Key-only export and import of your account key, and account switching."
+      "label": "Account"
     },
     "appearance": {
-      "description": "Local light, dark, and language selection.",
       "label": "Language & theme"
     },
     "system": {
-      "description": "Window close behavior and desktop integration.",
       "label": "System"
     },
     "keyboard": {
-      "description": "Assigned keys and the screen or focus each one needs.",
       "label": "Keyboard"
     },
     "community-node": {
-      "description": "Configured community nodes, auth, consent, and refresh actions.",
       "label": "Community Node"
     },
     "connectivity": {
-      "description": "Sync summary, peer tickets, and global error visibility.",
       "label": "Connectivity"
     },
     "developer": {
-      "description": "Developer mode and work-in-progress feature visibility.",
       "label": "Developer"
     },
     "discovery": {
-      "description": "Seeded DHT configuration and discovery diagnostics.",
       "label": "Discovery"
     },
     "reactions": {
-      "description": "Custom reaction creation and saved reaction management.",
       "label": "Reactions"
     },
     "release": {
-      "description": "Preview updates, diagnostics, and resources.",
       "label": "Release"
     },
     "safety": {
-      "label": "Safety",
-      "description": "Adult material display, mute, and block."
+      "label": "Safety"
     },
     "notifications": {
-      "label": "Notifications",
-      "description": "OS notification categories, quiet mode, and preview text."
+      "label": "Notifications"
     },
     "backup": {
-      "label": "Backup & restore",
-      "description": "Create and restore an encrypted backup of this device's data."
+      "label": "Backup & restore"
     }
   },
   "workspace": {
@@ -398,7 +384,6 @@
     "unavailableNodeOption": "Unavailable · {{baseUrl}}",
     "selectedNodeUnavailable": "The explicitly selected Community Node is unavailable. Queries are paused.",
     "title": "Community Index",
-    "topicSummary": "Search the active topic or private channel through an eligible Community Node.",
     "nodeLabel": "Search provider",
     "surfaces": "Community Index surfaces",
     "operations": {
@@ -490,10 +475,10 @@
       "admissionDenied": "This node has not allowed you to join. Check its admission requirements in community node settings, or choose another node.",
       "manifestError": "The node information could not be loaded. Check the connection and try again.",
       "manifestAbsent": "This node does not publish its feature information. Check its settings or choose another node.",
-      "indexNotProvided": "This node does not provide search or discovery. These are separate from connection assistance. Choose a node that provides search.",
+      "indexNotProvided": "This node does not provide search or discovery. Choose a node that provides search.",
       "authRequired": "Authentication with the node is not complete. Check the connection again.",
       "connectionFailed": "Communication with the node failed. Check the connection again or inspect this node in community node settings.",
-      "manualStopped": "Search is paused so your chosen provider is not changed without your permission. Choose another node or return to automatic selection.",
+      "manualStopped": "Search on this node is paused. Choose another node or return to automatic selection.",
       "retryAfter": "You can retry in about {{seconds}} seconds.",
       "retryFailed": "The status could not be updated. Check the connection and try again.",
       "retry": "Check status again",
@@ -638,7 +623,6 @@
     "rename": {
       "action": "Change title",
       "title": "Change the title",
-      "description": "Devices pick up the new title when it reaches them.",
       "submit": "Change",
       "failed": "Couldn't change the title. Try again."
     },

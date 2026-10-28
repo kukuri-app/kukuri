@@ -35,7 +35,6 @@ function SettingsDrawerStory({ initialSection = 'connectivity' }: { initialSecti
     {
       id: 'appearance' as const,
       label: 'Appearance',
-      description: 'Local light and dark theme selection.',
       content: (
         <AppearancePanel
           view={{ ...createAppearancePanelFixture(), selectedTheme: theme, selectedLocale: locale }}
@@ -47,7 +46,6 @@ function SettingsDrawerStory({ initialSection = 'connectivity' }: { initialSecti
     {
       id: 'connectivity' as const,
       label: 'Connectivity',
-      description: 'Peer status and topic diagnostics',
       content: (
         <ConnectivityPanel
           view={{ ...connectivityPanelFixture, peerTicketInput }}
@@ -59,7 +57,6 @@ function SettingsDrawerStory({ initialSection = 'connectivity' }: { initialSecti
     {
       id: 'discovery' as const,
       label: 'Discovery',
-      description: 'Seeded DHT configuration and diagnostics',
       content: (
         <DiscoveryPanel
           view={{ ...discoveryPanelFixture, seedPeersInput }}
@@ -75,7 +72,6 @@ function SettingsDrawerStory({ initialSection = 'connectivity' }: { initialSecti
     {
       id: 'community-node' as const,
       label: 'Community Node',
-      description: 'Auth, consent, and connectivity urls',
       content: (
         <CommunityNodePanel
           view={{ ...communityNodePanelFixture, nodes: communityNodes }}

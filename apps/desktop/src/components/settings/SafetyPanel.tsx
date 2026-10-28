@@ -29,7 +29,6 @@ export function SafetyPanel({
     <Card className='space-y-4'>
       <CardHeader>
         <h3>{t('settings:safety.title')}</h3>
-        <small>{t('settings:safety.summary')}</small>
       </CardHeader>
 
       <label className='flex min-w-0 items-center gap-3 rounded-[var(--radius-input)] border border-[var(--border-subtle)] bg-[var(--surface-panel-soft)] px-4 py-3 text-sm text-foreground'>
