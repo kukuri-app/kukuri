@@ -18,6 +18,24 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.5.1-preview.1] - 2026-10-28
+
+### Features
+
+- キャッシュ・ブックマーク・投稿の画像を管理するメディアカラムを追加 ([#1949](https://github.com/kukuri-app/kukuri/pull/1949), [#1968](https://github.com/kukuri-app/kukuri/pull/1968))
+
+### Fixes
+
+- 夜間の Android・Safari の失敗を直す（DataChannel の部分信頼・emulator の image・DM の読み） ([#1967](https://github.com/kukuri-app/kukuri/pull/1967))
+- UI 全体の利用者に役立たない説明文を削除 ([#1966](https://github.com/kukuri-app/kukuri/pull/1966))
+- ブックマークから添付するダイアログの余計な文言を削除 ([#1964](https://github.com/kukuri-app/kukuri/pull/1964), [#1965](https://github.com/kukuri-app/kukuri/pull/1965))
+- flush cached blob files and skip pwa-shell outside Chrome ([#1963](https://github.com/kukuri-app/kukuri/pull/1963))
+
+### Other
+
+- リリースの版を 0.5.1 にする ([#1969](https://github.com/kukuri-app/kukuri/pull/1969))
+- v0.5.0-preview.1 の changelog・LP・本番更新の記録 ([#1962](https://github.com/kukuri-app/kukuri/pull/1962))
+
 ## [v0.5.0-preview.1] - 2026-10-27
 
 ### Features
