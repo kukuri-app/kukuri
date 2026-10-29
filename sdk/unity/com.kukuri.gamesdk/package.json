@@ -1,0 +1,17 @@
+{
+  "name": "com.kukuri.gamesdk",
+  "version": "0.1.0",
+  "displayName": "kukuri Game SDK",
+  "description": "kukuri の P2P の SNS・Live・アセット配布・ゲーム通信を Unity から使う SDK（ADR 0070）。Windows x64 の Unity 6.3 LTS が対象。",
+  "unity": "6000.3",
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.2.2"
+  },
+  "samples": [
+    {
+      "displayName": "Minimal",
+      "description": "profile の起動・同意・新規アカウント・既存アカウントの明示 import と接続状態を扱う最小 sample。",
+      "path": "Samples~/Minimal"
+    }
+  ]
+}
