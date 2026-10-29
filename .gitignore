@@ -160,3 +160,6 @@ __pycache__/
 # Game SDK の native binary（sdk/unity/build-native.ps1 が置く。配布物は #1984）
 sdk/unity/com.kukuri.gamesdk/Runtime/Plugins/x86_64/*.dll
 sdk/unity/com.kukuri.gamesdk/Editor/Sidecar~/
+# Unity の package の sample は `Samples~`（`*~` から除く）
+!sdk/unity/com.kukuri.gamesdk/Samples~/
+!sdk/unity/com.kukuri.gamesdk/Samples~/**
