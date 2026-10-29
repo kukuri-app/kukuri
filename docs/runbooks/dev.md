@@ -435,14 +435,18 @@ Unity 6.3 LTS（6000.3.27f1）と Windows x64 が対象。UPM の package は `s
 ```powershell
 # native（kukuri_game_sdk.dll と kukuri-sdk-sidecar.exe）を release で build して package へ置く（git には入れない）
 powershell -ExecutionPolicy Bypass -File sdk/unity/build-native.ps1
-# 空の Unity project に package を入れて EditMode の試験を流し、NGO なしで Player を build して Minimal sample を動かす
+# 空の Unity project に package を入れて EditMode の試験（Play・Stop と domain reload の lifecycle を含む）を流し、
+# NGO なしで Player を build して、Minimal sample と同じ profile での 2 回の起動・終了を確かめる
 powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1
+# IL2CPP の Player で同じ確認をする（EditMode は Mono の回で済んでいるので省く）
+powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -Backend IL2CPP -SkipEditMode
 ```
 
 - 自分の project へ入れるときは、`Packages/manifest.json` の `dependencies` に `"com.kukuri.gamesdk": "file:<repo>/sdk/unity/com.kukuri.gamesdk"` を足す。
 - DLL を build し直したら、DLL を読み込んだ Unity Editor を再起動する（Windows は読み込んだ native plugin を解放しないので、Editor が開いたままでは差し替わらない）。
 - 設定 asset（`kukuri/Settings`）の mode を Sidecar にすると、Play の開始時に Editor が `kukuri-sdk-sidecar.exe` を起動し、Play を止めても動かし続ける。Editor の終了か menu の「kukuri/Sidecar を止める」で止まる。Player の build は Sidecar を起動せず、既定は FFI。
 - Unity の project を深い path に置くと Windows の path の長さの上限に当たる。`test.ps1` は `%TEMP%\kgs-test` に作る。
+- `test.ps1` は CLI の process 試験と同じく `KUKURI_DISABLE_KEYRING=1` と loopback の接続設定で動かす。Player の再起動の確認は、鍵を keyring に置かない構成での確認になる。
 
 ## Linux AppImage／Deb生成
 
