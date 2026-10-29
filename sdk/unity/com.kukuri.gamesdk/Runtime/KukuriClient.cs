@@ -51,10 +51,34 @@ namespace Kukuri.GameSdk
         /// Editor が Sidecar の mode の Open の前に呼ぶ（動いていなければ Sidecar を起動する）。Player では null。
         public static Action<string, string> EnsureSidecar;
 
-        static int openHandles;
+        /// 開いている client。Dispose されないまま domain が破棄されたり app が終わったりしても、native の handle と
+        /// profile の lock を残さないように閉じる（Editor の domain reload の有無、Player の終了。#1977 AC-2）。
+        static readonly HashSet<KukuriClient> open = new HashSet<KukuriClient>();
 
-        /// 開いている handle の数（使っていない機能が動いていないことの確認に使う）。
-        public static int OpenHandles => Volatile.Read(ref openHandles);
+        static KukuriClient()
+        {
+            AppDomain.CurrentDomain.DomainUnload += (_, _) => DisposeAll();
+            UnityEngine.Application.quitting += DisposeAll;
+        }
+
+        /// 開いている handle の数（使っていない機能が動いていないこと・閉じ忘れが無いことの確認に使う）。
+        public static int OpenHandles
+        {
+            get
+            {
+                lock (open)
+                    return open.Count;
+            }
+        }
+
+        static void DisposeAll()
+        {
+            KukuriClient[] clients;
+            lock (open)
+                clients = new List<KukuriClient>(open).ToArray();
+            foreach (var client in clients)
+                client.Dispose();
+        }
 
         IntPtr handle;
         readonly string profile;
@@ -88,7 +112,8 @@ namespace Kukuri.GameSdk
             this.handle = handle;
             this.profile = profile;
             ownerThread = Thread.CurrentThread.ManagedThreadId;
-            Interlocked.Increment(ref openHandles);
+            lock (open)
+                open.Add(this);
         }
 
         /// profile を開く。`profileDirectory` は絶対 path。DLL が無い・版が違うときは理由つきの `KukuriException` で、handle を作らない。
@@ -326,7 +351,8 @@ namespace Kukuri.GameSdk
             {
                 Native.kukuri_sdk_free(handle);
                 handle = IntPtr.Zero;
-                Interlocked.Decrement(ref openHandles);
+                lock (open)
+                    open.Remove(this);
             }
         }
 

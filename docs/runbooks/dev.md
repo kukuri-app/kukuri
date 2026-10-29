@@ -435,8 +435,11 @@ Unity 6.3 LTS（6000.3.27f1）と Windows x64 が対象。UPM の package は `s
 ```powershell
 # native（kukuri_game_sdk.dll と kukuri-sdk-sidecar.exe）を release で build して package へ置く（git には入れない）
 powershell -ExecutionPolicy Bypass -File sdk/unity/build-native.ps1
-# 空の Unity project に package を入れて EditMode の試験を流し、NGO なしで Player を build して Minimal sample を動かす
+# 空の Unity project に package を入れて EditMode の試験（Play・Stop と domain reload の lifecycle を含む）を流し、
+# NGO なしで Player を build して、Minimal sample と同じ profile での 2 回の起動・終了を確かめる
 powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1
+# IL2CPP の Player で同じ確認をする（EditMode は Mono の回で済んでいるので省く）
+powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -Backend IL2CPP -SkipEditMode
 ```
 
 - 自分の project へ入れるときは、`Packages/manifest.json` の `dependencies` に `"com.kukuri.gamesdk": "file:<repo>/sdk/unity/com.kukuri.gamesdk"` を足す。
