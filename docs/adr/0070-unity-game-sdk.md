@@ -71,7 +71,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | command | `set_live_broadcast` / `stop_live_broadcast` / `watch_live_media` / `stop_watching_live_media` / `set_live_volume` | #1982 | desktop-runtime にある Live の配信・視聴の操作を登録簿へ載せる |
 | event | `events_lost` | #1975 | 知らせの event を捨てた件数 |
 | event | `game_session_closed` | #1978 | session が閉じた（退出・room の終了・権限の失効・host の不在）。理由の code を持つ |
-| event | `game_session_packet` | #1979 | datagram または stream の message を受けた。bytes を伴う |
+| event | `game_session_packet` | #1979 | datagram または stream の message を受けた。どちらで届いたかを持ち、bytes を伴う |
 | event | `game_session_path` | #1979 | 接続の経路（Direct P2P / Relay Supported P2P / Relay Fallback）と RTT が変わった |
 | event | `game_asset_updated` | #1980 | 検証できる新しい release の manifest が届いた |
 | event | `post_received` | #1981 | 表示中の timeline・thread に投稿・返信が届いた。投稿 ID・topic・channel・返信先を持つ |
