@@ -44,7 +44,11 @@ namespace Kukuri.GameSdk.Editor
             });
             var ready = process.StandardError.ReadLineAsync();
             if (!ready.Wait(ReadyTimeoutMilliseconds) && !process.HasExited)
+            {
+                // 準備できなかった Sidecar を残さない（Editor の終了でも止められなくなる）。
+                process.Kill();
                 throw new KukuriException("daemon_unavailable", "the sidecar did not become ready");
+            }
             if (ready.Result != "ready")
             {
                 process.WaitForExit(ReadyTimeoutMilliseconds);
@@ -73,7 +77,10 @@ namespace Kukuri.GameSdk.Editor
         }
 
         static string Arguments(string command, string profile, string profileDirectory) =>
-            $"{command} --profile \"{profile}\" --profile-dir \"{profileDirectory}\"";
+            $"{command} --profile {Quote(profile)} --profile-dir {Quote(profileDirectory)}";
+
+        // Windows の引数の規則では、閉じる " の直前の \ は二重にしないと " を文字として読む（末尾が \ の path）。
+        static string Quote(string value) => "\"" + (value.EndsWith("\\") ? value + "\\" : value) + "\"";
 
         // domain reload をまたいで、この Editor の session で起動した Sidecar を覚えておく。
         static IEnumerable<string> Remembered()

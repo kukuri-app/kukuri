@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -58,8 +60,17 @@ namespace Kukuri.GameSdk
         readonly string profile;
         readonly int ownerThread;
         readonly Dictionary<string, Pending> pending = new Dictionary<string, Pending>();
+        /// native から取り出して、まだ処理していない応答と event（次の frame の Pump へ持ち越す分）。
+        readonly Queue<Received> backlog = new Queue<Received>();
         long nextRequest;
         bool closed;
+
+        struct Received
+        {
+            public uint Kind;
+            public byte[] Data;
+            public byte[] Secret;
+        }
 
         sealed class Pending
         {
@@ -125,10 +136,11 @@ namespace Kukuri.GameSdk
             return new KukuriClient(opened, profile);
         }
 
-        /// 要求を送る。結果は `Pump` が完了させる。`secret` は秘密の入力（passphrase・export・招待 token）で、JSON や log に出さない。
+        /// 要求を送る（handle を開いた thread から）。結果は `Pump` が完了させる。`secret` は秘密の入力（passphrase・export・招待 token）で、JSON や log に出さない。
         public Task<KukuriResponse> SendAsync(string command, JObject payload = null, byte[] secret = null,
             bool acceptsSecretOutput = false, CancellationToken cancellation = default)
         {
+            RequireOwnerThread();
             if (closed)
                 throw new KukuriException("closed", "the client is closed");
             var requestId = "u" + Interlocked.Increment(ref nextRequest);
@@ -169,25 +181,54 @@ namespace Kukuri.GameSdk
                 Native.kukuri_sdk_cancel(handle, id, (UIntPtr)bytes.Length);
         }
 
-        /// 届いている応答と event を 1 回だけ取り出して処理する（1 frame に 1 回。既定は 64 件・1 MiB まで、残りは次の frame。
-        /// ADR 0070 §8.5）。呼出元は handle を開いた thread（Unity の main thread）に限る。
-        public int Pump(int maxItems = 64, int maxBytes = 1 << 20)
+        /// 届いている応答と event を処理する（1 frame に 1 回呼ぶ）。native からの取り出しは 1 回で既定 64 件・1 MiB まで、
+        /// 処理は `budgetMilliseconds` を超えたら残りを次の frame へ回す（ADR 0070 §8.5）。取り出した batch はすぐ managed の
+        /// memory へ写して解放するので、callback の中で Dispose しても解放済みの memory を読まない。
+        /// 呼出元は handle を開いた thread（Unity の main thread）に限る。
+        public int Pump(int maxItems = 64, int maxBytes = 1 << 20, double budgetMilliseconds = 1.0)
         {
-            if (Thread.CurrentThread.ManagedThreadId != ownerThread)
-                throw new InvalidOperationException("Pump must run on the thread that opened the client (the Unity main thread)");
-            if (handle == IntPtr.Zero)
+            RequireOwnerThread();
+            if (closed)
                 return 0;
+            var clock = Stopwatch.StartNew();
+            if (backlog.Count == 0)
+                Receive(maxItems, maxBytes);
+            var handled = 0;
+            while (!closed && backlog.Count > 0)
+            {
+                Deliver(backlog.Dequeue(), events: true);
+                handled++;
+                if (clock.Elapsed.TotalMilliseconds >= budgetMilliseconds)
+                    break;
+            }
+            return handled;
+        }
+
+        /// native の batch を 1 回取り出し、managed の memory へ写してから解放する。
+        void Receive(int maxItems, int maxBytes)
+        {
             var status = Native.kukuri_sdk_poll(handle, (UIntPtr)maxItems, (UIntPtr)maxBytes, out var batch);
             if (status == Native.Faulted)
             {
                 FailAll("internal_error", "the SDK handle faulted");
-                return 0;
+                return;
             }
             if (status != Native.Ok || batch == null)
-                return 0;
+                return;
             try
             {
-                return Dispatch(batch);
+                var count = (int)batch->Count;
+                for (var index = 0; index < count; index++)
+                {
+                    var item = batch->Items[index];
+                    var received = new Received { Kind = item.Kind, Data = Copy(item) };
+                    // 秘密の出力は直前の応答と組にする（SDK は必ず応答の直後に置く）。
+                    if (item.Kind == Native.ItemResponse && index + 1 < count &&
+                        batch->Items[index + 1].Kind == Native.ItemSecret)
+                        received.Secret = Copy(batch->Items[++index]);
+                    if (item.Kind == Native.ItemResponse || item.Kind == Native.ItemEvent)
+                        backlog.Enqueue(received);
+                }
             }
             finally
             {
@@ -195,31 +236,31 @@ namespace Kukuri.GameSdk
             }
         }
 
-        int Dispatch(Native.Batch* batch)
+        static byte[] Copy(Native.Item item)
         {
-            var count = (int)batch->Count;
-            for (var index = 0; index < count; index++)
+            var bytes = new byte[(int)item.Length];
+            Marshal.Copy((IntPtr)item.Data, bytes, 0, bytes.Length);
+            return bytes;
+        }
+
+        void Deliver(Received received, bool events)
+        {
+            if (received.Kind == Native.ItemEvent)
             {
-                var item = batch->Items[index];
-                var json = Encoding.UTF8.GetString(item.Data, (int)item.Length);
-                if (item.Kind == Native.ItemEvent)
+                if (!events || EventReceived == null)
+                    return;
+                try
                 {
-                    EventReceived?.Invoke(JObject.Parse(json));
-                    continue;
+                    EventReceived(JObject.Parse(Encoding.UTF8.GetString(received.Data)));
                 }
-                if (item.Kind != Native.ItemResponse)
-                    continue;
-                byte[] secret = null;
-                if (index + 1 < count && batch->Items[index + 1].Kind == Native.ItemSecret)
+                catch (Exception error)
                 {
-                    var secretItem = batch->Items[++index];
-                    secret = new byte[(int)secretItem.Length];
-                    for (var i = 0; i < secret.Length; i++)
-                        secret[i] = secretItem.Data[i];
+                    // 利用者の handler の例外で、残りの応答と event を失わない。
+                    UnityEngine.Debug.LogException(error);
                 }
-                Complete(JObject.Parse(json), secret);
+                return;
             }
-            return count;
+            Complete(JObject.Parse(Encoding.UTF8.GetString(received.Data)), received.Secret);
         }
 
         void Complete(JObject raw, byte[] secret)
@@ -245,37 +286,48 @@ namespace Kukuri.GameSdk
 
         void FailAll(string code, string message)
         {
-            foreach (var entry in pending.Values)
+            var entries = new List<Pending>(pending.Values);
+            pending.Clear();
+            foreach (var entry in entries)
             {
                 entry.Cancellation.Dispose();
                 entry.Completion.TrySetException(new KukuriException(code, message));
             }
-            pending.Clear();
+        }
+
+        void RequireOwnerThread()
+        {
+            if (Thread.CurrentThread.ManagedThreadId != ownerThread)
+                throw new InvalidOperationException("the client must be used on the thread that opened it (the Unity main thread)");
         }
 
         /// 閉じる。未完了の要求は SDK が返す最後の結果（`interrupted`・`operation_outcome_unknown` 等）で終え、handle を解放する。
+        /// 閉じた後は event を渡さない。
         public void Dispose()
         {
             if (closed)
                 return;
             closed = true;
-            Native.kukuri_sdk_close(handle);
-            // close の後も poll でき、未完了だった要求の結果が届く（ADR 0070 §3）。
-            while (Native.kukuri_sdk_poll(handle, (UIntPtr)256, (UIntPtr)(1 << 20), out var batch) == Native.Ok && batch != null)
+            try
             {
-                try
+                Native.kukuri_sdk_close(handle);
+                // close の後も poll でき、未完了だった要求の結果が届く（ADR 0070 §3）。
+                int before;
+                do
                 {
-                    Dispatch(batch);
-                }
-                finally
-                {
-                    Native.kukuri_sdk_batch_release(handle, batch);
-                }
+                    before = backlog.Count;
+                    Receive(256, 1 << 20);
+                } while (backlog.Count > before);
+                while (backlog.Count > 0)
+                    Deliver(backlog.Dequeue(), events: false);
+                FailAll("closed", "the client was closed before the response arrived");
             }
-            FailAll("closed", "the client was closed before the response arrived");
-            Native.kukuri_sdk_free(handle);
-            handle = IntPtr.Zero;
-            Interlocked.Decrement(ref openHandles);
+            finally
+            {
+                Native.kukuri_sdk_free(handle);
+                handle = IntPtr.Zero;
+                Interlocked.Decrement(ref openHandles);
+            }
         }
 
         static string StatusCode(int status)

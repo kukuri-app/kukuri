@@ -106,6 +106,69 @@ namespace Kukuri.GameSdk.Tests
             }
         }
 
+        /// 応答が native に溜まるまで、Pump せずに待つ。
+        static IEnumerator WaitWithoutPumping(double seconds)
+        {
+            var clock = Stopwatch.StartNew();
+            while (clock.Elapsed.TotalSeconds < seconds)
+                yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator DisposingInsideAContinuationStopsDeliveryWithoutReadingReleasedMemory()
+        {
+            var client = KukuriClient.Open(KukuriMode.Ffi, "p", profileDirectory);
+            var first = client.SendAsync("get_desktop_startup_status");
+            var second = client.SendAsync("get_desktop_startup_status");
+            yield return WaitWithoutPumping(1.0);
+            var disposed = false;
+            var eventsAfterDispose = 0;
+            client.EventReceived += _ =>
+            {
+                if (disposed)
+                    eventsAfterDispose++;
+            };
+            // await の続きと同じく、応答の完了の中（Pump の中）で Dispose する。
+            first.ContinueWith(_ =>
+            {
+                client.Dispose();
+                disposed = true;
+            }, TaskContinuationOptions.ExecuteSynchronously);
+            client.Pump(budgetMilliseconds: double.MaxValue);
+            Assert.IsTrue(disposed);
+            Assert.AreEqual(0, eventsAfterDispose, "no event after Dispose");
+            Assert.IsTrue(second.IsCompleted, "the other request ends with its result or closed");
+            Assert.AreEqual(0, client.Pump());
+        }
+
+        [UnityTest]
+        public IEnumerator APumpStopsAtItsTimeBudgetAndCarriesTheRestOver()
+        {
+            var client = KukuriClient.Open(KukuriMode.Ffi, "p", profileDirectory);
+            try
+            {
+                var requests = new System.Collections.Generic.List<Task<KukuriResponse>>();
+                for (var index = 0; index < 20; index++)
+                    requests.Add(client.SendAsync("get_desktop_startup_status"));
+                yield return WaitWithoutPumping(1.0);
+                // 予算 0 なら 1 件ごとに次の frame へ回す。
+                Assert.AreEqual(1, client.Pump(budgetMilliseconds: 0));
+                var pumps = 1;
+                var clock = Stopwatch.StartNew();
+                while (requests.Exists(request => !request.IsCompleted))
+                {
+                    Assert.LessOrEqual(client.Pump(budgetMilliseconds: 0), 1, "one item per pump");
+                    pumps++;
+                    Assert.Less(clock.Elapsed.TotalSeconds, 30);
+                }
+                Assert.GreaterOrEqual(pumps, 20, "the rest was carried over to later pumps");
+            }
+            finally
+            {
+                client.Dispose();
+            }
+        }
+
         [UnityTest]
         public IEnumerator AnUnknownCommandIsATypedErrorAndDisposeEndsOutstandingRequests()
         {
