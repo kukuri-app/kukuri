@@ -105,7 +105,6 @@ fn fake_handle() -> *mut KukuriHandle {
         Ok(Started {
             dispatcher: Dispatcher::new(registry),
             session: None,
-            lease: None,
         })
     })
     .unwrap();
@@ -268,9 +267,8 @@ fn a_real_profile_starts_answers_and_releases_its_lock_on_close() {
         send(handle, &request("late", "client.status", json!({}))),
         Status::Closed as i32
     );
-    unsafe { kukuri_sdk_free(handle) };
 
-    // close で lock を外したので、もう一度開ける。
+    // close で lock を外したので、free の前でも同じ profile を開ける（閉じた handle は poll できる）。
     let reopened = open_real(dir.path());
     assert_eq!(
         send(reopened, &request("again", "client.status", json!({}))),
@@ -280,6 +278,8 @@ fn a_real_profile_starts_answers_and_releases_its_lock_on_close() {
         response_for(reopened, "again", Duration::from_secs(30))["ok"],
         true
     );
+    assert!(poll_once(handle, 64).is_ok());
+    unsafe { kukuri_sdk_free(handle) };
     finish(reopened);
 }
 
@@ -378,19 +378,32 @@ fn only_requests_that_have_not_started_can_be_cancelled() {
 }
 
 #[test]
-fn a_request_past_its_deadline_times_out() {
+fn a_request_past_its_deadline_times_out_even_while_waiting_to_start() {
     let handle = fake_handle();
-    let mut timed =
-        serde_json::from_slice::<Value>(&request("t", "sleep.read", json!({"ms": 2000}))).unwrap();
-    timed["timeout_ms"] = json!(50);
-    assert_eq!(
-        send(handle, timed.to_string().as_bytes()),
-        Status::Ok as i32
-    );
+    let timed = |id: &str, ms: u64| {
+        let mut timed =
+            serde_json::from_slice::<Value>(&request(id, "sleep.read", json!({"ms": ms}))).unwrap();
+        timed["timeout_ms"] = json!(100);
+        timed.to_string().into_bytes()
+    };
+    assert_eq!(send(handle, &timed("t", 2000)), Status::Ok as i32);
     assert_eq!(
         error_code(&response_for(handle, "t", Duration::from_secs(5))),
         "timeout"
     );
+    // 実行の枠を埋めると、次の要求は実行前の待ちのまま期限を迎える。期限は受け付けた時から数える。
+    for index in 0..16 {
+        let request = request(&format!("busy{index}"), "sleep.read", json!({"ms": 1500}));
+        assert_eq!(send(handle, &request), Status::Ok as i32);
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    let sent = Instant::now();
+    assert_eq!(send(handle, &timed("waiting", 0)), Status::Ok as i32);
+    assert_eq!(
+        error_code(&response_for(handle, "waiting", Duration::from_secs(5))),
+        "timeout"
+    );
+    assert!(sent.elapsed() < Duration::from_millis(1000));
     finish(handle);
 }
 

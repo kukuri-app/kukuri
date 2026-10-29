@@ -74,11 +74,10 @@ pub struct SdkConfig {
     pub profile_dir: PathBuf,
 }
 
-/// 起動の結果。profile の所有（lease）は close まで持つ。
+/// 起動の結果。
 pub struct Started {
     pub dispatcher: Dispatcher,
     pub session: Option<Arc<ClientSession>>,
-    pub lease: Option<ProfileLease>,
 }
 
 type StartResult = Option<Result<Arc<Started>, ProtocolError>>;
@@ -143,6 +142,8 @@ pub struct SdkClient {
     shutdown: watch::Sender<bool>,
     running: Arc<Semaphore>,
     profile: String,
+    /// profile の所有。close で session を止めた後に手放す（同じ profile を free の前に開き直せる）。
+    lease: Arc<Mutex<Option<ProfileLease>>>,
 }
 
 impl SdkClient {
@@ -153,20 +154,24 @@ impl SdkClient {
             profile_dir,
         } = config;
         let name = profile.clone();
-        Self::open_with(profile, async move {
-            let lease = ProfileLease::acquire(ClientProfile {
+        let lease = Arc::new(Mutex::new(None));
+        let slot = lease.clone();
+        let mut client = Self::open_with(profile, async move {
+            let acquired = ProfileLease::acquire(ClientProfile {
                 name,
                 app_data_dir: profile_dir.clone(),
                 kind: ClientProfileKind::GameSdk,
             })
             .map_err(|error| ProtocolError::new(error.code(), error.message))?;
+            *slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(acquired);
             let session = ClientSession::start(profile_dir).await?;
             Ok(Started {
                 dispatcher: Dispatcher::for_session(session.clone()),
                 session: Some(session),
-                lease: Some(lease),
             })
-        })
+        })?;
+        client.lease = lease;
+        Ok(client)
     }
 
     /// 起動の処理を差し替えて開く（試験で dispatcher を注入する）。
@@ -206,6 +211,7 @@ impl SdkClient {
             shutdown,
             running: Arc::new(Semaphore::new(MAX_RUNNING)),
             profile,
+            lease: Arc::default(),
         })
     }
 
@@ -417,8 +423,14 @@ impl SdkClient {
                 }
             }
         });
-        // 起動の task と event の転送が持つ参照を手放し、profile の lock を外す。
+        // 起動の task と event の転送を止めてから、profile の lock を外す。
         runtime.shutdown_timeout(Duration::from_secs(1));
+        drop(
+            self.lease
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take(),
+        );
         Status::Ok
     }
 }
@@ -447,8 +459,13 @@ impl RequestTask {
         let fail = |code: &str, message: &str| {
             (failure(&request, ProtocolError::new(code, message)), None)
         };
+        // 期限は受け付けた時から数える（起動と実行の枠の待ちを含む）。
+        let deadline = match request.timeout_ms() {
+            Ok(timeout) => tokio::time::Instant::now() + Duration::from_millis(timeout),
+            Err(error) => return (failure(&request, error), None),
+        };
         let mut shutdown = self.shutdown.clone();
-        // 実行前: 起動の完了と実行の枠を待つ。取消と close で抜ける。
+        // 実行前: 起動の完了と実行の枠を待つ。取消・close・期限で抜ける。
         let waiting = async {
             let started = self
                 .started
@@ -463,6 +480,7 @@ impl RequestTask {
             biased;
             _ = &mut cancelled => return fail(CANCELLED, "the request was cancelled before it started"),
             _ = shutdown.wait_for(|closed| *closed) => return fail(error_code::INTERRUPTED, "the handle closed before the request started"),
+            _ = tokio::time::sleep_until(deadline) => return fail(error_code::TIMEOUT, "command timed out"),
             ready = waiting => ready,
         };
         let started = match started {
@@ -487,12 +505,8 @@ impl RequestTask {
                 .map(|registration| registration.metadata.effect),
             Some(CommandEffect::Write | CommandEffect::Destructive)
         );
-        let timeout = match request.timeout_ms() {
-            Ok(timeout) => Duration::from_millis(timeout),
-            Err(error) => return (failure(&request, error), None),
-        };
-        let dispatch = tokio::time::timeout(
-            timeout,
+        let dispatch = tokio::time::timeout_at(
+            deadline,
             started
                 .dispatcher
                 .dispatch(request.clone(), secret, &self.profile, None),
@@ -611,7 +625,6 @@ mod tests {
             Ok(Started {
                 dispatcher: Dispatcher::new(registry),
                 session: None,
-                lease: None,
             })
         })
         .unwrap();
@@ -646,7 +659,6 @@ mod tests {
             Ok(Started {
                 dispatcher: Dispatcher::new(registry),
                 session: None,
-                lease: None,
             })
         })
         .unwrap();
