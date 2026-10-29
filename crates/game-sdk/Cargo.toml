@@ -7,6 +7,10 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "kukuri-sdk-sidecar"
+path = "src/bin/sidecar.rs"
+
 [dependencies]
 async-trait.workspace = true
 futures-util.workspace = true
@@ -15,6 +19,16 @@ kukuri-desktop-runtime = { path = "../desktop-runtime" }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[target.'cfg(windows)'.dependencies]
+blake3.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "signal"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tempfile.workspace = true

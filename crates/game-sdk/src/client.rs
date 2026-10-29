@@ -2,7 +2,7 @@
 //! 呼出側（Unity の main thread）からの send・cancel・poll は network を待たない。
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     panic::AssertUnwindSafe,
     path::PathBuf,
     sync::{
@@ -72,6 +72,17 @@ pub struct Item {
 pub struct SdkConfig {
     pub profile: String,
     pub profile_dir: PathBuf,
+    /// 本番の既定は FFI（process の中で動かす）。Sidecar は開発用で、動いている Sidecar へ接続する（ADR 0070 §1）。
+    #[serde(default)]
+    pub mode: Mode,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    #[default]
+    Ffi,
+    Sidecar,
 }
 
 /// 起動の結果。
@@ -92,7 +103,10 @@ struct Queues {
     pending: HashMap<String, Pending>,
     /// 未完了の要求と poll されていない応答の合計（応答の置き場の予約）。
     reserved: usize,
-    responses: VecDeque<(Vec<u8>, Option<Vec<u8>>)>,
+    /// 応答（request_id、JSON、秘密の出力）。
+    responses: VecDeque<(String, Vec<u8>, Option<Vec<u8>>)>,
+    /// 届け先が切断した要求。終わっても応答を置かない（Sidecar の接続の切替）。
+    abandoned: HashSet<String>,
     events: VecDeque<Vec<u8>>,
     lost: u64,
     closed: bool,
@@ -118,7 +132,13 @@ impl Shared {
         let mut queues = self.queues();
         // close が成否不明として先に返した要求は、遅れて終わっても二重に返さない。
         if queues.pending.remove(request_id).is_some() {
-            queues.responses.push_back((response, secret));
+            if queues.abandoned.remove(request_id) {
+                queues.reserved -= 1;
+            } else {
+                queues
+                    .responses
+                    .push_back((request_id.to_owned(), response, secret));
+            }
         }
         drop(queues);
         self.settled.notify_waiters();
@@ -152,6 +172,7 @@ impl SdkClient {
         let SdkConfig {
             profile,
             profile_dir,
+            ..
         } = config;
         let name = profile.clone();
         let lease = Arc::new(Mutex::new(None));
@@ -217,6 +238,43 @@ impl SdkClient {
 
     pub fn profile(&self) -> &str {
         &self.profile
+    }
+
+    /// command が書き込みかどうか。起動の前で分からなければ None。
+    pub fn is_write(&self, command: &str) -> Option<bool> {
+        let started = self.started.borrow();
+        let started = started.as_ref()?.as_ref().ok()?;
+        Some(matches!(
+            started
+                .dispatcher
+                .registry()
+                .get(command)
+                .map(|registration| registration.metadata.effect),
+            Some(CommandEffect::Write | CommandEffect::Destructive)
+        ))
+    }
+
+    /// 届け先が切断した要求の応答を捨てる。実行中のものは終わっても応答を置かない（取り消しはしない）。
+    pub fn abandon(&self, request_ids: &[String]) {
+        let mut queues = self.shared.queues();
+        for request_id in request_ids {
+            if queues.pending.contains_key(request_id) {
+                queues.abandoned.insert(request_id.clone());
+            }
+        }
+        let before = queues.responses.len();
+        queues
+            .responses
+            .retain(|(request_id, _, _)| !request_ids.contains(request_id));
+        let dropped = before - queues.responses.len();
+        queues.reserved -= dropped;
+    }
+
+    /// 溜まった event を捨てる。新しく接続した受け手は状態を読み直す。
+    pub fn clear_events(&self) {
+        let mut queues = self.shared.queues();
+        queues.events.clear();
+        queues.lost = 0;
     }
 
     fn check(&self) -> Result<(), Status> {
@@ -324,12 +382,12 @@ impl SdkClient {
         let fits = |items: &Vec<Item>, bytes: usize, size: usize, count: usize| {
             items.len() + count <= max_items && (items.is_empty() || bytes + size <= max_bytes)
         };
-        while let Some((response, secret)) = queues.responses.front() {
+        while let Some((_, response, secret)) = queues.responses.front() {
             let size = response.len() + secret.as_ref().map_or(0, Vec::len);
             if !fits(&items, bytes, size, 1 + usize::from(secret.is_some())) {
                 break;
             }
-            let (response, secret) = queues.responses.pop_front().expect("front exists");
+            let (_, response, secret) = queues.responses.pop_front().expect("front exists");
             queues.reserved -= 1;
             bytes += size;
             items.push(Item {
@@ -405,14 +463,16 @@ impl SdkClient {
                     queues.pending.remove(&request_id);
                     let response = ResponseEnvelope::failure_parts(
                         "",
-                        request_id,
+                        request_id.clone(),
                         self.profile.clone(),
                         ProtocolError::new(
                             error_code::OPERATION_OUTCOME_UNKNOWN,
                             "the handle closed before the write finished",
                         ),
                     );
-                    queues.responses.push_back((encode(&response), None));
+                    queues
+                        .responses
+                        .push_back((request_id, encode(&response), None));
                 }
             }
             if let Some(Ok(started)) = started {
@@ -633,7 +693,7 @@ mod tests {
             .shared
             .queues()
             .responses
-            .push_back((b"{}".to_vec(), None));
+            .push_back((String::new(), b"{}".to_vec(), None));
         client.shared.queues().reserved += 1;
         for index in 0..MAX_EVENTS + 10 {
             client

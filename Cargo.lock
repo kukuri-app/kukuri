@@ -4371,6 +4371,7 @@ name = "kukuri-game-sdk"
 version = "0.5.1"
 dependencies = [
  "async-trait",
+ "blake3",
  "futures-util",
  "kukuri-cli",
  "kukuri-desktop-runtime",
@@ -4378,6 +4379,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

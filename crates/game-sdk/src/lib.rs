@@ -2,6 +2,8 @@
 //! process の中で起動・操作・停止する。関数は network を待たず（close を除く）、panic を ABI の外へ出さない。
 
 mod client;
+#[cfg(windows)]
+pub mod sidecar;
 
 use std::{
     collections::HashSet,
@@ -10,7 +12,7 @@ use std::{
 };
 
 pub use client::{
-    CANCELLED, Item, ItemKind, MAX_EVENTS, MAX_PENDING, MAX_POLL_ITEMS, SdkClient, SdkConfig,
+    CANCELLED, Item, ItemKind, MAX_EVENTS, MAX_PENDING, MAX_POLL_ITEMS, Mode, SdkClient, SdkConfig,
     Started, Status,
 };
 
@@ -38,8 +40,49 @@ struct OwnedBatch {
     data: Vec<Vec<u8>>,
 }
 
+/// handle の要求の行き先。FFI は process の中の client、Sidecar は named pipe の先の client。
+pub enum Backend {
+    Local(SdkClient),
+    #[cfg(windows)]
+    Sidecar(sidecar::SidecarClient),
+}
+
+impl Backend {
+    fn send(&mut self, request: &[u8], secret: Option<&[u8]>) -> Status {
+        match self {
+            Self::Local(client) => client.send(request, secret),
+            #[cfg(windows)]
+            Self::Sidecar(client) => client.send(request, secret),
+        }
+    }
+
+    fn cancel(&mut self, request_id: &str) -> Status {
+        match self {
+            Self::Local(client) => client.cancel(request_id),
+            #[cfg(windows)]
+            Self::Sidecar(client) => client.cancel(request_id),
+        }
+    }
+
+    fn poll(&mut self, max_items: usize, max_bytes: usize) -> Result<Vec<Item>, Status> {
+        match self {
+            Self::Local(client) => client.poll(max_items, max_bytes),
+            #[cfg(windows)]
+            Self::Sidecar(client) => client.poll(max_items, max_bytes),
+        }
+    }
+
+    fn close(&mut self) -> Status {
+        match self {
+            Self::Local(client) => client.close(),
+            #[cfg(windows)]
+            Self::Sidecar(client) => client.close(),
+        }
+    }
+}
+
 pub struct KukuriHandle {
-    client: Mutex<SdkClient>,
+    client: Mutex<Backend>,
     /// 解放されていない batch の address。別の handle の batch・解放済みの batch を見分ける。
     batches: Mutex<HashSet<usize>>,
 }
@@ -47,13 +90,17 @@ pub struct KukuriHandle {
 impl KukuriHandle {
     /// 起動の処理を差し替えた handle（試験で dispatcher を注入する）。
     pub fn from_client(client: SdkClient) -> *mut Self {
+        Self::from_backend(Backend::Local(client))
+    }
+
+    pub fn from_backend(client: Backend) -> *mut Self {
         Box::into_raw(Box::new(Self {
             client: Mutex::new(client),
             batches: Mutex::new(HashSet::new()),
         }))
     }
 
-    fn client(&self) -> std::sync::MutexGuard<'_, SdkClient> {
+    fn client(&self) -> std::sync::MutexGuard<'_, Backend> {
         self.client
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -112,13 +159,21 @@ pub unsafe extern "C" fn kukuri_sdk_open(
             return Status::InvalidArgument;
         }
         quiet_panics();
-        match SdkClient::open(config) {
-            Ok(client) => {
-                unsafe { *out = KukuriHandle::from_client(client) };
-                Status::Ok
-            }
-            Err(_) => Status::Faulted,
-        }
+        let backend = match config.mode {
+            Mode::Ffi => match SdkClient::open(config) {
+                Ok(client) => Backend::Local(client),
+                Err(_) => return Status::Faulted,
+            },
+            #[cfg(windows)]
+            Mode::Sidecar => Backend::Sidecar(sidecar::SidecarClient::connect(
+                config.profile,
+                &config.profile_dir,
+            )),
+            #[cfg(not(windows))]
+            Mode::Sidecar => return Status::InvalidArgument,
+        };
+        unsafe { *out = KukuriHandle::from_backend(backend) };
+        Status::Ok
     })
 }
 
