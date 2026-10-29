@@ -85,13 +85,14 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | 関数 | 働き | 待ち |
 | --- | --- | --- |
 | `kukuri_sdk_abi_version()` | ABI の版を返す。C# は読み込み直後に照合し、違えば理由を示して開始しない | なし |
-| `kukuri_sdk_open(config, out_handle)` | profile directory を指定して handle を作る。runtime の起動は背景で進み、完了を event で知らせる | なし |
+| `kukuri_sdk_open(abi_version, config, out_handle)` | ABI の版と profile（名前と directory）を指定して handle を作る。版が違えば `ABI_MISMATCH` で handle を作らない。runtime の起動は背景で進み、完了を `startup_status_changed` の event で知らせる。起動に失敗したら（`profile_in_use` 等）、要求の応答がその error を返す | なし |
 | `kukuri_sdk_send(handle, request, secret)` | 要求を待ち行列に入れて即座に戻る。結果は poll で受ける | なし |
-| `kukuri_sdk_send_binary(handle, kind, target, bytes)` | session の packet（datagram・stream）と、配信する映像・音声の bytes を渡す。`target` は session ID または Live の session ID | なし |
+| `kukuri_sdk_send_binary(handle, kind, target, bytes)` | session の packet（datagram・stream）と、配信する映像・音声の bytes を渡す。`target` は session ID または Live の session ID。最初に使う #1979 が、kind と batch の bytes の項目と一緒に足す | なし |
 | `kukuri_sdk_cancel(handle, request_id)` | 実行前の要求を取り消す | なし |
-| `kukuri_sdk_poll(handle, max_items, max_bytes, out_batch)` | 届いている応答・秘密の出力・event・bytes を上限まで batch に入れて返す。1 件だけで `max_bytes` を超えるものは、その poll の最初の 1 件なら単独で返す。届いていなければ空の batch で戻る | なし |
+| `kukuri_sdk_poll(handle, max_items, max_bytes, out_batch)` | 届いている応答・秘密の出力・event・bytes を上限まで batch に入れて返す。1 件だけで `max_bytes` を超えるものは、その poll の最初の 1 件なら単独で返す。届いていなければ batch を返さない（`out_batch` は null） | なし |
 | `kukuri_sdk_batch_release(handle, batch)` | poll で受けた batch（中の JSON と bytes を含む）を解放する | なし |
-| `kukuri_sdk_close(handle)` | 購読・task・未解放の batch・DB lock を解放して handle を閉じる | 停止の完了まで（上限 5 秒） |
+| `kukuri_sdk_close(handle)` | 新しい要求を断り、未完了の要求を下の表の結果で終え、購読・task・DB lock を解放する。close の後も poll と batch の解放はでき、未完了だった要求の結果を受け取れる | 停止の完了まで（上限 5 秒） |
+| `kukuri_sdk_free(handle)` | handle と未解放の batch の memory を解放する（close していなければ close する）。以後 handle は使えない | close と同じ |
 
 - ABI の関数は同期的な状態 code を返す: `OK`、`INVALID_ARGUMENT`、`BACKPRESSURE`、`CLOSED`、`FAULTED`、`ABI_MISMATCH`。要求の成否は poll で受ける応答で返す。
 - `kukuri_sdk_send_binary` には応答が無く、結果はこの状態 code だけで返す。上限を超える大きさ・不明な kind は `INVALID_ARGUMENT`、閉じた session・Live は `CLOSED`、stream の送り待ちが上限に達したら `BACKPRESSURE`（bytes は受け付けない）。datagram と映像は送り待ちが溢れても `OK` を返し、§3 の上限の規則で古いものを捨てる。
@@ -317,7 +318,7 @@ probe のコードは repository に残していない（この節の値の根�
 | #1976 | Windows の Sidecar と IPC、attach・detach、複数 profile | C ABI、Unity |
 | #1977 | UPM・C# API・mode の切替・Unity の lifecycle | 各柱の UI と挙動 |
 | #1978 | action session の room、発見、公開範囲、`join_game_session` / `leave_game_session`、session の寿命と `game_session_closed`（退出・終了・失効で受け口が packet を受け付けなくなること） | packet の配送、裁定 |
-| #1979 | session の datagram と stream、送受信の上限、`game_session_packet` / `game_session_path`、NGO の Transport adapter | session の寿命の判定、裁定、予測と補正 |
+| #1979 | `kukuri_sdk_send_binary` と batch の bytes の項目・未解放の batch の上限、session の datagram と stream、送受信の上限、`game_session_packet` / `game_session_path`、NGO の Transport adapter | session の寿命の判定、裁定、予測と補正 |
 | #1980 | 発行・発見・取得・保持・検証、asset の command と `game_asset_updated`、Unity のスキンの読み込み | 課金・DRM |
 | #1981 | SNS の command の利用、`post_received` と `ReactionReceived` による対象の解決、掲示板 Prefab、差分の表示 | Live の映像、3D の演出 |
 | #1982 | Live の command の登録、Unity の映像・音声 adapter、`live_video_frame` / `live_watch_status`、既存 Live との相互配信、転送 | 3D の演出 |
@@ -339,13 +340,13 @@ probe のコードは repository に残していない（この節の値の根�
 | F-ABI-7 | 取消 | 実行前の要求を cancel | `cancelled` | #1975 |
 | F-ABI-8 | 実行中の取消 | 実行中の要求を cancel | 実際の結果が返る | #1975 |
 | F-ABI-9 | 期限 | 応答が期限までに来ない要求 | `timeout` | #1975 |
-| F-ABI-10 | 終了 | close の後に send・send_binary | `CLOSED` | #1975 |
+| F-ABI-10 | 終了 | close の後に send（send_binary は #1979） | `CLOSED` | #1975 |
 | F-ABI-11 | 終了中の要求 | 読み取りと書き込みの実行中に close | 読み取りは `interrupted`。書き込みは結果か `operation_outcome_unknown`。知らせずに消えない | #1975 |
 | F-ABI-12 | panic | handler が panic する | handle が `FAULTED`、未完了は `internal_error`、process は続く | #1975 |
 | F-ABI-13 | event の溢れ | poll しないまま知らせの event が 1024 件を超える | 古い event を捨て、`events_lost` で件数が届く。応答は失われない | #1975 |
-| F-ABI-14 | poll | 届いたものが無い | 空の batch で即座に戻る | #1975 |
+| F-ABI-14 | poll | 届いたものが無い | batch を返さず（null）即座に戻る | #1975 |
 | F-ABI-15 | batch の解放 | batch を解放した後に、同じ batch と別の handle の batch を解放する | どちらも `INVALID_ARGUMENT`。他の batch は有効なまま | #1975 |
-| F-ABI-16 | 未解放の上限 | batch を解放しないまま 64 MiB に達する | 新しい映像と datagram は捨て、応答は届く。解放すると再開する | #1975 |
+| F-ABI-16 | 未解放の上限 | batch を解放しないまま 64 MiB に達する | 新しい映像と datagram は捨て、応答は届く。解放すると再開する | #1979（bytes の項目を足すとき） |
 | F-ABI-17 | 秘密の出力 | 招待 token の export を送る | token は秘密の出力だけに入り、応答の JSON・event・log に出ない | #1975 |
 | F-PRO-1 | 同意前 | 新しい profile で open | 同意待ち。network I/O 0 件 | #1975 |
 | F-PRO-2 | 再起動 | 作成 → close → open | 同じ公開鍵 | #1975 |

@@ -15,6 +15,8 @@ const PROFILE_MARKER_VERSION: u32 = 1;
 pub enum ClientProfileKind {
     Gui,
     Cli,
+    /// Game SDK の profile（ADR 0070 §4）。kukuri の GUI・CLI の profile とは別に所有する。
+    GameSdk,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -297,12 +299,13 @@ fn validate_or_create_marker(profile: &ClientProfile) -> Result<(), ProfileError
         .any(|entry| {
             entry.file_name() != PROFILE_LOCK_FILE && entry.file_name() != PROFILE_MARKER_TEMP_FILE
         });
-    if has_existing_state && profile.kind == ClientProfileKind::Cli {
+    if has_existing_state && profile.kind != ClientProfileKind::Gui {
         return Err(ProfileError::new(
             ProfileErrorKind::LegacyProfileUnclassified,
             format!(
-                "unmarked existing profile `{}` cannot be adopted by the CLI",
-                profile.app_data_dir.display()
+                "unmarked existing profile `{}` cannot be adopted by {:?}",
+                profile.app_data_dir.display(),
+                profile.kind
             ),
         ));
     }
