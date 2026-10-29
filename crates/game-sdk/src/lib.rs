@@ -158,12 +158,15 @@ pub unsafe extern "C" fn kukuri_sdk_open(
         if config.profile.trim().is_empty() || !config.profile_dir.is_absolute() {
             return Status::InvalidArgument;
         }
-        quiet_panics();
         let backend = match config.mode {
-            Mode::Ffi => match SdkClient::open(config) {
-                Ok(client) => Backend::Local(client),
-                Err(_) => return Status::Faulted,
-            },
+            // runtime の task は FFI の mode だけが DLL の中で動かす。
+            Mode::Ffi => {
+                quiet_panics();
+                match SdkClient::open(config) {
+                    Ok(client) => Backend::Local(client),
+                    Err(_) => return Status::Faulted,
+                }
+            }
             #[cfg(windows)]
             Mode::Sidecar => Backend::Sidecar(sidecar::SidecarClient::connect(
                 config.profile,
