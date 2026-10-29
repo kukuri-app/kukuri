@@ -25,6 +25,8 @@ use crate::{ABI_VERSION, Item, ItemKind, SdkClient, Status};
 /// frame 1 つの上限。応答と event の JSON（1 MiB）より大きな poll の結果も入るよう、未解放の batch の上限に揃える。
 const MAX_FRAME_BYTES: usize = 64 << 20;
 const ERROR_PIPE_BUSY: i32 = 231;
+/// 使用中の pipe を開き直す回数（5 ms ごと、合わせて 100 ms まで）。
+const PIPE_BUSY_RETRIES: usize = 20;
 
 /// profile directory から決める pipe の名前。大文字小文字と区切りの違いで別の Sidecar にならないよう正規化する。
 pub fn pipe_name(profile_dir: &Path) -> String {
@@ -160,15 +162,36 @@ pub async fn serve(
             _ = stop.wait_for(|stopped| *stopped) => return Ok(()),
             connected = server.connect() => connected?,
         }
-        let mut pipe = server;
-        let shutdown = attach(&mut pipe, client, profile_dir, &mut stop).await;
+        // 次の接続を受ける pipe をすぐ用意する（切断の直後に接続し直す client が使用中で断られないように）。
+        let mut pipe = std::mem::replace(&mut server, create(false)?);
+        let shutdown = {
+            let mut attachment =
+                std::pin::pin!(attach(&mut pipe, client, profile_dir, stop.clone()));
+            loop {
+                tokio::select! {
+                    shutdown = &mut attachment => break shutdown,
+                    connected = server.connect() => {
+                        connected?;
+                        // 接続は一度に一つ。接続中に来た別の client は同じ profile の二重の所有として断る。
+                        let busy = std::mem::replace(&mut server, create(false)?);
+                        tokio::spawn(refuse_busy(busy));
+                    }
+                }
+            }
+        };
         let _ = pipe.disconnect();
         if shutdown {
             return Ok(());
         }
-        // 接続は一度に一つ。今の接続が終わってから次の接続を受ける（その間の接続は PIPE_BUSY になる）。
-        server = create(false)?;
     }
+}
+
+async fn refuse_busy(mut pipe: NamedPipeServer) {
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(1), read_frame(&mut pipe)).await;
+    let mut reply = Reply::status(Status::InvalidArgument);
+    reply.code = Some(error_code::PROFILE_IN_USE.into());
+    let _ = write_reply(&mut pipe, &reply).await;
+    let _ = pipe.disconnect();
 }
 
 /// 一つの接続を中継する。shutdown を受けたら true。
@@ -176,7 +199,7 @@ async fn attach(
     pipe: &mut NamedPipeServer,
     client: &SdkClient,
     profile_dir: &Path,
-    stop: &mut watch::Receiver<bool>,
+    mut stop: watch::Receiver<bool>,
 ) -> bool {
     let hello = match read_frame(pipe).await {
         Ok(frame) => serde_json::from_slice::<Op>(&frame).ok(),
@@ -303,19 +326,26 @@ impl SidecarClient {
             profile,
             closed: false,
         };
-        let opened = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(pipe_name(profile_dir));
-        let mut pipe = match opened {
-            Ok(pipe) => pipe,
-            Err(error) => {
-                if error.raw_os_error() == Some(ERROR_PIPE_BUSY) {
-                    // 別の client が接続している。同じ profile の二重の所有と同じ扱い。
-                    client.unavailable = error_code::PROFILE_IN_USE;
+        let name = pipe_name(profile_dir);
+        let open = || {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&name)
+        };
+        let mut opened = open();
+        // Sidecar が接続を受けてから次の pipe を用意するまでの短い間は使用中になる。少しだけ待って開き直す。
+        for _ in 0..PIPE_BUSY_RETRIES {
+            match &opened {
+                Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    opened = open();
                 }
-                return client;
+                _ => break,
             }
+        }
+        let Ok(mut pipe) = opened else {
+            return client;
         };
         let hello = Op::Hello {
             abi_version: ABI_VERSION,
@@ -331,6 +361,10 @@ impl SidecarClient {
             Ok(reply) if reply.status == Status::Ok as i32 => client.pipe = Some(pipe),
             Ok(reply) if reply.code.as_deref() == Some(error_code::AUTHORIZATION_FAILED) => {
                 client.unavailable = error_code::AUTHORIZATION_FAILED;
+            }
+            // 別の client が接続している。同じ profile の二重の所有と同じ扱い。
+            Ok(reply) if reply.code.as_deref() == Some(error_code::PROFILE_IN_USE) => {
+                client.unavailable = error_code::PROFILE_IN_USE;
             }
             Ok(reply) if reply.status == Status::AbiMismatch as i32 => {
                 client.unavailable = error_code::PROTOCOL_MISMATCH;

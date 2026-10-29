@@ -251,6 +251,25 @@ fn the_sidecar_binary_listens_on_no_tcp_port_and_logs_no_secret() {
     // 制御の経路は named pipe だけで、TCP の listen は無い（P2P は UDP の QUIC）。
     assert_eq!(netstat_listens(child.id()), Vec::<String>::new());
 
+    // 接続中に別の client が来ても、Sidecar が持つ profile を FFI で開いても、二重の所有として断る（F-PRO-5）。
+    let second = SidecarServer::connect(dir.path());
+    assert_eq!(
+        send(second, &request("second", "client.status", json!({}))),
+        0
+    );
+    assert_eq!(
+        error_code(&response_for(second, "second", Duration::from_secs(10))),
+        "profile_in_use"
+    );
+    finish(second);
+    let ffi = support::open_real(dir.path());
+    assert_eq!(send(ffi, &request("ffi", "client.status", json!({}))), 0);
+    assert_eq!(
+        error_code(&response_for(ffi, "ffi", Duration::from_secs(30))),
+        "profile_in_use"
+    );
+    finish(ffi);
+
     finish(handle);
     let stopped = Command::new(env!("CARGO_BIN_EXE_kukuri-sdk-sidecar"))
         .args(["stop", "--profile", PROFILE, "--profile-dir"])
