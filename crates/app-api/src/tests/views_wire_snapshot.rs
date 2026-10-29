@@ -502,6 +502,7 @@ fn views_wire_game_room_view() {
             updated_at: 1_700_000_400,
             channel_id: None,
             audience_label: "Public".to_string(),
+            action: None,
         },
     );
     assert_fixture(
@@ -590,6 +591,7 @@ fn views_wire_game_room_view() {
             updated_at: 1_700_000_430,
             channel_id: Some("chan-1".to_string()),
             audience_label: "Private channel".to_string(),
+            action: None,
         },
     );
 }

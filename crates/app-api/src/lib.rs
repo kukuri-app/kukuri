@@ -26,6 +26,7 @@ pub use direct_messages::PendingReceiveDestinationPage;
 mod dome_connections;
 mod dome_delete;
 pub use dome_delete::{DeleteDomeInput, DeleteDomeView, PendingDomeDeletionView};
+mod action_rooms;
 mod dome_hosting;
 mod dome_management;
 mod dome_move;

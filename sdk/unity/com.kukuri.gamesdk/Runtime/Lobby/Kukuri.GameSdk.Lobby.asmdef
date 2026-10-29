@@ -1,0 +1,14 @@
+{
+    "name": "Kukuri.GameSdk.Lobby",
+    "rootNamespace": "Kukuri.GameSdk.Lobby",
+    "references": ["Kukuri.GameSdk", "UnityEngine.UI"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

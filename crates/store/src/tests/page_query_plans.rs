@@ -259,10 +259,23 @@ async fn live_and_game_lists_are_channel_bounded_index_reads() {
             live_session_list_query(EXPLAIN, "topic", "channel", true, 100),
             "idx_live_session_cache_live_now (topic_id=? AND channel_id=?)",
         ),
+        // #1978: ScoreGame・Dome と action session は application_id で範囲を分け、続きは前の頁の最後の行から読む。
         (
             "game rooms",
-            game_room_list_query(EXPLAIN, "topic", "channel", 100),
-            "idx_game_room_cache_topic_updated (topic_id=? AND channel_id=?)",
+            game_room_list_query(EXPLAIN, "topic", "channel", "", None, 100),
+            "idx_game_room_cache_topic_updated (topic_id=? AND channel_id=? AND application_id=?)",
+        ),
+        (
+            "action session rooms after a page",
+            game_room_list_query(
+                EXPLAIN,
+                "topic",
+                "channel",
+                "com.example.arena",
+                Some((1_000, "game-1".into())),
+                20,
+            ),
+            "idx_game_room_cache_topic_updated (topic_id=? AND channel_id=? AND application_id=? AND (updated_at,room_id)<(?,?))",
         ),
     ] {
         let plan = builder

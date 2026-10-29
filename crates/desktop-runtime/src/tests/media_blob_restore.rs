@@ -724,6 +724,7 @@ async fn restart_restores_game_room_manifest() {
             title: "restart finals".into(),
             description: "set".into(),
             participants: vec!["Alice".into(), "Bob".into()],
+            action: None,
         })
         .await
         .expect("create game room");

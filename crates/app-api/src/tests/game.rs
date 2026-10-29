@@ -38,6 +38,7 @@ async fn game_room_score_update_replicates() {
                 title: "sync room".into(),
                 description: "set".into(),
                 participants: vec!["Alice".into(), "Bob".into()],
+                action: None,
             },
         )
         .await
@@ -210,6 +211,7 @@ async fn finished_game_room_rejects_updates() {
                 title: "finished room".into(),
                 description: "set".into(),
                 participants: vec!["Alice".into(), "Bob".into()],
+                action: None,
             },
         )
         .await

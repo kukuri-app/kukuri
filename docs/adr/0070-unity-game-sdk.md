@@ -65,6 +65,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 
 | 種類 | 名前 | 担当 | 働き |
 | --- | --- | --- | --- |
+| command | `list_action_rooms` | #1978 | 1 つの application ID の action session の room を、更新の新しい順に 1 頁 20 件ずつ返す。続きは応答の `next_cursor` で読む（CLI と SDK だけ。desktop・Web は表示しない） |
 | command | `join_game_session` / `leave_game_session` | #1978 | action session の room の host へ参加・退出する。参加の応答に session ID を返す |
 | command | `publish_game_asset` | #1980 | 発行者の profile で manifest に署名して公開する（Sidecar・CLI だけ。§5.3） |
 | command | `list_game_assets` / `fetch_game_asset` | #1980 | 発行者の公開鍵と application ID で release を一覧し、検証済みの file の path を得る |
@@ -186,6 +187,10 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 この柱で決めたことは次のとおり。
 
 - room は既存の Game Room に新しい種類（action session）を足して表す。application ID、host の endpoint、最大人数、状態を owner の署名つき manifest に持たせ、ScoreGame と Metaverse room の挙動は変えない。参加者は manifest に書かず、host の session が受け付ける。
+  - 作成は既存の `create_game_room` に `action`（application ID と最大人数）を付けて行う。host の endpoint は作成した端末のものを入れる。状態の変更と終了は既存の `update_game_room`（scores は空）で行い、終了した room は更新できない。
+  - application ID は 1〜128 byte の、空白と制御文字を含まない ASCII。最大人数は 1 以上。action の metadata は action session の room だけが持ち、他の種類の room が持っていれば検証で断る。
+  - 一覧（`list_action_rooms`）は application ID ごとに、更新の新しい順に 20 件ずつ読む。索引は (topic, channel, application ID, 更新時刻, room ID) で、ScoreGame と Dome の一覧は application ID が空の範囲だけを読む。どちらの一覧も、他方の room や他のゲームの room の数に比例しない。終了した room も「終了」として一覧に残る（2026-10-30 のユーザー判断）。
+  - desktop・Web の一覧には action session の room を出さない。Web はこの種類の行を保存しない（2026-10-30 のユーザー判断）。旧版の desktop は manifest の種類を読めずにその room を飛ばし、一覧の残りは表示される。
 - 公開範囲は room を置く場所で決まる。公開 topic なら public、private channel なら既存の audience（friend_only・friend_plus・invite_only）をそのまま使う。
 - session は専用の ALPN で host の端末へ接続し、最初の双方向 stream で、参加者が署名した 10 秒の proof（room と host に束縛）を送る。host は room の状態と公開範囲を確かめてから packet を受け付け、5 秒ごとに評価し直す（media と同じ形）。
 - 座標などの最新の状態は QUIC の unreliable datagram、確定させる操作は reliable stream で送る。送る側の上限は次のとおりで、#1979 はこの値で実装する。

@@ -11,10 +11,10 @@
 
 use super::*;
 use kukuri_core::{
-    DomeCustomizationV1, DomeInstanceStatusV1, DomePresetRefV1, GameRoomKind, GameRoomStatus,
-    GameScoreEntry, LiveSessionStatus, MetaverseAssetKind, MetaverseAssetRef, MetaverseDomeV1,
-    MetaversePrimitive, MetaverseRoomChatMessageV1, MetaverseRoomSpawnV1, MetaverseRoomStateV1,
-    SpatialContextV1, TopicId,
+    ActionSessionV1, DomeCustomizationV1, DomeInstanceStatusV1, DomePresetRefV1, GameRoomKind,
+    GameRoomStatus, GameScoreEntry, LiveSessionStatus, MetaverseAssetKind, MetaverseAssetRef,
+    MetaverseDomeV1, MetaversePrimitive, MetaverseRoomChatMessageV1, MetaverseRoomSpawnV1,
+    MetaverseRoomStateV1, SpatialContextV1, TopicId,
 };
 
 // ---------------------------------------------------------------------------
@@ -361,6 +361,12 @@ fn game_room_max() -> GameRoomProjectionRow {
         ],
         room_kind: GameRoomKind::MetaverseRoom,
         metaverse: Some(metaverse_state()),
+        // 列の往復だけを見る(種類との組合せは app-api が検証する)。
+        action: Some(ActionSessionV1 {
+            application_id: "com.example.arena".into(),
+            host_endpoint_id: "e".repeat(64),
+            max_players: 4,
+        }),
         updated_at: 6_000,
         source_replica_id: ReplicaId::new("topic::kukuri:topic:game-rt"),
         source_key: "game/room-max/manifest".into(),
@@ -386,6 +392,7 @@ fn game_room_min() -> GameRoomProjectionRow {
         scores: Vec::new(),
         room_kind: GameRoomKind::ScoreGame,
         metaverse: None,
+        action: None,
         updated_at: 5_000,
         source_replica_id: ReplicaId::new("topic::kukuri:topic:game-rt"),
         source_key: "game/room-min/manifest".into(),
@@ -412,11 +419,25 @@ async fn game_room_roundtrip_preserves_all_columns() {
     // 読み出しは list のみ。主キー updated_at DESC の順序ごと全列固定
     // (副キー room_id DESC の tie-break はここでは未行使 —
     // T6 の pagination テストと T8 の backend_parity が担保)。
+    // action を持つ行は application ID の一覧からだけ読める(#1978)。
     assert_eq!(
-        LiveGameProjectionStore::list_channel_game_rooms(&store, GAME_TOPIC, "ch:game", 100,)
-            .await
-            .expect("list game rooms"),
+        LiveGameProjectionStore::list_channel_action_rooms(
+            &store,
+            GAME_TOPIC,
+            "ch:game",
+            "com.example.arena",
+            None,
+            100,
+        )
+        .await
+        .expect("list action rooms"),
         vec![max]
+    );
+    assert!(
+        LiveGameProjectionStore::list_channel_game_rooms(&store, GAME_TOPIC, "ch:game", 100)
+            .await
+            .expect("list game rooms")
+            .is_empty()
     );
     assert_eq!(
         LiveGameProjectionStore::list_channel_game_rooms(&store, GAME_TOPIC, "public", 100,)

@@ -446,6 +446,7 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -Backend IL2CPP -Ski
 - DLL を build し直したら、DLL を読み込んだ Unity Editor を再起動する（Windows は読み込んだ native plugin を解放しないので、Editor が開いたままでは差し替わらない）。
 - 設定 asset（`kukuri/Settings`）の mode を Sidecar にすると、Play の開始時に Editor が `kukuri-sdk-sidecar.exe` を起動し、Play を止めても動かし続ける。Editor の終了か menu の「kukuri/Sidecar を止める」で止まる。Player の build は Sidecar を起動せず、既定は FFI。
 - Unity の project を深い path に置くと Windows の path の長さの上限に当たる。`test.ps1` は `%TEMP%\kgs-test` に作る。
+- ロビーは `Runtime/Lobby/KukuriLobby.prefab`（uGUI）を scene に置き、`runner` に `KukuriRunner` を、`applicationId` と `topic` にゲームの値を設定する。scene に `EventSystem` が無ければ Unity の menu の UI から足す。
 - `test.ps1` は CLI の process 試験と同じく `KUKURI_DISABLE_KEYRING=1` と loopback の接続設定で動かす。Player の再起動の確認は、鍵を keyring に置かない構成での確認になる。
 
 ## Linux AppImage／Deb生成

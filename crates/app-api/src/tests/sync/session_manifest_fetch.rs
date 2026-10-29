@@ -74,6 +74,7 @@ impl Fixture {
                         title: "score".into(),
                         description: String::new(),
                         participants: vec!["a".into(), "b".into()],
+                        action: None,
                     },
                 )
                 .await

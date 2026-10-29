@@ -299,6 +299,7 @@ pub(super) fn game_manifest(
         room_kind: GameRoomKind::ScoreGame,
         metaverse: None,
         updated_at: Utc::now().timestamp_millis(),
+        action: None,
     }
 }
 
@@ -418,5 +419,61 @@ async fn unreadable_game_room_record_does_not_break_the_list_of_the_topic() {
     assert!(
         rooms.iter().any(|room| room.room_id == honest_id),
         "an unreadable record hid the other game rooms of the topic"
+    );
+}
+
+// (game c) #1978: action の metadata を持つ ScoreGame と、metadata の無い action session は、owner が署名していても
+// どちらの一覧にも出ない(action session の一覧の範囲に他の種類を混ぜない)。正しい action session だけが出る。
+#[tokio::test]
+async fn action_metadata_on_another_kind_or_missing_from_an_action_session_is_not_listed() {
+    let (_, _, docs_sync, blob_service) = local_app_with_memory_services();
+    let topic = TopicId::new("kukuri:topic:integrity-game-action-kind");
+    let replica = topic_replica_id(topic.as_str());
+    let owner_keys = generate_keys();
+    let owner = owner_keys.public_key_hex();
+    let action = kukuri_core::ActionSessionV1 {
+        application_id: "com.example.arena".into(),
+        host_endpoint_id: "e".repeat(64),
+        max_players: 4,
+    };
+    let mut mixed = game_manifest(&format!("mixed-1-{}", &owner[..16]), &topic, None, &owner);
+    mixed.action = Some(action.clone());
+    let mut bare = game_manifest(&format!("bare-1-{}", &owner[..16]), &topic, None, &owner);
+    bare.room_kind = GameRoomKind::ActionSession;
+    let mut honest = game_manifest(&format!("honest-1-{}", &owner[..16]), &topic, None, &owner);
+    honest.room_kind = GameRoomKind::ActionSession;
+    honest.action = Some(action);
+    for manifest in [&mixed, &bare, &honest] {
+        write_game_room(
+            docs_sync.as_ref(),
+            blob_service.as_ref(),
+            &replica,
+            Some(&owner_keys),
+            manifest,
+        )
+        .await;
+    }
+
+    let viewer = fresh_viewer(docs_sync, blob_service);
+    let rooms = viewer
+        .list_game_rooms(topic.as_str())
+        .await
+        .expect("game rooms");
+    assert!(rooms.is_empty(), "listed as a ScoreGame: {rooms:?}");
+    let page = viewer
+        .list_action_rooms(
+            topic.as_str(),
+            TimelineScope::Public,
+            "com.example.arena",
+            None,
+        )
+        .await
+        .expect("action rooms");
+    assert_eq!(
+        page.items
+            .iter()
+            .map(|room| room.room_id.as_str())
+            .collect::<Vec<_>>(),
+        [honest.room_id.as_str()]
     );
 }

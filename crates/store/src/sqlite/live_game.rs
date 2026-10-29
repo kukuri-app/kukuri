@@ -20,7 +20,7 @@ const LIVE_SESSION_SELECT: &str = r#"
 
 const GAME_ROOM_SELECT: &str = r#"
     SELECT room_id, score_revision, topic_id, host_pubkey, title, description, status, phase_label,
-           channel_id, scores_json, room_kind, metaverse_json, updated_at,
+           channel_id, scores_json, room_kind, metaverse_json, action_json, updated_at,
            source_replica_id, source_key, manifest_blob_hash, derived_at, projection_version
     FROM game_room_cache
 "#;
@@ -50,11 +50,14 @@ pub(crate) fn live_session_list_query<'a>(
     builder
 }
 
-/// #1292: game 一覧を既存の (topic, channel, updated_at, room_id) 索引の範囲から読む。
+/// #1292: game 一覧を (topic, channel, application_id, updated_at, room_id) 索引の範囲から読む。ScoreGame と Dome の
+/// application_id は ''。`before` は前の頁の最後の行(#1978)。
 pub(crate) fn game_room_list_query<'a>(
     prefix: &str,
     topic_id: &'a str,
     channel_id: &'a str,
+    application_id: &'a str,
+    before: Option<(i64, String)>,
     limit: usize,
 ) -> QueryBuilder<Sqlite> {
     let mut builder = QueryBuilder::<Sqlite>::new(prefix);
@@ -63,6 +66,15 @@ pub(crate) fn game_room_list_query<'a>(
     builder.push_bind(topic_id);
     builder.push(" AND channel_id = ");
     builder.push_bind(channel_id);
+    builder.push(" AND application_id = ");
+    builder.push_bind(application_id);
+    if let Some((updated_at, room_id)) = before {
+        builder.push(" AND (updated_at, room_id) < (");
+        builder.push_bind(updated_at);
+        builder.push(", ");
+        builder.push_bind(room_id);
+        builder.push(")");
+    }
     builder.push(" ORDER BY updated_at DESC, room_id DESC LIMIT ");
     builder.push_bind(i64::try_from(limit).unwrap_or(i64::MAX));
     builder
@@ -199,14 +211,19 @@ impl LiveGameProjectionStore for SqliteStore {
             .as_ref()
             .map(serde_json::to_string)
             .transpose()?;
+        let action_json = row.action.as_ref().map(serde_json::to_string).transpose()?;
+        let application_id = row
+            .action
+            .as_ref()
+            .map_or("", |action| action.application_id.as_str());
         sqlx::query(
             r#"
             INSERT INTO game_room_cache (
               room_id, score_revision, topic_id, channel_id, host_pubkey, title, description, status, phase_label,
               scores_json, room_kind, metaverse_json, updated_at, source_replica_id, source_key,
-              manifest_blob_hash, derived_at, projection_version
+              manifest_blob_hash, derived_at, projection_version, action_json, application_id
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
             ON CONFLICT(room_id) DO UPDATE SET
               score_revision = excluded.score_revision,
               topic_id = excluded.topic_id,
@@ -224,7 +241,9 @@ impl LiveGameProjectionStore for SqliteStore {
               source_key = excluded.source_key,
               manifest_blob_hash = excluded.manifest_blob_hash,
               derived_at = excluded.derived_at,
-              projection_version = excluded.projection_version
+              projection_version = excluded.projection_version,
+              action_json = excluded.action_json,
+              application_id = excluded.application_id
             WHERE excluded.score_revision IS NULL
                OR game_room_cache.score_revision IS NULL
                OR excluded.score_revision > game_room_cache.score_revision
@@ -248,9 +267,29 @@ impl LiveGameProjectionStore for SqliteStore {
         .bind(row.manifest_blob_hash.as_str())
         .bind(row.derived_at)
         .bind(row.projection_version)
+        .bind(action_json.as_deref())
+        .bind(application_id)
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    async fn list_channel_action_rooms(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+        application_id: &str,
+        before: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<GameRoomProjectionRow>> {
+        if limit == 0 || application_id.is_empty() {
+            return Ok(Vec::new());
+        }
+        let rows = game_room_list_query("", topic_id, channel_id, application_id, before, limit)
+            .build()
+            .fetch_all(&self.pool)
+            .await?;
+        rows.into_iter().map(row_to_game_room_projection).collect()
     }
 
     async fn list_channel_game_rooms(
@@ -262,7 +301,7 @@ impl LiveGameProjectionStore for SqliteStore {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let rows = game_room_list_query("", topic_id, channel_id, limit)
+        let rows = game_room_list_query("", topic_id, channel_id, "", None, limit)
             .build()
             .fetch_all(&self.pool)
             .await?;

@@ -55,6 +55,7 @@ fn minimal_metaverse_png_bytes() -> Vec<u8> {
 }
 
 mod account_sync;
+mod action_rooms;
 mod capability_registry_snapshot;
 mod direct_messages;
 #[cfg(feature = "iroh-integration-tests")]

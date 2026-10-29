@@ -313,10 +313,21 @@ pub trait LiveGameProjectionStore: Send + Sync {
         session_id: &str,
     ) -> Result<Option<String>>;
     async fn upsert_game_room_cache(&self, row: GameRoomProjectionRow) -> Result<()>;
+    /// ScoreGame と Dome の行だけ(action session の行は数えない。#1978)。
     async fn list_channel_game_rooms(
         &self,
         topic_id: &str,
         channel_id: &str,
+        limit: usize,
+    ) -> Result<Vec<GameRoomProjectionRow>>;
+    /// 1 つの application ID の action session の行を、更新の新しい順に `before`(updated_at, room_id)より後ろから
+    /// 読む(#1978)。
+    async fn list_channel_action_rooms(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+        application_id: &str,
+        before: Option<(i64, String)>,
         limit: usize,
     ) -> Result<Vec<GameRoomProjectionRow>>;
     async fn get_game_room(

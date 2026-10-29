@@ -55,7 +55,7 @@ pub(crate) async fn hydrate_game_room_from_record(
         let manifest = verified.manifest();
         // Slow blob I/O precedes the room lock. Other rooms never wait for it.
         // Metaverse keeps its existing projection/lifecycle behavior.
-        let projection_guard = if manifest.room_kind == GameRoomKind::ScoreGame {
+        let projection_guard = if manifest.room_kind != GameRoomKind::MetaverseRoom {
             Some(services.game_room_projections.lock(&state.room_id).await)
         } else {
             None

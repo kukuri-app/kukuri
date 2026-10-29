@@ -12,6 +12,34 @@ pub enum GameRoomKind {
     #[default]
     ScoreGame,
     MetaverseRoom,
+    /// SDK のゲームの action session(ADR 0070 §5.2)。参加者は manifest に書かず、host の端末の session が受け付ける。
+    ActionSession,
+}
+
+/// action session の room の、owner が署名する metadata(ADR 0070 §5.2)。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ActionSessionV1 {
+    /// ゲームを識別する ID。一覧はこの値ごとに引く。
+    pub application_id: String,
+    /// 参加者が接続する host の端末の endpoint id。
+    pub host_endpoint_id: String,
+    pub max_players: u32,
+}
+
+/// application ID は 1〜128 byte の、空白と制御文字を含まない ASCII。
+pub fn validate_action_session(action: &ActionSessionV1) -> Result<()> {
+    let id = action.application_id.as_bytes();
+    if id.is_empty() || id.len() > 128 || !id.iter().all(u8::is_ascii_graphic) {
+        bail!("application_id must be 1-128 printable ASCII characters without spaces");
+    }
+    if action.host_endpoint_id.is_empty() {
+        bail!("action session host endpoint id is required");
+    }
+    if action.max_players == 0 {
+        bail!("max_players must be at least 1");
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -908,6 +936,9 @@ pub struct GameRoomManifestBlobV1 {
     pub room_kind: GameRoomKind,
     #[serde(default)]
     pub metaverse: Option<MetaverseRoomStateV1>,
+    /// action session の room だけが持つ。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<ActionSessionV1>,
     pub updated_at: i64,
 }
 

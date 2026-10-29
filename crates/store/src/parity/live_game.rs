@@ -186,6 +186,8 @@ pub(super) async fn live_sessions_and_presence_match_between_backends<
 struct GameRoomScenarioResult {
     topic_rooms: Vec<GameRoomProjectionRow>,
     other_topic_rooms: Vec<GameRoomProjectionRow>,
+    action_rooms: Vec<GameRoomProjectionRow>,
+    action_rooms_after_first: Vec<GameRoomProjectionRow>,
 }
 
 async fn game_room_scenario<S: Store + ProjectionStore>(store: &S) -> GameRoomScenarioResult {
@@ -199,11 +201,25 @@ async fn game_room_scenario<S: Store + ProjectionStore>(store: &S) -> GameRoomSc
     meta.room_kind = GameRoomKind::MetaverseRoom;
     meta.score_revision = None;
     meta.metaverse = Some(parity_metaverse_state());
+    // #1978: action session の行は、ScoreGame・Dome の一覧に混ざらず、application ID ごとに読む。
+    let action_room = |room_id: &str, application_id: &str, updated_at: i64| {
+        let mut row = parity_game_room(room_id, topic, GameRoomStatus::Waiting, updated_at);
+        row.room_kind = GameRoomKind::ActionSession;
+        row.action = Some(ActionSessionV1 {
+            application_id: application_id.into(),
+            host_endpoint_id: "e".repeat(64),
+            max_players: 4,
+        });
+        row
+    };
     for row in [
         parity_game_room("room-alpha", topic, GameRoomStatus::Waiting, 100),
         beta,
         meta,
         parity_game_room("room-other", other_topic, GameRoomStatus::Waiting, 80),
+        action_room("room-arena-1", "com.example.arena", 110),
+        action_room("room-arena-2", "com.example.arena", 120),
+        action_room("room-puzzle", "com.example.puzzle", 130),
     ] {
         LiveGameProjectionStore::upsert_game_room_cache(store, row)
             .await
@@ -228,6 +244,26 @@ async fn game_room_scenario<S: Store + ProjectionStore>(store: &S) -> GameRoomSc
         )
         .await
         .expect("list other topic game rooms"),
+        action_rooms: LiveGameProjectionStore::list_channel_action_rooms(
+            store,
+            topic,
+            "ch-game",
+            "com.example.arena",
+            None,
+            1,
+        )
+        .await
+        .expect("list action rooms"),
+        action_rooms_after_first: LiveGameProjectionStore::list_channel_action_rooms(
+            store,
+            topic,
+            "ch-game",
+            "com.example.arena",
+            Some((120, "room-arena-2".into())),
+            20,
+        )
+        .await
+        .expect("list action rooms after the first page"),
     }
 }
 
@@ -268,6 +304,16 @@ pub(super) async fn game_rooms_match_between_backends<S: Store + ProjectionStore
                 GameRoomKind::MetaverseRoom,
             ),
         ],
+    );
+    let ids = |rows: &[GameRoomProjectionRow]| {
+        rows.iter()
+            .map(|row| row.room_id.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&from_backend.action_rooms), ["room-arena-2"]);
+    assert_eq!(
+        ids(&from_backend.action_rooms_after_first),
+        ["room-arena-1"]
     );
     assert_eq!(from_backend.topic_rooms[0].scores, parity_game_scores());
     assert_eq!(

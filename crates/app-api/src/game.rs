@@ -1,5 +1,8 @@
 use crate::service::*;
-use kukuri_core::{DomeInstanceStatusV1, MetaverseRoomEventV1, SpatialContextV1};
+use kukuri_core::{
+    ActionSessionV1, DomeHostingStateV1, DomeInstanceStatusV1, MetaverseRoomEventV1,
+    SpatialContextV1, validate_action_session,
+};
 
 const METAVERSE_CHAT_HISTORY_LIMIT: usize = 100;
 
@@ -104,36 +107,46 @@ impl AppService {
             } else {
                 None
             };
-            items.push(GameRoomView {
-                room_id: row.room_id,
-                host_pubkey: row.host_pubkey,
-                title: row.title,
-                description: row.description,
-                status: row.status,
-                phase_label: row.phase_label,
-                scores: row
-                    .scores
-                    .into_iter()
-                    .map(|score| GameScoreView {
-                        participant_id: score.participant_id,
-                        label: score.label,
-                        score: score.score,
-                    })
-                    .collect(),
-                room_kind: row.room_kind,
-                metaverse: row.metaverse,
-                dome_hosting,
-                manifest_blob_hash: row.manifest_blob_hash.as_str().to_string(),
-                updated_at: row.updated_at,
-                channel_id: channel_id_for_view(row.channel_id.as_str()),
-                audience_label: self
-                    .audience_label_for_storage(topic_id, row.channel_id.as_str())
-                    .await,
-            });
+            items.push(self.game_room_view(topic_id, row, dome_hosting).await);
         }
         self.append_context_domes(topic_id, &allowed, &mut items)
             .await?;
         Ok(items)
+    }
+
+    pub(crate) async fn game_room_view(
+        &self,
+        topic_id: &str,
+        row: GameRoomProjectionRow,
+        dome_hosting: Option<DomeHostingStateV1>,
+    ) -> GameRoomView {
+        GameRoomView {
+            audience_label: self
+                .audience_label_for_storage(topic_id, row.channel_id.as_str())
+                .await,
+            channel_id: channel_id_for_view(row.channel_id.as_str()),
+            room_id: row.room_id,
+            host_pubkey: row.host_pubkey,
+            title: row.title,
+            description: row.description,
+            status: row.status,
+            phase_label: row.phase_label,
+            scores: row
+                .scores
+                .into_iter()
+                .map(|score| GameScoreView {
+                    participant_id: score.participant_id,
+                    label: score.label,
+                    score: score.score,
+                })
+                .collect(),
+            room_kind: row.room_kind,
+            metaverse: row.metaverse,
+            dome_hosting,
+            action: row.action,
+            manifest_blob_hash: row.manifest_blob_hash.as_str().to_string(),
+            updated_at: row.updated_at,
+        }
     }
 
     pub async fn create_game_room(
@@ -162,7 +175,22 @@ impl AppService {
             }
         };
         let channel_id = private_state.as_ref().map(|state| state.channel_id.clone());
-        let participants = sanitize_game_participants(input.participants)?;
+        // action session の参加者は manifest に書かず、host の端末の session が受け付ける(ADR 0070 §5.2)。
+        let (participants, action) = match input.action {
+            Some(action) => {
+                if !input.participants.is_empty() {
+                    anyhow::bail!("action session rooms do not list participants");
+                }
+                let action = ActionSessionV1 {
+                    application_id: action.application_id,
+                    host_endpoint_id: self.services.transport.discovery().await?.local_endpoint_id,
+                    max_players: action.max_players,
+                };
+                validate_action_session(&action)?;
+                (Vec::new(), Some(action))
+            }
+            None => (sanitize_game_participants(input.participants)?, None),
+        };
         let now = Utc::now().timestamp_millis();
         // 切替後は作成時の bucket に entity の最新 state を置く(id の時刻から読み手が bucket を決める)。
         let source_replica_id =
@@ -204,8 +232,13 @@ impl AppService {
                     score: 0,
                 })
                 .collect(),
-            room_kind: GameRoomKind::ScoreGame,
+            room_kind: if action.is_some() {
+                GameRoomKind::ActionSession
+            } else {
+                GameRoomKind::ScoreGame
+            },
             metaverse: None,
+            action,
             updated_at: now,
         };
         let projection_guard = self.services.game_room_projections.lock(&room_id).await;
@@ -348,6 +381,7 @@ impl AppService {
             scores: Vec::new(),
             room_kind: GameRoomKind::MetaverseRoom,
             metaverse: Some(metaverse),
+            action: None,
             updated_at: now,
         };
         let instance_manifest = dome_instance_manifest_from_game_manifest(&manifest)?;

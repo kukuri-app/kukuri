@@ -113,6 +113,7 @@
     ]
   },
   "dome_hosting": null,
+  "action": null,
   "manifest_blob_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   "updated_at": 1700000430,
   "channel_id": "chan-1",

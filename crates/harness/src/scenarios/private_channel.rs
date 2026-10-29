@@ -547,6 +547,7 @@ pub(crate) async fn run_private_channel_invite_connectivity(
                 title: "private finals".to_string(),
                 description: "core bracket".to_string(),
                 participants: vec!["Alice".to_string(), "Bob".to_string()],
+                action: None,
             })
             .await
             .context("failed to create private game room")?;

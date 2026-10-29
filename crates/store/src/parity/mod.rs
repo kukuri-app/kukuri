@@ -32,11 +32,11 @@
 use crate::*;
 
 use kukuri_core::{
-    AssetRef, AssetRole, CustomReactionAssetSnapshotV1, DomeCustomizationV1, DomeInstanceStatusV1,
-    DomePresetRefV1, GameRoomKind, GameRoomStatus, GameScoreEntry, KukuriEnvelope,
-    LiveSessionStatus, MetaverseAssetKind, MetaverseAssetRef, MetaverseDomeV1, MetaversePrimitive,
-    MetaverseRoomChatMessageV1, MetaverseRoomSpawnV1, MetaverseRoomStateV1, RepostSourceSnapshotV1,
-    SpatialContextV1, TopicId,
+    ActionSessionV1, AssetRef, AssetRole, CustomReactionAssetSnapshotV1, DomeCustomizationV1,
+    DomeInstanceStatusV1, DomePresetRefV1, GameRoomKind, GameRoomStatus, GameScoreEntry,
+    KukuriEnvelope, LiveSessionStatus, MetaverseAssetKind, MetaverseAssetRef, MetaverseDomeV1,
+    MetaversePrimitive, MetaverseRoomChatMessageV1, MetaverseRoomSpawnV1, MetaverseRoomStateV1,
+    RepostSourceSnapshotV1, SpatialContextV1, TopicId,
 };
 use kukuri_core::{
     BlobHash, EnvelopeId, FollowEdgeStatus, ObjectStatus, PayloadRef, ReactionKeyKind, ReplicaId,
@@ -232,6 +232,7 @@ fn parity_game_room(
         scores: Vec::new(),
         room_kind: GameRoomKind::ScoreGame,
         metaverse: None,
+        action: None,
         updated_at,
         source_replica_id: ReplicaId::new(format!("topic::{topic_id}")),
         source_key: format!("games/{room_id}/manifest"),

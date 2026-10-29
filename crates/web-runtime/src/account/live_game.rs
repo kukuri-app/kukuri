@@ -147,6 +147,10 @@ impl LiveGameProjectionStore for IndexedDbCache {
 
     /// score の revision が新しいとき（どちらかに revision が無いときも）だけ置き換える。
     async fn upsert_game_room_cache(&self, row: GameRoomProjectionRow) -> Result<()> {
+        // Web からは action session に参加できないので、その行は置かない(#1978 の判断)。
+        if row.action.is_some() {
+            return Ok(());
+        }
         self.run(move |db| async move {
             let tx = Txn::begin(&db.idb, &[GAME_ROOMS], Mode::Write)?;
             let existing =
@@ -178,6 +182,18 @@ impl LiveGameProjectionStore for IndexedDbCache {
             rows::scan(&tx, GAME_ROOMS, Some("channel"), &range, true, limit).await
         })
         .await
+    }
+
+    /// action session の行は置かない(`upsert_game_room_cache`)。
+    async fn list_channel_action_rooms(
+        &self,
+        _topic_id: &str,
+        _channel_id: &str,
+        _application_id: &str,
+        _before: Option<(i64, String)>,
+        _limit: usize,
+    ) -> Result<Vec<GameRoomProjectionRow>> {
+        Ok(Vec::new())
     }
 
     async fn get_game_room(

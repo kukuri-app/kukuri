@@ -509,8 +509,12 @@ impl VerifiedGameRoom {
             return Err(SessionRejection::BucketTimeMismatch);
         }
         let signer = signed.map(|(signer, _)| signer);
+        // action の metadata は action session の room だけが持つ(一覧の範囲を他の種類に混ぜない。#1978)。
+        if manifest.action.is_some() != (manifest.room_kind == GameRoomKind::ActionSession) {
+            return Err(SessionRejection::ManifestMismatch);
+        }
         match manifest.room_kind {
-            GameRoomKind::ScoreGame => {
+            GameRoomKind::ScoreGame | GameRoomKind::ActionSession => {
                 let Some(signer) = signer else {
                     return Err(SessionRejection::SignedManifestUnavailable);
                 };
@@ -522,6 +526,13 @@ impl VerifiedGameRoom {
                 }
                 if manifest.score_revision.is_none_or(|revision| revision < 1) {
                     return Err(SessionRejection::InvalidRevision);
+                }
+                if manifest
+                    .action
+                    .as_ref()
+                    .is_some_and(|action| kukuri_core::validate_action_session(action).is_err())
+                {
+                    return Err(SessionRejection::ManifestMismatch);
                 }
             }
             GameRoomKind::MetaverseRoom => {
@@ -756,7 +767,9 @@ pub(crate) async fn load_verified_game_room(
             && newest
                 .as_ref()
                 .is_none_or(|current| match verified.manifest.room_kind {
-                    GameRoomKind::ScoreGame => verified.score_revision() > current.score_revision(),
+                    GameRoomKind::ScoreGame | GameRoomKind::ActionSession => {
+                        verified.score_revision() > current.score_revision()
+                    }
                     GameRoomKind::MetaverseRoom => {
                         verified.state.updated_at > current.state.updated_at
                     }

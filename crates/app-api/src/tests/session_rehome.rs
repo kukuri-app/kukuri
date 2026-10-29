@@ -42,6 +42,7 @@ fn game_input() -> CreateGameRoomInput {
         title: "room".into(),
         description: String::new(),
         participants: vec!["Alice".into(), "Bob".into()],
+        action: None,
     }
 }
 

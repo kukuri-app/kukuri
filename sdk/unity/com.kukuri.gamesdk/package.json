@@ -5,7 +5,8 @@
   "description": "kukuri の P2P の SNS・Live・アセット配布・ゲーム通信を Unity から使う SDK（ADR 0070）。Windows x64 の Unity 6.3 LTS が対象。",
   "unity": "6000.3",
   "dependencies": {
-    "com.unity.nuget.newtonsoft-json": "3.2.2"
+    "com.unity.nuget.newtonsoft-json": "3.2.2",
+    "com.unity.ugui": "2.0.0"
   },
   "samples": [
     {

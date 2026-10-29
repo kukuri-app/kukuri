@@ -298,6 +298,20 @@ impl DesktopRuntime {
             .await
     }
 
+    pub async fn list_action_rooms(
+        &self,
+        request: crate::ListActionRoomsRequest,
+    ) -> Result<kukuri_app_api::GameRoomPage> {
+        self.app_service
+            .list_action_rooms(
+                request.topic.as_str(),
+                request.scope,
+                request.application_id.as_str(),
+                request.cursor.as_deref(),
+            )
+            .await
+    }
+
     pub async fn create_game_room(&self, request: CreateGameRoomRequest) -> Result<String> {
         self.app_service
             .create_game_room_in_channel(
@@ -307,6 +321,7 @@ impl DesktopRuntime {
                     title: request.title,
                     description: request.description,
                     participants: request.participants,
+                    action: request.action,
                 },
             )
             .await

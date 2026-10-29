@@ -204,6 +204,7 @@ impl SessionFixture {
                         title: "game".into(),
                         description: String::new(),
                         participants: vec!["Alice".into(), "Bob".into()],
+                        action: None,
                     },
                 )
                 .await

@@ -37,8 +37,10 @@ pub(super) fn game_room() -> Value {
     view(json!({
         "room_id": string(), "host_pubkey": string(), "title": string(), "description": string(),
         "status": status(), "phase_label": nullable(string()), "scores": array(score()),
-        "room_kind": {"enum": ["score_game", "metaverse_room"]},
+        "room_kind": {"enum": ["score_game", "metaverse_room", "action_session"]},
         "metaverse": nullable(metaverse_state()), "dome_hosting": nullable(hosting_state()),
+        "action": nullable(view(json!({"application_id": string(), "host_endpoint_id": string(),
+            "max_players": unsigned()}))),
         "manifest_blob_hash": string(), "updated_at": integer(), "channel_id": nullable(string()),
         "audience_label": string()
     }))
