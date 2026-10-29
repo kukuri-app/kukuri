@@ -145,3 +145,70 @@ pub fn send_secret(handle: *mut KukuriHandle, request: &[u8], secret: &[u8]) -> 
         )
     }
 }
+
+/// process の中で `client` を Sidecar として公開し、Sidecar の mode の handle で接続する（Windows だけ）。
+/// drop で server を止め、client を close する。
+#[cfg(windows)]
+pub struct SidecarServer {
+    pub handle: *mut KukuriHandle,
+    pub profile_dir: tempfile::TempDir,
+    stop: tokio::sync::watch::Sender<bool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(windows)]
+impl SidecarServer {
+    pub fn start(client: kukuri_game_sdk::SdkClient) -> Self {
+        let profile_dir = tempfile::tempdir().unwrap();
+        let dir = profile_dir.path().to_path_buf();
+        let (stop, stopped) = tokio::sync::watch::channel(false);
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let mut client = client;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime
+                .block_on(kukuri_game_sdk::sidecar::serve(
+                    &client,
+                    &dir,
+                    stopped,
+                    || {
+                        let _ = ready_tx.send(());
+                    },
+                ))
+                .unwrap();
+            client.close();
+        });
+        ready_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let handle = Self::connect(profile_dir.path());
+        Self {
+            handle,
+            profile_dir,
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    /// 同じ Sidecar へ新しい handle で接続する。
+    pub fn connect(profile_dir: &std::path::Path) -> *mut KukuriHandle {
+        let config =
+            json!({"profile": PROFILE, "profile_dir": profile_dir, "mode": "sidecar"}).to_string();
+        let mut handle = std::ptr::null_mut();
+        let status =
+            unsafe { kukuri_sdk_open(ABI_VERSION, config.as_ptr(), config.len(), &mut handle) };
+        assert_eq!(status, Status::Ok as i32);
+        handle
+    }
+}
+
+#[cfg(windows)]
+impl Drop for SidecarServer {
+    fn drop(&mut self) {
+        let _ = self.stop.send(true);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}

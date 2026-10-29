@@ -39,7 +39,7 @@ Discussion #1972 は、P2P のアセット配布、ロビーとゲーム通信�
 | runtime・account・同意・購読・profile の所有 | `kukuri-desktop-runtime` | `ClientHost`、`DesktopRuntime`、`ProfileLease`（profile の file lock と種類の marker）、account 作成・暗号化 export/import、app 同意・CN 同意 | profile の種類 `GameSdk`（§4） |
 | command の定義・検証・実行 | `kukuri-cli` の `registry` / `dispatcher` / `protocol` / `session` | 登録簿・dispatcher・型付き error・secret frame | §3 の表の新しい command を同じ登録簿へ登録する |
 | C ABI | 新規 `crates/game-sdk`（package `kukuri-game-sdk`、`cdylib` と `rlib`） | `kukuri-cli` の dispatcher を process 内で呼ぶ | handle・要求の受付・結果と event の待ち行列・batch の所有と解放・panic の隔離 |
-| Local Sidecar | `kukuri-cli` の常駐プロセス | Linux の常駐プロセスと同じ dispatcher・profile 所有 | Windows のローカル IPC（§8）と binary frame |
+| Local Sidecar | `crates/game-sdk` の binary `kukuri-sdk-sidecar` | FFI と同じ `SdkClient`（`kukuri-cli` の dispatcher と profile の所有）を Sidecar の process で動かす | Windows の named pipe の中継（§8.2） |
 | ゲーム通信 | `kukuri-iroh-node` | media の受け口の認可（最初の stream で認可要求、5 秒ごとの再評価）、Direct → Relay Supported の接続順 | 専用 ALPN の session（datagram と stream） |
 | アセット配布 | `kukuri-core` / `kukuri-app-api` / blob・docs・hint | docs の署名つき record、blob の取得・保持、公開 blob の発見（ADR 0063） | 発行者の署名つき manifest の型と検証 |
 | Live の映像 | `kukuri-desktop-runtime` の live media | `push_live_video` / `next_live_video`、署名・転送・認可 | libvpx による native の VP8 圧縮・復号（§8.3） |
@@ -85,7 +85,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | 関数 | 働き | 待ち |
 | --- | --- | --- |
 | `kukuri_sdk_abi_version()` | ABI の版を返す。C# は読み込み直後に照合し、違えば理由を示して開始しない | なし |
-| `kukuri_sdk_open(abi_version, config, out_handle)` | ABI の版と profile（名前と directory）を指定して handle を作る。版が違えば `ABI_MISMATCH` で handle を作らない。runtime の起動は背景で進み、完了を `startup_status_changed` の event で知らせる。起動に失敗したら（`profile_in_use` 等）、要求の応答がその error を返す | なし |
+| `kukuri_sdk_open(abi_version, config, out_handle)` | ABI の版と profile（名前と directory）を指定して handle を作る。版が違えば `ABI_MISMATCH` で handle を作らない。runtime の起動は背景で進み、完了を `startup_status_changed` の event で知らせる。起動に失敗したら（`profile_in_use` 等）、要求の応答がその error を返す。Sidecar の mode では runtime は既に動いており、接続の前の event は渡さないので（§8.2）、`get_desktop_startup_status` で状態を読む | なし |
 | `kukuri_sdk_send(handle, request, secret)` | 要求を待ち行列に入れて即座に戻る。結果は poll で受ける | なし |
 | `kukuri_sdk_send_binary(handle, kind, target, bytes)` | session の packet（datagram・stream）と、配信する映像・音声の bytes を渡す。`target` は session ID または Live の session ID。最初に使う #1979 が、kind と batch の bytes の項目と一緒に足す | なし |
 | `kukuri_sdk_cancel(handle, request_id)` | 実行前の要求を取り消す | なし |
@@ -256,8 +256,11 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 
 - Windows の named pipe を使う。名前は profile directory から決め（`\\.\pipe\kukuri-sdk-<profile directory の hash>`）、同じ profile の Sidecar が二つ動かないようにする。
 - pipe は `FILE_FLAG_FIRST_PIPE_INSTANCE` で作り（同じ名前の pipe を先に作られていたら起動しない）、remote の client を拒否し、DACL は Sidecar を起動した user だけに読み書きを許す。TCP の listen はしない。
-- frame は CLI の Unix socket と同じ要求・応答の JSON に、bytes の frame（kind・target・長さ）を足したもの。上限は §3 と同じ。
-- client の切断と再接続は Sidecar の runtime を止めない。切断時の未完了の要求の結果は §3 の表のとおり。
+- Sidecar の process は FFI と同じ `SdkClient` を持ち、pipe は send・cancel・poll を中継するだけにする。待ち行列・取消・期限・event の上限の意味は FFI と同じコードが担い、同じ fixture（§10）を両方へ流して確かめる（#1976 AC-1）。`kukuri-cli` の bin は `kukuri-game-sdk` に依存できない（`kukuri-game-sdk` が `kukuri-cli` の lib に依存する）ので、Sidecar は `kukuri-game-sdk` の binary `kukuri-sdk-sidecar` に置く。Linux の CLI の常駐プロセスと protocol は変えない。
+- frame は長さ（u32）つきの bytes。最初の frame（hello）で ABI の版と profile の名前・directory を照合し、合わなければ handler に届く前に理由の code（`protocol_mismatch`・`authorization_failed`）を返して切る。
+- 接続は一度に一つ。Sidecar は接続を受けるとすぐ次の pipe を用意し、接続中に来た別の client には hello への返事で `profile_in_use` を返す（その client の要求は `profile_in_use` で終わる）。切断の直後に接続し直す client は使用中で断られない。
+- client の close は接続を切るだけで、Sidecar の runtime（identity・P2P の接続）は止めない。切断で応答を待っていた要求の結果は §3 の表のとおりで（読み取りは `interrupted`、書き込みは `operation_outcome_unknown`）、Sidecar は切断した接続の要求の応答を捨て、接続し直した client にも渡さない。接続し直した client には、接続していない間の event も渡さない（状態を読み直す）。
+- Sidecar は `kukuri-sdk-sidecar run --profile <名前> --profile-dir <絶対 path>` で起動し、`stop`（同じ引数）か Ctrl+C で止める。Unity の Player は Sidecar を起動しない（§7）。
 
 #### 8.3 映像と音声
 
@@ -379,7 +382,7 @@ probe のコードは repository に残していない（この節の値の根�
 ## Consequences
 
 - SDK は CLI と同じ登録簿を使うため、command を足すと desktop の CLI と SDK の両方で使える。登録簿の変更は両方の試験で確かめる。
-- Windows の常駐プロセスは CLI 全体の Windows 移植ではなく、SDK の開発用 Sidecar として必要な範囲に限る。
+- Windows の Sidecar は CLI 全体の Windows 移植ではなく、SDK の開発用として `SdkClient` を中継する範囲に限る。
 - 4 本柱の正本は既存の docs・blob・hint・投稿・Live のままで、SDK だけのデータの正本は作らない。新しく分類したのは §5.1〜§5.3（SDK の profile と要求の経路、ゲームの通信、アセット配布）である。
 - Unity の版・映像方式・閾値は §8 で確定した。閾値は結果を見て緩めず、未計測のものを達成とは扱わない。libvpx の BSD-3-Clause と PATENTS の表示は #1984 の第三者の notice に含める。
 
