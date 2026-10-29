@@ -27,6 +27,8 @@ const MAX_FRAME_BYTES: usize = 64 << 20;
 const ERROR_PIPE_BUSY: i32 = 231;
 /// 使用中の pipe を開き直す回数（5 ms ごと、合わせて 100 ms まで）。
 const PIPE_BUSY_RETRIES: usize = 20;
+/// 接続から hello までの期限。hello を送らない接続が他の client を締め出し続けないようにする。
+const HELLO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// profile directory から決める pipe の名前。大文字小文字と区切りの違いで別の Sidecar にならないよう正規化する。
 pub fn pipe_name(profile_dir: &Path) -> String {
@@ -42,10 +44,13 @@ pub fn pipe_name(profile_dir: &Path) -> String {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Op {
+    /// 最初の frame。`stop` なら要求を受けずに Sidecar を止める（`kukuri-sdk-sidecar stop`。接続中の client がいても止まる）。
     Hello {
         abi_version: u32,
         profile: String,
         profile_dir: PathBuf,
+        #[serde(default)]
+        stop: bool,
     },
     /// 続く frame は要求、`secret` なら秘密の入力。
     Send {
@@ -58,8 +63,6 @@ enum Op {
         max_items: usize,
         max_bytes: usize,
     },
-    /// Sidecar を止める（`kukuri-sdk-sidecar stop`）。
-    Shutdown,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -156,11 +159,20 @@ pub async fn serve(
         unsafe { options.create_with_security_attributes_raw(&name, security.as_ptr()) }
     };
     let mut server = create(true)?;
+    let halt = std::sync::Arc::new(tokio::sync::Notify::new());
     ready();
     loop {
         tokio::select! {
             _ = stop.wait_for(|stopped| *stopped) => return Ok(()),
-            connected = server.connect() => connected?,
+            // 接続が終わる間際に届いた止める要求（返事は済んでいる）。
+            _ = halt.notified() => return Ok(()),
+            connected = server.connect() => {
+                // 開いてすぐ閉じた client などは、その pipe を捨てて次を待つ（Sidecar は止めない）。
+                if connected.is_err() {
+                    server = create(false)?;
+                    continue;
+                }
+            }
         }
         // 次の接続を受ける pipe をすぐ用意する（切断の直後に接続し直す client が使用中で断られないように）。
         let mut pipe = std::mem::replace(&mut server, create(false)?);
@@ -170,28 +182,79 @@ pub async fn serve(
             loop {
                 tokio::select! {
                     shutdown = &mut attachment => break shutdown,
+                    _ = halt.notified() => break true,
                     connected = server.connect() => {
-                        connected?;
+                        if connected.is_err() {
+                            server = create(false)?;
+                            continue;
+                        }
                         // 接続は一度に一つ。接続中に来た別の client は同じ profile の二重の所有として断る。
+                        // 止める要求だけは受ける。
                         let busy = std::mem::replace(&mut server, create(false)?);
-                        tokio::spawn(refuse_busy(busy));
+                        tokio::spawn(refuse_busy(
+                            busy,
+                            client.profile().to_owned(),
+                            profile_dir.to_path_buf(),
+                            halt.clone(),
+                        ));
                     }
                 }
             }
         };
-        let _ = pipe.disconnect();
+        // disconnect は client がまだ読んでいない返事を捨てるので呼ばない。handle を閉じるだけで接続は終わる。
+        drop(pipe);
         if shutdown {
             return Ok(());
         }
     }
 }
 
-async fn refuse_busy(mut pipe: NamedPipeServer) {
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(1), read_frame(&mut pipe)).await;
-    let mut reply = Reply::status(Status::InvalidArgument);
-    reply.code = Some(error_code::PROFILE_IN_USE.into());
-    let _ = write_reply(&mut pipe, &reply).await;
-    let _ = pipe.disconnect();
+async fn refuse_busy(
+    mut pipe: NamedPipeServer,
+    profile: String,
+    profile_dir: PathBuf,
+    halt: std::sync::Arc<tokio::sync::Notify>,
+) {
+    let hello = read_hello(&mut pipe).await;
+    if let Ok(true) = check_hello(hello.as_ref(), &profile, &profile_dir) {
+        let _ = write_reply(&mut pipe, &Reply::status(Status::Ok)).await;
+        halt.notify_one();
+    } else {
+        let mut reply = Reply::status(Status::InvalidArgument);
+        reply.code = Some(error_code::PROFILE_IN_USE.into());
+        let _ = write_reply(&mut pipe, &reply).await;
+    }
+    // disconnect は返事を捨てるので呼ばず、handle を閉じるだけにする。
+    drop(pipe);
+}
+
+async fn read_hello(pipe: &mut NamedPipeServer) -> Option<Op> {
+    let frame = tokio::time::timeout(HELLO_TIMEOUT, read_frame(pipe))
+        .await
+        .ok()?
+        .ok()?;
+    serde_json::from_slice(&frame).ok()
+}
+
+/// hello の ABI の版と profile を照合する。通れば止める要求かどうか、断るなら返事の状態と理由の code。
+fn check_hello(
+    hello: Option<&Op>,
+    profile: &str,
+    profile_dir: &Path,
+) -> Result<bool, (Status, &'static str)> {
+    match hello {
+        Some(Op::Hello { abi_version, .. }) if *abi_version != ABI_VERSION => {
+            Err((Status::AbiMismatch, error_code::PROTOCOL_MISMATCH))
+        }
+        Some(Op::Hello {
+            profile: claimed,
+            profile_dir: dir,
+            stop,
+            ..
+        }) if claimed == profile && pipe_name(dir) == pipe_name(profile_dir) => Ok(*stop),
+        Some(Op::Hello { .. }) => Err((Status::InvalidArgument, error_code::AUTHORIZATION_FAILED)),
+        _ => Err((Status::InvalidArgument, error_code::INVALID_REQUEST)),
+    }
 }
 
 /// 一つの接続を中継する。shutdown を受けたら true。
@@ -201,32 +264,19 @@ async fn attach(
     profile_dir: &Path,
     mut stop: watch::Receiver<bool>,
 ) -> bool {
-    let hello = match read_frame(pipe).await {
-        Ok(frame) => serde_json::from_slice::<Op>(&frame).ok(),
-        Err(_) => return false,
-    };
-    let refused = match &hello {
-        Some(Op::Hello { abi_version, .. }) if *abi_version != ABI_VERSION => {
-            Some((Status::AbiMismatch, error_code::PROTOCOL_MISMATCH))
+    let hello = read_hello(pipe).await;
+    match check_hello(hello.as_ref(), client.profile(), profile_dir) {
+        Err((status, code)) => {
+            let mut reply = Reply::status(status);
+            reply.code = Some(code.into());
+            let _ = write_reply(pipe, &reply).await;
+            return false;
         }
-        Some(Op::Hello {
-            profile,
-            profile_dir: dir,
-            ..
-        }) if profile != client.profile() || pipe_name(dir) != pipe_name(profile_dir) => {
-            Some((Status::InvalidArgument, error_code::AUTHORIZATION_FAILED))
+        Ok(stop) => {
+            if write_reply(pipe, &Reply::status(Status::Ok)).await.is_err() || stop {
+                return stop;
+            }
         }
-        Some(Op::Hello { .. }) => None,
-        _ => Some((Status::InvalidArgument, error_code::INVALID_REQUEST)),
-    };
-    if let Some((status, code)) = refused {
-        let mut reply = Reply::status(status);
-        reply.code = Some(code.into());
-        let _ = write_reply(pipe, &reply).await;
-        return false;
-    }
-    if write_reply(pipe, &Reply::status(Status::Ok)).await.is_err() {
-        return false;
     }
     // 新しい受け手は状態を読み直すので、接続していない間に溜まった event は渡さない。
     client.clear_events();
@@ -288,10 +338,6 @@ async fn attach(
                 }
                 Err(status) => write_reply(pipe, &Reply::status(status)).await,
             },
-            Ok(Op::Shutdown) => {
-                let _ = write_reply(pipe, &Reply::status(Status::Ok)).await;
-                break true;
-            }
             Ok(Op::Hello { .. }) | Err(_) => break false,
         };
         if reply.is_err() {
@@ -318,6 +364,10 @@ pub struct SidecarClient {
 
 impl SidecarClient {
     pub fn connect(profile: String, profile_dir: &Path) -> Self {
+        Self::connect_with(profile, profile_dir, false)
+    }
+
+    fn connect_with(profile: String, profile_dir: &Path, stop: bool) -> Self {
         let mut client = Self {
             pipe: None,
             outstanding: HashMap::new(),
@@ -351,6 +401,7 @@ impl SidecarClient {
             abi_version: ABI_VERSION,
             profile: client.profile.clone(),
             profile_dir: profile_dir.to_path_buf(),
+            stop,
         };
         let accepted = write_sync(
             &mut pipe,
@@ -549,16 +600,13 @@ impl SidecarClient {
     }
 }
 
-/// `kukuri-sdk-sidecar stop`: 動いている Sidecar を止める。
+/// `kukuri-sdk-sidecar stop`: 動いている Sidecar を止める（接続中の client がいても止まる）。
 pub fn request_shutdown(profile: String, profile_dir: &Path) -> Result<(), &'static str> {
-    let mut client = SidecarClient::connect(profile, profile_dir);
+    let client = SidecarClient::connect_with(profile, profile_dir, true);
     if client.pipe.is_none() {
         return Err(client.unavailable);
     }
-    client
-        .rpc(&Op::Shutdown, &[])
-        .map(|_| ())
-        .ok_or(error_code::DAEMON_UNAVAILABLE)
+    Ok(())
 }
 
 fn write_sync(pipe: &mut std::fs::File, frame: &[u8]) -> std::io::Result<()> {

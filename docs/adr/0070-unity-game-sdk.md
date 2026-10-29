@@ -260,7 +260,9 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 - frame は長さ（u32）つきの bytes。最初の frame（hello）で ABI の版と profile の名前・directory を照合し、合わなければ handler に届く前に理由の code（`protocol_mismatch`・`authorization_failed`）を返して切る。
 - 接続は一度に一つ。Sidecar は接続を受けるとすぐ次の pipe を用意し、接続中に来た別の client には hello への返事で `profile_in_use` を返す（その client の要求は `profile_in_use` で終わる）。切断の直後に接続し直す client は使用中で断られない。
 - client の close は接続を切るだけで、Sidecar の runtime（identity・P2P の接続）は止めない。切断で応答を待っていた要求の結果は §3 の表のとおりで（読み取りは `interrupted`、書き込みは `operation_outcome_unknown`）、Sidecar は切断した接続の要求の応答を捨て、接続し直した client にも渡さない。接続し直した client には、接続していない間の event も渡さない（状態を読み直す）。
-- Sidecar は `kukuri-sdk-sidecar run --profile <名前> --profile-dir <絶対 path>` で起動し、`stop`（同じ引数）か Ctrl+C で止める。Unity の Player は Sidecar を起動しない（§7）。
+- Sidecar は `kukuri-sdk-sidecar run --profile <名前> --profile-dir <絶対 path>` で起動し、`stop`（同じ引数）か Ctrl+C で止める。`stop` は hello に止める印を付けて送り、client が接続中でも止まる。同じ profile の二つ目の Sidecar は pipe を作れずに終わる（終了 code 3）。Unity の Player は Sidecar を起動しない（§7）。
+- 接続から hello までの期限は 5 秒。hello を送らない接続はその後に切り、他の client を締め出し続けない。開いてすぐ閉じた接続や接続の待ちの失敗では、その pipe を捨てて次の接続を待ち、Sidecar は止めない。直前に閉じた接続を片付けている短い間に来た client は `profile_in_use` で断られうるので、C# は少し待って接続し直す。
+- 返事を書いた接続を `DisconnectNamedPipe` で切ると、client がまだ読んでいない返事が捨てられる。Sidecar は接続を終えるとき handle を閉じるだけにし、断りの返事も client に届ける。
 
 #### 8.3 映像と音声
 
