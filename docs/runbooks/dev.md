@@ -428,6 +428,22 @@ cargo xtask desktop-package
 - `cargo xtask desktop-package` は `src-tauri/tauri.windows.conf.json` を使った Windows bundle config を前提にする
 - release workflow / updater manifest / draft release の手順は `docs/runbooks/release.md` を参照する
 
+## Unity の Game SDK（ADR 0070、#1977）
+
+Unity 6.3 LTS（6000.3.27f1）と Windows x64 が対象。UPM の package は `sdk/unity/com.kukuri.gamesdk`。
+
+```powershell
+# native（kukuri_game_sdk.dll と kukuri-sdk-sidecar.exe）を release で build して package へ置く（git には入れない）
+powershell -ExecutionPolicy Bypass -File sdk/unity/build-native.ps1
+# 空の Unity project に package を入れて EditMode の試験を流し、NGO なしで Player を build して Minimal sample を動かす
+powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1
+```
+
+- 自分の project へ入れるときは、`Packages/manifest.json` の `dependencies` に `"com.kukuri.gamesdk": "file:<repo>/sdk/unity/com.kukuri.gamesdk"` を足す。
+- DLL を build し直したら、DLL を読み込んだ Unity Editor を再起動する（Windows は読み込んだ native plugin を解放しないので、Editor が開いたままでは差し替わらない）。
+- 設定 asset（`kukuri/Settings`）の mode を Sidecar にすると、Play の開始時に Editor が `kukuri-sdk-sidecar.exe` を起動し、Play を止めても動かし続ける。Editor の終了か menu の「kukuri/Sidecar を止める」で止まる。Player の build は Sidecar を起動せず、既定は FFI。
+- Unity の project を深い path に置くと Windows の path の長さの上限に当たる。`test.ps1` は `%TEMP%\kgs-test` に作る。
+
 ## Linux AppImage／Deb生成
 
 Debは`bundle/deb/`へ生成され、同じ公開鍵で`.deb.sig`を検証する。`scripts/release/deb_package.py`がmetadata／ELF／desktop entry／icon／依存／noticeを実payloadから検査する。package CIは使い捨てrunnerで依存解決・install／reinstall／remove・データsentinel保持を確認する。GUI更新・権限承認は[Deb手順](linux-deb.md)と[#905作業記録](../progress/2026-09-07-issue-905-linux-deb-updater.md)を参照する。

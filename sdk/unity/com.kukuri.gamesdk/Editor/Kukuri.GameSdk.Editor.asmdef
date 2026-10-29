@@ -1,0 +1,14 @@
+{
+    "name": "Kukuri.GameSdk.Editor",
+    "rootNamespace": "Kukuri.GameSdk.Editor",
+    "references": ["Kukuri.GameSdk"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
