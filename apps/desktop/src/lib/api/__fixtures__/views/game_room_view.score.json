@@ -15,6 +15,7 @@
   "room_kind": "score_game",
   "metaverse": null,
   "dome_hosting": null,
+  "action": null,
   "manifest_blob_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "updated_at": 1700000400,
   "channel_id": null,

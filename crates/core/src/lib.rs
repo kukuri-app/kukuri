@@ -135,7 +135,7 @@ pub use envelope::{
     sign_envelope_json_at,
 };
 pub use game::{
-    DomeCustomizationV1, DomeDirection, DomeEnvironmentV1, DomeInstanceManifestV1,
+    ActionSessionV1, DomeCustomizationV1, DomeDirection, DomeEnvironmentV1, DomeInstanceManifestV1,
     DomeInstanceStateDocV1, DomeInstanceStatusV1, DomeMaterialPreset, DomeMovePhaseV1,
     DomeMoveRecordV1, DomeMoveStateDocV1, DomePresetManifestV1, DomePresetRefV1,
     DomePresetStateDocV1, DomeRelationshipDetachV1, DomeSurfaceCustomizationV1, FIXED_DOME_SPEC_ID,
@@ -147,9 +147,9 @@ pub use game::{
     MetaverseRoomPresenceV1, MetaverseRoomSpawnV1, MetaverseRoomStateV1, SharedRoomObjectV1,
     SpatialContextV1, build_game_session_envelope, build_metaverse_room_event_envelope,
     fallback_capsule_collider, fixed_dome_v1, interpolate_dome_environment,
-    resolve_metaverse_room_state, validate_dome_customization, validate_dome_instance_manifest,
-    validate_dome_move_record, validate_dome_preset_manifest, validate_dome_relationship_scope,
-    validate_metaverse_collider, validate_metaverse_room_state,
+    resolve_metaverse_room_state, validate_action_session, validate_dome_customization,
+    validate_dome_instance_manifest, validate_dome_move_record, validate_dome_preset_manifest,
+    validate_dome_relationship_scope, validate_metaverse_collider, validate_metaverse_room_state,
 };
 pub use identity_export::{
     ACCOUNT_KEY_EXPORT_KDF, ACCOUNT_KEY_EXPORT_MIN_PASSPHRASE_CHARS, ACCOUNT_KEY_EXPORT_PREFIX,

@@ -232,6 +232,7 @@ fn parity_game_room(
         scores: Vec::new(),
         room_kind: GameRoomKind::ScoreGame,
         metaverse: None,
+        action: None,
         updated_at,
         source_replica_id: ReplicaId::new(format!("topic::{topic_id}")),
         source_key: format!("games/{room_id}/manifest"),

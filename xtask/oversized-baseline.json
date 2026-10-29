@@ -9,7 +9,7 @@
       "path": "docs/THIRD_PARTY_NOTICES.md"
     },
     {
-      "lines": 1220,
+      "lines": 1221,
       "path": "crates/harness/src/scenarios/community_node.rs"
     },
     {
@@ -21,7 +21,7 @@
       "path": "crates/metaverse-host/src/lib.rs"
     },
     {
-      "lines": 1165,
+      "lines": 1185,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {
@@ -41,8 +41,12 @@
       "path": "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts"
     },
     {
-      "lines": 1065,
+      "lines": 1068,
       "path": "crates/store/fixtures/schema/store_schema_full.txt"
+    },
+    {
+      "lines": 1054,
+      "path": "crates/app-api/src/views.rs"
     },
     {
       "lines": 1054,
@@ -61,16 +65,12 @@
       "path": "crates/cn-user-api/tests/trust_relation.rs"
     },
     {
-      "lines": 1044,
-      "path": "crates/app-api/src/dome_hosting.rs"
-    },
-    {
-      "lines": 1044,
+      "lines": 1045,
       "path": "crates/harness/src/scenarios/desktop_smoke.rs"
     },
     {
-      "lines": 1034,
-      "path": "crates/app-api/src/views.rs"
+      "lines": 1044,
+      "path": "crates/app-api/src/dome_hosting.rs"
     },
     {
       "lines": 1030,

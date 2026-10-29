@@ -378,6 +378,10 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
         ),
         ("list_game_rooms", size1(DesktopRuntime::list_game_rooms)),
         (
+            "list_action_rooms",
+            size1(DesktopRuntime::list_action_rooms),
+        ),
+        (
             "list_joined_private_channels",
             size1(DesktopRuntime::list_joined_private_channels),
         ),

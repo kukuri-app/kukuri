@@ -238,6 +238,7 @@ impl Fixture {
                     title: "finals".into(),
                     description: "controlled hydration".into(),
                     participants: vec!["Alice".into(), "Bob".into()],
+                    action: None,
                 },
             )
             .await
@@ -617,6 +618,7 @@ async fn comparison_and_commit_exclude_same_room_writer(sqlite: bool) {
                 title: "other".into(),
                 description: String::new(),
                 participants: vec!["Alice".into(), "Bob".into()],
+                action: None,
             },
         )
         .await

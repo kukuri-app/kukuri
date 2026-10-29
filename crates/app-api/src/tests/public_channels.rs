@@ -488,6 +488,7 @@ async fn private_channels_cannot_take_the_public_channel_form_and_games_stay_out
                 title: "game".into(),
                 description: String::new(),
                 participants: vec!["a".into(), "b".into()],
+                action: None,
             },
         )
         .await

@@ -262,6 +262,7 @@ pub(crate) async fn run_desktop_smoke_scenario(
                                 title: title.clone(),
                                 description: description.clone(),
                                 participants: participants.clone(),
+                                action: None,
                             },
                         )
                         .await?;

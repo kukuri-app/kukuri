@@ -1,3 +1,5 @@
+use std::ops::Bound;
+
 use super::*;
 
 impl MemoryStore {
@@ -153,7 +155,7 @@ impl LiveGameProjectionStore for MemoryStore {
             remove_projection_index_entry(
                 &mut index,
                 previous.topic_id.as_str(),
-                previous.channel_id.as_str(),
+                &game_room_index_channel(previous),
                 previous.updated_at,
                 previous.room_id.as_str(),
             );
@@ -161,7 +163,7 @@ impl LiveGameProjectionStore for MemoryStore {
         insert_projection_index_entry(
             &mut index,
             row.topic_id.as_str(),
-            row.channel_id.as_str(),
+            &game_room_index_channel(&row),
             row.updated_at,
             row.room_id.as_str(),
         );
@@ -185,6 +187,38 @@ impl LiveGameProjectionStore for MemoryStore {
             .get(&scope)
             .into_iter()
             .flat_map(|entries| entries.iter().take(limit))
+            .filter_map(|(_, Reverse(room_id))| rows.get(room_id).cloned())
+            .collect())
+    }
+
+    async fn list_channel_action_rooms(
+        &self,
+        topic_id: &str,
+        channel_id: &str,
+        application_id: &str,
+        before: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<GameRoomProjectionRow>> {
+        if application_id.is_empty() {
+            return Ok(Vec::new());
+        }
+        let index = self.game_room_index.read().await;
+        let rows = self.game_room_rows.read().await;
+        let scope = (
+            topic_id.to_string(),
+            action_index_channel(channel_id, application_id),
+        );
+        let start = before.map(|(updated_at, room_id)| (Reverse(updated_at), Reverse(room_id)));
+        Ok(index
+            .get(&scope)
+            .into_iter()
+            .flat_map(|entries| {
+                entries.range((
+                    start.clone().map_or(Bound::Unbounded, Bound::Excluded),
+                    Bound::Unbounded,
+                ))
+            })
+            .take(limit)
             .filter_map(|(_, Reverse(room_id))| rows.get(room_id).cloned())
             .collect())
     }
@@ -284,6 +318,19 @@ impl LiveGameProjectionStore for MemoryStore {
             .retain(|(presence_topic, _, _, _), _| presence_topic != topic_id);
         Ok(())
     }
+}
+
+/// sqlite の (topic, channel, application_id) 索引と同じ範囲の分け方。action session の行は channel の key に
+/// application ID を付けた範囲に置き、ScoreGame・Dome の範囲に混ぜない(#1978)。
+fn game_room_index_channel(row: &GameRoomProjectionRow) -> String {
+    match &row.action {
+        Some(action) => action_index_channel(&row.channel_id, &action.application_id),
+        None => row.channel_id.clone(),
+    }
+}
+
+fn action_index_channel(channel_id: &str, application_id: &str) -> String {
+    format!("{channel_id}\u{0}{application_id}")
 }
 
 fn insert_projection_index_entry(

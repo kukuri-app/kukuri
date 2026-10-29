@@ -567,6 +567,7 @@ async fn fixture() -> Fixture {
                 title: "available game".into(),
                 description: String::new(),
                 participants: vec!["Alice".into(), "Bob".into()],
+                action: None,
             },
         )
         .await

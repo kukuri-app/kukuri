@@ -850,6 +850,7 @@ pub(crate) async fn run_community_node_connectivity(
                         title: "community finals".to_string(),
                         description: "set".to_string(),
                         participants: vec!["Alice".to_string(), "Bob".to_string()],
+                        action: None,
                     })
                     .await
                     .with_context(|| format!("failed to create game room on {game_owner_label}"))?;

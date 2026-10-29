@@ -173,6 +173,8 @@ table game_room_cache
   column cid=15 name=room_kind type=TEXT notnull=1 default=Some("'score_game'") pk=0
   column cid=16 name=metaverse_json type=TEXT notnull=0 default=None pk=0
   column cid=17 name=score_revision type=INTEGER notnull=0 default=None pk=0
+  column cid=18 name=action_json type=TEXT notnull=0 default=None pk=0
+  column cid=19 name=application_id type=TEXT notnull=1 default=Some("''") pk=0
 table legacy_store_retirement
   column cid=0 name=kind type=TEXT notnull=0 default=None pk=1
   column cid=1 name=cursor type=TEXT notnull=1 default=None pk=0
@@ -598,9 +600,10 @@ index idx_game_room_cache_topic_kind_updated table=game_room_cache unique=0 orig
 index idx_game_room_cache_topic_updated table=game_room_cache unique=0 origin=c partial=0
   key seqno=0 cid=1 name=Some("topic_id")
   key seqno=1 cid=14 name=Some("channel_id")
-  key seqno=2 cid=8 name=Some("updated_at")
-  key seqno=3 cid=0 name=Some("room_id")
-  sql=Some("CREATE INDEX idx_game_room_cache_topic_updated ON game_room_cache(topic_id, channel_id, updated_at DESC, room_id DESC)")
+  key seqno=2 cid=19 name=Some("application_id")
+  key seqno=3 cid=8 name=Some("updated_at")
+  key seqno=4 cid=0 name=Some("room_id")
+  sql=Some("CREATE INDEX idx_game_room_cache_topic_updated ON game_room_cache(topic_id, channel_id, application_id, updated_at DESC, room_id DESC)")
 index idx_game_room_cache_topic_updated_all table=game_room_cache unique=0 origin=c partial=0
   key seqno=0 cid=1 name=Some("topic_id")
   key seqno=1 cid=8 name=Some("updated_at")

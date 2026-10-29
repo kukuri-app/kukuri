@@ -244,6 +244,7 @@ async fn muted_author_is_filtered_from_live_and_game_lists() {
                 title: "muted room".into(),
                 description: "hidden".into(),
                 participants: vec!["Alice".into(), "Bob".into()],
+                action: None,
             },
         )
         .await
@@ -313,6 +314,7 @@ async fn blocked_author_is_filtered_from_live_and_game_lists_in_both_directions(
                 title: "blocked room".into(),
                 description: "hidden".into(),
                 participants: vec!["Alice".into(), "Bob".into()],
+                action: None,
             },
         )
         .await
@@ -445,6 +447,7 @@ async fn lease_start_rereads_existing_live_sessions_and_game_rooms() {
                 title: "existing room".into(),
                 description: "before the lease".into(),
                 participants: vec!["Alice".into(), "Bob".into()],
+                action: None,
             },
         )
         .await

@@ -375,6 +375,7 @@ async fn score_game_selection_uses_signed_revision() {
                 title: "revision target".into(),
                 description: String::new(),
                 participants: vec!["a".into(), "b".into()],
+                action: None,
             },
         )
         .await
@@ -495,6 +496,7 @@ async fn session_manifests_without_revision_are_rejected() {
                 title: "old game format".into(),
                 description: String::new(),
                 participants: vec!["a".into(), "b".into()],
+                action: None,
             },
         )
         .await
@@ -612,6 +614,7 @@ async fn forged_metaverse_room_is_not_listed_as_the_victims_dome() {
             room_kind: GameRoomKind::MetaverseRoom,
             metaverse: Some(metaverse),
             updated_at: Utc::now().timestamp_millis(),
+            action: None,
         };
         let envelope = build_game_session_envelope(
             &attacker_keys,

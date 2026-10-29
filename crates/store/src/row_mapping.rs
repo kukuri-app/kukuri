@@ -348,6 +348,9 @@ pub(crate) fn row_to_game_room_projection(
             .filter(|value| !value.trim().is_empty())
             .map(|value| serde_json::from_str(value.as_str()))
             .transpose()?,
+        action: opt_col::<String>(&row, "action_json")
+            .map(|value| serde_json::from_str(value.as_str()))
+            .transpose()?,
         updated_at: row.get("updated_at"),
         source_replica_id: ReplicaId::new(row.get::<String, _>("source_replica_id")),
         source_key: row.get("source_key"),
@@ -483,6 +486,7 @@ pub(crate) fn game_room_kind_name(kind: &GameRoomKind) -> &'static str {
     match kind {
         GameRoomKind::ScoreGame => "score_game",
         GameRoomKind::MetaverseRoom => "metaverse_room",
+        GameRoomKind::ActionSession => "action_session",
     }
 }
 
@@ -490,6 +494,7 @@ pub(crate) fn parse_game_room_kind(value: &str) -> Result<GameRoomKind> {
     match value {
         "" | "score_game" => Ok(GameRoomKind::ScoreGame),
         "metaverse_room" => Ok(GameRoomKind::MetaverseRoom),
+        "action_session" => Ok(GameRoomKind::ActionSession),
         _ => anyhow::bail!("unknown game room kind: {value}"),
     }
 }

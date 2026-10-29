@@ -475,6 +475,21 @@ pub struct CreateGameRoomRequest {
     pub title: String,
     pub description: String,
     pub participants: Vec<String>,
+    /// あれば action session の room を作る(SDK。`participants` は空。#1978)。
+    #[serde(default)]
+    pub action: Option<kukuri_app_api::CreateActionSessionInput>,
+}
+
+/// action session の room の一覧(SDK。#1978)。1 頁は 20 件。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListActionRoomsRequest {
+    pub topic: String,
+    #[serde(default)]
+    pub scope: TimelineScope,
+    pub application_id: String,
+    /// 前の頁の `next_cursor`。無ければ最初の頁。
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

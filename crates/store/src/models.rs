@@ -1,8 +1,9 @@
 use kukuri_core::{
-    AssetRef, BlobHash, CustomReactionAssetSnapshotV1, DirectMessageAttachmentManifestV1,
-    EnvelopeId, GameRoomKind, GameRoomStatus, GameScoreEntry, LiveRefV1, LiveSessionStatus,
-    MetaverseRoomStateV1, ObjectStatus, PayloadRef, PostWithdrawalReason, ReactionKeyKind,
-    ReplicaId, RepostSourceSnapshotV1, WithdrawalReasonVisibility,
+    ActionSessionV1, AssetRef, BlobHash, CustomReactionAssetSnapshotV1,
+    DirectMessageAttachmentManifestV1, EnvelopeId, GameRoomKind, GameRoomStatus, GameScoreEntry,
+    LiveRefV1, LiveSessionStatus, MetaverseRoomStateV1, ObjectStatus, PayloadRef,
+    PostWithdrawalReason, ReactionKeyKind, ReplicaId, RepostSourceSnapshotV1,
+    WithdrawalReasonVisibility,
 };
 use serde::{Deserialize, Serialize};
 
@@ -247,6 +248,9 @@ pub struct GameRoomProjectionRow {
     pub scores: Vec<GameScoreEntry>,
     pub room_kind: GameRoomKind,
     pub metaverse: Option<MetaverseRoomStateV1>,
+    /// action session の room だけが持つ(#1978)。
+    #[serde(default)]
+    pub action: Option<ActionSessionV1>,
     pub updated_at: i64,
     pub source_replica_id: ReplicaId,
     pub source_key: String,

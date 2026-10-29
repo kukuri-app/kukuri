@@ -153,6 +153,7 @@ async fn shared_replica_writes_use_only_registered_key_families() {
             title: "room".into(),
             description: "desc".into(),
             participants: vec!["Alice".into(), "Bob".into()],
+            action: None,
         },
     )
     .await

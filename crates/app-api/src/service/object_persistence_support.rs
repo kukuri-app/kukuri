@@ -674,6 +674,7 @@ pub(crate) fn game_projection_row(verified: &VerifiedGameRoom) -> GameRoomProjec
         scores: manifest.scores.clone(),
         room_kind: manifest.room_kind.clone(),
         metaverse: manifest.metaverse.clone(),
+        action: manifest.action.clone(),
         updated_at: state.updated_at,
         source_replica_id: verified.replica().clone(),
         source_key: stable_key("sessions/game", &format!("{}/state", state.room_id)),

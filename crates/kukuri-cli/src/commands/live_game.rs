@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kukuri_desktop_runtime::{
-    CreateGameRoomRequest, CreateLiveSessionRequest, ListGameRoomsRequest, ListLiveSessionsRequest,
-    LiveSessionCommandRequest, UpdateGameRoomRequest,
+    CreateGameRoomRequest, CreateLiveSessionRequest, ListActionRoomsRequest, ListGameRoomsRequest,
+    ListLiveSessionsRequest, LiveSessionCommandRequest, UpdateGameRoomRequest,
 };
 use serde_json::{Value, json};
 
@@ -24,6 +24,7 @@ enum Operation {
     JoinLive,
     LeaveLive,
     ListGame,
+    ListAction,
     CreateGame,
     UpdateGame,
 }
@@ -95,6 +96,12 @@ impl CommandHandler for Handler {
                     .await
                     .map_err(command_error)?,
             ),
+            Operation::ListAction => encode(
+                runtime
+                    .list_action_rooms(decode::<ListActionRoomsRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
             Operation::CreateGame => encode(
                 runtime
                     .create_game_room(decode::<CreateGameRoomRequest>(payload)?)
@@ -144,6 +151,22 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
             ),
             schema::array(super::game_views::game_room()),
         ),
+        // #1978: SDK の action session の room を、application ID ごとに更新の新しい順に 1 頁ずつ読む。
+        (
+            "list_action_rooms",
+            Read,
+            ListAction,
+            schema::object(
+                json!({"topic": {"type": "string"}, "scope": schema::timeline_scope(),
+                "application_id": {"type": "string"}, "cursor": schema::nullable(json!({"type": "string"}))}),
+                &["topic", "application_id"],
+            ),
+            schema::object(
+                json!({"items": schema::array(super::game_views::game_room()),
+                "next_cursor": schema::nullable(json!({"type": "string"}))}),
+                &["items", "next_cursor"],
+            ),
+        ),
         (
             "create_game_room",
             Write,
@@ -151,7 +174,11 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
             schema::object(
                 json!({"topic": {"type": "string"}, "channel_ref": schema::channel_ref(),
                 "title": {"type": "string"}, "description": {"type": "string"},
-                "participants": schema::array(json!({"type": "string"}))}),
+                "participants": schema::array(json!({"type": "string"})),
+                "action": schema::nullable(schema::object(
+                    json!({"application_id": {"type": "string"}, "max_players": {"type": "integer", "minimum": 1}}),
+                    &["application_id", "max_players"],
+                ))}),
                 &["topic", "title", "description", "participants"],
             ),
             json!({"type": "string", "description": "room_id"}),

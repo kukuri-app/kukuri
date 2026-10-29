@@ -219,7 +219,7 @@ start_post_id?: string | null, };
 
 export type GameRoomStatus = "Waiting" | "Running" | "Paused" | "Ended";
 
-export type GameRoomKind = "score_game" | "metaverse_room";
+export type GameRoomKind = "score_game" | "metaverse_room" | "action_session";
 
 export type GameScoreView = { participant_id: string, label: string, score: number, };
 
@@ -369,7 +369,21 @@ export type MetaverseRoomSpawnV1 = { position: [number, number, number], rotatio
 
 export type MetaverseRoomStateV1 = { world_version: number, instance_id: string, spatial_context: SpatialContextV1, instance_generation: number, instance_status: DomeInstanceStatusV1, relationship_detach?: DomeRelationshipDetachV1 | null, replacement_instance_id?: string | null, preset_ref: DomePresetRefV1, session_id: string, max_peers?: number | null, dome: MetaverseDomeV1, default_spawn: MetaverseRoomSpawnV1, asset_refs: Array<MetaverseAssetRef>, chat_history?: Array<MetaverseRoomChatMessageV1> | null, };
 
-export type GameRoomView = { room_id: string, host_pubkey: string, title: string, description: string, status: GameRoomStatus, phase_label?: string | null, scores: Array<GameScoreView>, room_kind: GameRoomKind, metaverse?: MetaverseRoomStateV1 | null, dome_hosting?: DomeHostingStateV1 | null, manifest_blob_hash: string, updated_at: number, channel_id?: string | null, audience_label: string, };
+export type ActionSessionV1 = { 
+/**
+ * ゲームを識別する ID。一覧はこの値ごとに引く。
+ */
+application_id: string, 
+/**
+ * 参加者が接続する host の端末の endpoint id。
+ */
+host_endpoint_id: string, max_players: number, };
+
+export type GameRoomView = { room_id: string, host_pubkey: string, title: string, description: string, status: GameRoomStatus, phase_label?: string | null, scores: Array<GameScoreView>, room_kind: GameRoomKind, metaverse?: MetaverseRoomStateV1 | null, dome_hosting?: DomeHostingStateV1 | null, 
+/**
+ * action session の room だけが持つ(#1978)。
+ */
+action?: ActionSessionV1 | null, manifest_blob_hash: string, updated_at: number, channel_id?: string | null, audience_label: string, };
 
 export type MetaverseRoomEventView = { envelope_id: string, content: MetaverseRoomEventEnvelopeContentV1, envelope: Record<string, unknown>, received_at: number, source_peer: string, };
 
@@ -967,7 +981,13 @@ export type SessionCandidateView = { replica_id: string, session_id: string, kin
 
 export type ListGameRoomsRequest = { topic: string, scope: TimelineScope, };
 
-export type CreateGameRoomRequest = { topic: string, channel_ref: ChannelRef, title: string, description: string, participants: Array<string>, };
+export type CreateActionSessionInput = { application_id: string, max_players: number, };
+
+export type CreateGameRoomRequest = { topic: string, channel_ref: ChannelRef, title: string, description: string, participants: Array<string>, 
+/**
+ * あれば action session の room を作る(SDK。`participants` は空。#1978)。
+ */
+action?: CreateActionSessionInput | null, };
 
 export type CreateMetaverseRoomRequest = { topic: string, channel_ref: ChannelRef, title: string, description: string, max_peers?: number | null, };
 

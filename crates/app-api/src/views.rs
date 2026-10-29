@@ -1,9 +1,9 @@
 use kukuri_core::{
-    AssetRole, ChannelAudienceKind, ChannelRef, ChannelSharingState, DomeConnectionProposalV1,
-    DomeConnectionRecordV1, DomeConnectionTerminalReasonV1, DomeCustomizationV1, DomeDirection,
-    DomeHostingLeaseV1, DomeHostingStateV1, DomeMoveRecordV1, DomeProposalDerivedStatusV1,
-    DomeProposalSelectionV1, DomeTopologyResolutionV1, GameRoomKind, GameRoomStatus,
-    KukuriEnvelope, LiveSessionStatus, MetaverseAssetKind, MetaverseAssetRef,
+    ActionSessionV1, AssetRole, ChannelAudienceKind, ChannelRef, ChannelSharingState,
+    DomeConnectionProposalV1, DomeConnectionRecordV1, DomeConnectionTerminalReasonV1,
+    DomeCustomizationV1, DomeDirection, DomeHostingLeaseV1, DomeHostingStateV1, DomeMoveRecordV1,
+    DomeProposalDerivedStatusV1, DomeProposalSelectionV1, DomeTopologyResolutionV1, GameRoomKind,
+    GameRoomStatus, KukuriEnvelope, LiveSessionStatus, MetaverseAssetKind, MetaverseAssetRef,
     MetaverseResourceBudgetConfig, MetaverseResourceMetricsV1, MetaverseRoomEventEnvelopeContentV1,
     MetaverseRoomEventV1, MetaverseRoomStateV1, SpatialContextV1,
 };
@@ -508,6 +508,8 @@ pub struct GameRoomView {
     pub room_kind: GameRoomKind,
     pub metaverse: Option<MetaverseRoomStateV1>,
     pub dome_hosting: Option<DomeHostingStateV1>,
+    /// action session の room だけが持つ(#1978)。
+    pub action: Option<ActionSessionV1>,
     pub manifest_blob_hash: String,
     pub updated_at: i64,
     pub channel_id: Option<String>,
@@ -536,6 +538,24 @@ pub struct CreateGameRoomInput {
     pub title: String,
     pub description: String,
     pub participants: Vec<String>,
+    /// あれば action session の room を作る(参加者は持たない。#1978)。
+    pub action: Option<CreateActionSessionInput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct CreateActionSessionInput {
+    pub application_id: String,
+    pub max_players: u32,
+}
+
+/// action session の room の 1 頁(#1978)。`next_cursor` があれば続きがある。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct GameRoomPage {
+    pub items: Vec<GameRoomView>,
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

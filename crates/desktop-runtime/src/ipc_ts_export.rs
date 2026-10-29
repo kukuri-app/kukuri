@@ -290,6 +290,7 @@ fn export_ipc_types() {
         MetaverseRoomEventEnvelopeContentV1,
         MetaverseRoomSpawnV1,
         MetaverseRoomStateV1,
+        kukuri_core::ActionSessionV1,
         GameRoomView,
         MetaverseRoomEventView,
         // core / transport の残り + newtype(string)
@@ -445,6 +446,7 @@ fn export_ipc_types() {
         kukuri_transport::PeerPage,
         kukuri_app_api::SessionCandidateView,
         ListGameRoomsRequest,
+        kukuri_app_api::CreateActionSessionInput,
         CreateGameRoomRequest,
         CreateMetaverseRoomRequest,
         PublishMetaverseRoomEventRequest,

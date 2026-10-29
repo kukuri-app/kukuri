@@ -478,6 +478,7 @@ async fn private_channel_invite_restores_after_restart_without_reimport() {
             title: "core room".into(),
             description: "private set".into(),
             participants: vec!["Alice".into(), "Bob".into()],
+            action: None,
         })
         .await
         .expect("create private game room");

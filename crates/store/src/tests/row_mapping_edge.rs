@@ -241,6 +241,7 @@ async fn game_room_status_legacy_aliases_map_to_current_variants() {
             scores: vec![],
             room_kind: GameRoomKind::ScoreGame,
             metaverse: None,
+            action: None,
             updated_at: 30,
             source_replica_id: ReplicaId::new("replica-game-edge"),
             source_key: "games/room-open/manifest".into(),

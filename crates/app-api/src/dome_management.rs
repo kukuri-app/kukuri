@@ -118,6 +118,7 @@ impl AppService {
             room_kind: GameRoomKind::MetaverseRoom,
             metaverse: manifest.metaverse,
             dome_hosting: Some(hosting),
+            action: None,
             manifest_blob_hash: state.current_manifest.hash.as_str().into(),
             updated_at: instance.updated_at,
             channel_id: channel_id_for_view(channel),
@@ -144,6 +145,7 @@ pub(crate) fn instance_management_manifest(
         participants: vec![],
         scores: vec![],
         room_kind: GameRoomKind::MetaverseRoom,
+        action: None,
         updated_at: instance.updated_at,
         metaverse: Some(kukuri_core::MetaverseRoomStateV1 {
             world_version: kukuri_core::METAVERSE_WORLD_VERSION,
