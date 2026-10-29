@@ -89,7 +89,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | `kukuri_sdk_send(handle, request, secret)` | 要求を待ち行列に入れて即座に戻る。結果は poll で受ける | なし |
 | `kukuri_sdk_send_binary(handle, kind, target, bytes)` | session の packet（datagram・stream）と、配信する映像・音声の bytes を渡す。`target` は session ID または Live の session ID | なし |
 | `kukuri_sdk_cancel(handle, request_id)` | 実行前の要求を取り消す | なし |
-| `kukuri_sdk_poll(handle, max_items, max_bytes, out_batch)` | 届いている応答・秘密の出力・event・bytes を上限まで batch に入れて返す。届いていなければ空の batch で戻る | なし |
+| `kukuri_sdk_poll(handle, max_items, max_bytes, out_batch)` | 届いている応答・秘密の出力・event・bytes を上限まで batch に入れて返す。1 件だけで `max_bytes` を超えるものは、その poll の最初の 1 件なら単独で返す。届いていなければ空の batch で戻る | なし |
 | `kukuri_sdk_batch_release(handle, batch)` | poll で受けた batch（中の JSON と bytes を含む）を解放する | なし |
 | `kukuri_sdk_close(handle)` | 購読・task・未解放の batch・DB lock を解放して handle を閉じる | 停止の完了まで（上限 5 秒） |
 
@@ -112,7 +112,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | 受けた stream の message | session ごとに 256 KiB | 捨てない。上限に達したら stream の読み取りを止め、QUIC の flow control で送り手を待たせる。poll で空いたら読み取りを再開する |
 | 受けた映像 | 視聴中の session ごとに 1 枚 | 新しい frame が来たら古い frame を捨てる |
 | poll 済みで未解放の batch | handle ごとに合計 64 MiB | 解放されるまで、新しい映像と datagram は捨て、stream は読み取りを止めたままにする。応答は予約した置き場に残る |
-| 1 回の poll | 呼出側の指定（最大 256 件・`max_bytes`）。Unity の既定は §8 | 残りは次の poll へ |
+| 1 回の poll | 呼出側の指定（最大 256 件・`max_bytes`）。Unity の既定は §8 | 残りは次の poll へ。1 件だけで `max_bytes` を超えるものは、次の poll の最初に単独で返す（大きな映像の frame も受け取れる） |
 | 要求の期限 | 既定 30 秒、指定できる上限 5 分（CLI と同じ） | `timeout` |
 
 - media・blob の本体を JSON に入れない。アセットは検証済みの file の path で渡し（§5.3）、映像と packet は bytes で渡す。
@@ -264,37 +264,39 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
   - build: `configure --target=x86_64-win64-vs17 --disable-vp9 --enable-realtime-only --enable-static-msvcrt --as=nasm` の project を MSBuild で `WholeProgramOptimization=false` で build する（全体最適化の object は Rust の link と合わない）。1.17.0 の VS の project は `vp8/common/x86`・`vp8/encoder/x86` の asm と `vpx_ports` の `emms_mmx.asm`・`float_control_word.asm` を含めないので、これらは nasm で別に組み立てて同じ DLL に link する。source は `chromium.googlesource.com/webm/libvpx` の tag `v1.17.0` から取得し、手順と checksum を #1984 の CI に置く。
   - 圧縮の設定: realtime、CBR、`g_lag_in_frames = 0`、`VP8E_SET_CPUUSED = 10`、4 thread。
 - 画質は既存の受信側の上限に合わせ、camera の上限（1280×720・30 fps・1.5 Mbps。ADR 0067 D8）で送る。既存の受信側はこれを超える frame と bitrate を捨てるためである。
-- 取り込み: 配信する camera の RenderTexture を `AsyncGPUReadback`（RGBA32）で読み、callback で bytes を `kukuri_sdk_send_binary` へ渡す（SDK が copy する）。I420 への変換と圧縮は Rust の worker thread で行い、Unity の main thread で圧縮しない。
+- 取り込み: 配信する camera の RenderTexture を `AsyncGPUReadback`（RGBA32）で読み、callback で bytes を `kukuri_sdk_send_binary` へ渡す（SDK が copy する）。I420 への変換と圧縮は Rust の worker thread で行い、Unity の main thread で圧縮しない。圧縮前の送り待ちは 1 枚で、新しい frame が来たら古い frame を捨てる。
 - 表示: 復号した I420 の 3 面を `live_video_frame` で渡し、Unity は R8 の texture 3 枚へ `SetPixelData` で上げ、shader で RGB にする。
-- 音声: `AudioListener` と同じ GameObject の component の `OnAudioFilterRead` でゲームの出力音（48 kHz の float）を受け、audio thread から `kukuri_sdk_send_binary` で渡す。Rust 側は既存のマイクの取り込み（moq-audio）の音と混ぜて、既存の Opus の track として送る。送り待ちは 200 ms 分までで、溢れたら古いものから捨てる。
+- 音声: `AudioListener` と同じ GameObject の component の `OnAudioFilterRead` でゲームの出力音（`AudioSettings.outputSampleRate` の rate と channel 数の float）を受け、audio thread から `kukuri_sdk_send_binary` で渡す。Rust 側は 48 kHz に変換し、既存のマイクの取り込み（moq-audio）の音と混ぜて、既存の Opus の track として送る。送り待ちは 200 ms 分までで、溢れたら古いものから捨てる。
+  - 今の moq-audio はマイクの取り込みから Opus の圧縮までを一続きに行うので、取り込みの後・圧縮の前に混ぜる口は #1982 が作る。
+  - マイクを off にしても（機器は閉じる。ADR 0067 §9）、ゲーム音は送り続ける。
 
 #### 8.4 性能の測定条件と閾値
 
 | 項目 | 固定する条件 |
 | --- | --- |
-| 機器 | Ryzen 7 7800X3D / RTX 4080 SUPER / 64 GB / Windows 11 の 1 台で 7 process を動かす |
+| 機器 | Ryzen 7 7800X3D / RTX 4080 SUPER / 64 GB / Windows 11 の 1 台。対戦者 2 人と視聴者 5 人の 7 つの Player（FFI）に加え、発行用の Sidecar と計測用の proxy を同じ PC で動かす |
 | 解像度 | 対戦者 2 人は 1920×1080、視聴者 5 人は 1280×720（window） |
 | 負荷 | 対戦 2 人。host の対戦者が試合の camera を配信し、視聴者 5 人が視聴する（直接の枠は 4 人なので、5 人目は転送で受ける）。試合中に Sidecar から 5 MiB の glb のスキンを 1 件発行し、対戦者 2 人が適用する |
-| network | 全 process の P2P の packet を、計測用の UDP の proxy（#1984 が harness に置く）に通す。片道 25 ms に packet ごとの 0〜5 ms の一様な遅延を足し（往復 50 ms・ゆらぎ 5 ms）、方向ごとに 1% を落とす。relay と DHT は使わない |
-| 時間と回数 | 準備の 10 秒の後に 3 分を測り、これを 5 回くり返す。家庭回線 2 拠点の手順は別に記録し、結果は参考値として PASS / FAIL に数えない |
+| network | 全 process の P2P の packet を、計測用の UDP の proxy（#1984 が harness に置く）に通す。片道は packet ごとに 22.5〜27.5 ms の一様な遅延（往復の平均 50 ms、片道のゆらぎの幅 5 ms）で、方向ごとに 1% を落とす（2026-10-29 のユーザー判断）。relay と DHT は使わないので、この条件で測れる経路は Direct P2P だけになる |
+| 時間と回数 | 準備の 10 秒の後に 3 分を測り、これを 5 回くり返す。memory の増加だけは、同じ負荷を 10 分続ける測定を別に 1 回行って判定する（2026-10-29 のユーザー判断）。家庭回線 2 拠点の手順と結果は #1984 の日本語の手順に記録し、参考値として PASS / FAIL に数えない（Relay Supported P2P と Relay Fallback の値はここでだけ出る） |
 | 時計 | 同じ PC の `Stopwatch`（QueryPerformanceCounter）で、process をまたいで時刻を比べる |
 
-閾値は、対戦者 2 人とも、5 回すべてで満たすこと。
+閾値は 5 回すべてで満たすこと。frame time・入力の確定・asset の反映は対戦者 2 人とも、映像遅延は視聴者 5 人全員、memory は 7 つの Player すべてで判定する。送信量は 3 分間の平均で判定する。
 
 | 項目 | 測り方 | 閾値 |
 | --- | --- | --- |
 | frame time | 対戦者の `Update` の間隔 | p95 ≤ 16.7 ms、p99 ≤ 25 ms |
 | 入力の確定 | キャッチの操作の frame から、host の確定 event を受けた frame まで | p95 ≤ 100 ms |
 | 映像遅延 | 配信者が frame に埋めた番号を視聴者の texture で読み、取り込みの時刻との差を取る | p95: 直接 ≤ 500 ms、転送 1 段 ≤ 800 ms |
-| asset の反映 | `publish_game_asset` の完了から、相手の Player でスキンを適用した frame まで | p95 ≤ 10 s。適用中の frame time の最大 ≤ 33 ms |
+| asset の反映 | `publish_game_asset` を送った時点（署名と blob の登録を含む）から、相手の Player でスキンを適用した frame まで（2026-10-29 のユーザー判断） | p95 ≤ 10 s。適用中の frame time の最大 ≤ 33 ms |
 | 送信量 | 経路（Direct P2P / Relay Supported P2P / Relay Fallback）ごとの送信 bytes | 対戦 ≤ 200 kbps / 人、配信者の上り ≤ 10 Mbps |
 | 切断からの復帰 | proxy で全 packet を 3 秒落とし、戻してから対戦の packet の往復と視聴の frame が再び届くまで | 対戦 ≤ 5 s、視聴 ≤ 20 s |
-| SDK の memory | SDK を開く直前との process の private bytes の差 | ≤ 256 MiB / process。10 分間の増加 5% 以内 |
+| SDK の memory | SDK の DLL の Rust 側が確保している bytes（確保量を数える global allocator で測る。2026-10-29 のユーザー判断） | ≤ 256 MiB / process。10 分の測定で、開始 1 分後からの増加が 5% 以内 |
 | poll | 1 frame の poll（64 件まで）にかかった時間 | p99 ≤ 1 ms |
 
 #### 8.5 poll の既定値
 
-Unity の 1 frame の poll は 64 件・1 MiB まで、かつ 1 ms を超えたら次の frame へ回す。
+Unity の 1 frame の poll は 64 件・1 MiB まで、かつ 1 ms を超えたら次の frame へ回す。1 MiB を超える 1 件（720p の I420 は約 1.3 MiB）は §3 の規則で単独で受け取る。
 
 #### 8.6 限定 probe の結果（2026-10-29）
 
@@ -303,7 +305,7 @@ probe のコードは repository に残していない（この節の値の根�
 | 確かめたこと | 結果 |
 | --- | --- |
 | build | 6000.3.27f1 で URP 17.3.0・NGO 2.13.3・glTFast 6.20.0 を入れた project の Mono と IL2CPP の Windows x64 Player が build できた |
-| C ABI の往復 | `kukuri-cli` の dispatcher を載せた cdylib を両方の Player から呼び、同意待ちの状態が返った。応答は次の frame の poll で届き、poll 1 回は p99 0.01 ms。DLL は 119 MB で、依存は OS の DLL と VCRUNTIME140 だけ（§8.1 で静的 CRT にする） |
+| C ABI の往復 | graphics は Direct3D 12。`kukuri-cli` の dispatcher を載せた cdylib を両方の Player から呼び、同意待ちの状態が返った。応答は次の frame の poll で届き、poll 1 回は p99 0.01 ms。DLL は 119 MB で、依存は OS の DLL と VCRUNTIME140 だけ（§8.1 で静的 CRT にする。映像の行の値は、libvpx を同じ DLL に link した構成で測った。静的 CRT の DLL は probe で確かめていないので、#1984 の CI と clean な環境で確かめる） |
 | named pipe | 1 KiB の往復 p50 40 µs・p99 100 µs、8 MiB の往復 約 400 MB/s。切断・再接続を 3 回くり返して成功し、同じ名前の first instance の二重作成は拒否された |
 | 映像 | 1280×720 の RenderTexture の readback は約 2 frame（p50 29〜33 ms）。RGBA → I420 は 1.5 ms、VP8 の圧縮は p50 2.1 ms・p95 3.9 ms、復号は p50 0.9 ms、I420 の 3 面の upload は p50 0.08 ms。取り込みから texture までは p50 33 ms。圧縮と変換は probe では main thread で行い、frame time の p95 が 18.5 ms に上がった（§8.3 で worker thread にする理由） |
 
