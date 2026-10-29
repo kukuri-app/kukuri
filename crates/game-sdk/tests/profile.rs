@@ -14,7 +14,8 @@ use kukuri_desktop_runtime::{ClientProfile, ClientProfileKind, ProfileLease};
 use kukuri_game_sdk::KukuriHandle;
 use serde_json::{Value, json};
 use support::{
-    PROFILE, error_code, finish, open_real, poll_once, request, response_for, send, send_secret,
+    PROFILE, error_code, finish, open_real, poll_once, request, response_for, seen_json, send,
+    send_secret,
 };
 
 fn isolated_environment() {
@@ -221,13 +222,16 @@ fn an_encrypted_export_imports_the_same_identity_and_a_wrong_passphrase_changes_
     );
     assert_eq!(public_key(game, "imported-key"), donor_key);
 
-    // 秘密の値は応答・event のどこにも出ない（残りの event も確かめる）。
-    for item in poll_once(game, 256)
-        .unwrap()
+    // 秘密の値は、これまでに受けた応答と event のどこにも出ない（秘密の出力の項目だけが export を持つ）。
+    poll_once(game, 256).unwrap();
+    poll_once(donor, 256).unwrap();
+    let seen: Vec<Vec<u8>> = seen_json(game)
         .into_iter()
-        .chain(poll_once(donor, 256).unwrap())
-    {
-        let text = String::from_utf8_lossy(&item.raw);
+        .chain(seen_json(donor))
+        .collect();
+    assert!(seen.len() > 10, "responses and events were recorded");
+    for raw in seen {
+        let text = String::from_utf8_lossy(&raw);
         assert!(
             !text.contains("sentinel") && !text.contains(&exported),
             "{text}"

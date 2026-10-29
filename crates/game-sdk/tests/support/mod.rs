@@ -58,7 +58,7 @@ pub fn poll_once(handle: *mut KukuriHandle, max_items: usize) -> Result<Vec<Poll
     }
     let view = unsafe { &*batch };
     let items = unsafe { std::slice::from_raw_parts(view.items, view.count) };
-    let polled = items
+    let polled: Vec<Polled> = items
         .iter()
         .map(|item| {
             let raw = unsafe { std::slice::from_raw_parts(item.data, item.len) }.to_vec();
@@ -73,7 +73,25 @@ pub fn poll_once(handle: *mut KukuriHandle, max_items: usize) -> Result<Vec<Poll
         unsafe { kukuri_sdk_batch_release(handle, batch) },
         Status::Ok as i32
     );
+    SEEN.lock().unwrap().extend(
+        polled
+            .iter()
+            .map(|item| (handle as usize, item.kind, item.raw.clone())),
+    );
     Ok(polled)
+}
+
+/// poll で受けたすべての項目（handle の address、種類、bytes）。秘密が出ていないことを後から確かめる。
+static SEEN: Mutex<Vec<(usize, u32, Vec<u8>)>> = Mutex::new(Vec::new());
+
+/// handle がこれまでに poll で受けた応答と event（秘密の出力の項目は除く）。
+pub fn seen_json(handle: *mut KukuriHandle) -> Vec<Vec<u8>> {
+    SEEN.lock()
+        .unwrap()
+        .iter()
+        .filter(|(owner, kind, _)| *owner == handle as usize && *kind != 2)
+        .map(|(_, _, raw)| raw.clone())
+        .collect()
 }
 
 /// 先に届いた応答（handle の address と応答）。一度の poll に複数の応答が入るので、探していない応答を残す。
