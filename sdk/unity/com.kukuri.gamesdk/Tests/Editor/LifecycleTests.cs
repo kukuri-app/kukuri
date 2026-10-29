@@ -139,8 +139,7 @@ namespace Kukuri.GameSdk.Tests
             // Dispose を呼ばずに残す（利用者の閉じ忘れ）。
             KukuriClient.Open(KukuriMode.Ffi, "p", ProfileDirectory);
             yield return new EnterPlayMode();
-            // domain の破棄で閉じたので、新しい domain から同じ profile を開ける。
-            Assert.AreEqual(0, KukuriClient.OpenHandles);
+            // domain の破棄で閉じたので、新しい domain から同じ profile を開ける（閉じていなければ profile_in_use）。
             yield return AssertProfileIsFree();
             yield return new ExitPlayMode();
         }

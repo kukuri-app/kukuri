@@ -51,14 +51,13 @@ namespace Kukuri.GameSdk
         /// Editor が Sidecar の mode の Open の前に呼ぶ（動いていなければ Sidecar を起動する）。Player では null。
         public static Action<string, string> EnsureSidecar;
 
-        /// 開いている client。Dispose されないまま domain が破棄されたり app が終わったりしても、native の handle と
-        /// profile の lock を残さないように閉じる（Editor の domain reload の有無、Player の終了。#1977 AC-2）。
+        /// 開いている client。Dispose されないまま Editor の domain reload で domain が破棄されても、native の handle と
+        /// profile の lock を残さないように閉じる（#1977 AC-2）。
         static readonly HashSet<KukuriClient> open = new HashSet<KukuriClient>();
 
         static KukuriClient()
         {
             AppDomain.CurrentDomain.DomainUnload += (_, _) => DisposeAll();
-            UnityEngine.Application.quitting += DisposeAll;
         }
 
         /// 開いている handle の数（使っていない機能が動いていないこと・閉じ忘れが無いことの確認に使う）。
