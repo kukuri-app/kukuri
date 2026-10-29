@@ -431,6 +431,10 @@ impl SidecarClient {
         if self.outstanding.contains_key(&request_id) {
             return Status::InvalidArgument;
         }
+        // 切断の後に作る結果も、poll されるまでは FFI と同じ上限で数える。
+        if self.pipe.is_none() && self.local.len() >= crate::MAX_PENDING {
+            return Status::Backpressure;
+        }
         let mut frames = vec![request];
         frames.extend(secret);
         let was_connected = self.pipe.is_some();
@@ -475,8 +479,9 @@ impl SidecarClient {
     }
 
     pub fn poll(&mut self, max_items: usize, max_bytes: usize) -> Result<Vec<Item>, Status> {
+        let max_items = max_items.clamp(1, crate::MAX_POLL_ITEMS);
         let mut items: Vec<Item> = Vec::new();
-        while items.len() < max_items.max(1)
+        while items.len() < max_items
             && let Some(item) = self.local.pop_front()
         {
             items.push(item);
@@ -491,18 +496,31 @@ impl SidecarClient {
             },
             &[],
         ) else {
-            return Ok(self.local.drain(..).collect());
+            return Ok(self.take_local(max_items));
         };
         if reply.status != Status::Ok as i32 {
             return Err(status_from(reply.status));
         }
-        for kind in reply.kinds {
+        let kinds: Vec<Option<ItemKind>> = reply.kinds.into_iter().map(kind_from).collect();
+        for kind in &kinds {
             let frame = self.pipe.as_mut().map(read_sync);
             let Some(Ok(data)) = frame else {
+                // 読み終えた応答は返す。秘密の出力を読めなかった応答は、結果が欠けるので成否不明に置き換える。
+                if *kind == Some(ItemKind::Secret)
+                    && let Some(response) = items.pop()
+                    && let Some((request_id, command)) = request_id_of(&response.data)
+                {
+                    let item =
+                        self.failure(&request_id, &command, error_code::OPERATION_OUTCOME_UNKNOWN);
+                    items.push(item);
+                }
                 self.disconnect(error_code::DAEMON_UNAVAILABLE);
-                return Ok(self.local.drain(..).collect());
+                let room = max_items.saturating_sub(items.len());
+                let more = self.take_local(room);
+                items.extend(more);
+                return Ok(items);
             };
-            let Some(kind) = kind_from(kind) else {
+            let Some(kind) = *kind else {
                 continue;
             };
             if kind == ItemKind::Response
@@ -513,6 +531,11 @@ impl SidecarClient {
             items.push(Item { kind, data });
         }
         Ok(items)
+    }
+
+    fn take_local(&mut self, max_items: usize) -> Vec<Item> {
+        let count = self.local.len().min(max_items);
+        self.local.drain(..count).collect()
     }
 
     /// 接続を切る（Sidecar の runtime は止めない）。応答を待っている要求は disconnect と同じ結果で終える。
@@ -637,7 +660,8 @@ mod security {
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
             return Err(std::io::Error::last_os_error());
         }
-        let mut buffer = vec![0u8; 256];
+        // TOKEN_USER の alignment を満たすよう u64 の buffer にする。
+        let mut buffer = vec![0u64; 32];
         let mut needed = 0;
         // SAFETY: buffer は needed bytes まで書ける。
         let read = unsafe {
@@ -645,7 +669,7 @@ mod security {
                 token,
                 TokenUser,
                 buffer.as_mut_ptr().cast(),
-                buffer.len() as u32,
+                (buffer.len() * size_of::<u64>()) as u32,
                 &mut needed,
             )
         };

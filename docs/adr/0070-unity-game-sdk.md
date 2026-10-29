@@ -85,7 +85,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | 関数 | 働き | 待ち |
 | --- | --- | --- |
 | `kukuri_sdk_abi_version()` | ABI の版を返す。C# は読み込み直後に照合し、違えば理由を示して開始しない | なし |
-| `kukuri_sdk_open(abi_version, config, out_handle)` | ABI の版と profile（名前と directory）を指定して handle を作る。版が違えば `ABI_MISMATCH` で handle を作らない。runtime の起動は背景で進み、完了を `startup_status_changed` の event で知らせる。起動に失敗したら（`profile_in_use` 等）、要求の応答がその error を返す | なし |
+| `kukuri_sdk_open(abi_version, config, out_handle)` | ABI の版と profile（名前と directory）を指定して handle を作る。版が違えば `ABI_MISMATCH` で handle を作らない。runtime の起動は背景で進み、完了を `startup_status_changed` の event で知らせる。起動に失敗したら（`profile_in_use` 等）、要求の応答がその error を返す。Sidecar の mode では runtime は既に動いており、接続の前の event は渡さないので（§8.2）、`get_desktop_startup_status` で状態を読む | なし |
 | `kukuri_sdk_send(handle, request, secret)` | 要求を待ち行列に入れて即座に戻る。結果は poll で受ける | なし |
 | `kukuri_sdk_send_binary(handle, kind, target, bytes)` | session の packet（datagram・stream）と、配信する映像・音声の bytes を渡す。`target` は session ID または Live の session ID。最初に使う #1979 が、kind と batch の bytes の項目と一緒に足す | なし |
 | `kukuri_sdk_cancel(handle, request_id)` | 実行前の要求を取り消す | なし |

@@ -296,3 +296,75 @@ fn the_sidecar_binary_listens_on_no_tcp_port_and_logs_no_secret() {
         .unwrap();
     assert!(!rest.contains("sentinel"), "{rest}");
 }
+
+/// poll の返事を書く途中で切れる偽の Sidecar。2 件の書き込みを受け、1 件目の応答だけを書いて切る。
+fn half_answering_sidecar(profile_dir: &std::path::Path) -> std::thread::JoinHandle<()> {
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::windows::named_pipe::ServerOptions,
+    };
+    let name = sidecar::pipe_name(profile_dir);
+    let (ready, started) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async move {
+            let mut pipe = ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(&name)
+                .unwrap();
+            ready.send(()).unwrap();
+            pipe.connect().await.unwrap();
+            async fn read(pipe: &mut tokio::net::windows::named_pipe::NamedPipeServer) -> Vec<u8> {
+                let len = pipe.read_u32_le().await.unwrap() as usize;
+                let mut frame = vec![0; len];
+                pipe.read_exact(&mut frame).await.unwrap();
+                frame
+            }
+            async fn write(
+                pipe: &mut tokio::net::windows::named_pipe::NamedPipeServer,
+                frame: &[u8],
+            ) {
+                pipe.write_u32_le(frame.len() as u32).await.unwrap();
+                pipe.write_all(frame).await.unwrap();
+            }
+            read(&mut pipe).await; // hello
+            write(&mut pipe, br#"{"status":0}"#).await;
+            for _ in 0..2 {
+                read(&mut pipe).await; // send
+                read(&mut pipe).await; // 要求
+                write(&mut pipe, br#"{"status":0,"write":true}"#).await;
+            }
+            read(&mut pipe).await; // poll
+            write(&mut pipe, br#"{"status":0,"kinds":[1,1]}"#).await;
+            let response = json!({"schema_version": 1, "ok": true, "command": "count.write",
+                "request_id": "w1", "profile": PROFILE, "data": {"done": true}});
+            write(&mut pipe, response.to_string().as_bytes()).await;
+            // disconnect は client が読んでいない data を捨てるので、handle を閉じるだけにする（落ちた process と同じ）。
+            drop(pipe);
+        });
+    });
+    started.recv_timeout(Duration::from_secs(10)).unwrap();
+    thread
+}
+
+#[test]
+fn a_poll_cut_halfway_keeps_the_read_responses_and_reports_the_rest_as_unknown() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = half_answering_sidecar(dir.path());
+    let handle = SidecarServer::connect(dir.path());
+    for id in ["w1", "w2"] {
+        assert_eq!(send(handle, &request(id, "count.write", json!({}))), 0);
+    }
+    let first = response_for(handle, "w1", Duration::from_secs(5));
+    assert_eq!(
+        first["data"]["done"], true,
+        "the response read before the cut is kept"
+    );
+    let second = response_for(handle, "w2", Duration::from_secs(5));
+    assert_eq!(error_code(&second), "operation_outcome_unknown");
+    finish(handle);
+    fake.join().unwrap();
+}
