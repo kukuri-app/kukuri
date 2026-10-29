@@ -15,6 +15,7 @@ members = [
     "crates/app-api",
     "crates/desktop-runtime",
     "crates/kukuri-cli",
+    "crates/game-sdk",
     "crates/test-support",
     "crates/cn-core",
     "crates/cn-user-api",

@@ -4367,6 +4367,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kukuri-game-sdk"
+version = "0.5.1"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "kukuri-cli",
+ "kukuri-desktop-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "kukuri-harness"
 version = "0.5.1"
 dependencies = [
