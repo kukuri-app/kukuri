@@ -446,3 +446,63 @@ async fn game_room_roundtrip_preserves_all_columns() {
         vec![min]
     );
 }
+
+/// #1978: action session の行は ScoreGame・Dome の一覧に混ざらず、application ID ごとに更新の新しい順で、前の頁の
+/// 最後の行より後ろから読める。sqlite と memory で同じ結果になる(Web は action の行を保存しないので比べない)。
+#[tokio::test]
+async fn action_rooms_are_listed_per_application_after_the_previous_page() {
+    async fn scenario<S: LiveGameProjectionStore>(store: &S) -> Vec<Vec<String>> {
+        let mut rows = vec![game_room_min()];
+        for (room_id, application_id, updated_at) in [
+            ("room-arena-1", "com.example.arena", 110),
+            ("room-arena-2", "com.example.arena", 120),
+            ("room-arena-3", "com.example.arena", 120),
+            ("room-puzzle", "com.example.puzzle", 130),
+        ] {
+            let mut row = game_room_min();
+            row.room_id = room_id.into();
+            row.room_kind = GameRoomKind::ActionSession;
+            row.updated_at = updated_at;
+            row.action = Some(ActionSessionV1 {
+                application_id: application_id.into(),
+                host_endpoint_id: "e".repeat(64),
+                max_players: 4,
+            });
+            rows.push(row);
+        }
+        for row in rows {
+            store
+                .upsert_game_room_cache(row)
+                .await
+                .expect("upsert room");
+        }
+        let ids = |rows: Vec<GameRoomProjectionRow>| {
+            rows.into_iter().map(|row| row.room_id).collect::<Vec<_>>()
+        };
+        let arena = |before| {
+            store.list_channel_action_rooms(GAME_TOPIC, "public", "com.example.arena", before, 2)
+        };
+        vec![
+            ids(store
+                .list_channel_game_rooms(GAME_TOPIC, "public", 100)
+                .await
+                .expect("score games")),
+            ids(arena(None).await.expect("first page")),
+            // 同じ updated_at の行が頁の境界にまたがっても、重複も欠落もしない。
+            ids(arena(Some((120, "room-arena-2".into())))
+                .await
+                .expect("next page")),
+        ]
+    }
+    let sqlite = SqliteStore::connect_memory().await.expect("sqlite store");
+    let from_sqlite = scenario(&sqlite).await;
+    assert_eq!(from_sqlite, scenario(&MemoryStore::default()).await);
+    assert_eq!(
+        from_sqlite,
+        [
+            vec!["room-min".to_string()],
+            vec!["room-arena-3".to_string(), "room-arena-2".to_string()],
+            vec!["room-arena-1".to_string()],
+        ]
+    );
+}

@@ -43,6 +43,7 @@ namespace Kukuri.GameSdk.Lobby
         readonly List<KukuriLobbyItem> items = new List<KukuriLobbyItem>();
         KukuriClient client;
         string ownPubkey;
+        string syncedTopic;
         string nextCursor;
         int pages;
         bool busy;
@@ -51,16 +52,26 @@ namespace Kukuri.GameSdk.Lobby
         public IReadOnlyList<LobbyRoom> Rooms => rooms;
         public bool HasMore => nextCursor != null;
 
+        /// 変えると、読んだ一覧を捨てる（次の読み込みは先頭の頁から）。
         public string ApplicationId
         {
             get => applicationId;
-            set => applicationId = value;
+            set
+            {
+                applicationId = value;
+                Clear();
+            }
         }
 
+        /// 変えると、読んだ一覧を捨て、次の読み込みの前に新しい topic の同期を有効にする。
         public string Topic
         {
             get => topic;
-            set => topic = value;
+            set
+            {
+                topic = value;
+                Clear();
+            }
         }
 
         /// runner を使わずに client を渡す（試験と、client を自分で開くゲーム用）。
@@ -151,11 +162,22 @@ namespace Kukuri.GameSdk.Lobby
         /// topic の同期を有効にし、自分の公開鍵を一度だけ読む。
         async Task EnsureTopicAsync()
         {
-            if (ownPubkey != null)
-                return;
             var client = Client ?? throw new KukuriException("not_ready", "the kukuri client is not open");
-            Require(await client.SendAsync("set_topic_gossip_enabled", new JObject { ["topic"] = topic, ["enabled"] = true }));
-            ownPubkey = (string)Require(await client.SendAsync("get_sync_status"))["local_author_pubkey"];
+            if (syncedTopic != topic)
+            {
+                var requested = topic;
+                Require(await client.SendAsync("set_topic_gossip_enabled", new JObject { ["topic"] = requested, ["enabled"] = true }));
+                syncedTopic = requested;
+            }
+            ownPubkey ??= (string)Require(await client.SendAsync("get_sync_status"))["local_author_pubkey"];
+        }
+
+        void Clear()
+        {
+            rooms.Clear();
+            nextCursor = null;
+            pages = 0;
+            Render();
         }
 
         void Append(JToken page)
