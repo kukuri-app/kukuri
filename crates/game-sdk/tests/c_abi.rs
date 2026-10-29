@@ -2,8 +2,10 @@
 //! 実際の profile を開く試験と、dispatcher に試験用の command を注入する試験がある。
 #![allow(clippy::unwrap_used)]
 
+mod support;
+
 use std::{
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -18,11 +20,10 @@ use kukuri_cli::{
 use kukuri_game_sdk::{
     ABI_VERSION, KukuriBatch, KukuriHandle, MAX_PENDING, SdkClient, Started, Status,
     kukuri_sdk_batch_release, kukuri_sdk_cancel, kukuri_sdk_close, kukuri_sdk_free,
-    kukuri_sdk_open, kukuri_sdk_poll, kukuri_sdk_send,
+    kukuri_sdk_open, kukuri_sdk_poll,
 };
 use serde_json::{Value, json};
-
-const PROFILE: &str = "p";
+use support::{PROFILE, error_code, finish, open_real, poll_once, request, response_for, send};
 
 struct Sleep;
 
@@ -109,104 +110,6 @@ fn fake_handle() -> *mut KukuriHandle {
     })
     .unwrap();
     KukuriHandle::from_client(client)
-}
-
-fn open_real(dir: &std::path::Path) -> *mut KukuriHandle {
-    let config = json!({"profile": PROFILE, "profile_dir": dir}).to_string();
-    let mut handle = std::ptr::null_mut();
-    let status =
-        unsafe { kukuri_sdk_open(ABI_VERSION, config.as_ptr(), config.len(), &mut handle) };
-    assert_eq!(status, Status::Ok as i32);
-    handle
-}
-
-fn request(id: &str, command: &str, payload: Value) -> Vec<u8> {
-    json!({
-        "protocol_version": 1,
-        "request_id": id,
-        "command": command,
-        "profile": PROFILE,
-        "payload": payload,
-    })
-    .to_string()
-    .into_bytes()
-}
-
-fn send(handle: *mut KukuriHandle, request: &[u8]) -> i32 {
-    unsafe { kukuri_sdk_send(handle, request.as_ptr(), request.len(), std::ptr::null(), 0) }
-}
-
-#[derive(Debug)]
-struct Polled {
-    kind: u32,
-    json: Value,
-    raw: Vec<u8>,
-}
-
-/// 1 回 poll して、batch を写してから解放する。
-fn poll_once(handle: *mut KukuriHandle, max_items: usize) -> Result<Vec<Polled>, i32> {
-    let mut batch: *const KukuriBatch = std::ptr::null();
-    let status = unsafe { kukuri_sdk_poll(handle, max_items, 1 << 20, &mut batch) };
-    if status != Status::Ok as i32 {
-        return Err(status);
-    }
-    if batch.is_null() {
-        return Ok(Vec::new());
-    }
-    let view = unsafe { &*batch };
-    let items = unsafe { std::slice::from_raw_parts(view.items, view.count) };
-    let polled = items
-        .iter()
-        .map(|item| {
-            let raw = unsafe { std::slice::from_raw_parts(item.data, item.len) }.to_vec();
-            Polled {
-                kind: item.kind,
-                json: serde_json::from_slice(&raw).unwrap_or(Value::Null),
-                raw,
-            }
-        })
-        .collect();
-    assert_eq!(
-        unsafe { kukuri_sdk_batch_release(handle, batch) },
-        Status::Ok as i32
-    );
-    Ok(polled)
-}
-
-/// 先に届いた応答（handle の address と応答）。一度の poll に複数の応答が入るので、探していない応答を残す。
-static RECEIVED: Mutex<Vec<(usize, Value)>> = Mutex::new(Vec::new());
-
-/// `request_id` の応答が届くまで poll する。
-fn response_for(handle: *mut KukuriHandle, id: &str, within: Duration) -> Value {
-    let deadline = Instant::now() + within;
-    loop {
-        let mut received = RECEIVED.lock().unwrap();
-        for item in poll_once(handle, 64).unwrap() {
-            if item.kind == 1 {
-                received.push((handle as usize, item.json));
-            }
-        }
-        if let Some(index) = received
-            .iter()
-            .position(|(owner, json)| *owner == handle as usize && json["request_id"] == id)
-        {
-            return received.swap_remove(index).1;
-        }
-        drop(received);
-        assert!(Instant::now() < deadline, "no response for {id}");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
-fn error_code(response: &Value) -> &str {
-    response["error"]["code"].as_str().unwrap_or("")
-}
-
-fn finish(handle: *mut KukuriHandle) {
-    unsafe {
-        kukuri_sdk_close(handle);
-        kukuri_sdk_free(handle);
-    }
 }
 
 #[test]
