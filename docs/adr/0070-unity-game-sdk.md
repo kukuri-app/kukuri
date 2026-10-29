@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（#1974 AC-1、2026-10-29）。§8 の対応環境・映像方式・性能プロファイルは #1974 AC-2 で確定する。各柱の実装と検証の完了は #1975〜#1984 の各 AC で判定する。
+Accepted（#1974 AC-1、2026-10-29）。§8 の対応環境・映像方式・性能プロファイルは #1974 AC-2 で確定した（2026-10-29）。各柱の実装と検証の完了は #1975〜#1984 の各 AC で判定する。
 
 - [Discussion #1972](https://github.com/kukuri-app/kukuri/discussions/1972) は第一弾のエンジンを Godot 4.x としていた。2026-10-29 のユーザー判断「Unity 案でいく」により、第一弾を Unity に置き換える。Discussion は当時の検討として残し、以後の判断はこの ADR を正本にする。
 - エンジンに依存しない Rust の共通部分と、エンジンごとの binding を分ける方針は Discussion から引き継ぐ。Godot・Unreal の binding は後続で扱う。
@@ -42,7 +42,7 @@ Discussion #1972 は、P2P のアセット配布、ロビーとゲーム通信�
 | Local Sidecar | `kukuri-cli` の常駐プロセス | Linux の常駐プロセスと同じ dispatcher・profile 所有 | Windows のローカル IPC（§8）と binary frame |
 | ゲーム通信 | `kukuri-iroh-node` | media の受け口の認可（最初の stream で認可要求、5 秒ごとの再評価）、Direct → Relay Supported の接続順 | 専用 ALPN の session（datagram と stream） |
 | アセット配布 | `kukuri-core` / `kukuri-app-api` / blob・docs・hint | docs の署名つき record、blob の取得・保持、公開 blob の発見（ADR 0063） | 発行者の署名つき manifest の型と検証 |
-| Live の映像 | `kukuri-desktop-runtime` の live media | `push_live_video` / `next_live_video`、署名・転送・認可 | native の VP8 圧縮・復号（§8 で方式を決める） |
+| Live の映像 | `kukuri-desktop-runtime` の live media | `push_live_video` / `next_live_video`、署名・転送・認可 | libvpx による native の VP8 圧縮・復号（§8.3） |
 | Unity | 新規 `sdk/unity/com.kukuri.gamesdk/`（UPM）と `sdk/unity/CyberDiscArena/`（sample project） | — | C# API・module・Prefab・sample |
 
 - SDK の dispatcher は CLI と同じ登録簿を使う。秘密の出力を伴う command（private channel の招待・access token・grant・share の export、passphrase で暗号化した鍵の export）は、CLI の secret frame と同じく応答の JSON とは別の秘密の出力として返す（§3）。平文の秘密鍵を返す command は登録簿に無く、SDK も足さない。
@@ -238,13 +238,74 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 
 ### 8. 対応環境・映像方式・性能プロファイル
 
-#1974 AC-2 で、次を確定してこの節に書く。確定までは後続の実装の受入基準に使わない。
+#1974 AC-2 で確定した（2026-10-29）。2026-10-29 のユーザー判断は、Unity の版（6.3 LTS）、Live の音声（ゲーム音とマイクを一つの track にする）、性能の測定条件と閾値（§8.4）の 3 点である。ここに無い環境・版を対応済みとは扱わない。
 
-- Unity・URP・Netcode for GameObjects・glTFast の版、Mono（Editor）と IL2CPP（Player）の build 条件。
-- Windows の Sidecar のローカル IPC の方式。
-- Unity の映像の codec の実装（VP8 の圧縮・復号）と texture の受け渡し方式、Unity の出力音の取り込みとマイクとの mix の方式（音声はゲーム音とマイクを一つの track にする。2026-10-29 のユーザー判断）。
-- リファレンス PC と解像度、同時負荷（対戦 2 人・視聴 5 人・アセット更新 1 件）、network の条件、測定時間と反復回数、合否の閾値。
-- poll の 1 frame あたりの件数・時間の既定値。
+#### 8.1 対応環境
+
+| 対象 | 固定するもの |
+| --- | --- |
+| Unity | 6000.3.27f1（Unity 6.3 LTS）。6000.3 系の新しい patch へ上げるときは #1984 の CI で確かめてから上げる |
+| package | URP 17.3.0、Netcode for GameObjects 2.13.3（6.3 に同梱の版。Netcode module だけが依存する）、glTFast 6.20.0（Assets module だけが依存する） |
+| OS・graphics | Windows 11 x64、Direct3D 12（6.3 の Windows の既定）。Windows 10 と他の graphics API は確かめていないので対応に含めない |
+| scripting | Editor は Mono。Player は IL2CPP を基準とし、Mono の Player も build・実行できる |
+| C# | P/Invoke の pointer を扱う SDK の asmdef だけで unsafe を許可する。利用者の project 設定は変えない |
+| native | Rust 1.98.1（repository の toolchain）、`x86_64-pc-windows-msvc` の cdylib。依存は OS の DLL だけにするため、CRT は静的に link する（Rust は `+crt-static`、libvpx は `--enable-static-msvcrt`） |
+
+#### 8.2 Sidecar のローカル IPC
+
+- Windows の named pipe を使う。名前は profile directory から決め（`\\.\pipe\kukuri-sdk-<profile directory の hash>`）、同じ profile の Sidecar が二つ動かないようにする。
+- pipe は `FILE_FLAG_FIRST_PIPE_INSTANCE` で作り（同じ名前の pipe を先に作られていたら起動しない）、remote の client を拒否し、DACL は Sidecar を起動した user だけに読み書きを許す。TCP の listen はしない。
+- frame は CLI の Unix socket と同じ要求・応答の JSON に、bytes の frame（kind・target・長さ）を足したもの。上限は §3 と同じ。
+- client の切断と再接続は Sidecar の runtime を止めない。切断時の未完了の要求の結果は §3 の表のとおり。
+
+#### 8.3 映像と音声
+
+- codec は既存の Live と同じ VP8（ADR 0067 D6）。Rust 側で libvpx 1.17.0（BSD-3-Clause）を静的に link して圧縮・復号する。純 Rust の VP8 実装は実用段階のものが無いので使わない。
+  - build: `configure --target=x86_64-win64-vs17 --disable-vp9 --enable-realtime-only --enable-static-msvcrt --as=nasm` の project を MSBuild で `WholeProgramOptimization=false` で build する（全体最適化の object は Rust の link と合わない）。1.17.0 の VS の project は `vp8/common/x86`・`vp8/encoder/x86` の asm と `vpx_ports` の `emms_mmx.asm`・`float_control_word.asm` を含めないので、これらは nasm で別に組み立てて同じ DLL に link する。source は `chromium.googlesource.com/webm/libvpx` の tag `v1.17.0` から取得し、手順と checksum を #1984 の CI に置く。
+  - 圧縮の設定: realtime、CBR、`g_lag_in_frames = 0`、`VP8E_SET_CPUUSED = 10`、4 thread。
+- 画質は既存の受信側の上限に合わせ、camera の上限（1280×720・30 fps・1.5 Mbps。ADR 0067 D8）で送る。既存の受信側はこれを超える frame と bitrate を捨てるためである。
+- 取り込み: 配信する camera の RenderTexture を `AsyncGPUReadback`（RGBA32）で読み、callback で bytes を `kukuri_sdk_send_binary` へ渡す（SDK が copy する）。I420 への変換と圧縮は Rust の worker thread で行い、Unity の main thread で圧縮しない。
+- 表示: 復号した I420 の 3 面を `live_video_frame` で渡し、Unity は R8 の texture 3 枚へ `SetPixelData` で上げ、shader で RGB にする。
+- 音声: `AudioListener` と同じ GameObject の component の `OnAudioFilterRead` でゲームの出力音（48 kHz の float）を受け、audio thread から `kukuri_sdk_send_binary` で渡す。Rust 側は既存のマイクの取り込み（moq-audio）の音と混ぜて、既存の Opus の track として送る。送り待ちは 200 ms 分までで、溢れたら古いものから捨てる。
+
+#### 8.4 性能の測定条件と閾値
+
+| 項目 | 固定する条件 |
+| --- | --- |
+| 機器 | Ryzen 7 7800X3D / RTX 4080 SUPER / 64 GB / Windows 11 の 1 台で 7 process を動かす |
+| 解像度 | 対戦者 2 人は 1920×1080、視聴者 5 人は 1280×720（window） |
+| 負荷 | 対戦 2 人。host の対戦者が試合の camera を配信し、視聴者 5 人が視聴する（直接の枠は 4 人なので、5 人目は転送で受ける）。試合中に Sidecar から 5 MiB の glb のスキンを 1 件発行し、対戦者 2 人が適用する |
+| network | 全 process の P2P の packet を、計測用の UDP の proxy（#1984 が harness に置く）に通す。片道 25 ms に packet ごとの 0〜5 ms の一様な遅延を足し（往復 50 ms・ゆらぎ 5 ms）、方向ごとに 1% を落とす。relay と DHT は使わない |
+| 時間と回数 | 準備の 10 秒の後に 3 分を測り、これを 5 回くり返す。家庭回線 2 拠点の手順は別に記録し、結果は参考値として PASS / FAIL に数えない |
+| 時計 | 同じ PC の `Stopwatch`（QueryPerformanceCounter）で、process をまたいで時刻を比べる |
+
+閾値は、対戦者 2 人とも、5 回すべてで満たすこと。
+
+| 項目 | 測り方 | 閾値 |
+| --- | --- | --- |
+| frame time | 対戦者の `Update` の間隔 | p95 ≤ 16.7 ms、p99 ≤ 25 ms |
+| 入力の確定 | キャッチの操作の frame から、host の確定 event を受けた frame まで | p95 ≤ 100 ms |
+| 映像遅延 | 配信者が frame に埋めた番号を視聴者の texture で読み、取り込みの時刻との差を取る | p95: 直接 ≤ 500 ms、転送 1 段 ≤ 800 ms |
+| asset の反映 | `publish_game_asset` の完了から、相手の Player でスキンを適用した frame まで | p95 ≤ 10 s。適用中の frame time の最大 ≤ 33 ms |
+| 送信量 | 経路（Direct P2P / Relay Supported P2P / Relay Fallback）ごとの送信 bytes | 対戦 ≤ 200 kbps / 人、配信者の上り ≤ 10 Mbps |
+| 切断からの復帰 | proxy で全 packet を 3 秒落とし、戻してから対戦の packet の往復と視聴の frame が再び届くまで | 対戦 ≤ 5 s、視聴 ≤ 20 s |
+| SDK の memory | SDK を開く直前との process の private bytes の差 | ≤ 256 MiB / process。10 分間の増加 5% 以内 |
+| poll | 1 frame の poll（64 件まで）にかかった時間 | p99 ≤ 1 ms |
+
+#### 8.5 poll の既定値
+
+Unity の 1 frame の poll は 64 件・1 MiB まで、かつ 1 ms を超えたら次の frame へ回す。
+
+#### 8.6 限定 probe の結果（2026-10-29）
+
+probe のコードは repository に残していない（この節の値の根拠としてだけ使った）。
+
+| 確かめたこと | 結果 |
+| --- | --- |
+| build | 6000.3.27f1 で URP 17.3.0・NGO 2.13.3・glTFast 6.20.0 を入れた project の Mono と IL2CPP の Windows x64 Player が build できた |
+| C ABI の往復 | `kukuri-cli` の dispatcher を載せた cdylib を両方の Player から呼び、同意待ちの状態が返った。応答は次の frame の poll で届き、poll 1 回は p99 0.01 ms。DLL は 119 MB で、依存は OS の DLL と VCRUNTIME140 だけ（§8.1 で静的 CRT にする） |
+| named pipe | 1 KiB の往復 p50 40 µs・p99 100 µs、8 MiB の往復 約 400 MB/s。切断・再接続を 3 回くり返して成功し、同じ名前の first instance の二重作成は拒否された |
+| 映像 | 1280×720 の RenderTexture の readback は約 2 frame（p50 29〜33 ms）。RGBA → I420 は 1.5 ms、VP8 の圧縮は p50 2.1 ms・p95 3.9 ms、復号は p50 0.9 ms、I420 の 3 面の upload は p50 0.08 ms。取り込みから texture までは p50 33 ms。圧縮と変換は probe では main thread で行い、frame time の p95 が 18.5 ms に上がった（§8.3 で worker thread にする理由） |
 
 ### 9. 子 Issue の担当
 
@@ -317,7 +378,7 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 - SDK は CLI と同じ登録簿を使うため、command を足すと desktop の CLI と SDK の両方で使える。登録簿の変更は両方の試験で確かめる。
 - Windows の常駐プロセスは CLI 全体の Windows 移植ではなく、SDK の開発用 Sidecar として必要な範囲に限る。
 - 4 本柱の正本は既存の docs・blob・hint・投稿・Live のままで、SDK だけのデータの正本は作らない。新しく分類したのは §5.1〜§5.3（SDK の profile と要求の経路、ゲームの通信、アセット配布）である。
-- Unity の版・映像方式・閾値は §8 が確定するまで未定であり、未計測のものを達成とは扱わない。
+- Unity の版・映像方式・閾値は §8 で確定した。閾値は結果を見て緩めず、未計測のものを達成とは扱わない。libvpx の BSD-3-Clause と PATENTS の表示は #1984 の第三者の notice に含める。
 
 ## 参照
 
