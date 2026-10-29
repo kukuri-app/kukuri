@@ -4717,7 +4717,7 @@ dependencies = [
 [[package]]
 name = "moq-audio"
 version = "0.1.11"
-source = "git+https://github.com/KingYoSun/moq?rev=03bae00ab0db6a373142fb20bc95a40fdd6c1274#03bae00ab0db6a373142fb20bc95a40fdd6c1274"
+source = "git+https://github.com/KingYoSun/moq?rev=e0dd3249c9f2bbe4a2dd36bfcd8ecbc26dfdfe03#e0dd3249c9f2bbe4a2dd36bfcd8ecbc26dfdfe03"
 dependencies = [
  "block2",
  "bytes",
@@ -4812,7 +4812,7 @@ dependencies = [
 [[package]]
 name = "moq-mux"
 version = "0.10.12"
-source = "git+https://github.com/KingYoSun/moq?rev=03bae00ab0db6a373142fb20bc95a40fdd6c1274#03bae00ab0db6a373142fb20bc95a40fdd6c1274"
+source = "git+https://github.com/KingYoSun/moq?rev=e0dd3249c9f2bbe4a2dd36bfcd8ecbc26dfdfe03#e0dd3249c9f2bbe4a2dd36bfcd8ecbc26dfdfe03"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -4891,7 +4891,7 @@ dependencies = [
 [[package]]
 name = "moq-tokio"
 version = "0.19.24"
-source = "git+https://github.com/KingYoSun/moq?rev=03bae00ab0db6a373142fb20bc95a40fdd6c1274#03bae00ab0db6a373142fb20bc95a40fdd6c1274"
+source = "git+https://github.com/KingYoSun/moq?rev=e0dd3249c9f2bbe4a2dd36bfcd8ecbc26dfdfe03#e0dd3249c9f2bbe4a2dd36bfcd8ecbc26dfdfe03"
 dependencies = [
  "bytes",
  "futures",

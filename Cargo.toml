@@ -140,9 +140,10 @@ iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-addres
 # #1879（同じ fork の続き）: moq-tokio を Web（wasm）でも build できるようにし、Web では poll 型への変換
 # （`transport`）だけを含める。moq-mux・moq-audio の時刻を web-time にする（ブラウザには std の時計が無い。
 # native では std と同じ型）。
-moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "03bae00ab0db6a373142fb20bc95a40fdd6c1274" }
-moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "03bae00ab0db6a373142fb20bc95a40fdd6c1274" }
-moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "03bae00ab0db6a373142fb20bc95a40fdd6c1274" }
+# fork の `.claude/shared` の submodule（上流の kixelated/skills が消えた）を外した commit に固定する。外さないと cargo の取得が失敗する。
+moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "e0dd3249c9f2bbe4a2dd36bfcd8ecbc26dfdfe03" }
+moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "e0dd3249c9f2bbe4a2dd36bfcd8ecbc26dfdfe03" }
+moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "e0dd3249c9f2bbe4a2dd36bfcd8ecbc26dfdfe03" }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"
