@@ -432,15 +432,18 @@ namespace Kukuri.GameSdk.Live.Tests
             Assert.AreEqual(viewers[1].StartPostId, (string)replies[1][0]["reply_to"]);
             Assert.IsEmpty(replies[0], "the first live does not get the second live's reply");
 
-            // 1 つ目の視聴をやめると、その映像の購読だけが止まり、2 つ目は続く。
+            // 1 つ目の視聴をやめると、その映像の購読だけが止まり（SDK は止めた session の frame を渡さない）、2 つ目は続く。
+            var delivered = new Dictionary<string, int> { [first] = 0, [second] = 0 };
+            game.LiveFrameReceived += frame => delivered[frame.SessionId]++;
             var stop = viewers[0].StopWatching();
             yield return Wait(stop, "the watch did not stop");
-            var firstShown = viewers[0].FramesShown;
-            var secondShown = viewers[1].FramesShown;
+            yield return Frames(() => false, "", broadcast, null, 1);
+            delivered[first] = 0;
+            delivered[second] = 0;
             yield return Frames(() => false, "", broadcast, null, 2);
             Assert.IsNull(viewers[0].Output);
-            Assert.AreEqual(firstShown, viewers[0].FramesShown, "the stopped watch receives nothing");
-            Assert.Greater(viewers[1].FramesShown, secondShown, "the other live keeps playing");
+            Assert.AreEqual(0, delivered[first], "the stopped watch delivers no frame");
+            Assert.Greater(delivered[second], 0, "the other live keeps playing");
         }
     }
 }

@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 
 const DESIRED_SUBSCRIPTIONS_VERSION: u32 = 1;
 const DESIRED_SUBSCRIPTIONS_EXTENSION: &str = "subscriptions.json";
+/// 公開スレッド（公開 channel）の購読は別の file に置く（#1982）。旧版は `subscriptions.json` の channel を private channel
+/// として復元し、参加していないので起動に失敗するため、旧版の読まない file へ分ける（2026-10-31 のユーザー判断）。
+const PUBLIC_CHANNEL_SUBSCRIPTIONS_EXTENSION: &str = "public-channel-subscriptions.json";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -20,6 +23,11 @@ pub struct DesiredSubscription {
 }
 
 impl DesiredSubscription {
+    fn is_public_channel(&self) -> bool {
+        matches!(&self.scope, DesiredSubscriptionScope::Channel { channel_id }
+            if kukuri_core::ChannelId::new(channel_id).is_public_channel())
+    }
+
     pub fn validate(&self) -> Result<(), SubscriptionStateError> {
         validate_identifier("topic", &self.topic)?;
         if let DesiredSubscriptionScope::Channel { channel_id } = &self.scope {
@@ -117,8 +125,18 @@ pub fn desired_subscriptions_path(db_path: &Path) -> PathBuf {
 pub(crate) async fn load_desired_subscriptions(
     db_path: &Path,
 ) -> Result<Vec<DesiredSubscription>, SubscriptionStateError> {
-    let path = desired_subscriptions_path(db_path);
-    let bytes = match crate::storage::read_file(&path).await {
+    let mut subscriptions = read_store(&desired_subscriptions_path(db_path)).await?;
+    subscriptions
+        .extend(read_store(&db_path.with_extension(PUBLIC_CHANNEL_SUBSCRIPTIONS_EXTENSION)).await?);
+    subscriptions.sort();
+    subscriptions.dedup();
+    // 保存は 64 件まで。超える file は先頭の 64 件だけを使う(#1221 R2-C)。
+    subscriptions.truncate(kukuri_app_api::MAX_ACTIVE_SCOPES);
+    Ok(subscriptions)
+}
+
+async fn read_store(path: &Path) -> Result<Vec<DesiredSubscription>, SubscriptionStateError> {
+    let bytes = match crate::storage::read_file(path).await {
         Ok(Some(bytes)) => bytes,
         Ok(None) => return Ok(Vec::new()),
         Err(error) => {
@@ -128,7 +146,7 @@ pub(crate) async fn load_desired_subscriptions(
             ));
         }
     };
-    let mut store: DesiredSubscriptionStore = serde_json::from_slice(&bytes).map_err(|error| {
+    let store: DesiredSubscriptionStore = serde_json::from_slice(&bytes).map_err(|error| {
         SubscriptionStateError::new(
             SubscriptionStateErrorKind::DecodeFailed,
             format!("failed to decode `{}`: {error}", path.display()),
@@ -146,12 +164,6 @@ pub(crate) async fn load_desired_subscriptions(
     for subscription in &store.subscriptions {
         subscription.validate()?;
     }
-    store.subscriptions.sort();
-    store.subscriptions.dedup();
-    // 保存は 64 件まで。超える file は先頭の 64 件だけを使う(#1221 R2-C)。
-    store
-        .subscriptions
-        .truncate(kukuri_app_api::MAX_ACTIVE_SCOPES);
     Ok(store.subscriptions)
 }
 
@@ -165,6 +177,21 @@ pub(crate) async fn save_desired_subscriptions(
     }
     subscriptions.sort();
     subscriptions.dedup();
+    let (public_channels, others): (Vec<_>, Vec<_>) = subscriptions
+        .into_iter()
+        .partition(DesiredSubscription::is_public_channel);
+    write_store(&desired_subscriptions_path(db_path), others).await?;
+    write_store(
+        &db_path.with_extension(PUBLIC_CHANNEL_SUBSCRIPTIONS_EXTENSION),
+        public_channels,
+    )
+    .await
+}
+
+async fn write_store(
+    path: &Path,
+    subscriptions: Vec<DesiredSubscription>,
+) -> Result<(), SubscriptionStateError> {
     let bytes = serde_json::to_vec_pretty(&DesiredSubscriptionStore {
         version: DESIRED_SUBSCRIPTIONS_VERSION,
         subscriptions,
@@ -175,8 +202,7 @@ pub(crate) async fn save_desired_subscriptions(
             format!("failed to encode desired subscriptions: {error}"),
         )
     })?;
-    let path = desired_subscriptions_path(db_path);
-    crate::storage::write_file(&path, &bytes)
+    crate::storage::write_file(path, &bytes)
         .await
         .map_err(|error| {
             SubscriptionStateError::new(
@@ -231,6 +257,36 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    /// 公開スレッドの購読は旧版の読まない file に置き、読むときは合わせる（#1982）。
+    #[tokio::test]
+    async fn public_channel_subscriptions_live_in_their_own_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("kukuri.db");
+        let thread = DesiredSubscription {
+            topic: "t".to_string(),
+            scope: DesiredSubscriptionScope::Channel {
+                channel_id: kukuri_core::ChannelId::public_channel(1, &"a".repeat(64))
+                    .as_str()
+                    .to_string(),
+            },
+        };
+        save_desired_subscriptions(&db_path, &[public("t"), thread.clone()])
+            .await
+            .expect("save");
+        assert_eq!(
+            read_store(&desired_subscriptions_path(&db_path))
+                .await
+                .expect("old file"),
+            vec![public("t")],
+            "the file older versions read has no public channel"
+        );
+        let mut both = load_desired_subscriptions(&db_path).await.expect("load");
+        both.sort();
+        let mut expected = vec![public("t"), thread];
+        expected.sort();
+        assert_eq!(both, expected);
     }
 
     #[tokio::test]

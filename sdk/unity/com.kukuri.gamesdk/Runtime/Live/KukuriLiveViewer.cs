@@ -20,6 +20,8 @@ namespace Kukuri.GameSdk
         Texture2D cr;
         Material convert;
         Material screenMaterial;
+        /// 視聴を始める・止めるたびに進む番号。await の間に止められた開始を続けない。
+        int generation;
 
         public KukuriClient Client
         {
@@ -61,33 +63,38 @@ namespace Kukuri.GameSdk
         /// `sessionId` に参加して視聴を始める。
         public async Task<bool> StartWatching(string sessionId)
         {
+            var started = ++generation;
+            var target = client;
             var session = new JObject { ["topic"] = Topic, ["session_id"] = sessionId };
-            var joined = await client.SendAsync("join_live_session", session);
+            var joined = await target.SendAsync("join_live_session", session);
             if (!joined.Ok)
                 return false;
-            if (this == null)
+            var live = await target.SendAsync("get_live_session", session);
+            // 破棄・停止・別の視聴の開始が await の間にあったら、参加を戻して視聴を始めない。
+            if (this == null || started != generation)
             {
-                _ = client.SendAsync("leave_live_session", session);
+                _ = target.SendAsync("leave_live_session", session);
                 return false;
             }
             SessionId = sessionId;
-            var live = await client.SendAsync("get_live_session", session);
             StartPostId = live.Ok && live.Data is JObject view ? (string)view["start_post_id"] : null;
-            var watched = await client.SendAsync("watch_live_media", session);
+            var watched = await target.SendAsync("watch_live_media", session);
             return watched.Ok;
         }
 
         /// 視聴を止め、texture を解放する。
         public async Task StopWatching()
         {
+            generation++;
             if (SessionId == null)
                 return;
+            var target = client;
             var session = new JObject { ["topic"] = Topic, ["session_id"] = SessionId };
             SessionId = null;
             StartPostId = null;
             Release();
-            await client.SendAsync("stop_watching_live_media", session);
-            await client.SendAsync("leave_live_session", session);
+            await target.SendAsync("stop_watching_live_media", session);
+            await target.SendAsync("leave_live_session", session);
         }
 
         void OnEvent(JObject parsed)
@@ -98,14 +105,15 @@ namespace Kukuri.GameSdk
                     State = (string)parsed["state"];
                     StateChanged?.Invoke(State);
                     break;
-                case "reaction_received" when StartPostId != null &&
-                                              (string)parsed["reaction"]?["target_object_id"] == StartPostId:
-                    ReactionReceived?.Invoke((JObject)parsed["reaction"]);
+                // 知らせが溢れたときの `reaction`・`post` は null（JSON の null）なので、object のときだけ読む。
+                case "reaction_received" when StartPostId != null && parsed["reaction"] is JObject reaction &&
+                                              (string)reaction["target_object_id"] == StartPostId:
+                    ReactionReceived?.Invoke(reaction);
                     break;
-                case "post_received" when StartPostId != null &&
-                                          ((string)parsed["post"]?["reply_to"] == StartPostId ||
-                                           (string)parsed["post"]?["root_id"] == StartPostId):
-                    ReplyReceived?.Invoke((JObject)parsed["post"]);
+                case "post_received" when StartPostId != null && parsed["post"] is JObject post &&
+                                          ((string)post["reply_to"] == StartPostId ||
+                                           (string)post["root_id"] == StartPostId):
+                    ReplyReceived?.Invoke(post);
                     break;
             }
         }

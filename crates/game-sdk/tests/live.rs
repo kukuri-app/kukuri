@@ -417,10 +417,16 @@ fn the_fifth_viewer_is_relayed_and_keeps_watching_when_its_parent_leaves() {
         "the fifth viewer did not recover",
         |viewers| viewers[0].1.hops == 1 && viewers[0].1.frames.len() > 30,
     );
-    // 配信が止まると、視聴の状態が watching から変わる（画面は終わったことを示せる）。
+    // 配信が止まると、視聴の状態が映像なし・終了に変わる（画面は終わったことを示せる）。回復の途中の状態は数えない。
+    viewers[0].1.states.clear();
     media(broadcaster, "stop_live_broadcast", &live);
     let deadline = Instant::now() + Duration::from_secs(60);
-    while !viewers[0].1.states.iter().any(|state| state != "watching") {
+    while !viewers[0]
+        .1
+        .states
+        .iter()
+        .any(|state| state == "no_media" || state == "ended")
+    {
         assert!(
             Instant::now() < deadline,
             "the end of the broadcast was not shown"

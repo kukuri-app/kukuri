@@ -70,7 +70,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | command | `publish_game_asset` | #1980 | 発行者の profile で manifest に署名して公開する（Sidecar・CLI だけ。§5.3） |
 | command | `list_game_assets` / `fetch_game_asset` | #1980 | 発行者の公開鍵と application ID で、指定した asset ID（1 回 32 件まで）の最新の release を読み、検証済みの file の path を得る |
 | command | `set_live_broadcast` / `stop_live_broadcast` / `watch_live_media` / `stop_watching_live_media` / `set_live_volume` | #1982 | desktop-runtime にある Live の配信・視聴の操作を登録簿へ載せる |
-| command | `set_public_channel_subscription` | #1982 | 公開スレッド（公開 channel。ADR 0068）の投稿・リアクションの知らせを購読する・やめる。desired として保存し、topic の購読と同じ上限に数える（CLI と SDK だけ。desktop・Web は開いている列で購読する） |
+| command | `set_public_channel_subscription` | #1982 | 公開スレッド（公開 channel。ADR 0068）の投稿・リアクションの知らせを購読する・やめる。desired として保存し、topic の購読と同じ上限に数える（CLI と SDK だけ。desktop・Web は開いている列で購読する）。保存は旧版の読まない `public-channel-subscriptions.json` に分け（旧版は `subscriptions.json` の channel を private channel として復元して起動に失敗するため。2026-10-31 のユーザー判断）、backup には含めない |
 | event | `events_lost` | #1975 | 知らせの event を捨てた件数 |
 | event | `game_session_closed` | #1978 | session が閉じた（退出・room の終了・権限の失効・host の不在）。理由の code を持つ。参加者と host の両方の端末に届く（host の端末は #1979 から） |
 | event | `game_session_opened` | #1979 | host の端末で session を受け付け、送受信を始めた。session ID・room ID・参加者の公開鍵を持つ |
