@@ -16,7 +16,7 @@ using Object = UnityEngine.Object;
 namespace Kukuri.GameSdk.Netcode.Tests
 {
     /// NGO の Transport の契約（#1979 AC-2）。2 つの独立した profile の action session の上で、connect・send・poll・
-    /// disconnect と各配送を確かめる。test-netcode.ps1 が NGO 2.13.3 を入れた project で、keyring を切って loopback だけで
+    /// disconnect（client が切る・host が外す）と各配送を確かめる。test-netcode.ps1 が NGO 2.13.3 を入れた project で、keyring を切って loopback だけで
     /// 動かす。
     public sealed class NetcodeTransportTests
     {
@@ -184,6 +184,28 @@ namespace Kukuri.GameSdk.Netcode.Tests
             Assert.AreEqual(guestId, hostEvents.Last().id);
             Assert.AreEqual(1 + deliveries.Length + 1, hostEvents.Count, "nothing else arrived");
             guest.Shutdown();
+
+            // host が外すと（NGO の DisconnectRemoteClient）、client には切断が届く。
+            var rejoin = b.SendAsync("join_game_session", new JObject
+            {
+                ["topic"] = topic,
+                ["scope"] = new JObject { ["kind"] = "public" },
+                ["room_id"] = room,
+            });
+            yield return Wait(rejoin);
+            Assert.IsTrue(rejoin.Result.Ok, rejoin.Result.ErrorCode);
+            var second = Transport(b);
+            second.SessionId = (string)rejoin.Result.Data["session_id"];
+            Assert.IsTrue(second.StartClient());
+            var secondEvents = new List<(NetworkEvent kind, ulong id, byte[] data)>();
+            hostEvents.Clear();
+            yield return Collect(host, hostEvents, () => hostEvents.Count == 1, "the host accepts the guest again");
+            Assert.AreEqual(NetworkEvent.Connect, hostEvents[0].kind);
+            Assert.AreNotEqual(guestId, hostEvents[0].id, "a new client id");
+            host.DisconnectRemoteClient(hostEvents[0].id);
+            yield return Collect(second, secondEvents,
+                () => secondEvents.Any(received => received.kind == NetworkEvent.Disconnect), "the guest is removed");
+            second.Shutdown();
             host.Shutdown();
         }
 

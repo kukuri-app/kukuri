@@ -294,8 +294,9 @@ namespace Kukuri.GameSdk.Netcode
             {
                 _ = client.SendAsync("leave_game_session", new JObject { ["session_id"] = sessionId });
             }
-            catch (KukuriException error) when (error.Code == "closed")
+            catch (KukuriException)
             {
+                // client を閉じた・要求の待ち行列が満杯。外す・退出する要求は送れないが、NGO への切断は渡す。
             }
         }
 

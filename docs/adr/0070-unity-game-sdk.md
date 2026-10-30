@@ -256,6 +256,7 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
   - NGO の分割しない 1 batch の上限を 1088 bytes（datagram の上限から先頭の 5 bytes を引く）、分割する message の上限を 64 KiB（stream の 1 message）に合わせる。超えるものは NGO が送らない。
   - stream の送り待ちが上限で受け付けられなかった分は、相手ごとに 1 MiB まで手元に持って順に送り直す。超えたらその相手を切る。
   - host が開いた知らせより先に受けた packet は、session ごとに 64 件まで持ち、開いたら渡す。
+  - 切断（host が外す・client が退出する・NGO を止める）は session をすぐ閉じる。その時点の送り待ちの分（NGO の切断の理由の message を含む）は届かないことがある。
 - C# の結果（Task）と event の callback は Unity の main thread で、poll の中から呼ぶ。Rust の worker thread から GameObject や UI を触らない。
 - 1 frame で poll に使う件数と時間には上限を置く（既定値は §8）。上限を超えた分は次の frame へ回す。
 - mode（FFI / Sidecar）と profile 名は設定 asset で明示する。本番の Player の既定は FFI で、外部の daemon を自動で起動しない。

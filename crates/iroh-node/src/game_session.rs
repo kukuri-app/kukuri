@@ -148,12 +148,14 @@ impl ProtocolHandler for GameSessionSlot {
                 }
             }
         };
-        session.opened(Arc::new(GameSessionChannel::new(connection.clone())));
+        let channel = Arc::new(GameSessionChannel::new(connection.clone()));
+        session.opened(channel.clone());
         // host が外した([`GameSessionChannel::close`])のでなければ、参加者が閉じた・接続が失われたので退出として扱う。
         let reason = tokio::select! {
-            closed = connection.closed() => match closed {
-                ConnectionError::LocallyClosed => GAME_SESSION_REMOVED.to_string(),
-                _ => GAME_SESSION_LEFT.to_string(),
+            _ = connection.closed() => if channel.closed_here() {
+                GAME_SESSION_REMOVED.to_string()
+            } else {
+                GAME_SESSION_LEFT.to_string()
             },
             reason = revoked => {
                 connection.close(CLOSE_ENDED.into(), reason.as_bytes());
