@@ -21,7 +21,10 @@ use kukuri_cli::{
     },
     session::ClientSession,
 };
-use kukuri_desktop_runtime::{ClientHost, ClientProfile, ClientProfileKind, ProfileLease};
+use kukuri_desktop_runtime::{
+    ClientHost, ClientProfile, ClientProfileKind, DesktopRuntime, GameDelivery, GameSendRefused,
+    ProfileLease,
+};
 use serde::Deserialize;
 use tokio::sync::{Notify, Semaphore, oneshot, watch};
 
@@ -57,9 +60,17 @@ pub enum ItemKind {
     Response = 1,
     /// 直前の応答の秘密の出力（JSON ではない bytes）。
     Secret = 2,
-    /// `RuntimeEvent` と SDK の event（`events_lost`）の JSON。
+    /// `RuntimeEvent` と SDK の event（`events_lost`・`game_session_packet`）の JSON。
     Event = 3,
+    /// 直前の event（`game_session_packet`）の bytes。
+    Bytes = 4,
 }
+
+/// `kukuri_sdk_send_binary` の kind（ADR 0070 §3）。映像・音声の kind は #1982 が足す。
+pub const BINARY_DATAGRAM: u32 = 1;
+pub const BINARY_STREAM: u32 = 2;
+/// poll で packet の event に数える JSON の大きさ（session ID と配送の名前を含む上限の見積もり）。
+const PACKET_EVENT_BYTES: usize = 128;
 
 #[derive(Debug)]
 pub struct Item {
@@ -372,8 +383,44 @@ impl SdkClient {
         }
     }
 
-    /// 届いている応答・秘密の出力・event を上限まで取り出す。応答とその秘密の出力は分けない。
-    pub fn poll(&self, max_items: usize, max_bytes: usize) -> Result<Vec<Item>, Status> {
+    /// 開いている session の packet を送り待ちに置いて即座に戻る（ADR 0070 §3）。
+    pub fn send_binary(&self, kind: u32, target: &str, bytes: &[u8]) -> Status {
+        if let Err(status) = self.check() {
+            return status;
+        }
+        let delivery = match kind {
+            BINARY_DATAGRAM => GameDelivery::Datagram,
+            BINARY_STREAM => GameDelivery::Stream,
+            _ => return Status::InvalidArgument,
+        };
+        if self.runtime.is_none() || self.shared.queues().closed {
+            return Status::Closed;
+        }
+        let Some(runtime) = self.host_runtime() else {
+            return Status::Closed;
+        };
+        match runtime.send_game_packet(target, delivery, bytes) {
+            Ok(()) => Status::Ok,
+            Err(GameSendRefused::TooLarge) => Status::InvalidArgument,
+            Err(GameSendRefused::Backpressure) => Status::Backpressure,
+            Err(GameSendRefused::Closed) => Status::Closed,
+        }
+    }
+
+    fn host_runtime(&self) -> Option<Arc<DesktopRuntime>> {
+        let started = self.started.borrow();
+        let session = started.as_ref()?.as_ref().ok()?.session.clone()?;
+        session.host().map(|host| host.runtime())
+    }
+
+    /// 届いている応答・秘密の出力・event・packet を上限まで取り出す。応答とその秘密の出力、packet の event とその
+    /// bytes は分けない。`accept_packets` が false なら（未解放の batch が上限に達した）packet を取り出さない。
+    pub fn poll(
+        &self,
+        max_items: usize,
+        max_bytes: usize,
+        accept_packets: bool,
+    ) -> Result<Vec<Item>, Status> {
         self.check()?;
         let max_items = max_items.clamp(1, MAX_POLL_ITEMS);
         let mut queues = self.shared.queues();
@@ -427,6 +474,35 @@ impl SdkClient {
             items.push(Item {
                 kind: ItemKind::Event,
                 data: event,
+            });
+        }
+        drop(queues);
+        let Some(runtime) = self.host_runtime() else {
+            return Ok(items);
+        };
+        let mut count = items.len();
+        let packets = runtime.take_game_packets(accept_packets, |len| {
+            let size = PACKET_EVENT_BYTES + len;
+            let fits = count + 2 <= max_items && (count == 0 || bytes + size <= max_bytes);
+            if fits {
+                count += 2;
+                bytes += size;
+            }
+            fits
+        });
+        for (session_id, packet) in packets {
+            items.push(Item {
+                kind: ItemKind::Event,
+                data: serde_json::to_vec(&serde_json::json!({
+                    "type": "game_session_packet",
+                    "session_id": session_id,
+                    "delivery": packet.delivery.as_str(),
+                }))
+                .expect("packet event encodes"),
+            });
+            items.push(Item {
+                kind: ItemKind::Bytes,
+                data: packet.bytes.to_vec(),
             });
         }
         Ok(items)
@@ -700,7 +776,7 @@ mod tests {
                 .shared
                 .push_event(format!("{{\"n\":{index}}}").into_bytes());
         }
-        let items = client.poll(3, usize::MAX).unwrap();
+        let items = client.poll(3, usize::MAX, true).unwrap();
         assert_eq!(items[0].kind, ItemKind::Response);
         let lost: serde_json::Value = serde_json::from_slice(&items[1].data).unwrap();
         assert_eq!(lost["type"], "events_lost");
@@ -723,12 +799,12 @@ mod tests {
         })
         .unwrap();
         std::thread::sleep(Duration::from_millis(50));
-        client.poll(64, usize::MAX).unwrap();
+        client.poll(64, usize::MAX, true).unwrap();
         client.shared.push_event(vec![b'x'; 4096]);
         client.shared.push_event(b"small".to_vec());
-        let first = client.poll(64, 1024).unwrap();
+        let first = client.poll(64, 1024, true).unwrap();
         assert_eq!(first.len(), 1);
         assert_eq!(first[0].data.len(), 4096);
-        assert_eq!(client.poll(64, 1024).unwrap()[0].data, b"small");
+        assert_eq!(client.poll(64, 1024, true).unwrap()[0].data, b"small");
     }
 }

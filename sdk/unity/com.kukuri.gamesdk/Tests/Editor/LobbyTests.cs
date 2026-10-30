@@ -14,8 +14,9 @@ using Object = UnityEngine.Object;
 
 namespace Kukuri.GameSdk.Tests
 {
-    /// 2 つの独立した profile で、作成 → 発見（後から参加した側）→ 表示 → 参加 → 終了を Lobby prefab で確かめる（#1978
-    /// AC-1・AC-2、F-LOB-1・F-LOB-2）。test.ps1 が keyring を切り、loopback だけで動かす。
+    /// 2 つの独立した profile で、作成 → 発見（後から参加した側）→ 表示 → 参加 → packet の送受信 → 終了を Lobby prefab と
+    /// 低水準の API で確かめる（#1978 AC-1・AC-2、#1979 AC-1、F-LOB-1・F-LOB-2・F-SES-2）。test.ps1 が keyring を切り、
+    /// loopback だけで動かす。
     public sealed class LobbyTests
     {
         const string PrefabPath = "Packages/com.kukuri.gamesdk/Runtime/Lobby/KukuriLobby.prefab";
@@ -108,6 +109,18 @@ namespace Kukuri.GameSdk.Tests
             }
         }
 
+        IEnumerator PumpUntil(Func<bool> condition, string what)
+        {
+            var clock = Stopwatch.StartNew();
+            while (!condition())
+            {
+                Assert.Less(clock.Elapsed.TotalSeconds, 60, what);
+                a.Pump();
+                b.Pump();
+                yield return null;
+            }
+        }
+
         [UnityTest]
         public IEnumerator ARoomCreatedByOneProfileIsFoundJoinedAndEndedForAnother()
         {
@@ -145,10 +158,32 @@ namespace Kukuri.GameSdk.Tests
             // 参加すると「参加中」になり、host が終えると session が閉じた知らせが届く。
             string closedReason = null;
             guestLobby.SessionClosed += reason => closedReason = reason;
+            string opened = null;
+            a.EventReceived += @event =>
+            {
+                if ((string)@event["type"] == "game_session_opened")
+                    opened = (string)@event["session_id"];
+            };
+            var hostPackets = new System.Collections.Generic.List<KukuriPacket>();
+            var guestPackets = new System.Collections.Generic.List<KukuriPacket>();
+            a.PacketReceived += hostPackets.Add;
+            b.PacketReceived += guestPackets.Add;
             var join = guestLobby.JoinRoomAsync(roomId);
             yield return Wait(join);
-            Assert.AreEqual(join.Result, guestLobby.JoinedSessionId);
+            var session = join.Result;
+            Assert.AreEqual(session, guestLobby.JoinedSessionId);
             StringAssert.Contains("参加中", Shown(lobbyB).Single().Detail);
+
+            // 低水準の API: 両方の向きで stream と datagram が届く。
+            yield return PumpUntil(() => opened == session, "the host did not open the session");
+            Assert.AreEqual(KukuriSendStatus.Sent, b.SendPacket(session, KukuriDelivery.Stream, new byte[] { 1, 2, 3 }));
+            yield return PumpUntil(() => hostPackets.Count == 1, "the host did not receive the packet");
+            Assert.AreEqual(KukuriDelivery.Stream, hostPackets[0].Delivery);
+            CollectionAssert.AreEqual(new byte[] { 1, 2, 3 }, hostPackets[0].Data);
+            Assert.AreEqual(KukuriSendStatus.Sent, a.SendPacket(session, KukuriDelivery.Datagram, new byte[] { 9 }));
+            yield return PumpUntil(() => guestPackets.Count == 1, "the guest did not receive the packet");
+            Assert.AreEqual(KukuriDelivery.Datagram, guestPackets[0].Delivery);
+            Assert.AreEqual(KukuriSendStatus.TooLarge, b.SendPacket(session, KukuriDelivery.Datagram, new byte[1101]));
 
             yield return Wait(hostLobby.EndRoomAsync(roomId));
             Assert.AreEqual("Ended", hostLobby.Rooms.Single().Status);
@@ -162,6 +197,7 @@ namespace Kukuri.GameSdk.Tests
             }
             Assert.AreEqual("room_ended", closedReason);
             Assert.IsNull(guestLobby.JoinedSessionId);
+            Assert.AreEqual(KukuriSendStatus.Closed, b.SendPacket(session, KukuriDelivery.Stream, new byte[] { 4 }));
             yield return RefreshUntil(guestLobby, () => guestLobby.Rooms.Single().Status == "Ended",
                 "the other profile did not see the room end");
             StringAssert.Contains("終了", Shown(lobbyB).Single().Detail);

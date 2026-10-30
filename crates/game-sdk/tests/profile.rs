@@ -6,7 +6,6 @@ mod support;
 
 use std::{
     path::Path,
-    sync::Once,
     time::{Duration, Instant},
 };
 
@@ -14,70 +13,9 @@ use kukuri_desktop_runtime::{ClientProfile, ClientProfileKind, ProfileLease};
 use kukuri_game_sdk::KukuriHandle;
 use serde_json::{Value, json};
 use support::{
-    PROFILE, error_code, finish, open_real, poll_once, request, response_for, seen_json, send,
-    send_secret,
+    PROFILE, call, consent, error_code, finish, isolated_environment, open_real, poll_once,
+    request, response_for, seen_json, send, send_secret, wait_for_startup,
 };
-
-fn isolated_environment() {
-    static SET: Once = Once::new();
-    SET.call_once(|| unsafe {
-        for name in [
-            "KUKURI_APP_DATA_DIR",
-            "KUKURI_INSTANCE",
-            "KUKURI_DISCOVERY_SEEDS",
-            "KUKURI_ADVERTISE_PORT",
-        ] {
-            std::env::remove_var(name);
-        }
-        std::env::set_var("KUKURI_DISABLE_KEYRING", "1");
-        std::env::set_var("KUKURI_DISCOVERY_MODE", "static_peer");
-        std::env::set_var("KUKURI_BIND_ADDR", "127.0.0.1:0");
-        std::env::set_var("KUKURI_ADVERTISE_HOST", "127.0.0.1");
-    });
-}
-
-/// 応答の data を返す。失敗なら error を見せて止まる。
-fn call(handle: *mut KukuriHandle, id: &str, command: &str, payload: Value) -> Value {
-    assert_eq!(send(handle, &request(id, command, payload)), 0, "{command}");
-    let response = response_for(handle, id, Duration::from_secs(60));
-    assert_eq!(response["ok"], true, "{command}: {}", response["error"]);
-    response["data"].clone()
-}
-
-fn wait_for_startup(handle: *mut KukuriHandle) {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while !poll_once(handle, 64)
-        .unwrap()
-        .iter()
-        .any(|item| item.kind == 3 && item.json["type"] == "startup_status_changed")
-    {
-        assert!(Instant::now() < deadline, "startup did not finish");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
-/// 表示された現行の文書と 18 歳以上の申告に同意する（ゲームが同意の画面で行う操作）。
-fn consent(handle: *mut KukuriHandle) {
-    let status = call(
-        handle,
-        "consent-status",
-        "get_app_consent_status",
-        json!({}),
-    );
-    let documents: Vec<Value> = status["documents"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|doc| json!({"slug": doc["slug"], "version": doc["currentVersion"]}))
-        .collect();
-    let accepted = call(
-        handle,
-        "consent",
-        "accept_app_consents",
-        json!({"documents": documents, "language": "ja", "age_attested": true}),
-    );
-    assert_eq!(accepted["status"], "ready");
-}
 
 fn public_key(handle: *mut KukuriHandle, id: &str) -> Value {
     call(handle, id, "get_sync_status", json!({}))["local_author_pubkey"].clone()

@@ -2,7 +2,7 @@
 //!
 //! 参加者は最初の双方向 stream で参加の要求(proof を含む)を送り、host の認可の応答を読む。認可された接続は session
 //! の間ずっと保ち、host は 5 秒ごとに評価し直して、許されなくなったら理由の code を付けて閉じる。参加者が閉じれば
-//! 退出。どちらの側も、接続が閉じたことで session の終わりを知る。packet の送受信は #1979 がこの接続に載せる。
+//! 退出。どちらの側も、接続が閉じたことで session の終わりを知る。受け付けた後の送受信は [`GameSessionChannel`]。
 
 use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Duration;
@@ -15,7 +15,7 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use n0_future::time::timeout;
 use tokio::sync::Semaphore;
 
-use crate::IrohDocsNode;
+use crate::{GameSessionChannel, IrohDocsNode};
 
 pub(crate) const GAME_SESSION_ALPN: &[u8] = b"/kukuri/game-session/1";
 /// 参加の要求の上限(private channel の proof の envelope を含む)。
@@ -38,11 +38,18 @@ pub type GameSessionFuture<T> = BoxFuture<'static, T>;
 /// 許されている間は `None`、許されなくなったら閉じる理由の code。
 pub type GameSessionRevalidate = Arc<dyn Fn() -> GameSessionFuture<Option<String>> + Send + Sync>;
 
-/// host が受け付けた session。落とすと(接続が閉じると)host の記録を消す。
+/// host が受け付けた session。
 pub struct GameSessionGrant {
     pub session_id: String,
     pub revalidate: GameSessionRevalidate,
-    pub guard: Box<dyn Send + Sync>,
+    pub session: Box<dyn HostedGameSession>,
+}
+
+/// host の端末の、受け付けた session の記録。送受信を始めたら `opened`、閉じたら理由とともに `closed` が呼ばれる。
+/// どちらも呼ばれずに落とされたら(応答を返す前に切れた)、記録を消す。
+pub trait HostedGameSession: Send + Sync {
+    fn opened(&mut self, channel: Arc<GameSessionChannel>);
+    fn closed(self: Box<Self>, reason: &str);
 }
 
 /// 参加の要求の bytes と相手の endpoint から、受け付けた session か拒否の理由の code を返す。
@@ -117,7 +124,11 @@ impl ProtocolHandler for GameSessionSlot {
             connection.close(CLOSE_DONE.into(), b"unavailable");
             return Ok(());
         };
-        let Ok(Ok(Some(grant))) = timeout(HANDSHAKE_TIMEOUT, admit(&connection, &authorizer)).await
+        let Ok(Ok(Some(GameSessionGrant {
+            revalidate,
+            mut session,
+            ..
+        }))) = timeout(HANDSHAKE_TIMEOUT, admit(&connection, &authorizer)).await
         else {
             // 拒否の code を相手が読んで閉じるまで待つ(先に閉じると応答が届かない)。
             let _ = timeout(HANDSHAKE_TIMEOUT, connection.closed()).await;
@@ -125,20 +136,25 @@ impl ProtocolHandler for GameSessionSlot {
             return Ok(());
         };
         let revoked = async {
-            let mut revalidate = n0_future::time::interval(GAME_SESSION_REVALIDATE_INTERVAL);
-            revalidate.tick().await;
+            let mut every = n0_future::time::interval(GAME_SESSION_REVALIDATE_INTERVAL);
+            every.tick().await;
             loop {
-                revalidate.tick().await;
-                if let Some(reason) = (grant.revalidate)().await {
+                every.tick().await;
+                if let Some(reason) = revalidate().await {
                     return reason;
                 }
             }
         };
-        tokio::select! {
-            _ = connection.closed() => {}
-            reason = revoked => connection.close(CLOSE_ENDED.into(), reason.as_bytes()),
-        }
-        drop(grant);
+        session.opened(Arc::new(GameSessionChannel::new(connection.clone())));
+        // 参加者が閉じた・接続が失われたら退出として扱う。
+        let reason = tokio::select! {
+            _ = connection.closed() => GAME_SESSION_LEFT.to_string(),
+            reason = revoked => {
+                connection.close(CLOSE_ENDED.into(), reason.as_bytes());
+                reason
+            }
+        };
+        session.closed(&reason);
         Ok(())
     }
 }
@@ -163,11 +179,16 @@ async fn admit(
 pub struct GameSessionLink {
     connection: Connection,
     session_id: String,
+    channel: Arc<GameSessionChannel>,
 }
 
 impl GameSessionLink {
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    pub fn channel(&self) -> &Arc<GameSessionChannel> {
+        &self.channel
     }
 
     /// session が閉じるまで待ち、理由の code を返す(退出なら `left`)。
@@ -232,6 +253,7 @@ impl IrohDocsNode {
         };
         match answer.split_once('\n') {
             Some((GRANTED, session_id)) if !session_id.is_empty() => Ok(GameSessionLink {
+                channel: Arc::new(GameSessionChannel::new(connection.clone())),
                 connection,
                 session_id: session_id.to_string(),
             }),

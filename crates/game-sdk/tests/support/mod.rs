@@ -2,13 +2,13 @@
 #![allow(dead_code, clippy::unwrap_used)]
 
 use std::{
-    sync::Mutex,
+    sync::{Mutex, Once},
     time::{Duration, Instant},
 };
 
 use kukuri_game_sdk::{
     ABI_VERSION, KukuriBatch, KukuriHandle, Status, kukuri_sdk_batch_release, kukuri_sdk_close,
-    kukuri_sdk_free, kukuri_sdk_open, kukuri_sdk_poll, kukuri_sdk_send,
+    kukuri_sdk_free, kukuri_sdk_open, kukuri_sdk_poll, kukuri_sdk_send, kukuri_sdk_send_binary,
 };
 use serde_json::{Value, json};
 
@@ -44,6 +44,47 @@ pub struct Polled {
     pub kind: u32,
     pub json: Value,
     pub raw: Vec<u8>,
+}
+
+pub fn send_binary(handle: *mut KukuriHandle, kind: u32, target: &str, bytes: &[u8]) -> i32 {
+    unsafe {
+        kukuri_sdk_send_binary(
+            handle,
+            kind,
+            target.as_ptr(),
+            target.len(),
+            bytes.as_ptr(),
+            bytes.len(),
+        )
+    }
+}
+
+/// 1 回 poll して、batch を解放せずに写す（届いていなければ None）。
+pub fn poll_hold(
+    handle: *mut KukuriHandle,
+    max_items: usize,
+    max_bytes: usize,
+) -> Option<(*const KukuriBatch, Vec<Polled>)> {
+    let mut batch: *const KukuriBatch = std::ptr::null();
+    let status = unsafe { kukuri_sdk_poll(handle, max_items, max_bytes, &mut batch) };
+    assert_eq!(status, Status::Ok as i32);
+    if batch.is_null() {
+        return None;
+    }
+    let view = unsafe { &*batch };
+    let items = unsafe { std::slice::from_raw_parts(view.items, view.count) };
+    let polled = items
+        .iter()
+        .map(|item| {
+            let raw = unsafe { std::slice::from_raw_parts(item.data, item.len) }.to_vec();
+            Polled {
+                kind: item.kind,
+                json: serde_json::from_slice(&raw).unwrap_or(Value::Null),
+                raw,
+            }
+        })
+        .collect();
+    Some((batch, polled))
 }
 
 /// 1 回 poll して、batch を写してから解放する。
@@ -144,6 +185,68 @@ pub fn send_secret(handle: *mut KukuriHandle, request: &[u8], secret: &[u8]) -> 
             secret.len(),
         )
     }
+}
+
+/// 同意の後は実際の runtime を起動するので、CLI の process 試験と同じく keyring を使わず loopback だけで動かす。
+pub fn isolated_environment() {
+    static SET: Once = Once::new();
+    SET.call_once(|| unsafe {
+        for name in [
+            "KUKURI_APP_DATA_DIR",
+            "KUKURI_INSTANCE",
+            "KUKURI_DISCOVERY_SEEDS",
+            "KUKURI_ADVERTISE_PORT",
+        ] {
+            std::env::remove_var(name);
+        }
+        std::env::set_var("KUKURI_DISABLE_KEYRING", "1");
+        std::env::set_var("KUKURI_DISCOVERY_MODE", "static_peer");
+        std::env::set_var("KUKURI_BIND_ADDR", "127.0.0.1:0");
+        std::env::set_var("KUKURI_ADVERTISE_HOST", "127.0.0.1");
+    });
+}
+
+/// 応答の data を返す。失敗なら error を見せて止まる。
+pub fn call(handle: *mut KukuriHandle, id: &str, command: &str, payload: Value) -> Value {
+    assert_eq!(send(handle, &request(id, command, payload)), 0, "{command}");
+    let response = response_for(handle, id, Duration::from_secs(60));
+    assert_eq!(response["ok"], true, "{command}: {}", response["error"]);
+    response["data"].clone()
+}
+
+pub fn wait_for_startup(handle: *mut KukuriHandle) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !poll_once(handle, 64)
+        .unwrap()
+        .iter()
+        .any(|item| item.kind == 3 && item.json["type"] == "startup_status_changed")
+    {
+        assert!(Instant::now() < deadline, "startup did not finish");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// 表示された現行の文書と 18 歳以上の申告に同意する（ゲームが同意の画面で行う操作）。
+pub fn consent(handle: *mut KukuriHandle) {
+    let status = call(
+        handle,
+        "consent-status",
+        "get_app_consent_status",
+        json!({}),
+    );
+    let documents: Vec<Value> = status["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|doc| json!({"slug": doc["slug"], "version": doc["currentVersion"]}))
+        .collect();
+    let accepted = call(
+        handle,
+        "consent",
+        "accept_app_consents",
+        json!({"documents": documents, "language": "ja", "age_attested": true}),
+    );
+    assert_eq!(accepted["status"], "ready");
 }
 
 /// process の中で `client` を Sidecar として公開し、Sidecar の mode の handle で接続する（Windows だけ）。

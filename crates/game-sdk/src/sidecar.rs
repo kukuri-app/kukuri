@@ -59,9 +59,16 @@ enum Op {
     Cancel {
         request_id: String,
     },
+    /// 続く frame は packet の bytes。
+    SendBinary {
+        kind: u32,
+        target: String,
+    },
     Poll {
         max_items: usize,
         max_bytes: usize,
+        /// DLL の側の未解放の batch が上限に達していなければ true。
+        accept_packets: bool,
     },
 }
 
@@ -106,6 +113,7 @@ fn kind_from(code: u32) -> Option<ItemKind> {
         1 => Some(ItemKind::Response),
         2 => Some(ItemKind::Secret),
         3 => Some(ItemKind::Event),
+        4 => Some(ItemKind::Bytes),
         _ => None,
     }
 }
@@ -314,10 +322,21 @@ async fn attach(
             Ok(Op::Cancel { request_id }) => {
                 write_reply(pipe, &Reply::status(client.cancel(&request_id))).await
             }
+            Ok(Op::SendBinary { kind, target }) => {
+                let Ok(bytes) = read_frame(pipe).await else {
+                    break false;
+                };
+                write_reply(
+                    pipe,
+                    &Reply::status(client.send_binary(kind, &target, &bytes)),
+                )
+                .await
+            }
             Ok(Op::Poll {
                 max_items,
                 max_bytes,
-            }) => match client.poll(max_items, max_bytes) {
+                accept_packets,
+            }) => match client.poll(max_items, max_bytes, accept_packets) {
                 Ok(items) => {
                     for item in &items {
                         if item.kind == ItemKind::Response
@@ -529,7 +548,27 @@ impl SidecarClient {
         .map_or(Status::Ok, |reply| status_from(reply.status))
     }
 
-    pub fn poll(&mut self, max_items: usize, max_bytes: usize) -> Result<Vec<Item>, Status> {
+    /// 切断していれば送らずに `CLOSED`（session は Sidecar の runtime にある）。
+    pub fn send_binary(&mut self, kind: u32, target: &str, bytes: &[u8]) -> Status {
+        if self.closed {
+            return Status::Closed;
+        }
+        self.rpc(
+            &Op::SendBinary {
+                kind,
+                target: target.into(),
+            },
+            &[bytes],
+        )
+        .map_or(Status::Closed, |reply| status_from(reply.status))
+    }
+
+    pub fn poll(
+        &mut self,
+        max_items: usize,
+        max_bytes: usize,
+        accept_packets: bool,
+    ) -> Result<Vec<Item>, Status> {
         let max_items = max_items.clamp(1, crate::MAX_POLL_ITEMS);
         let mut items: Vec<Item> = Vec::new();
         while items.len() < max_items
@@ -544,6 +583,7 @@ impl SidecarClient {
             &Op::Poll {
                 max_items,
                 max_bytes,
+                accept_packets,
             },
             &[],
         ) else {

@@ -8,12 +8,23 @@ use anyhow::Result;
 use tokio::sync::Mutex;
 
 use crate::{
-    GAME_SESSION_HOST_UNAVAILABLE, GAME_SESSION_LEFT, GameSessionAuthorizer, GameSessionDenied,
-    GameSessionGrant, IrohDocsNode,
+    GAME_SESSION_HOST_UNAVAILABLE, GAME_SESSION_LEFT, GameSessionAuthorizer, GameSessionChannel,
+    GameSessionDenied, GameSessionGrant, HostedGameSession, IrohDocsNode,
 };
 
-/// 落とされた(host が session を記録から消した)回数を数える。
-struct Recorded(Arc<AtomicUsize>);
+/// host の端末で受け付けた session の送受信。
+pub(super) type HostChannel = Arc<std::sync::Mutex<Option<Arc<GameSessionChannel>>>>;
+
+/// 落とされた(host が session を記録から消した)回数を数え、送受信を `channel` に置く。
+struct Recorded(Arc<AtomicUsize>, HostChannel);
+
+impl HostedGameSession for Recorded {
+    fn opened(&mut self, channel: Arc<GameSessionChannel>) {
+        *self.1.lock().expect("host channel") = Some(channel);
+    }
+
+    fn closed(self: Box<Self>, _reason: &str) {}
+}
 
 impl Drop for Recorded {
     fn drop(&mut self) {
@@ -26,9 +37,18 @@ fn authorizer(
     released: Arc<AtomicUsize>,
     revoked: Arc<Mutex<Option<String>>>,
 ) -> GameSessionAuthorizer {
+    authorizer_with(released, revoked, HostChannel::default())
+}
+
+pub(super) fn authorizer_with(
+    released: Arc<AtomicUsize>,
+    revoked: Arc<Mutex<Option<String>>>,
+    channel: HostChannel,
+) -> GameSessionAuthorizer {
     Arc::new(move |_remote, request| {
         let released = released.clone();
         let revoked = revoked.clone();
+        let channel = channel.clone();
         Box::pin(async move {
             if request != b"join" {
                 return Err("access_denied".to_string());
@@ -39,13 +59,13 @@ fn authorizer(
                     let revoked = revoked.clone();
                     Box::pin(async move { revoked.lock().await.clone() })
                 }),
-                guard: Box::new(Recorded(released)),
+                session: Box::new(Recorded(released, channel)),
             })
         })
     })
 }
 
-async fn pair() -> Result<(Arc<IrohDocsNode>, Arc<IrohDocsNode>, String)> {
+pub(super) async fn pair() -> Result<(Arc<IrohDocsNode>, Arc<IrohDocsNode>, String)> {
     let host = IrohDocsNode::memory().await?;
     let participant = IrohDocsNode::memory().await?;
     participant
@@ -55,7 +75,7 @@ async fn pair() -> Result<(Arc<IrohDocsNode>, Arc<IrohDocsNode>, String)> {
     Ok((host, participant, host_id))
 }
 
-async fn eventually(released: &AtomicUsize, expected: usize) {
+pub(super) async fn eventually(released: &AtomicUsize, expected: usize) {
     for _ in 0..100 {
         if released.load(Ordering::SeqCst) == expected {
             return;
