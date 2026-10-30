@@ -193,6 +193,14 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
   - desktop・Web の一覧には action session の room を出さない。Web はこの種類の行を保存しない（2026-10-30 のユーザー判断）。旧版の desktop は manifest の種類を読めずにその room を飛ばし、一覧の残りは表示される。
 - 公開範囲は room を置く場所で決まる。公開 topic なら public、private channel なら既存の audience（friend_only・friend_plus・invite_only）をそのまま使う。
 - session は専用の ALPN で host の端末へ接続し、最初の双方向 stream で、参加者が署名した 10 秒の proof（room と host に束縛）を送る。host は room の状態と公開範囲を確かめてから packet を受け付け、5 秒ごとに評価し直す（media と同じ形）。
+  - ALPN は `/kukuri/game-session/1`。要求は topic、room ID、proof（`DomeSpatialAccessProofV1`）で、上限は 64 KiB。proof の署名は topic・channel と host に束縛する。room ID は要求に入れ、host が自分の room と照らす（要求を受け取るのは host だけ）。
+  - host は次をすべて満たすときだけ受け付け、session ID を返す。拒否は理由の code だけを返す。
+    - room が自分の action session で、終了していない（`room_not_found`・`room_ended`）
+    - 公開範囲を満たす（`access_denied`）。公開 topic では gossip を止めていないこと、private channel では参加者が今の epoch の参加者であること。どちらも host からの block が無いこと。friend_only・friend_plus・invite_only の違いは channel に入るときの規則にある
+    - host を含めて最大人数に達していない（`room_full`）
+  - 接続できないときの code は `host_unreachable`。参加者の端末が同時に参加する session は 8 まで（`session_limit`）。
+  - 接続は session の間ずっと保つ。host は評価し直しで続けられないと分かったら、理由の code（`room_ended`・`access_revoked`）を付けて閉じる。参加者が閉じれば退出（`left`）、理由が届かないまま切れたら `host_unavailable`。
+  - 参加者の端末には、閉じた理由とともに `game_session_closed` が届く。両方の端末で session の記録を消し、閉じた session の送受信は認可しない。
 - 座標などの最新の状態は QUIC の unreliable datagram、確定させる操作は reliable stream で送る。送る側の上限は次のとおりで、#1979 はこの値で実装する。
   - datagram: payload は 1 件 1100 bytes 以下で、さらに接続の `max_datagram_size` 以下。送り待ちは session ごとに 64 件で、溢れたら古いものから捨てる。
   - stream: message は 1 件 64 KiB 以下で、session の中の順に全部届く。送り待ちは session ごとに 256 KiB で、超えたら `BACKPRESSURE`。

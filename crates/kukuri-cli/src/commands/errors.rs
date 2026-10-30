@@ -1,7 +1,7 @@
 use kukuri_desktop_runtime::{
     CommunityNodeIndexQueryError, CommunityNodeIndexingRequestError, CommunityNodeReportError,
     CommunityNodeTesterFeedbackError, CommunityNodeTrustRelationError, DomeHostingRequestError,
-    ScopeLimitReached, SubscriptionStateError, SubscriptionStateErrorKind,
+    GameSessionRejected, ScopeLimitReached, SubscriptionStateError, SubscriptionStateErrorKind,
 };
 use serde_json::json;
 use std::io::Write;
@@ -30,6 +30,18 @@ pub(super) fn command_error(error: anyhow::Error) -> ProtocolError {
     }
     if let Some(error) = error.downcast_ref::<DomeHostingRequestError>() {
         return node_error(&error.code, Some(error.status), None);
+    }
+    // #1978: ゲームの session に参加できない理由の code は details.reason に載せる。
+    if let Some(rejected) = error.downcast_ref::<GameSessionRejected>() {
+        let code = match rejected.0.as_str() {
+            "room_not_found" => error_code::NOT_FOUND,
+            "access_denied" => error_code::AUTHORIZATION_FAILED,
+            "host_unreachable" => error_code::NETWORK_UNAVAILABLE,
+            "room_full" | "session_limit" => error_code::BACKPRESSURE,
+            _ => error_code::CONFLICT,
+        };
+        return ProtocolError::new(code, "ゲームの session に参加できませんでした")
+            .with_details(json!({"reason": rejected.0}));
     }
     // #1221 R2-C: 購読・参加の上限(desired と参加の lease で共通の 64)。
     if error.downcast_ref::<ScopeLimitReached>().is_some()

@@ -61,6 +61,8 @@ mod community_node;
 mod device_backup;
 mod dome_session;
 mod empty_namespace_reclaim;
+#[cfg(not(target_family = "wasm"))]
+mod game_sessions;
 mod holder_discovery;
 mod identity_restart;
 mod legacy_store_retirement;

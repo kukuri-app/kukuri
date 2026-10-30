@@ -16,6 +16,8 @@ mod account_transfer;
 // 旧 store の退役は native だけ（file を使う）。
 mod dome_session;
 #[cfg(not(target_family = "wasm"))]
+mod game_session;
+#[cfg(not(target_family = "wasm"))]
 mod legacy;
 mod media;
 mod network_work;
@@ -37,6 +39,12 @@ pub use account_transfer::{
     AccountHistoryPage, AccountHistoryResume, AccountHistoryStaging, AccountTransfer,
 };
 pub use dome_session::{DomeHostUnreachable, DomeSessionHandler};
+#[cfg(not(target_family = "wasm"))]
+pub use game_session::{
+    GAME_SESSION_HOST_UNAVAILABLE, GAME_SESSION_LEFT, GAME_SESSION_REQUEST_MAX_BYTES,
+    GAME_SESSION_REVALIDATE_INTERVAL, GameSessionAuthorizer, GameSessionDenied, GameSessionGrant,
+    GameSessionLink, GameSessionRevalidate,
+};
 #[cfg(not(target_family = "wasm"))]
 pub use legacy::{LegacyStore, adopt_endpoint_secret, remove_dir_step, retire_legacy_layout};
 pub use media::{

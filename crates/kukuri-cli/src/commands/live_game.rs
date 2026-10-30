@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kukuri_desktop_runtime::{
-    CreateGameRoomRequest, CreateLiveSessionRequest, ListActionRoomsRequest, ListGameRoomsRequest,
-    ListLiveSessionsRequest, LiveSessionCommandRequest, UpdateGameRoomRequest,
+    CreateGameRoomRequest, CreateLiveSessionRequest, JoinGameSessionRequest,
+    LeaveGameSessionRequest, ListActionRoomsRequest, ListGameRoomsRequest, ListLiveSessionsRequest,
+    LiveSessionCommandRequest, UpdateGameRoomRequest,
 };
 use serde_json::{Value, json};
 
@@ -25,6 +26,8 @@ enum Operation {
     LeaveLive,
     ListGame,
     ListAction,
+    JoinSession,
+    LeaveSession,
     CreateGame,
     UpdateGame,
 }
@@ -102,6 +105,18 @@ impl CommandHandler for Handler {
                     .await
                     .map_err(command_error)?,
             ),
+            Operation::JoinSession => encode(
+                runtime
+                    .join_game_session(decode::<JoinGameSessionRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            Operation::LeaveSession => encode(
+                runtime
+                    .leave_game_session(decode::<LeaveGameSessionRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
             Operation::CreateGame => encode(
                 runtime
                     .create_game_room(decode::<CreateGameRoomRequest>(payload)?)
@@ -166,6 +181,25 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
                 "next_cursor": schema::nullable(json!({"type": "string"}))}),
                 &["items", "next_cursor"],
             ),
+        ),
+        // #1978: action session の room の host へ参加・退出する。断られたら details.reason に理由の code。
+        (
+            "join_game_session",
+            Write,
+            JoinSession,
+            schema::object(
+                json!({"topic": {"type": "string"}, "scope": schema::timeline_scope(),
+                "room_id": {"type": "string"}}),
+                &["topic", "room_id"],
+            ),
+            schema::object(json!({"session_id": {"type": "string"}}), &["session_id"]),
+        ),
+        (
+            "leave_game_session",
+            Write,
+            LeaveSession,
+            schema::object(json!({"session_id": {"type": "string"}}), &["session_id"]),
+            json!({"type": "null"}),
         ),
         (
             "create_game_room",

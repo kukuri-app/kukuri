@@ -298,6 +298,8 @@ pub(crate) struct SharedIrohStack {
     dome_session_handler: Mutex<Option<kukuri_iroh_node::DomeSessionHandler>>,
     /// 空間音声と live の受け口の認可(ADR 0067)。作り直す node にも付け直す。
     media_authorizer: Mutex<Option<kukuri_iroh_node::MediaAuthorizer>>,
+    #[cfg(not(target_family = "wasm"))]
+    game_session_authorizer: Mutex<Option<kukuri_iroh_node::GameSessionAuthorizer>>,
     /// 公開 blob の保持端末の候補の源（Web の Community Node の検索。#1632 AC-6）。作り直す node にも付け直す。
     public_blob_providers:
         Mutex<Option<Arc<dyn kukuri_iroh_node::remote_fetch::PublicBlobProviders>>>,
@@ -470,6 +472,8 @@ impl SharedIrohStack {
             receive_binding_keys: Mutex::new(None),
             dome_session_handler: Mutex::new(None),
             media_authorizer: Mutex::new(None),
+            #[cfg(not(target_family = "wasm"))]
+            game_session_authorizer: Mutex::new(None),
             public_blob_providers: Mutex::new(None),
             current_shut_down: AtomicBool::new(false),
             #[cfg(test)]
@@ -553,6 +557,22 @@ impl SharedIrohStack {
             .node
             .install_media_authorizer(Some(authorizer.clone()));
         *self.media_authorizer.lock().await = Some(authorizer);
+        Ok(())
+    }
+
+    /// SDK のゲームの action session の受け口の認可を、今の node と作り直す node へ付ける(#1978)。
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) async fn use_game_session_authorizer(
+        &self,
+        authorizer: kukuri_iroh_node::GameSessionAuthorizer,
+    ) -> Result<()> {
+        let current = self.current.lock().await;
+        current
+            .as_ref()
+            .context("missing active iroh stack")?
+            .node
+            .install_game_session_authorizer(Some(authorizer.clone()));
+        *self.game_session_authorizer.lock().await = Some(authorizer);
         Ok(())
     }
 
@@ -645,6 +665,11 @@ impl SharedIrohStack {
         }
         if let Some(authorizer) = self.media_authorizer.lock().await.as_ref() {
             next.node.install_media_authorizer(Some(authorizer.clone()));
+        }
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(authorizer) = self.game_session_authorizer.lock().await.as_ref() {
+            next.node
+                .install_game_session_authorizer(Some(authorizer.clone()));
         }
         if let Some(providers) = self.public_blob_providers.lock().await.as_ref() {
             next.node.install_public_blob_providers(providers.clone());

@@ -39,6 +39,8 @@ use tracing::warn;
 
 use crate::account_transfer::{ACCOUNT_SYNC_ALPN, ACCOUNT_TRANSFER_ALPN, AccountTransfer};
 use crate::dome_session::{DOME_SESSION_ALPN, DomeSessionConnections, DomeSessionSlot};
+#[cfg(not(target_family = "wasm"))]
+use crate::game_session::{GAME_SESSION_ALPN, GameSessionSlot};
 use crate::media::{MEDIA_ALPN, MediaSlot};
 use crate::page_read::{DOC_READ_ALPN, DocReadProtocol, PrivateCapabilities, PrivateSecretLookup};
 #[cfg(not(target_family = "wasm"))]
@@ -217,6 +219,9 @@ pub struct IrohDocsNode {
     account_transfer: AccountTransfer,
     pub(crate) dome_session: DomeSessionSlot,
     pub(crate) dome_session_connections: DomeSessionConnections,
+    /// SDK のゲームの action session の host の受け口(#1978)。
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) game_session: GameSessionSlot,
     /// metaverse の空間音声と live の media の受け口(ADR 0067)。Web は live だけを受ける(#1879)。
     pub(crate) media: MediaSlot,
     pub(crate) network_work: Arc<crate::network_work::NetworkWorkRuntime>,
@@ -581,6 +586,8 @@ impl IrohDocsNode {
         );
         let remote_blob = RemoteBlobProtocol::new(remote_cache.clone());
         let dome_session = DomeSessionSlot::default();
+        #[cfg(not(target_family = "wasm"))]
+        let game_session = GameSessionSlot::default();
         let media = MediaSlot::default();
         let signaling = webrtc
             .map(|transport| {
@@ -613,6 +620,10 @@ impl IrohDocsNode {
         if let Some(signaling) = &signaling {
             router = router.accept(SIGNALING_ALPN, signaling.clone());
         }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            router = router.accept(GAME_SESSION_ALPN, game_session.clone());
+        }
         let router = router.spawn();
 
         let node = Arc::new(Self {
@@ -633,6 +644,8 @@ impl IrohDocsNode {
             account_transfer,
             dome_session,
             dome_session_connections: DomeSessionConnections::default(),
+            #[cfg(not(target_family = "wasm"))]
+            game_session,
             media,
             network_work: Arc::new(crate::network_work::NetworkWorkRuntime::default()),
             #[cfg(not(target_family = "wasm"))]
@@ -874,6 +887,8 @@ impl IrohDocsNode {
         self.receive_binding.clear().await;
         self.topic_peer_introductions.clear();
         self.dome_session.install(None);
+        #[cfg(not(target_family = "wasm"))]
+        self.game_session.install(None);
         self.media.install(None);
         // Flush before the router invokes BlobsProtocol::shutdown. A later
         // shutdown RPC may legitimately find that actor already closed.
@@ -902,6 +917,8 @@ impl Drop for IrohDocsNode {
         self.network_work.close();
         self.receive_binding.reject_new_requests();
         self.dome_session.install(None);
+        #[cfg(not(target_family = "wasm"))]
+        self.game_session.install(None);
         self.media.install(None);
         if self.shutdown_started.swap(true, Ordering::AcqRel) {
             return;

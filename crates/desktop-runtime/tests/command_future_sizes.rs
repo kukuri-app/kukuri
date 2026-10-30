@@ -382,6 +382,14 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::list_action_rooms),
         ),
         (
+            "join_game_session",
+            size1(DesktopRuntime::join_game_session),
+        ),
+        (
+            "leave_game_session",
+            size1(DesktopRuntime::leave_game_session),
+        ),
+        (
             "list_joined_private_channels",
             size1(DesktopRuntime::list_joined_private_channels),
         ),

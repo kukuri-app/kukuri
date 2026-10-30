@@ -70,37 +70,42 @@ impl AppService {
                     .joined_private_channel_state(topic_id.as_str(), channel_id.as_str())
                     .await
                     .ok_or_else(|| anyhow::anyhow!("private channel is not joined"))?;
+                // 制御 record は手元へ複製しないので、手元の次に owner と channel の peer から読む(#1221 R5-C、#1978)。
                 let replica = current_private_channel_replica_id(&state);
-                let policy = self
-                    .docs_sync()
-                    .query_replica(
-                        &replica,
-                        DocQuery::Exact(stable_key("channels", "policy/envelope")),
-                    )
+                let read = |key: String| {
+                    let replica = replica.clone();
+                    self.read_joined_private_control(&state, move |docs, fetch| {
+                        let (replica, key) = (replica.clone(), key.clone());
+                        async move {
+                            Ok(query_replica_with_fetch_policy(
+                                docs.as_ref(),
+                                &replica,
+                                DocQuery::Exact(key),
+                                fetch,
+                            )
+                            .await?
+                            .into_iter()
+                            .next()
+                            .map(|record| record.value))
+                        }
+                    })
+                };
+                let policy = read(stable_key("channels", "policy/envelope"))
                     .await?
-                    .into_iter()
-                    .next()
                     .ok_or_else(|| {
                         anyhow::anyhow!("private channel policy proof is unavailable")
                     })?;
-                let participant = self
-                    .docs_sync()
-                    .query_replica(
-                        &replica,
-                        DocQuery::Exact(stable_key(
-                            "channels/participants",
-                            &format!("{}/envelope", participant_pubkey.as_str()),
-                        )),
-                    )
-                    .await?
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("private channel participant proof is unavailable")
-                    })?;
+                let participant = read(stable_key(
+                    "channels/participants",
+                    &format!("{}/envelope", participant_pubkey.as_str()),
+                ))
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("private channel participant proof is unavailable")
+                })?;
                 (
-                    Some(serde_json::from_slice(&policy.value)?),
-                    Some(serde_json::from_slice(&participant.value)?),
+                    Some(serde_json::from_slice(&policy)?),
+                    Some(serde_json::from_slice(&participant)?),
                 )
             }
         };
