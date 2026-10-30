@@ -64,7 +64,8 @@ namespace Kukuri.GameSdk
     }
 
     /// 視聴中の live の復号した frame（ADR 0070 §8.3、#1982）。`I420` は上の行から並んだ Y（幅×高さ）・U・V（それぞれ半分の
-    /// 幅×半分の高さ）で、呼出元のもの。`AudioClockUs` はそのときの音声の再生時刻（音声が無ければ 0）。
+    /// 幅×半分の高さ）で、呼出元のもの。`AudioClockUs` はそのときの音声の再生時刻（音声が無ければ 0）。`Hops` は配信者から
+    /// この端末までの段数（1 は直接、2 以上は視聴者の転送を通る）。
     public readonly struct KukuriLiveFrame
     {
         public string SessionId { get; }
@@ -72,6 +73,7 @@ namespace Kukuri.GameSdk
         public int Height { get; }
         public long TimestampUs { get; }
         public long AudioClockUs { get; }
+        public int Hops { get; }
         public byte[] I420 { get; }
 
         internal KukuriLiveFrame(JObject parsed, byte[] i420)
@@ -81,6 +83,7 @@ namespace Kukuri.GameSdk
             Height = (int)parsed["height"];
             TimestampUs = (long)parsed["timestamp_us"];
             AudioClockUs = (long)parsed["audio_clock_us"];
+            Hops = (int)parsed["hops"];
             I420 = i420;
         }
     }

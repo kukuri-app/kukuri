@@ -64,6 +64,10 @@ pub(super) fn input(name: &str) -> Value {
             json!({"topic": string(), "channel": string(), "enabled": boolean()}),
             &["topic", "channel", "enabled"],
         ),
+        "set_public_channel_subscription" => object(
+            json!({"topic": string(), "channel_id": string(), "enabled": boolean()}),
+            &["topic", "channel_id", "enabled"],
+        ),
         _ => unreachable!("network input schema"),
     }
 }
@@ -85,7 +89,8 @@ pub(super) fn output(name: &str) -> Value {
         "import_peer_ticket"
         | "unsubscribe_topic"
         | "set_topic_gossip_enabled"
-        | "set_channel_gossip_enabled" => json!({"type": "null"}),
+        | "set_channel_gossip_enabled"
+        | "set_public_channel_subscription" => json!({"type": "null"}),
         _ => unreachable!("network output schema"),
     }
 }

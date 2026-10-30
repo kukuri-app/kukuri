@@ -294,6 +294,11 @@ impl DesktopRuntime {
         Ok(self.live_media.next_video(&request.session_id).await)
     }
 
+    /// 視聴中の live の、配信者からこの端末までの段数(1 は直接、2 以上は視聴者の転送を通る。#1982)。
+    pub async fn live_watch_hops(&self, session_id: &str) -> Option<usize> {
+        self.live_media.watch_hops(session_id).await
+    }
+
     /// #1839 AC-4: 視聴中の live の音量(この端末だけ)。
     pub async fn set_live_volume(&self, request: crate::LiveVolumeRequest) -> Result<()> {
         self.live_media

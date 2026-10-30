@@ -70,6 +70,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | command | `publish_game_asset` | #1980 | 発行者の profile で manifest に署名して公開する（Sidecar・CLI だけ。§5.3） |
 | command | `list_game_assets` / `fetch_game_asset` | #1980 | 発行者の公開鍵と application ID で、指定した asset ID（1 回 32 件まで）の最新の release を読み、検証済みの file の path を得る |
 | command | `set_live_broadcast` / `stop_live_broadcast` / `watch_live_media` / `stop_watching_live_media` / `set_live_volume` | #1982 | desktop-runtime にある Live の配信・視聴の操作を登録簿へ載せる |
+| command | `set_public_channel_subscription` | #1982 | 公開スレッド（公開 channel。ADR 0068）の投稿・リアクションの知らせを購読する・やめる。desired として保存し、topic の購読と同じ上限に数える（CLI と SDK だけ。desktop・Web は開いている列で購読する）。保存は旧版の読まない `public-channel-subscriptions.json` に分け（旧版は `subscriptions.json` の channel を private channel として復元して起動に失敗するため。2026-10-31 のユーザー判断）、backup には含めない |
 | event | `events_lost` | #1975 | 知らせの event を捨てた件数 |
 | event | `game_session_closed` | #1978 | session が閉じた（退出・room の終了・権限の失効・host の不在）。理由の code を持つ。参加者と host の両方の端末に届く（host の端末は #1979 から） |
 | event | `game_session_opened` | #1979 | host の端末で session を受け付け、送受信を始めた。session ID・room ID・参加者の公開鍵を持つ |
@@ -77,7 +78,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | event | `game_session_path` | #1979 | 接続の経路（Direct P2P / Relay Supported P2P / Relay Fallback）か RTT が変わった。その時点の送受信の bytes も持つ |
 | event | `game_asset_updated` | #1980 | 検証できる新しい release が届いた。この端末で適用中のアセットは取得・適用した後に file の path 付きで、まだ適用していないアセットは path 無しで届く |
 | event | `post_received` | #1981 | 購読中の topic・channel の投稿・返信を手元へ新しく保存した（自分の投稿を含む）。投稿 ID・topic・channel・作者・返信先・thread の root を持ち、本文は持たない。作成から 30 秒を過ぎたもの（過去の頁の読込みで届いた古い投稿）と非表示の作者（mute・block）のものは送らない。溢れたときは `post` が null で、受け手は表示中の timeline・thread を読み直す |
-| event | `live_video_frame` | #1982 | 視聴中の session の復号済みの映像（画素の形式は §8）。幅・高さ・frame の timestamp・そのときの音声の再生時刻を持ち、bytes を伴う。session ごとに最新の 1 枚だけを持ち、poll していない古い frame は捨てる |
+| event | `live_video_frame` | #1982 | 視聴中の session の復号済みの映像（画素の形式は §8）。幅・高さ・frame の timestamp・そのときの音声の再生時刻・配信者からの段数（`hops`。1 は直接、2 以上は視聴者の転送を通る）を持ち、bytes を伴う。session ごとに最新の 1 枚だけを持ち、poll していない古い frame は捨てる |
 | event | `live_watch_status` | #1982 | 視聴の状態（`watching`・`full`・`no_media`・`ended`）が変わった |
 
 リアクションの受信は既存の `ReactionReceived`（対象の投稿を持つ）をそのまま使う。
@@ -320,6 +321,7 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
   - SDK の配信は runtime の mic を開かない（`set_live_broadcast` の `microphone` は false）。マイクを off にしても（機器は閉じる。ADR 0067 §9）、ゲーム音は送り続ける。
 - 視聴: 視聴する側の音声は、既存の Live と同じく Rust が OS の出力で鳴らす（feature `vp8` は desktop-runtime の `audio-devices` を含む）。`live_video_frame` の frame は、desktop・Web と同じく音声の再生時刻に 125 ms を足した時刻までで最も新しいもの。視聴が `watching` 以外（満員・映像なし・終了）で終わったら、desktop・Web と同じく 5 秒おいて視聴をやり直し、`stop_watching_live_media` まで続ける（配信者は最初の keyframe までは視聴を断る）。
 - AV 同期の判定（2026-10-31 のユーザー判断）: 描く frame の時刻 − 音声の再生時刻が p95 で −200〜+125 ms に入る（遅れの側は、音声を鳴らす前に持つ 160 ms と 1 frame 分に余裕を足した値）。#1982 AC-1 は手元の 2 つの profile で 1280×720 を配信して frame time（§8.4 の閾値）とあわせて判定し、§8.4 の全条件での計測は #1984 で行う。
+- 同じスレッドの複数の live: `KukuriLiveViewer` は、視聴を始めるときに読んだ開始 post への返信（`post_received`）とリアクション（`reaction_received`）だけを `ReplyReceived`・`ReactionReceived` で渡す。映像は session ごとに分かれる。返信とリアクションは開始 post に属したままで、live や別のスレッドへ移さない（#1982 AC-2）。
 - codec の相互運用: desktop・Web の配信（WebCodecs の VP8）の出力を libvpx で復号する試験を、Chromium の WebCodecs で作った fixture で置く（`crates/game-sdk/tests/fixtures/`）。
 
 #### 8.4 性能の測定条件と閾値

@@ -1,6 +1,7 @@
 //! #1982 AC-1: SDK の Live の映像・音声（ADR 0070 §8.3、F-LIV-1・F-LIV-2・F-LIV-5）。ゲームと desktop の 2 つの profile の
 //! 間で、配信する側が RGBA の frame とゲームの音を送り、視聴する側が復号した I420 の frame と音声の再生時刻を受ける。
 //! 向きを入れ替えて 2 回行う。frame の上半分に frame の番号を 8 本の白黒の帯で描き、受けた frame から読んで遅延を測る。
+//! #1982 AC-2: 配信者 1・視聴者 5 で、直接の枠（4）を超えた 5 人目が視聴者の転送で受け、親が抜けても受け続ける。
 #![cfg(feature = "vp8")]
 #![allow(clippy::unwrap_used)]
 
@@ -85,6 +86,17 @@ fn session(handle: *mut KukuriHandle, title: &str) -> String {
     .to_owned()
 }
 
+/// 視聴を始め、音量を 0 にする（試験で speaker から音を出さない。復号・出力・再生時刻は動く）。
+fn watch(viewer: *mut KukuriHandle, session_id: &str) {
+    media(viewer, "watch_live_media", session_id);
+    call(
+        viewer,
+        &id(),
+        "set_live_volume",
+        json!({"session_id": session_id, "volume": 0.0}),
+    );
+}
+
 fn media(handle: *mut KukuriHandle, command: &str, session_id: &str) {
     call(
         handle,
@@ -101,6 +113,8 @@ struct Received {
     /// 番号ごとの最初の受信（frame の timestamp、音声の再生時刻、受けた時刻）。
     frames: HashMap<u8, (u64, u64, Instant)>,
     last_i420: Vec<u8>,
+    /// 最後に受けた frame の、配信者からの段数（1 は直接、2 以上は転送）。
+    hops: u64,
 }
 
 impl Received {
@@ -121,6 +135,7 @@ impl Received {
                     .entry(index)
                     .or_insert((timestamp, clock, Instant::now()));
                 self.last_i420 = pair[1].raw.clone();
+                self.hops = event["hops"].as_u64().unwrap();
             }
         }
         for item in &items {
@@ -129,6 +144,67 @@ impl Received {
                     .push(item.json["state"].as_str().unwrap().to_owned());
             }
         }
+    }
+}
+
+/// 視聴する側は参加して見るだけで、投稿・反応・自分の配信をしない。live session が届くまで参加をやり直す。
+fn join(viewer: *mut KukuriHandle, live: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let request = id();
+        support::send(
+            viewer,
+            &support::request(
+                &request,
+                "join_live_session",
+                json!({"topic": TOPIC, "session_id": live}),
+            ),
+        );
+        if support::response_for(viewer, &request, Duration::from_secs(30))["ok"] == true {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the live session did not reach the viewer"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+/// `broadcaster` が `live` へ番号 `index` の frame と 20 ms の音を送り、視聴者の受信を poll する（30 fps の 1 回分）。
+fn tick(
+    broadcaster: *mut KukuriHandle,
+    live: &str,
+    index: &mut u8,
+    viewers: &mut [(*mut KukuriHandle, Received)],
+) {
+    *index = index.wrapping_add(1).max(1);
+    assert_eq!(
+        send_binary(broadcaster, BINARY_LIVE_VIDEO, live, &frame(*index)),
+        OK
+    );
+    for _ in 0..2 {
+        let _ = send_binary(broadcaster, BINARY_LIVE_AUDIO, live, &audio(0));
+    }
+    for (handle, received) in viewers.iter_mut() {
+        received.poll(*handle);
+    }
+    std::thread::sleep(Duration::from_millis(33));
+}
+
+/// 配信を続けながら、`done` が満たされるまで待つ。
+fn broadcast_until(
+    broadcaster: *mut KukuriHandle,
+    live: &str,
+    index: &mut u8,
+    viewers: &mut [(*mut KukuriHandle, Received)],
+    what: &str,
+    done: impl Fn(&[(*mut KukuriHandle, Received)]) -> bool,
+) {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !done(viewers) {
+        assert!(Instant::now() < deadline, "{what}");
+        tick(broadcaster, live, index, viewers);
     }
 }
 
@@ -157,28 +233,8 @@ fn broadcast_and_watch(broadcaster: *mut KukuriHandle, viewer: *mut KukuriHandle
         OK
     );
     std::thread::sleep(Duration::from_millis(500));
-    // 視聴する側は参加して見るだけで、投稿・反応・自分の配信をしない。
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let request = id();
-        support::send(
-            viewer,
-            &support::request(
-                &request,
-                "join_live_session",
-                json!({"topic": TOPIC, "session_id": live}),
-            ),
-        );
-        if support::response_for(viewer, &request, Duration::from_secs(30))["ok"] == true {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the live session did not reach the viewer"
-        );
-        std::thread::sleep(Duration::from_millis(500));
-    }
-    media(viewer, "watch_live_media", &live);
+    join(viewer, &live);
+    watch(viewer, &live);
 
     let mut received = Received::default();
     let mut sent = HashMap::new();
@@ -288,6 +344,99 @@ fn broadcast_and_watch(broadcaster: *mut KukuriHandle, viewer: *mut KukuriHandle
         send_binary(broadcaster, BINARY_LIVE_AUDIO, &live, &audio(0)),
         CLOSED
     );
+}
+
+/// 配信者 1・視聴者 5（それぞれ別の profile）。直接の枠は 4 人なので、5 人目は視聴者の転送で受ける（段数 2 以上）。親が
+/// 視聴をやめても受け続け（参加し直す）、配信が止まると視聴の状態が変わる。視聴者は投稿・反応・自分の配信をしない。
+#[test]
+fn the_fifth_viewer_is_relayed_and_keeps_watching_when_its_parent_leaves() {
+    isolated_environment();
+    let dirs: Vec<_> = (0..6).map(|_| tempfile::tempdir().unwrap()).collect();
+    let handles: Vec<_> = dirs.iter().map(|dir| open_real(dir.path())).collect();
+    for &handle in &handles {
+        consent(handle);
+        subscribe(handle, TOPIC);
+    }
+    for (at, &left) in handles.iter().enumerate() {
+        for &right in &handles[at + 1..] {
+            introduce(left, right);
+        }
+    }
+    let broadcaster = handles[0];
+    let live = session(broadcaster, "test: relay");
+    call(
+        broadcaster,
+        &id(),
+        "set_live_broadcast",
+        json!({"topic": TOPIC, "session_id": live, "source": "camera", "microphone": false}),
+    );
+    let mut index = 0u8;
+    let mut viewers: Vec<(*mut KukuriHandle, Received)> = Vec::new();
+    for _ in 0..3 {
+        tick(broadcaster, &live, &mut index, &mut viewers);
+    }
+    // 直接の枠の 4 人が順に見始め、配信者から直接受ける。
+    for &viewer in &handles[1..5] {
+        join(viewer, &live);
+        watch(viewer, &live);
+        viewers.push((viewer, Received::default()));
+        broadcast_until(
+            broadcaster,
+            &live,
+            &mut index,
+            &mut viewers,
+            "a direct viewer did not receive",
+            |viewers| viewers.last().unwrap().1.hops == 1,
+        );
+    }
+    // 5 人目は満員の配信者に断られ、直接の視聴者の転送で受ける。
+    let fifth = handles[5];
+    join(fifth, &live);
+    watch(fifth, &live);
+    viewers.push((fifth, Received::default()));
+    broadcast_until(
+        broadcaster,
+        &live,
+        &mut index,
+        &mut viewers,
+        "the fifth viewer was not relayed",
+        |viewers| viewers[4].1.hops >= 2,
+    );
+    assert!(viewers[..4].iter().all(|(_, received)| received.hops == 1));
+    // 直接の視聴者が順に視聴をやめても、5 人目は受け続け（親を失ったら参加し直す）、空いた直接の枠で受ける。
+    for &viewer in &handles[1..5] {
+        media(viewer, "stop_watching_live_media", &live);
+    }
+    viewers.clear();
+    viewers.push((fifth, Received::default()));
+    broadcast_until(
+        broadcaster,
+        &live,
+        &mut index,
+        &mut viewers,
+        "the fifth viewer did not recover",
+        |viewers| viewers[0].1.hops == 1 && viewers[0].1.frames.len() > 30,
+    );
+    // 配信が止まると、視聴の状態が映像なし・終了に変わる（画面は終わったことを示せる）。回復の途中の状態は数えない。
+    viewers[0].1.states.clear();
+    media(broadcaster, "stop_live_broadcast", &live);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !viewers[0]
+        .1
+        .states
+        .iter()
+        .any(|state| state == "no_media" || state == "ended")
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the end of the broadcast was not shown"
+        );
+        viewers[0].1.poll(fifth);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    for handle in handles {
+        finish(handle);
+    }
 }
 
 #[test]

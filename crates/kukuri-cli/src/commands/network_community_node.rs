@@ -14,6 +14,13 @@ use std::sync::Arc;
 
 struct Handler(&'static str);
 
+#[derive(serde::Deserialize)]
+struct PublicChannelSubscriptionRequest {
+    topic: String,
+    channel_id: String,
+    enabled: bool,
+}
+
 #[async_trait]
 impl CommandHandler for Handler {
     async fn execute(
@@ -78,6 +85,31 @@ impl CommandHandler for Handler {
                 }
                 encode(())
             }
+            // #1982: 公開スレッド（公開 channel）の投稿・リアクションの知らせを購読する（desired として保存し、再起動後も
+            // 続ける）。topic の購読と同じ上限に数える。
+            "set_public_channel_subscription" => {
+                let request: PublicChannelSubscriptionRequest = decode(payload)?;
+                if !kukuri_core::ChannelId::new(&request.channel_id).is_public_channel() {
+                    return Err(ProtocolError::new(
+                        crate::protocol::error_code::VALIDATION_FAILED,
+                        "channel_id is not a public channel",
+                    ));
+                }
+                let host = context.host.expect("runtime取得済み");
+                let subscription = DesiredSubscription {
+                    topic: request.topic,
+                    scope: DesiredSubscriptionScope::Channel {
+                        channel_id: request.channel_id,
+                    },
+                };
+                if request.enabled {
+                    host.add_desired_subscription(subscription).await
+                } else {
+                    host.remove_desired_subscription(&subscription).await
+                }
+                .map_err(|error| command_error(error.into()))?;
+                encode(())
+            }
             "set_channel_gossip_enabled" => encode(
                 runtime
                     .set_channel_gossip_enabled(decode::<SetChannelGossipEnabledRequest>(payload)?)
@@ -126,6 +158,7 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
         ("unsubscribe_topic", Write),
         ("set_topic_gossip_enabled", Write),
         ("set_channel_gossip_enabled", Write),
+        ("set_public_channel_subscription", Write),
     ]
     .into_iter()
     .map(|(name, effect)| {

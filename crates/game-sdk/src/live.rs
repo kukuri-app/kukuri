@@ -29,14 +29,14 @@ const DECODED_FRAMES: usize = 30;
 const RETRY: Duration = Duration::from_secs(5);
 
 type Events = Arc<dyn Fn(Vec<u8>) + Send + Sync>;
-pub(crate) type Shown = (u64, u64, Frame);
+pub(crate) type Shown = (u64, u64, usize, Frame);
 
 pub(crate) struct Live {
     handle: tokio::runtime::Handle,
     events: Events,
     encoders: Mutex<HashMap<String, Arc<Slot>>>,
     viewers: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
-    /// 視聴中の session の、まだ poll していない最新の frame（timestamp・そのときの音声の再生時刻・画像）。
+    /// 視聴中の session の、まだ poll していない最新の frame（timestamp・そのときの音声の再生時刻・配信者からの段数・画像）。
     frames: Mutex<HashMap<String, Shown>>,
 }
 
@@ -157,7 +157,7 @@ impl Live {
         let mut frames = lock(&self.frames);
         let ready: Vec<String> = frames
             .iter()
-            .filter(|(_, (_, _, frame))| fits(frame.i420.len()))
+            .filter(|(_, (_, _, _, frame))| fits(frame.i420.len()))
             .map(|(session, _)| session.clone())
             .collect();
         ready
@@ -320,7 +320,8 @@ async fn view(live: Weak<Live>, runtime: Arc<DesktopRuntime>, topic: String, ses
             .rposition(|(timestamp, _)| clock == 0 || *timestamp <= clock + VIDEO_LEAD_US);
         if let Some(due) = due {
             let (timestamp, frame) = decoded.drain(..=due).next_back().expect("due is in range");
-            lock(&live.frames).insert(session_id.clone(), (timestamp, clock, frame));
+            let hops = runtime.live_watch_hops(&session_id).await.unwrap_or(0);
+            lock(&live.frames).insert(session_id.clone(), (timestamp, clock, hops, frame));
         }
         drop(live);
         if code != 0 {

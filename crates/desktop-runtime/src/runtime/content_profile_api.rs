@@ -12,6 +12,14 @@ impl DesktopRuntime {
     ) -> Result<()> {
         let scope = match &subscription.scope {
             DesiredSubscriptionScope::Public => TimelineScope::Public,
+            // 公開 channel（公開スレッド。#1840）は、その channel の投稿・リアクションの知らせを購読する（#1982）。
+            DesiredSubscriptionScope::Channel { channel_id }
+                if kukuri_core::ChannelId::new(channel_id).is_public_channel() =>
+            {
+                TimelineScope::PublicChannel {
+                    channel_id: kukuri_core::ChannelId::new(channel_id),
+                }
+            }
             DesiredSubscriptionScope::Channel { channel_id } => TimelineScope::Channel {
                 channel_id: kukuri_core::ChannelId::new(channel_id),
             },
