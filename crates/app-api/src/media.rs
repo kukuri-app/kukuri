@@ -153,7 +153,7 @@ impl AppService {
         let fetch = self
             .services
             .blob_service
-            .fetch_blob_ephemeral_to_file(&blob_hash, path);
+            .fetch_blob_ephemeral_to_file(&blob_hash, path, None);
         let result = if let Some(source) = &access.source {
             self.services
                 .until_content_invalid(&source.topic, &source.channel, source.generation, fetch)

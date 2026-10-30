@@ -15,6 +15,14 @@ table adult_media_hashes
   column cid=0 name=blob_hash type=TEXT notnull=1 default=None pk=1
   column cid=1 name=marked_at type=INTEGER notnull=1 default=Some("0") pk=0
   column cid=2 name=is_protected type=INTEGER notnull=1 default=Some("1") pk=0
+table applied_game_assets
+  column cid=0 name=publisher_pubkey type=TEXT notnull=1 default=None pk=1
+  column cid=1 name=application_id type=TEXT notnull=1 default=None pk=2
+  column cid=2 name=asset_id type=TEXT notnull=1 default=None pk=3
+  column cid=3 name=revision type=INTEGER notnull=1 default=None pk=0
+  column cid=4 name=release_json type=TEXT notnull=1 default=None pk=0
+  column cid=5 name=file_path type=TEXT notnull=1 default=None pk=0
+  column cid=6 name=applied_at type=INTEGER notnull=1 default=None pk=0
 table author_docs_authors
   column cid=0 name=author_pubkey type=TEXT notnull=1 default=None pk=1
   column cid=1 name=docs_author type=TEXT notnull=1 default=None pk=0
@@ -828,6 +836,11 @@ index sqlite_autoindex_account_sync_items_1 table=account_sync_items unique=1 or
   sql=None
 index sqlite_autoindex_adult_media_hashes_1 table=adult_media_hashes unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("blob_hash")
+  sql=None
+index sqlite_autoindex_applied_game_assets_1 table=applied_game_assets unique=1 origin=pk partial=0
+  key seqno=0 cid=0 name=Some("publisher_pubkey")
+  key seqno=1 cid=1 name=Some("application_id")
+  key seqno=2 cid=2 name=Some("asset_id")
   sql=None
 index sqlite_autoindex_author_docs_authors_1 table=author_docs_authors unique=1 origin=pk partial=0
   key seqno=0 cid=0 name=Some("author_pubkey")

@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kukuri_desktop_runtime::{
-    CreateGameRoomRequest, CreateLiveSessionRequest, JoinGameSessionRequest,
-    LeaveGameSessionRequest, ListActionRoomsRequest, ListGameRoomsRequest, ListLiveSessionsRequest,
-    LiveSessionCommandRequest, UpdateGameRoomRequest,
+    CreateGameRoomRequest, CreateLiveSessionRequest, FetchGameAssetRequest, JoinGameSessionRequest,
+    LeaveGameSessionRequest, ListActionRoomsRequest, ListGameAssetsRequest, ListGameRoomsRequest,
+    ListLiveSessionsRequest, LiveSessionCommandRequest, PublishGameAssetRequest,
+    UpdateGameRoomRequest,
 };
 use serde_json::{Value, json};
 
@@ -28,6 +29,9 @@ enum Operation {
     ListAction,
     JoinSession,
     LeaveSession,
+    PublishAsset,
+    ListAssets,
+    FetchAsset,
     CreateGame,
     UpdateGame,
 }
@@ -117,6 +121,24 @@ impl CommandHandler for Handler {
                     .await
                     .map_err(command_error)?,
             ),
+            Operation::PublishAsset => encode(
+                runtime
+                    .publish_game_asset(decode::<PublishGameAssetRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            Operation::ListAssets => encode(
+                runtime
+                    .list_game_assets(decode::<ListGameAssetsRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            Operation::FetchAsset => encode(
+                runtime
+                    .fetch_game_asset(decode::<FetchGameAssetRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
             Operation::CreateGame => encode(
                 runtime
                     .create_game_room(decode::<CreateGameRoomRequest>(payload)?)
@@ -200,6 +222,43 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
             LeaveSession,
             schema::object(json!({"session_id": {"type": "string"}}), &["session_id"]),
             json!({"type": "null"}),
+        ),
+        // #1980: ゲームのアセットの発行(CLI と開発用の Sidecar だけ)・一覧・取得。取得できなければ details.reason。
+        (
+            "publish_game_asset",
+            Write,
+            PublishAsset,
+            schema::object(
+                json!({"topic": {"type": "string"}, "application_id": {"type": "string"},
+                "asset_id": {"type": "string"}, "format": super::game_views::asset_format(),
+                "path": {"type": "string"}}),
+                &["topic", "application_id", "asset_id", "format", "path"],
+            ),
+            super::game_views::asset_release(),
+        ),
+        (
+            "list_game_assets",
+            Read,
+            ListAssets,
+            schema::object(
+                json!({"topic": {"type": "string"}, "publisher_pubkey": {"type": "string"},
+                "application_id": {"type": "string"},
+                "asset_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1,
+                    "maxItems": kukuri_desktop_runtime::GAME_ASSET_LIST_LIMIT}}),
+                &["topic", "publisher_pubkey", "application_id", "asset_ids"],
+            ),
+            schema::array(super::game_views::asset_release()),
+        ),
+        (
+            "fetch_game_asset",
+            Write,
+            FetchAsset,
+            schema::object(
+                json!({"topic": {"type": "string"}, "publisher_pubkey": {"type": "string"},
+                "application_id": {"type": "string"}, "asset_id": {"type": "string"}}),
+                &["topic", "publisher_pubkey", "application_id", "asset_id"],
+            ),
+            super::game_views::asset_file(),
         ),
         (
             "create_game_room",

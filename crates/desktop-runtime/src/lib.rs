@@ -15,7 +15,9 @@ mod community_node;
 mod discovery;
 #[cfg(not(target_family = "wasm"))]
 mod game_sessions;
-pub use kukuri_app_api::GameSessionRejected;
+pub use kukuri_app_api::{
+    GAME_ASSET_LIST_LIMIT, GAME_ASSET_NOT_FOUND, GameAssetUnavailable, GameSessionRejected,
+};
 #[cfg(not(target_family = "wasm"))]
 pub use kukuri_iroh_node::{GameDelivery, GamePacket, GameSendRefused};
 mod host;
@@ -171,19 +173,20 @@ pub use requests::{
     DecideAccountTransferRequest, DelegateDomeHostingRequest, DeleteDirectMessageMessageRequest,
     DirectMessageRequest, ExportAccountKeyRequest, ExportChannelAccessTokenRequest,
     ExportFriendOnlyGrantRequest, ExportFriendPlusShareRequest, ExportPrivateChannelInviteRequest,
-    FreezePrivateChannelRequest, GetBlobMediaRequest, GetBlobPreviewRequest, GetDomeHostingRequest,
-    GetPublicChannelRequest, ImportAccountKeyRequest, ImportChannelAccessTokenRequest,
-    ImportCustomReactionSetRequest, ImportFriendOnlyGrantRequest, ImportFriendPlusShareRequest,
-    ImportMetaverseRoomAssetRequest, ImportPeerTicketRequest, ImportPrivateChannelInviteRequest,
-    InitialProfileRequest, JoinGameSessionRequest, JoinedGameSession, LeaveGameSessionRequest,
-    LeavePrivateChannelRequest, ListActionRoomsRequest, ListBookmarkedPostsRequest,
-    ListDirectMessageMessagesRequest, ListDomeConnectionTopologyRequest, ListGameRoomsRequest,
+    FetchGameAssetRequest, FreezePrivateChannelRequest, GetBlobMediaRequest, GetBlobPreviewRequest,
+    GetDomeHostingRequest, GetPublicChannelRequest, ImportAccountKeyRequest,
+    ImportChannelAccessTokenRequest, ImportCustomReactionSetRequest, ImportFriendOnlyGrantRequest,
+    ImportFriendPlusShareRequest, ImportMetaverseRoomAssetRequest, ImportPeerTicketRequest,
+    ImportPrivateChannelInviteRequest, InitialProfileRequest, JoinGameSessionRequest,
+    JoinedGameSession, LeaveGameSessionRequest, LeavePrivateChannelRequest, ListActionRoomsRequest,
+    ListBookmarkedPostsRequest, ListDirectMessageMessagesRequest,
+    ListDomeConnectionTopologyRequest, ListGameAssetsRequest, ListGameRoomsRequest,
     ListJoinedPrivateChannelsRequest, ListLiveSessionsRequest, ListMetaverseRoomEventsRequest,
     ListNotificationsPageRequest, ListProfileTimelineRequest, ListPublicChannelsRequest,
     ListRecentReactionsRequest, ListSocialConnectionsRequest, ListThreadRequest,
     ListTimelineRequest, LiveSessionCommandRequest, MoveDomeRequest, NotificationIdRequest,
     OpenAccountTransferRequest, PostWithdrawalReasonRequest, PrepareDomeTransitionRequest,
-    PreviewAccountKeyImportRequest, PreviewChannelAccessTokenRequest,
+    PreviewAccountKeyImportRequest, PreviewChannelAccessTokenRequest, PublishGameAssetRequest,
     PublishMetaverseRoomEventRequest, ReactionKeyRequest, RemoveBookmarkedCustomReactionRequest,
     RemoveBookmarkedPostRequest, ResolveCommunityIndexPostsRequest, ResyncDomeSnapshotsRequest,
     RetryPostElementsRequest, RevokeDomeConnectionRequest, RotatePrivateChannelRequest,

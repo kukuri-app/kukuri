@@ -234,6 +234,20 @@ pub struct LiveSessionProjectionRow {
     pub start_post_id: Option<EnvelopeId>,
 }
 
+/// この端末で適用したゲームのアセットの release(#1980。発行者・application ID・asset ID ごとに 1 行)。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppliedGameAssetRow {
+    pub publisher_pubkey: String,
+    pub application_id: String,
+    pub asset_id: String,
+    pub revision: u64,
+    /// 検証した release(`GameAssetReleaseV1`)の JSON。
+    pub release_json: String,
+    /// 検証した本体の file。
+    pub file_path: String,
+    pub applied_at: i64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameRoomProjectionRow {
     pub room_id: String,

@@ -7,7 +7,7 @@ use syn::{Token, parse::Parser, punctuated::Punctuated, visit::Visit};
 const TAURI_SOURCE: &str = include_str!("../../../apps/desktop/src-tauri/src/lib.rs");
 const MANIFEST: &str = include_str!("../command-parity.json");
 /// GUI の入口に対応しない CLI の command。daemon の制御と、CLI daemon だけの機能(#1909 の公開 topic の保持)。
-const CLI_ONLY: [&str; 10] = [
+const CLI_ONLY: [&str; 13] = [
     "client.status",
     "events.watch",
     "protocol.commands",
@@ -19,6 +19,10 @@ const CLI_ONLY: [&str; 10] = [
     "list_action_rooms",
     "join_game_session",
     "leave_game_session",
+    // #1980: ゲームのアセットの配布(SDK と CLI だけ)。
+    "publish_game_asset",
+    "list_game_assets",
+    "fetch_game_asset",
 ];
 
 #[derive(Clone, Deserialize)]

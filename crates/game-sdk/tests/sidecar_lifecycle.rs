@@ -6,133 +6,16 @@
 mod support;
 
 use std::{
-    io::{BufRead, BufReader},
-    path::Path,
-    process::{Child, Command, ExitStatus, Stdio},
+    process::Command,
     time::{Duration, Instant},
 };
 
 use kukuri_game_sdk::KukuriHandle;
 use serde_json::{Value, json};
-use support::{PROFILE, SidecarServer, error_code, finish, request, response_for, send};
-
-struct Sidecar {
-    child: Child,
-}
-
-impl Sidecar {
-    fn start(dir: &Path) -> Self {
-        let mut child = sidecar_command("run", dir)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut first = String::new();
-        BufReader::new(child.stderr.as_mut().unwrap())
-            .read_line(&mut first)
-            .unwrap();
-        assert_eq!(first.trim(), "ready");
-        Self { child }
-    }
-
-    /// 起動を試みて、終わるまで待つ（同じ profile の二つ目は起動できない）。
-    fn run_to_exit(dir: &Path) -> ExitStatus {
-        let mut child = sidecar_command("run", dir)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        wait_exit(&mut child)
-    }
-
-    fn pid(&self) -> u32 {
-        self.child.id()
-    }
-
-    fn stop(mut self, dir: &Path) -> ExitStatus {
-        let stopped = sidecar_command("stop", dir).output().unwrap();
-        assert!(
-            stopped.status.success(),
-            "stop failed: {}",
-            String::from_utf8_lossy(&stopped.stderr)
-        );
-        wait_exit(&mut self.child)
-    }
-}
-
-impl Drop for Sidecar {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-    }
-}
-
-fn sidecar_command(command: &str, dir: &Path) -> Command {
-    let mut process = Command::new(env!("CARGO_BIN_EXE_kukuri-sdk-sidecar"));
-    process
-        .args([command, "--profile", PROFILE, "--profile-dir"])
-        .arg(dir)
-        .env_remove("KUKURI_APP_DATA_DIR")
-        .env_remove("KUKURI_INSTANCE")
-        .env_remove("KUKURI_DISCOVERY_SEEDS")
-        .env_remove("KUKURI_ADVERTISE_PORT")
-        .env("KUKURI_DISABLE_KEYRING", "1")
-        .env("KUKURI_DISCOVERY_MODE", "static_peer")
-        .env("KUKURI_BIND_ADDR", "127.0.0.1:0")
-        .env("KUKURI_ADVERTISE_HOST", "127.0.0.1");
-    process
-}
-
-fn wait_exit(child: &mut Child) -> ExitStatus {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            return status;
-        }
-        assert!(Instant::now() < deadline, "the sidecar did not exit");
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
-fn call(handle: *mut KukuriHandle, id: &str, command: &str, payload: Value) -> Value {
-    assert_eq!(send(handle, &request(id, command, payload)), 0, "{command}");
-    let response = response_for(handle, id, Duration::from_secs(60));
-    assert_eq!(response["ok"], true, "{command}: {}", response["error"]);
-    response["data"].clone()
-}
-
-/// 同意して runtime を動かす（初めての profile だけ）。
-fn ready(handle: *mut KukuriHandle) {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let status = call(handle, "startup", "get_desktop_startup_status", json!({}));
-        match status["status"].as_str() {
-            Some("ready") => return,
-            Some("consent_required") => {
-                let consent = call(
-                    handle,
-                    "consent-status",
-                    "get_app_consent_status",
-                    json!({}),
-                );
-                let documents: Vec<Value> = consent["documents"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|doc| json!({"slug": doc["slug"], "version": doc["currentVersion"]}))
-                    .collect();
-                call(
-                    handle,
-                    "consent",
-                    "accept_app_consents",
-                    json!({"documents": documents, "language": "ja", "age_attested": true}),
-                );
-            }
-            _ => {}
-        }
-        assert!(Instant::now() < deadline, "the runtime did not start");
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
+use support::{
+    PROFILE, SidecarServer, call, error_code, finish, request, response_for, send,
+    sidecar_process::{Sidecar, ready},
+};
 
 /// 公開鍵と P2P の endpoint id。
 fn identity(handle: *mut KukuriHandle, id: &str) -> (Value, Value) {

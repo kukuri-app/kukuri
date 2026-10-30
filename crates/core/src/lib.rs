@@ -18,6 +18,7 @@ mod dome_session;
 mod dome_transition;
 mod envelope;
 mod game;
+mod game_assets;
 mod identity_export;
 mod ids;
 mod link_preview;
@@ -150,6 +151,11 @@ pub use game::{
     resolve_metaverse_room_state, validate_action_session, validate_dome_customization,
     validate_dome_instance_manifest, validate_dome_move_record, validate_dome_preset_manifest,
     validate_dome_relationship_scope, validate_metaverse_collider, validate_metaverse_room_state,
+};
+pub use game_assets::{
+    GAME_ASSET_MAX_BYTES, GAME_ASSET_RELEASE_KIND, GameAssetFormat, GameAssetReleaseV1,
+    build_game_asset_release_envelope, validate_application_id, validate_asset_id,
+    validate_game_asset_release, verify_game_asset_release,
 };
 pub use identity_export::{
     ACCOUNT_KEY_EXPORT_KDF, ACCOUNT_KEY_EXPORT_MIN_PASSPHRASE_CHARS, ACCOUNT_KEY_EXPORT_PREFIX,

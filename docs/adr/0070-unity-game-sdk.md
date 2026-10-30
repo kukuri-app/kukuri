@@ -68,14 +68,14 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | command | `list_action_rooms` | #1978 | 1 つの application ID の action session の room を、更新の新しい順に 1 頁 20 件ずつ返す。続きは応答の `next_cursor` で読む（CLI と SDK だけ。desktop・Web は表示しない） |
 | command | `join_game_session` / `leave_game_session` | #1978 | action session の room の host へ参加・退出する。参加の応答に session ID を返す |
 | command | `publish_game_asset` | #1980 | 発行者の profile で manifest に署名して公開する（Sidecar・CLI だけ。§5.3） |
-| command | `list_game_assets` / `fetch_game_asset` | #1980 | 発行者の公開鍵と application ID で release を一覧し、検証済みの file の path を得る |
+| command | `list_game_assets` / `fetch_game_asset` | #1980 | 発行者の公開鍵と application ID で、指定した asset ID（1 回 32 件まで）の最新の release を読み、検証済みの file の path を得る |
 | command | `set_live_broadcast` / `stop_live_broadcast` / `watch_live_media` / `stop_watching_live_media` / `set_live_volume` | #1982 | desktop-runtime にある Live の配信・視聴の操作を登録簿へ載せる |
 | event | `events_lost` | #1975 | 知らせの event を捨てた件数 |
 | event | `game_session_closed` | #1978 | session が閉じた（退出・room の終了・権限の失効・host の不在）。理由の code を持つ。参加者と host の両方の端末に届く（host の端末は #1979 から） |
 | event | `game_session_opened` | #1979 | host の端末で session を受け付け、送受信を始めた。session ID・room ID・参加者の公開鍵を持つ |
 | event | `game_session_packet` | #1979 | datagram または stream の message を受けた。どちらで届いたかを持ち、bytes を伴う |
 | event | `game_session_path` | #1979 | 接続の経路（Direct P2P / Relay Supported P2P / Relay Fallback）か RTT が変わった。その時点の送受信の bytes も持つ |
-| event | `game_asset_updated` | #1980 | 検証できる新しい release の manifest が届いた |
+| event | `game_asset_updated` | #1980 | 検証できる新しい release が届いた。この端末で適用中のアセットは取得・適用した後に file の path 付きで、まだ適用していないアセットは path 無しで届く |
 | event | `post_received` | #1981 | 表示中の timeline・thread に投稿・返信が届いた。投稿 ID・topic・channel・返信先を持つ |
 | event | `live_video_frame` | #1982 | 視聴中の session の復号済みの映像（画素の形式は §8）。bytes を伴う |
 | event | `live_watch_status` | #1982 | 視聴の状態（参加中・満員で転送待ち・映像なし・停止）が変わった |
@@ -218,11 +218,11 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 - Feature 名: ゲームの公式アセット（スキン等）の発行と P2P 配布
 - Durable / Transient: Durable（release 単位）
 - Canonical Source: 発行者の鍵で署名した manifest（application ID、asset ID、release revision、blob hash、長さ、形式）を docs の record に置き、本体は blob
-- Replicated?: Yes。ゲームの公開 topic の replica と、blob の保持 peer
+- Replicated?: Yes。発行者の制御領域（`author::<発行者>`）の record と、それを読んで適用した peer が保持した record・blob
 - Rebuildable From: docs の署名つき manifest と blob
-- Public Replica / Private Replica / Local Only: Public replica。適用済みの release の記録と検証済みの file は Local Only
-- Gossip Hint 必要有無: 更新の知らせに使う。hint だけでは適用しない
-- Blob 必要有無: Yes（glTF・texture）
+- Public Replica / Private Replica / Local Only: 発行者の制御領域（公開）。適用済みの release の記録と検証済みの file は Local Only
+- Gossip Hint 必要有無: 更新の知らせに使う（ゲームの公開 topic の `SessionChanged`、object_kind `game-asset`）。hint だけでは適用しない
+- Blob 必要有無: Yes（glTF binary・PNG・JPEG・Unity AssetBundle）
 - SQLite projection 必要有無: 適用済みの release の記録を持つ（application ID と asset ID ごとに 1 行）
 - 必須 contract: 発行者の公開鍵で検証できる manifest と、hash が一致する blob だけを適用する。別の鍵・改変・古い revision を拒否する。提供者がいないときは取得できないことを結果で返す
 - 必須 scenario: 発行者・保持 peer・新しく取得する peer の 3 役で公開 → 再提供 → 取得 → 再起動なしの差し替え（#1980）
@@ -232,6 +232,18 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 - 信頼する発行者の公開鍵は Unity の設定 asset に固定する。秘密鍵はゲームと UPM package に含めず、発行は開発者の Sidecar（CLI）からだけ行う。
 - 検証した本体は profile の cache directory に file として書き、その path を Unity に渡す。bytes を待ち行列に積まない。
 - 署名は発行元と内容が一致することを確かめるもので、アセットが無害であることの保証ではない。
+- 2026-10-30 のユーザー判断（#1980）:
+  - 形式は glTF binary（.glb）・PNG・JPEG と Unity の AssetBundle。AssetBundle は作った Unity の版と build の対象を manifest に記録し、読み込む側は自分と合わない bundle を読まない。
+  - 1 件の上限は既存の blob の上限（3 GiB）。取得の期限は大きさに合わせて延ばす（1 端末の転送を、大きさを 1 MiB/s で送る時間。15 秒より短くしない）。
+  - アセットの数に上限を置かない。asset ID は Unity Editor からの発行のときにゲームの設定 asset へ登録し、Player は登録された ID の record を読む。
+  - この端末で適用中の版は cache の掃除で消さず、ほかの端末への提供元にする。新しい版を適用したら、古い版は通常の cache の規則に戻る。
+  - 新しい版の取得は自動。更新の知らせを受けたら、適用中のアセットは背景で取得・検証・適用し、`game_asset_updated` で path とともに知らせる。
+- record の key は発行者の制御領域の `game-assets/<application ID>/<asset ID>` で、値は署名した envelope（kind `game-asset-release`）。日の bucket に置かないので、新しい端末も 1 回の exact な読みで最新版に届く（件数に比例しない）。
+  - 読み手は手元 → 発行者本人 → ゲームの公開 topic の参加者の順に読み、受けた record（最大 8 件）をすべて検証して revision が最大のものを採る。別の名義で古い署名済みの record を書かれても、新しい版より優先しない。
+  - 適用は revision が大きいときだけ（`applied_game_assets` の行）。取得は `.partial` へ書き、長さを確かめてから使える名前にする（hash は転送で照合する）。
+- ゲームの blob は公開 blob の DHT 発見（ADR 0063）の対象外のまま。取得は既知の端末とゲームの公開 topic の参加者から行う。
+
+この節の旧案（「ゲームの公開 topic の replica」に manifest を置く）は、日の bucket を知らない端末が最新版に届かず件数に比例する走査が要るので失効した（#1980 AC-1）。
 
 #### 5.4 SNS
 

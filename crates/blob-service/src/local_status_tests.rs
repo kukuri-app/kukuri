@@ -122,7 +122,7 @@ async fn local_blob_status_does_not_fetch_or_persist_remote_blob() {
     let display_path = receiver_dir.path().join("streamed-display.bin");
     assert_eq!(
         receiver
-            .fetch_blob_ephemeral_to_file(&stored.hash, &display_path)
+            .fetch_blob_ephemeral_to_file(&stored.hash, &display_path, None)
             .await
             .expect("stream display bytes"),
         Some(stored.bytes)

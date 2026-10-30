@@ -133,6 +133,12 @@ fn fake_client() -> SdkClient {
         registration("sleep.write", CommandEffect::Write, false, Arc::new(Sleep)),
         registration("panic.read", CommandEffect::Read, false, Arc::new(Panics)),
         registration("secret.write", CommandEffect::Write, true, Arc::new(Secret)),
+        registration(
+            "publish_game_asset",
+            CommandEffect::Write,
+            false,
+            Arc::new(Sleep),
+        ),
     ])
     .unwrap();
     SdkClient::open_with(PROFILE.into(), async move {
@@ -579,4 +585,28 @@ fn a_secret_output_arrives_only_as_its_own_item() {
     for fixture in fixtures() {
         a_secret_output_arrives_only_as_its_own_item_on(fixture.handle(), fixture.is_sidecar());
     }
+}
+
+/// #1980: ゲームの Player（FFI）はアセットを発行できず、開発用の Sidecar の process が許したときだけ発行の command を通す。
+#[test]
+fn only_the_development_sidecar_may_publish_game_assets() {
+    let player = fake_handle();
+    assert_eq!(
+        send(player, &request("p1", "publish_game_asset", json!({}))),
+        0
+    );
+    let refused = response_for(player, "p1", Duration::from_secs(10));
+    assert_eq!(error_code(&refused), "authorization_failed");
+    finish(player);
+
+    let sidecar = fake_client();
+    sidecar.allow_publish();
+    let sidecar = KukuriHandle::from_client(sidecar);
+    assert_eq!(
+        send(sidecar, &request("p2", "publish_game_asset", json!({}))),
+        0
+    );
+    let allowed = response_for(sidecar, "p2", Duration::from_secs(10));
+    assert_eq!(allowed["ok"], true, "{allowed}");
+    finish(sidecar);
 }

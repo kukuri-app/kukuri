@@ -27,12 +27,8 @@ pub struct ActionSessionV1 {
     pub max_players: u32,
 }
 
-/// application ID は 1〜128 byte の、空白と制御文字を含まない ASCII。
 pub fn validate_action_session(action: &ActionSessionV1) -> Result<()> {
-    let id = action.application_id.as_bytes();
-    if id.is_empty() || id.len() > 128 || !id.iter().all(u8::is_ascii_graphic) {
-        bail!("application_id must be 1-128 printable ASCII characters without spaces");
-    }
+    crate::game_assets::validate_application_id(&action.application_id)?;
     if action.host_endpoint_id.is_empty() {
         bail!("action session host endpoint id is required");
     }

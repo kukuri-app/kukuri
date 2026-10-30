@@ -41,7 +41,7 @@
       "path": "apps/desktop/src/components/extended/metaverse/useMetaverseRoomSession.ts"
     },
     {
-      "lines": 1068,
+      "lines": 1081,
       "path": "crates/store/fixtures/schema/store_schema_full.txt"
     },
     {
@@ -85,7 +85,7 @@
       "path": "crates/store/src/parity/lists.rs"
     },
     {
-      "lines": 1018,
+      "lines": 1020,
       "path": "crates/desktop-runtime/src/stack.rs"
     },
     {

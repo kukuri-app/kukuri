@@ -175,6 +175,8 @@ pub struct SdkClient {
     profile: String,
     /// profile の所有。close で session を止めた後に手放す（同じ profile を free の前に開き直せる）。
     lease: Arc<Mutex<Option<ProfileLease>>>,
+    /// アセットの発行（`publish_game_asset`）を受け付けるか。開発用の Sidecar の process だけが許す（ADR 0070 §5.3）。
+    publish: Arc<AtomicBool>,
 }
 
 impl SdkClient {
@@ -244,7 +246,13 @@ impl SdkClient {
             running: Arc::new(Semaphore::new(MAX_RUNNING)),
             profile,
             lease: Arc::default(),
+            publish: Arc::default(),
         })
+    }
+
+    /// アセットの発行を許す（開発用の Sidecar の process が開いた直後に呼ぶ）。
+    pub fn allow_publish(&self) {
+        self.publish.store(true, Ordering::Release);
     }
 
     pub fn profile(&self) -> &str {
@@ -340,6 +348,7 @@ impl SdkClient {
             shutdown: self.shutdown.subscribe(),
             running: self.running.clone(),
             profile: self.profile.clone(),
+            publish: self.publish.load(Ordering::Acquire),
         };
         runtime.spawn(async move {
             let request_id = request.request_id.clone();
@@ -583,7 +592,11 @@ struct RequestTask {
     shutdown: watch::Receiver<bool>,
     running: Arc<Semaphore>,
     profile: String,
+    publish: bool,
 }
+
+/// ゲームの Player から発行させない command。
+const PUBLISH_COMMAND: &str = "publish_game_asset";
 
 impl RequestTask {
     async fn run(
@@ -595,6 +608,12 @@ impl RequestTask {
         let fail = |code: &str, message: &str| {
             (failure(&request, ProtocolError::new(code, message)), None)
         };
+        if request.command == PUBLISH_COMMAND && !self.publish {
+            return fail(
+                error_code::AUTHORIZATION_FAILED,
+                "game assets are published from the development Sidecar or the CLI, not from a game",
+            );
+        }
         // 期限は受け付けた時から数える（起動と実行の枠の待ちを含む）。
         let deadline = match request.timeout_ms() {
             Ok(timeout) => tokio::time::Instant::now() + Duration::from_millis(timeout),

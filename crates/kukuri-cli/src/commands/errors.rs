@@ -43,6 +43,16 @@ pub(super) fn command_error(error: anyhow::Error) -> ProtocolError {
         return ProtocolError::new(code, "ゲームの session に参加できませんでした")
             .with_details(json!({"reason": rejected.0}));
     }
+    // #1980: ゲームのアセットを取得できなかった(提供者がいない・release が無い)。成功扱いにしない。
+    if let Some(unavailable) = error.downcast_ref::<kukuri_desktop_runtime::GameAssetUnavailable>()
+    {
+        let code = match unavailable.0 {
+            kukuri_desktop_runtime::GAME_ASSET_NOT_FOUND => error_code::NOT_FOUND,
+            _ => error_code::NETWORK_UNAVAILABLE,
+        };
+        return ProtocolError::new(code, "ゲームのアセットを取得できませんでした")
+            .with_details(json!({"reason": unavailable.0}));
+    }
     // #1221 R2-C: 購読・参加の上限(desired と参加の lease で共通の 64)。
     if error.downcast_ref::<ScopeLimitReached>().is_some()
         || error
