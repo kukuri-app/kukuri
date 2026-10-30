@@ -1,0 +1,20 @@
+{
+    "name": "Kukuri.GameSdk.Assets",
+    "rootNamespace": "Kukuri.GameSdk.Assets",
+    "references": ["Kukuri.GameSdk", "glTFast"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": ["KUKURI_GLTFAST"],
+    "versionDefines": [
+        {
+            "name": "com.unity.cloud.gltfast",
+            "expression": "[6.20.0,7.0.0)",
+            "define": "KUKURI_GLTFAST"
+        }
+    ],
+    "noEngineReferences": false
+}

@@ -443,6 +443,9 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -Backend IL2CPP -Ski
 # NGO 2.13.3 を入れた project で、NGO の Transport の EditMode の試験を流し、Netcode Sync sample の Player を 2 つ起動して
 # cube の同期と切断を確かめる（client は FFI と Sidecar の 2 回。%TEMP%\kgs-ngo に作る）
 powershell -ExecutionPolicy Bypass -File sdk/unity/test-netcode.ps1
+# glTFast 6.20.0 を入れた新しい project に Skin Loader sample を入れ、発行（開発用の Sidecar）→ 更新の知らせ → P2P の取得
+# → 再起動なしの差し替えを EditMode で確かめる。差し替えの前後の描画を %TEMP%\kgs-skin-*.png に書く（%TEMP%\kgs-assets に作る）
+powershell -ExecutionPolicy Bypass -File sdk/unity/test-assets.ps1
 ```
 
 - 自分の project へ入れるときは、`Packages/manifest.json` の `dependencies` に `"com.kukuri.gamesdk": "file:<repo>/sdk/unity/com.kukuri.gamesdk"` を足す。
@@ -451,6 +454,7 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test-netcode.ps1
 - Unity の project を深い path に置くと Windows の path の長さの上限に当たる。`test.ps1` は `%TEMP%\kgs-test` に作る。
 - ロビーは `Runtime/Lobby/KukuriLobby.prefab`（uGUI）を scene に置き、`runner` に `KukuriRunner` を、`applicationId` と `topic` にゲームの値を設定する。scene に `EventSystem` が無ければ Unity の menu の UI から足す。
 - NGO を使うときは、`NetworkManager` の Transport に `KukuriNetcodeTransport`（`runner` に `KukuriRunner`）を置き、ロビーの `RoomCreated` で `RoomId` を設定して `StartHost`、`Joined` で `SessionId` を設定して `StartClient` を呼ぶ。Package Manager の Samples から「Netcode Sync」を入れると、その組み方の sample が入る。
+- スキンは `KukuriSkinLoader`（glTFast が要る）を GameObject に置き、`runner` と topic・信頼する発行者の公開鍵・application ID・asset ID を設定する。新しい版は自動で取得・差し替えされる。アセットの発行は開発用の Sidecar（設定 asset の mode を Sidecar にする）か CLI の `publish_game_asset` で行う。
 - `test.ps1` は CLI の process 試験と同じく `KUKURI_DISABLE_KEYRING=1` と loopback の接続設定で動かす。Player の再起動の確認は、鍵を keyring に置かない構成での確認になる。
 
 ## Linux AppImage／Deb生成
