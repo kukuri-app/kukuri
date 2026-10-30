@@ -71,7 +71,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | command | `list_game_assets` / `fetch_game_asset` | #1980 | 発行者の公開鍵と application ID で、指定した asset ID（1 回 32 件まで）の最新の release を読み、検証済みの file の path を得る |
 | command | `set_live_broadcast` / `stop_live_broadcast` / `watch_live_media` / `stop_watching_live_media` / `set_live_volume` | #1982 | desktop-runtime にある Live の配信・視聴の操作を登録簿へ載せる |
 | command | `set_public_channel_subscription` | #1982 | 公開スレッド（公開 channel。ADR 0068）の投稿・リアクションの知らせを購読する・やめる。desired として保存し、topic の購読と同じ上限に数える（CLI と SDK だけ。desktop・Web は開いている列で購読する）。保存は旧版の読まない `public-channel-subscriptions.json` に分け（旧版は `subscriptions.json` の channel を private channel として復元して起動に失敗するため。2026-10-31 のユーザー判断）、backup には含めない |
-| command | `start_game_player` / `get_game_player` | #1996 | profile と application ID ごとの game player を作る・読む（§4.1） |
+| command | `start_game_player` / `get_game_player` | #1996 | profile の game player を作る・読む（1 つの profile に 1 つのゲーム。§4.1） |
 | command | `open_account_transfer` / `get_account_transfer_status` / `decide_account_transfer` / `cancel_account_transfer` | #1996 | desktop・Web から既存のアカウントを移行で受ける（ADR 0062 の既存の操作を登録簿へ載せる。リンクは秘密の入力。§4.1） |
 | event | `events_lost` | #1975 | 知らせの event を捨てた件数 |
 | event | `game_session_closed` | #1978 | session が閉じた（退出・room の終了・権限の失効・host の不在）。理由の code を持つ。参加者と host の両方の端末に届く（host の端末は #1979 から） |
@@ -162,6 +162,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 2026-10-31 のユーザー判断で、次の 3 点を決めた。
 
 - 既存のアカウントでゲームが署名する方法は、既存の移行（ADR 0062）で鍵を渡す形にする。
+  - 選ばなかった案は 2 つある。用途を限った委任鍵は、投稿・リアクション・room を読むすべての経路で委任状を検証する変更が要る。そのうえ、旧版の client がゲームの投稿を本人のものと認めない。desktop に署名を頼む形は、desktop・Web を開いている間しかゲームで投稿・参加できない。
 - 移行のリンクは、ゲームの「貼り付け」のボタンが clipboard から読む。
 - 「開始済み」は「はじめる」の時点とする。
 
@@ -171,45 +172,52 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 
 | 入口 | 操作 | 結果 |
 | --- | --- | --- |
-| 新規 | 同意（§4 の 1・2）→「はじめる」 | 同意で作られたゲーム用のアカウントに、game player を結び付けて始める。別サイトの登録・メールとパスワード・SNS のプロフィールの入力は要らない |
+| 新規 | 同意（§4 の 1・2）→「はじめる」 | 同意で作られたゲーム用のアカウントに、game player を結び付けて始める。別サイトの登録・メールとパスワード・SNS のプロフィールの入力は要らない。プロフィールの入力を求める `profile_setup_required` は GUI の側の判定で、runtime は投稿・参加の前に求めない |
 | 保存済み | 起動 | 保存した game player とそのアカウントで再開する（同意と「はじめる」を繰り返さない） |
-| 既存の kukuri アカウント | 開始の画面の「kukuriアカウントを使う」→ desktop・Web の移行の画面で「リンクをコピー」→ ゲームで「貼り付け」→ 両方に出る 6 桁の確認コードの一致を両方で押す →「はじめる」 | 受けたアカウントへ切り替え、そのアカウントに game player を結び付けて始める。鍵・export の文字列は扱わない。ゲームの端末には鍵が残り、desktop 側から後で取り消すことはできない（解除はゲームの profile から外すこと）。承認の画面で、このことを示す |
+| 既存の kukuri アカウント | 開始の画面の「kukuriアカウントを使う」→ desktop・Web の移行の画面で「リンクをコピー」→ ゲームで「貼り付け」→ 両方に出る 6 桁の確認コードの一致を両方で押す → 移行の完了の後に「はじめる」 | 受けたアカウントへ切り替え、そのアカウントに game player を結び付けて始める。鍵・export の文字列は扱わない |
 
-開始の画面は「はじめる」を主の操作にし、「kukuriアカウントを使う」は任意の入口として並べる。アカウントの方式を選ぶ画面を全員に強制しない。
+- 「kukuriアカウントを使う」を押した後、貼り付けの前に、ゲームの画面で次のことを示す。
+  - このゲームがそのアカウントで投稿・署名できること。
+  - ゲームの端末に鍵が残り、desktop 側から後で取り消せないこと。解除はゲームの profile から外すことになる。
+- desktop・Web の移行元の画面は、相手がゲームだと分からないので、既存の表示（ADR 0062 §8）のままとする。
+- 開始の画面は「はじめる」を主の操作にし、「kukuriアカウントを使う」は任意の入口として並べる。アカウントの方式を選ぶ画面を全員に強制しない。
 
 ##### game player
 
-- game player ID は、profile とゲームの application ID の組ごとに SDK が作るランダムな ID である。ゲームはセーブの参照に使う。セーブの内容はゲームが持ち、SDK は持たない。
+- game player ID は、SDK の profile ごとに SDK が作るランダムな ID である。ゲームはセーブの参照に使う。セーブの内容はゲームが持ち、SDK は持たない。
 - game player ID はアカウントの公開鍵とは別の値で、アカウントの公開鍵・端末の profile・外部の provider の主体 ID のどれでもない。後からアカウントを統合しても（#1998）、game player ID は変わらない。
-- game player は、作った時のアカウントに結び付く（binding）。保存先は profile の directory の `game-players.json` で、application ID ごとに 1 件、profile ごとに 16 件までとする。network へは出さない。
+- 1 つの profile は 1 つのゲーム（application ID）の game player だけを持つ。別の application ID を渡すと `game_player_application_mismatch` で断る。異なるゲームが profile とアカウントを暗黙に共用しないためである。
+- game player は、作った時のアカウントに結び付く（binding）。保存先は profile の directory の `game-players.json`（1 件）で、network へは出さない。
 - 保存は ProfileLease の中で行う。旧版の SDK はこの file を読まない（前からの profile を開く向きに影響は無い）。
 
 ##### 状態の表
 
 | 今の状態 | 操作・出来事 | 次の状態 |
 | --- | --- | --- |
-| 同意前 | 同意する | 同意済み・未開始（ゲーム用のアカウントがある。network I/O を始める） |
+| 同意前 | 同意する | 同意済み・未開始（ゲーム用のアカウントを作り、network I/O を始める） |
 | 同意前 | 同意しない・閉じる | 同意前のまま（network I/O 0 件、アカウントを作らない） |
 | 未開始 | 「はじめる」 | 開始済み（今のアカウントに game player を結び付ける） |
-| 未開始 | 「kukuriアカウントを使う」→ 確認コードの一致を両方が承認 | 未開始（受けたアカウントへ切り替える。前のゲーム用のアカウントは profile に残し、使わない） |
-| 未開始 | 移行の拒否・期限切れ（5 分）・取消・届かない | 未開始のまま（アカウントも切り替えも変えない） |
-| 開始済み | 再起動 | 開始済み（結び付けたアカウントを active にして同じ game player で再開する） |
-| 開始済み | 別のアカウントを移行で受ける | 開始済みのまま切り替えない。受けたアカウントは profile に加わり、結果は `integration_required`（統合の実行は #1998） |
+| 未開始 | 開始の画面を閉じる・再起動 | 未開始のまま（同じゲーム用のアカウントで開始の画面に戻る。新しいアカウントを作らない） |
+| 未開始 | 「kukuriアカウントを使う」→ 確認コードの一致を両方が承認 → 移行の完了 | 未開始（ゲームが `switch_account` で受けたアカウントへ切り替える。前のゲーム用のアカウントは profile に残し、使わない） |
+| 未開始・開始済み | 移行の拒否・期限切れ（5 分）・取消・届かない・移行の途中の再起動 | 前の状態のまま（アカウントも切り替えも変えない。ADR 0062 のとおり、確認の前に終わった移行は何も保存しない） |
+| 開始済み | 再起動 | 開始済み（`start_game_player` が、結び付けたアカウントを active にして同じ game player で再開する） |
+| 開始済み | 別のアカウントを移行で受けて `switch_account` を呼ぶ | 開始済みのまま切り替えない。`switch_account` は `integration_required` を返す。受けたアカウントは profile に加わる（統合の実行は #1998） |
 
-開始の前に、自動で作ったアカウントで公開投稿・room への参加を始めない。「はじめる」の前に SNS・ロビーを開かない作りは、ゲームの開始の画面（AC-2 の sample）が担う。
+開始の前に、自動で作ったアカウントで公開投稿・room への参加を始めない。「はじめる」の前に SNS・ロビーを開かない作りは、ゲームの開始の画面（AC-2 の sample）が担い、AC-2・AC-3 の確認に含める。
 
 ##### API・保存・互換
 
 - 足す command:
-  - `start_game_player`（application ID）: game player を作る、または保存済みのものを返す。返すのは game player ID・アカウントの公開鍵・作った時刻。
-  - `get_game_player`（application ID）: 保存済みの game player を返す。無ければ null。
+  - `start_game_player`（application ID）: game player を作る、または保存済みのものを返す。返すのは game player ID とアカウントの公開鍵。
+  - `get_game_player`（application ID）: 保存済みの game player を返す。無ければ null。ゲームは、起動時に開始の画面を出すかどうかをこれで決める。
 - 登録簿へ載せる既存の移行の操作（今は GUI だけ）:
-  - `open_account_transfer`: 移行先として開く。リンクは秘密の入力で渡し、応答・event・log に出さない。
-  - `get_account_transfer_status`
+  - `open_account_transfer`: 移行先として開く。リンクは秘密の入力で渡し、応答・event・log に出さない。投稿の履歴は受けない（`history` は無し）。移行の完了は必須 bundle の保存だけで決まり、開始を投稿の数に比例して待たせない。
+  - `get_account_transfer_status`: 完了（`completed`）なら、受けたアカウントの ID を返す。
   - `decide_account_transfer`
   - `cancel_account_transfer`
-- 受けた後に、開始済みのゲームのアカウントは切り替えない。`start_game_player` は、結び付けたアカウントと active のアカウントが違えば、結び付けたほうを active にする。
-- 保存の形の変更は `game-players.json` の追加だけで、既存の DB・backup・wire は変えない。
+- 移行は、受けたアカウントを profile に足すだけで active を変えない（ADR 0062）。切り替えは、移行の完了の後にゲームが既存の `switch_account` で行う。
+- SDK の profile に game player がある間は、`switch_account` は結び付けたアカウント以外へ切り替えず、`integration_required` を返す（SDK の dispatcher で判定する）。統合が要る状態を `switch_account` で処理しないためである。
+- 保存の形の変更は `game-players.json` の追加だけで、既存の DB・backup・wire・`AccountTransferStatus` の型は変えない。
 
 ##### 再利用と削除
 
@@ -223,13 +231,15 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 
 - AC-2:
   - 空の profile から、同意 →「はじめる」で始まる。同意の前の network I/O は 0 件である。
-  - 再起動・再実行で、公開鍵と game player ID が同じである。
-  - 同意を取り消すと、既存のアカウントを上書きしない。
-  - SDK の試験と、Unity の開始の画面の sample で確かめる。
+  - 開始の画面を閉じる・再実行・再起動しても、公開鍵と game player ID が同じである。開始の画面で取り消すと（同意しない・閉じる）、既存のアカウントを上書きせず、新しいアカウントも作らない。
+  - 別の application ID は断る。
+  - 「はじめる」の前に、開始の画面の sample は SNS・ロビーを開かない。
+  - SDK の試験と、Windows の実 Player の開始の画面の sample で確かめる。
 - AC-3:
-  - desktop の runtime を移行元にして招待を作る。SDK が「貼り付け」の経路（秘密の入力）で受け、確認コードの承認を経る。これで、既存の公開鍵で始められることと、再起動しても同じであることを確かめる。
+  - desktop の runtime を移行元にして招待を作る。SDK が「貼り付け」の経路（秘密の入力）で受け、確認コードの承認・完了・`switch_account` を経る。既存の公開鍵で始められることと、再起動しても同じであることを確かめる。
   - 拒否・期限切れ・取消では、元のアカウントと game player を保つ。
-  - 開始済みで別のアカウントを受けると、`integration_required` を返して切り替えない。
+  - 開始済みで別のアカウントを受けると、`switch_account` が `integration_required` を返して切り替えない。
+  - SDK の試験に加え、作者が管理する desktop と Windows の実 Player で、貼り付け → 確認 → 開始 → 再起動を確かめる。
 
 ### 5. 4 本柱のデータ分類
 
