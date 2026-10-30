@@ -199,6 +199,13 @@ async fn a_public_game_session_lasts_until_leave_block_or_end() {
     assert_eq!(closed(&mut second_events, &blocked).await, "access_revoked");
     assert!(!second.game_sessions.is_open(&blocked));
     eventually_closed_on_host(&host, &blocked).await;
+    // 一覧には出ていて参加者の端末は要求を作れるが、host が断る。
+    assert_eq!(
+        join(&second, topic, &public, &room)
+            .await
+            .expect_err("blocked by the host"),
+        "access_denied"
+    );
 
     // host が room を終えると閉じ、それ以上は参加できない。
     let ended = join_when_allowed(&first, topic, &public, &room).await;
@@ -212,6 +219,7 @@ async fn a_public_game_session_lasts_until_leave_block_or_end() {
     .await
     .expect("end the room");
     assert_eq!(closed(&mut first_events, &ended).await, "room_ended");
+    assert!(!first.game_sessions.is_open(&ended));
     assert!(!host.game_sessions.is_open(&ended));
     assert_eq!(
         join(&first, topic, &public, &room)
@@ -364,6 +372,7 @@ async fn an_invite_only_game_session_admits_invited_members_until_they_leave_the
         .await
         .expect("leave the channel");
     assert_eq!(closed(&mut events, &session).await, "access_revoked");
+    assert!(!member.game_sessions.is_open(&session));
     eventually_closed_on_host(&owner, &session).await;
 
     for runtime in [owner, member, outsider] {

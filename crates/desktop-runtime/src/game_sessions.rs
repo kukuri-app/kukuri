@@ -9,6 +9,7 @@ use kukuri_app_api::{AppService, GAME_SESSION_ROOM_FULL, GameSessionRejected};
 use kukuri_iroh_node::{
     GameSessionAuthorizer, GameSessionDenied, GameSessionGrant, GameSessionLink, IrohDocsNode,
 };
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::RuntimeEvent;
 
@@ -21,12 +22,14 @@ const HOST_UNREACHABLE: &str = "host_unreachable";
 struct Ledger {
     /// host の端末で受け付けた session(session ID → room ID)。
     hosted: HashMap<String, String>,
-    /// 参加者の端末で参加中の session(session ID → room ID と接続)。
-    joined: HashMap<String, (String, Arc<GameSessionLink>)>,
+    /// 参加者の端末で参加中の session(session ID → room ID と接続、参加の枠)。
+    joined: HashMap<String, (String, Arc<GameSessionLink>, OwnedSemaphorePermit)>,
 }
 
 pub(crate) struct GameSessions {
     ledger: Arc<StdMutex<Ledger>>,
+    /// 参加の枠。参加を始める前に取り、記録が消えるまで持つ。
+    join_slots: Arc<Semaphore>,
     events: tokio::sync::broadcast::Sender<RuntimeEvent>,
 }
 
@@ -56,6 +59,7 @@ impl GameSessions {
     pub(crate) fn new(events: tokio::sync::broadcast::Sender<RuntimeEvent>) -> Arc<Self> {
         Arc::new(Self {
             ledger: Arc::default(),
+            join_slots: Arc::new(Semaphore::new(MAX_JOINED_SESSIONS)),
             events,
         })
     }
@@ -117,16 +121,11 @@ impl GameSessions {
         scope: kukuri_core::TimelineScope,
         room_id: &str,
     ) -> Result<String> {
-        if self
-            .ledger
-            .lock()
-            .expect("game session ledger")
-            .joined
-            .len()
-            >= MAX_JOINED_SESSIONS
-        {
-            return Err(anyhow!(GameSessionRejected(SESSION_LIMIT.into())));
-        }
+        let slot = self
+            .join_slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| anyhow!(GameSessionRejected(SESSION_LIMIT.into())))?;
         let join = app
             .game_session_join_request(topic_id, scope, room_id)
             .await?;
@@ -145,7 +144,10 @@ impl GameSessions {
             .lock()
             .expect("game session ledger")
             .joined
-            .insert(session_id.clone(), (room_id.to_string(), link.clone()));
+            .insert(
+                session_id.clone(),
+                (room_id.to_string(), link.clone(), slot),
+            );
         // 閉じるまで待ち、記録を消して知らせる(上限つきの参加中の session ごとに 1 つ。退出でも閉じる)。
         let (ledger, events, room_id) = (
             Arc::downgrade(&self.ledger),
@@ -178,7 +180,7 @@ impl GameSessions {
             .expect("game session ledger")
             .joined
             .get(session_id)
-            .map(|(_, link)| link.clone());
+            .map(|(_, link, _)| link.clone());
         if let Some(link) = link {
             link.leave();
         }
@@ -192,6 +194,6 @@ impl GameSessions {
             || ledger
                 .joined
                 .get(session_id)
-                .is_some_and(|(_, link)| link.is_open())
+                .is_some_and(|(_, link, _)| link.is_open())
     }
 }
