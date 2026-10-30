@@ -220,7 +220,8 @@ impl ClientEventReceiver {
     }
 
     /// 次の event。取りこぼしたら、画面に読み直しを促す event（`AdultMediaLabelEvicted { hash: None }` と
-    /// `AuthorRelationshipChanged { pubkey: None }`）とPushの混雑通知を続けて返す。host が止まったら `None`。
+    /// `AuthorRelationshipChanged { pubkey: None }`）とPushの混雑通知、投稿の読み直し（`PostReceived { post: None }`。
+    /// #1981）を続けて返す。host が止まったら `None`。
     pub async fn next(&mut self) -> Option<RuntimeEvent> {
         if let Some(event) = self.pending.pop_front() {
             return Some(event);
@@ -232,6 +233,8 @@ impl ClientEventReceiver {
                     .push_back(RuntimeEvent::AuthorRelationshipChanged { pubkey: None });
                 self.pending
                     .push_back(RuntimeEvent::LiveOverlayPushReceived { push: None });
+                self.pending
+                    .push_back(RuntimeEvent::PostReceived { post: None });
                 Some(RuntimeEvent::AdultMediaLabelEvicted { hash: None })
             }
             Err(broadcast::error::RecvError::Closed) => None,
@@ -580,6 +583,8 @@ impl ClientHost {
                             generation,
                             RuntimeEvent::AuthorRelationshipChanged { pubkey: None },
                         ));
+                        let _ =
+                            sender.send((generation, RuntimeEvent::PostReceived { post: None }));
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
@@ -627,6 +632,28 @@ pub fn distribution_community_node_config() -> Result<CommunityNodeConfig, serde
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 取りこぼした受け手には、投稿の読み直し（`post: None`）も届く（#1981。SDK の掲示板が表示を読み直す）。
+    #[tokio::test]
+    async fn a_lagged_receiver_is_told_to_reload_posts() {
+        let (sender, events) = broadcast::channel(1);
+        let (_generation, generation) = watch::channel(0);
+        for _ in 0..3 {
+            sender
+                .send((0, RuntimeEvent::NotificationStatusChanged))
+                .unwrap();
+        }
+        let mut receiver = ClientEventReceiver {
+            events,
+            generation,
+            pending: Default::default(),
+        };
+        let mut reloads = Vec::new();
+        for _ in 0..4 {
+            reloads.push(receiver.next().await.unwrap());
+        }
+        assert!(reloads.contains(&RuntimeEvent::PostReceived { post: None }));
+    }
 
     #[tokio::test]
     async fn consent_gate_does_not_initialize_account_or_runtime() {
