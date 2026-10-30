@@ -13,6 +13,9 @@ mod backup;
 mod command;
 mod community_node;
 mod discovery;
+#[cfg(not(target_family = "wasm"))]
+mod game_sessions;
+pub use kukuri_app_api::GameSessionRejected;
 mod host;
 mod identity;
 #[cfg(feature = "ts")]
@@ -170,23 +173,24 @@ pub use requests::{
     GetPublicChannelRequest, ImportAccountKeyRequest, ImportChannelAccessTokenRequest,
     ImportCustomReactionSetRequest, ImportFriendOnlyGrantRequest, ImportFriendPlusShareRequest,
     ImportMetaverseRoomAssetRequest, ImportPeerTicketRequest, ImportPrivateChannelInviteRequest,
-    InitialProfileRequest, LeavePrivateChannelRequest, ListActionRoomsRequest,
-    ListBookmarkedPostsRequest, ListDirectMessageMessagesRequest,
-    ListDomeConnectionTopologyRequest, ListGameRoomsRequest, ListJoinedPrivateChannelsRequest,
-    ListLiveSessionsRequest, ListMetaverseRoomEventsRequest, ListNotificationsPageRequest,
-    ListProfileTimelineRequest, ListPublicChannelsRequest, ListRecentReactionsRequest,
-    ListSocialConnectionsRequest, ListThreadRequest, ListTimelineRequest,
-    LiveSessionCommandRequest, MoveDomeRequest, NotificationIdRequest, OpenAccountTransferRequest,
-    PostWithdrawalReasonRequest, PrepareDomeTransitionRequest, PreviewAccountKeyImportRequest,
-    PreviewChannelAccessTokenRequest, PublishMetaverseRoomEventRequest, ReactionKeyRequest,
-    RemoveBookmarkedCustomReactionRequest, RemoveBookmarkedPostRequest,
-    ResolveCommunityIndexPostsRequest, ResyncDomeSnapshotsRequest, RetryPostElementsRequest,
-    RevokeDomeConnectionRequest, RotatePrivateChannelRequest, SendDirectMessageRequest,
-    SetChannelGossipEnabledRequest, SetMyProfileRequest, SetPrivateChannelEntryDomeRequest,
-    SetTopicGossipEnabledRequest, SetTopicRetentionLimitsRequest, SetTopicRetentionRequest,
-    StartOwnerDomeHostingRequest, SubmitDomeSessionInputRequest, SwitchAccountRequest,
-    TakePrivateChannelControllerRequest, ToggleReactionRequest, UnsubscribeTopicRequest,
-    UpdateGameRoomRequest, UpdateMetaverseRoomRequest, UpdatePublicChannelTitleRequest,
+    InitialProfileRequest, JoinGameSessionRequest, JoinedGameSession, LeaveGameSessionRequest,
+    LeavePrivateChannelRequest, ListActionRoomsRequest, ListBookmarkedPostsRequest,
+    ListDirectMessageMessagesRequest, ListDomeConnectionTopologyRequest, ListGameRoomsRequest,
+    ListJoinedPrivateChannelsRequest, ListLiveSessionsRequest, ListMetaverseRoomEventsRequest,
+    ListNotificationsPageRequest, ListProfileTimelineRequest, ListPublicChannelsRequest,
+    ListRecentReactionsRequest, ListSocialConnectionsRequest, ListThreadRequest,
+    ListTimelineRequest, LiveSessionCommandRequest, MoveDomeRequest, NotificationIdRequest,
+    OpenAccountTransferRequest, PostWithdrawalReasonRequest, PrepareDomeTransitionRequest,
+    PreviewAccountKeyImportRequest, PreviewChannelAccessTokenRequest,
+    PublishMetaverseRoomEventRequest, ReactionKeyRequest, RemoveBookmarkedCustomReactionRequest,
+    RemoveBookmarkedPostRequest, ResolveCommunityIndexPostsRequest, ResyncDomeSnapshotsRequest,
+    RetryPostElementsRequest, RevokeDomeConnectionRequest, RotatePrivateChannelRequest,
+    SendDirectMessageRequest, SetChannelGossipEnabledRequest, SetMyProfileRequest,
+    SetPrivateChannelEntryDomeRequest, SetTopicGossipEnabledRequest,
+    SetTopicRetentionLimitsRequest, SetTopicRetentionRequest, StartOwnerDomeHostingRequest,
+    SubmitDomeSessionInputRequest, SwitchAccountRequest, TakePrivateChannelControllerRequest,
+    ToggleReactionRequest, UnsubscribeTopicRequest, UpdateGameRoomRequest,
+    UpdateMetaverseRoomRequest, UpdatePublicChannelTitleRequest,
     WithdrawDomeConnectionProposalRequest, WithdrawPostRequest, WithdrawalReasonVisibilityRequest,
 };
 pub use runtime::{DesktopRuntime, RuntimeEvent};

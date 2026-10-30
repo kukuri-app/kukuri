@@ -85,6 +85,10 @@
       "path": "crates/store/src/parity/lists.rs"
     },
     {
+      "lines": 1018,
+      "path": "crates/desktop-runtime/src/stack.rs"
+    },
+    {
       "lines": 1004,
       "path": "apps/desktop/src/shell/DesktopShellPage.tsx"
     }

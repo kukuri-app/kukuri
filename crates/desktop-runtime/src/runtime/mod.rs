@@ -85,6 +85,8 @@ use crate::stack::SharedIrohStack;
 mod community_node_api;
 mod content_profile_api;
 mod dome_session_api;
+#[cfg(not(target_family = "wasm"))]
+mod game_session_api;
 mod identity_api;
 #[cfg(not(target_family = "wasm"))]
 mod legacy_store_retirement;
@@ -139,6 +141,12 @@ pub enum RuntimeEvent {
     },
     LiveOverlayPushReceived {
         push: Option<Box<kukuri_app_api::LiveOverlayPushView>>,
+    },
+    /// SDK のゲームの session が閉じた(#1978)。理由は `left`・`room_ended`・`access_revoked`・`host_unavailable`。
+    GameSessionClosed {
+        session_id: String,
+        room_id: String,
+        reason: String,
     },
 }
 
@@ -290,6 +298,9 @@ pub struct DesktopRuntime {
     pub(crate) metaverse_audio: Arc<crate::metaverse_audio::MetaverseAudio>,
     /// live の配信と視聴(ADR 0067、#1034。Web は #1879)。
     pub(crate) live_media: Arc<crate::live_media::RuntimeLiveMedia>,
+    /// SDK のゲームの action session(#1978)。
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) game_sessions: Arc<crate::game_sessions::GameSessions>,
 }
 
 async fn load_private_channel_capabilities(
@@ -772,6 +783,13 @@ impl DesktopRuntime {
             store.clone(),
         );
         let (event_sender, _) = tokio::sync::broadcast::channel(64);
+        // SDK のゲームの action session の host の受け口(#1978)。room の状態と公開範囲を host の状態で確かめる。
+        #[cfg(not(target_family = "wasm"))]
+        let game_sessions = crate::game_sessions::GameSessions::new(event_sender.clone());
+        #[cfg(not(target_family = "wasm"))]
+        iroh_stack
+            .use_game_session_authorizer(game_sessions.authorizer(Arc::downgrade(&app_service)))
+            .await?;
         let notification_event_task = {
             let reactions_app = Arc::downgrade(&app_service);
             let notifications = forward_runtime_events(
@@ -852,6 +870,8 @@ impl DesktopRuntime {
             #[cfg(not(target_family = "wasm"))]
             metaverse_audio,
             live_media,
+            #[cfg(not(target_family = "wasm"))]
+            game_sessions,
         })
     }
 

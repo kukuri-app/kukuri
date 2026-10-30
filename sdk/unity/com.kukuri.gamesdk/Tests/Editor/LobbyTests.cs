@@ -14,8 +14,8 @@ using Object = UnityEngine.Object;
 
 namespace Kukuri.GameSdk.Tests
 {
-    /// 2 つの独立した profile で、作成 → 発見（後から参加した側）→ 表示 → 終了を Lobby prefab で確かめる（#1978 AC-1、
-    /// F-LOB-1・F-LOB-2）。test.ps1 が keyring を切り、loopback だけで動かす。
+    /// 2 つの独立した profile で、作成 → 発見（後から参加した側）→ 表示 → 参加 → 終了を Lobby prefab で確かめる（#1978
+    /// AC-1・AC-2、F-LOB-1・F-LOB-2）。test.ps1 が keyring を切り、loopback だけで動かす。
     public sealed class LobbyTests
     {
         const string PrefabPath = "Packages/com.kukuri.gamesdk/Runtime/Lobby/KukuriLobby.prefab";
@@ -109,7 +109,7 @@ namespace Kukuri.GameSdk.Tests
         }
 
         [UnityTest]
-        public IEnumerator ARoomCreatedByOneProfileIsFoundShownAndEndedForAnother()
+        public IEnumerator ARoomCreatedByOneProfileIsFoundJoinedAndEndedForAnother()
         {
             var topic = "kukuri:topic:test-lobby-" + Guid.NewGuid().ToString("N").Substring(0, 8);
             a = KukuriClient.Open(KukuriMode.Ffi, "a", NewProfileDirectory());
@@ -142,8 +142,26 @@ namespace Kukuri.GameSdk.Tests
             Assert.AreEqual("決勝戦の練習", shown.Title);
             StringAssert.Contains("待機中", shown.Detail);
 
+            // 参加すると「参加中」になり、host が終えると session が閉じた知らせが届く。
+            string closedReason = null;
+            guestLobby.SessionClosed += reason => closedReason = reason;
+            var join = guestLobby.JoinRoomAsync(roomId);
+            yield return Wait(join);
+            Assert.AreEqual(join.Result, guestLobby.JoinedSessionId);
+            StringAssert.Contains("参加中", Shown(lobbyB).Single().Detail);
+
             yield return Wait(hostLobby.EndRoomAsync(roomId));
             Assert.AreEqual("Ended", hostLobby.Rooms.Single().Status);
+            var clock = Stopwatch.StartNew();
+            while (closedReason == null)
+            {
+                Assert.Less(clock.Elapsed.TotalSeconds, 60, "the session did not close");
+                a.Pump();
+                b.Pump();
+                yield return null;
+            }
+            Assert.AreEqual("room_ended", closedReason);
+            Assert.IsNull(guestLobby.JoinedSessionId);
             yield return RefreshUntil(guestLobby, () => guestLobby.Rooms.Single().Status == "Ended",
                 "the other profile did not see the room end");
             StringAssert.Contains("終了", Shown(lobbyB).Single().Detail);

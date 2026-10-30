@@ -480,6 +480,25 @@ pub struct CreateGameRoomRequest {
     pub action: Option<kukuri_app_api::CreateActionSessionInput>,
 }
 
+/// SDK のゲームの action session の host へ参加する(#1978)。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinGameSessionRequest {
+    pub topic: String,
+    #[serde(default)]
+    pub scope: TimelineScope,
+    pub room_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinedGameSession {
+    pub session_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaveGameSessionRequest {
+    pub session_id: String,
+}
+
 /// action session の room の一覧(SDK。#1978)。1 頁は 20 件。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListActionRoomsRequest {

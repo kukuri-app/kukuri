@@ -853,7 +853,7 @@ reference_id?: string | null,
  */
 disputed_risk_signal_id?: string | null, };
 
-export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "startup_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, } | { "type": "author_relationship_changed", pubkey?: string | null, } | { "type": "reaction_received", reaction: ReactionReceivedView, } | { "type": "live_overlay_push_received", push?: LiveOverlayPushView | null, };
+export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "startup_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, } | { "type": "author_relationship_changed", pubkey?: string | null, } | { "type": "reaction_received", reaction: ReactionReceivedView, } | { "type": "live_overlay_push_received", push?: LiveOverlayPushView | null, } | { "type": "game_session_closed", session_id: string, room_id: string, reason: string, };
 
 export type LiveOverlayPushView = { event_id: string, sender_pubkey: string, target: PushLiveOverlayRequest, post_created_at: number, sent_at: number, received_at: number, };
 

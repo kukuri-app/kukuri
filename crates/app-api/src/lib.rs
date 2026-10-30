@@ -32,6 +32,7 @@ mod dome_management;
 mod dome_move;
 mod dome_session;
 mod game;
+mod game_sessions;
 mod live;
 mod live_overlay;
 pub use live_overlay::{
@@ -69,6 +70,11 @@ mod topic_retention;
 pub use topic_retention::{RetainedTopicView, RetentionProgressView, TopicRetentionView};
 mod views;
 
+pub use game_sessions::{
+    AdmittedGameSession, GAME_SESSION_ACCESS_DENIED, GAME_SESSION_ACCESS_REVOKED,
+    GAME_SESSION_ROOM_ENDED, GAME_SESSION_ROOM_FULL, GAME_SESSION_ROOM_NOT_FOUND, GameSessionJoin,
+    GameSessionRejected,
+};
 pub use kukuri_store::{NOTIFICATION_DISPATCH_PAGE_SIZE, NotificationKind};
 pub use private_channels::{
     is_retryable_friend_only_grant_import_error, is_retryable_friend_plus_share_import_error,

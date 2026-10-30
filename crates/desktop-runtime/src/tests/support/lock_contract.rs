@@ -79,6 +79,8 @@ const LOCK_CLASSIFICATION: &[(&str, &str, usize)] = &[
     ("host_generation.rs", "IdentityStorage", 4),
     ("identity_restart.rs", "IdentityStorage", 2),
     ("legacy_store_retirement.rs", "IdentityStorage", 2),
+    // #1978 AC-2: ゲームの session の公開範囲と寿命の 4 試験。
+    ("game_sessions.rs", "IrohNetwork", 4),
     ("media_blob_restore.rs", "IrohNetwork", 11),
     ("private_channels/friend_only.rs", "IrohNetwork", 1),
     ("private_channels/friend_plus.rs", "IrohNetwork", 1),
@@ -154,7 +156,7 @@ fn lock_acquisitions_match_declared_classification() {
     );
     let total: usize = expected.values().sum();
     assert_eq!(
-        total, 213,
+        total, 217,
         "classification total drifted from the Q7 T6 baseline(#1020 で Dome delete・stale input 試験を各 1 件追加、#711 で index_query 試験を 1 件、\
          #802 で tester_feedback_submission 試験を 3 件、#862 で config 永続化試験を 2 件、\
          #855 で device_backup 試験を 7 件、recovery 試験を 13 件へ拡充、\
@@ -184,6 +186,7 @@ fn lock_acquisitions_match_declared_classification() {
          #1211 AC-6 で移行先と相互フォローの相手の DM の試験に IdentityStorage 取得を 1 件追加、
          #1211 AC-5 で移行元のアカウントが残る試験に IdentityStorage 取得を 1 件追加、
          #1527 で別の端末からの Dome の入室・遷移と、stack の作り直し・到達できない host の試験に IrohNetwork 取得を各 1 件追加、
-         #1650 で本人の端末どうしの和集合の同期の往復の試験に IdentityStorage 取得を 1 件追加)"
+         #1650 で本人の端末どうしの和集合の同期の往復の試験に IdentityStorage 取得を 1 件追加、
+         #1978 でゲームの session の公開範囲と寿命の試験に IrohNetwork 取得を 4 件追加)"
     );
 }
