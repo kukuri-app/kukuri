@@ -25,6 +25,8 @@ const IDLE: Duration = Duration::from_secs(5);
 /// 映像を音声より先に出してよい上限と、復号して描く前に持つ frame の上限（desktop・Web と同じ）。
 const VIDEO_LEAD_US: u64 = 125_000;
 const DECODED_FRAMES: usize = 30;
+/// 視聴が `watching` 以外（満員・映像なし・終了）で終わったら、この間をおいてやり直す（desktop・Web と同じ）。
+const RETRY: Duration = Duration::from_secs(5);
 
 type Events = Arc<dyn Fn(Vec<u8>) + Send + Sync>;
 pub(crate) type Shown = (u64, u64, Frame);
@@ -279,7 +281,7 @@ fn parse_batch(batch: &[u8]) -> Option<Batch<'_>> {
 }
 
 /// 視聴の task。chunk を順に復号し、音声の再生時刻（無ければ最新）に合う frame を渡す。状態が変われば
-/// `live_watch_status` を出し、終われば止まる。
+/// `live_watch_status` を出す。視聴が終わったら `RETRY` おいて runtime の視聴をやり直し、`stop_watching` まで続ける。
 async fn view(live: Weak<Live>, runtime: Arc<DesktopRuntime>, topic: String, session_id: String) {
     let Some(mut decoder) = Decoder::new() else {
         return;
@@ -320,9 +322,12 @@ async fn view(live: Weak<Live>, runtime: Arc<DesktopRuntime>, topic: String, ses
             let (timestamp, frame) = decoded.drain(..=due).next_back().expect("due is in range");
             lock(&live.frames).insert(session_id.clone(), (timestamp, clock, frame));
         }
-        if state_name(code) == "ended" {
-            lock(&live.viewers).remove(&session_id);
-            return;
+        drop(live);
+        if code != 0 {
+            tokio::time::sleep(RETRY).await;
+            decoded.clear();
+            // 届かなければ、次の読みが終わった状態を返し、また間をおいてやり直す。
+            let _ = runtime.watch_live_media(request.clone()).await;
         }
     }
 }

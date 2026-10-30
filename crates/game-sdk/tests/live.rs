@@ -231,19 +231,24 @@ fn broadcast_and_watch(broadcaster: *mut KukuriHandle, viewer: *mut KukuriHandle
     let v = received.last_i420
         [(WIDTH * HEIGHT + WIDTH * HEIGHT / 4 + (HEIGHT - 20) / 2 * WIDTH / 2) as usize];
     assert!(v < 125, "the lower half is blue ({v})");
-    // 音声が再生され、映像は音声の再生時刻より 125 ms を超えて先に出ない。
+    // 音声が再生され、描く frame の時刻 − 音声の再生時刻が −200〜+125 ms に入る（p95。2026-10-31 のユーザー判断）。
     let played: Vec<_> = received
         .frames
         .values()
         .filter(|(_, clock, _)| *clock > 0)
         .collect();
     assert!(!played.is_empty(), "no frame came with an audio clock");
-    for (timestamp, clock, _) in &played {
-        assert!(
-            *timestamp <= clock + 125_000,
-            "video ran ahead of audio: {timestamp} > {clock}"
-        );
-    }
+    let in_sync = played
+        .iter()
+        .filter(|(timestamp, clock, _)| {
+            (-200_000..=125_000).contains(&(*timestamp as i64 - *clock as i64))
+        })
+        .count();
+    assert!(
+        in_sync * 100 >= played.len() * 95,
+        "audio and video drifted: {in_sync} of {} frames in sync",
+        played.len()
+    );
     // 取り込み（送った時刻）から受けた時刻までの遅延（直接の視聴、p95 ≤ 500 ms。ADR 0070 §8.4）。
     let mut delays: Vec<u128> = received
         .frames

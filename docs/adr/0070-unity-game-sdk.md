@@ -318,7 +318,9 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 - 音声: `AudioListener` と同じ GameObject の component の `OnAudioFilterRead` でゲームの出力音（`AudioSettings.outputSampleRate` の rate と channel 数の float）を受け、mic が on なら Unity の `Microphone` の音を足して、audio thread から `kukuri_sdk_send_binary` で渡す（speaker へ出す音は変えない）。Rust 側は mono にして、mic と同じく非公開の broadcast で 48 kHz の Opus に圧縮し、配信者の署名を付けて既存の音声の track へ写す。送り待ちは 200 ms 分までで、溢れたら古いものから捨てる。
   - mic の音は Unity が混ぜる（#1982）。moq-audio の mic の取り込みは取り込みから Opus の圧縮までを一続きに行い、取り込んだ sample を外へ出さないので、Rust 側で混ぜるには fork の変更が要る。Unity で混ぜれば変更が要らず、ゲームの音を mic の機器の echo cancellation（moq-audio が再生する音だけを消す）が消すことも無いので、消える機能は無い。この節の旧案（「Rust 側で既存の mic の取り込みと混ぜる口を作る」）は失効した。
   - SDK の配信は runtime の mic を開かない（`set_live_broadcast` の `microphone` は false）。マイクを off にしても（機器は閉じる。ADR 0067 §9）、ゲーム音は送り続ける。
-- 視聴: 視聴する側の音声は、既存の Live と同じく Rust が OS の出力で鳴らす（feature `vp8` は desktop-runtime の `audio-devices` を含む）。`live_video_frame` の frame は、desktop・Web と同じく音声の再生時刻に 125 ms を足した時刻までで最も新しいもの。
+- 視聴: 視聴する側の音声は、既存の Live と同じく Rust が OS の出力で鳴らす（feature `vp8` は desktop-runtime の `audio-devices` を含む）。`live_video_frame` の frame は、desktop・Web と同じく音声の再生時刻に 125 ms を足した時刻までで最も新しいもの。視聴が `watching` 以外（満員・映像なし・終了）で終わったら、desktop・Web と同じく 5 秒おいて視聴をやり直し、`stop_watching_live_media` まで続ける（配信者は最初の keyframe までは視聴を断る）。
+- AV 同期の判定（2026-10-31 のユーザー判断）: 描く frame の時刻 − 音声の再生時刻が p95 で −200〜+125 ms に入る（遅れの側は、音声を鳴らす前に持つ 160 ms と 1 frame 分に余裕を足した値）。#1982 AC-1 は手元の 2 つの profile で 1280×720 を配信して frame time（§8.4 の閾値）とあわせて判定し、§8.4 の全条件での計測は #1984 で行う。
+- codec の相互運用: desktop・Web の配信（WebCodecs の VP8）の出力を libvpx で復号する試験を、Chromium の WebCodecs で作った fixture で置く（`crates/game-sdk/tests/fixtures/`）。
 
 #### 8.4 性能の測定条件と閾値
 

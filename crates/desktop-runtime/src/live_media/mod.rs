@@ -548,11 +548,13 @@ impl LiveMedia {
 
     /// 配信を止める(broadcast を閉じ、mic を止める)。
     pub(crate) async fn stop_broadcast(&self, session_id: &str) {
+        // 配信を作る側と同じく broadcast の一覧の lock の中で外す（作っている途中の配信の判定を残さない）。
+        let mut broadcasts = self.broadcasts.lock().await;
         self.game_audio
             .lock()
             .expect("game audio poisoned")
             .remove(session_id);
-        self.broadcasts.lock().await.remove(session_id);
+        broadcasts.remove(session_id);
     }
 
     /// この端末で配信中の session か（待たない。SDK が配信の前の映像を断る）。

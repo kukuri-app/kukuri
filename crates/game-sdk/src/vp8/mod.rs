@@ -170,6 +170,26 @@ mod tests {
             .collect()
     }
 
+    /// 既存の desktop・Web の配信の圧縮（Chromium の WebCodecs の VP8。上が赤・下が青の 320×240、realtime・1.5 Mbps）の
+    /// 出力を libvpx で復号できる（#1982。desktop・Web の配信を Unity で見る向き）。
+    #[test]
+    fn chunks_from_webcodecs_decode_with_the_top_row_first() {
+        let mut decoder = Decoder::new().unwrap();
+        let mut decoded = None;
+        for line in include_str!("../../tests/fixtures/webcodecs-vp8-red-over-blue.txt").lines() {
+            let (_, hex) = line.split_once(' ').unwrap();
+            let chunk: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap())
+                .collect();
+            decoded = Some(decoder.decode(&chunk).expect("every chunk decodes"));
+        }
+        let frame = decoded.unwrap();
+        assert_eq!((frame.width, frame.height), (320, 240));
+        let cr = |y: u32| frame.i420[(320 * 240 + 320 * 240 / 4 + y / 2 * 160 + 80) as usize];
+        assert!(cr(10) > 200 && cr(230) < 125, "{} {}", cr(10), cr(230));
+    }
+
     #[test]
     fn frames_round_trip_through_vp8_with_the_top_row_first() {
         let (width, height) = (320, 240);

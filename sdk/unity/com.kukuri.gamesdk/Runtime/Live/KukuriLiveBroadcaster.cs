@@ -48,8 +48,13 @@ namespace Kukuri.GameSdk
                 // mic の音は Unity が混ぜるので、runtime の mic は開かない。
                 ["microphone"] = false,
             });
-            if (!response.Ok || this == null)
+            if (!response.Ok)
                 return false;
+            if (this == null)
+            {
+                _ = Client.SendAsync("stop_live_broadcast", new JObject { ["topic"] = Topic, ["session_id"] = sessionId });
+                return false;
+            }
             SessionId = sessionId;
             target = new RenderTexture(Math.Min(width, 1280), Math.Min(height, 720), 24, RenderTextureFormat.ARGB32);
             previousTarget = sourceCamera.targetTexture;

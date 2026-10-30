@@ -7,7 +7,8 @@ namespace Kukuri.GameSdk
 {
     /// live session を視聴し、復号した映像を `Output` の RenderTexture に描く（ADR 0070 §8.3、#1982）。音声は SDK が OS の
     /// 出力で鳴らす（音量は `set_live_volume`）。視聴は見るだけで、投稿・反応・自分の取り込みや配信を始めない。`screen` を
-    /// 指定すれば、その Renderer の material の texture を `Output` にする。
+    /// 指定すれば、その Renderer の material の texture を `Output` にする。満員・映像なし・終了になったら、SDK が 5 秒
+    /// おいて視聴をやり直す（`State` が変わる）。
     public sealed class KukuriLiveViewer : MonoBehaviour
     {
         [SerializeField] Renderer screen;
@@ -54,8 +55,13 @@ namespace Kukuri.GameSdk
         {
             var session = new JObject { ["topic"] = Topic, ["session_id"] = sessionId };
             var joined = await client.SendAsync("join_live_session", session);
-            if (!joined.Ok || this == null)
+            if (!joined.Ok)
                 return false;
+            if (this == null)
+            {
+                _ = client.SendAsync("leave_live_session", session);
+                return false;
+            }
             SessionId = sessionId;
             var watched = await client.SendAsync("watch_live_media", session);
             return watched.Ok;

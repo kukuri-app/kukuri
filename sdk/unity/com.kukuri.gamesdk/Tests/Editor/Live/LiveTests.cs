@@ -17,12 +17,13 @@ namespace Kukuri.GameSdk.Live.Tests
 {
     /// Unity の Live の配信・視聴（#1982 AC-1）。ゲーム（FFI）と desktop（開発用の Sidecar。desktop の app と同じ runtime）の
     /// 2 つの profile で、ゲームの camera の配信を desktop が受け、desktop の配信をゲームの texture で見る。配信を始める前は
-    /// 取り込まず送らない。止めたら RenderTexture・texture を解放する。視聴の間の frame は契約の予算（ADR 0070 §8.4 の frame
-    /// time p95 ≤ 16.7 ms・p99 ≤ 25 ms）に収まる。test-graphics.ps1 が graphics を使い、keyring を切って loopback だけで動かす。
+    /// 取り込まず送らない。止めたら RenderTexture・texture を解放する。1280×720 の配信・視聴の間の frame は契約の予算（ADR 0070
+    /// §8.4 の frame time p95 ≤ 16.7 ms・p99 ≤ 25 ms）に収まり、描く frame の時刻 − 音声の再生時刻は p95 で −200〜+125 ms に
+    /// 入る（2026-10-31 のユーザー判断）。test-graphics.ps1 が graphics を使い、keyring を切って loopback だけで動かす。
     public sealed class LiveTests
     {
-        const int Width = 320;
-        const int Height = 240;
+        const int Width = 1280;
+        const int Height = 720;
 
         KukuriClient game;
         KukuriClient desktop;
@@ -155,6 +156,18 @@ namespace Kukuri.GameSdk.Live.Tests
                 return new[] { value, value };
             }).ToArray();
 
+        /// 描く frame の時刻 − 音声の再生時刻が −200〜+125 ms に入る frame が 95% 以上。
+        static string AssertInSync(List<KukuriLiveFrame> frames, string what)
+        {
+            var played = frames.Where(frame => frame.AudioClockUs > 0).ToList();
+            Assert.IsNotEmpty(played, what + ": no frame came with an audio clock");
+            var inSync = played.Count(frame => frame.TimestampUs - frame.AudioClockUs is >= -200_000 and <= 125_000);
+            Assert.GreaterOrEqual(inSync * 100, played.Count * 95, $"{what}: {inSync} of {played.Count} frames in sync " +
+                string.Join(",", played.Select(frame => (frame.TimestampUs - frame.AudioClockUs) / 1000)));
+            var offsets = played.Select(frame => (frame.TimestampUs - frame.AudioClockUs) / 1000).ToList();
+            return $"{offsets.Min()}..{offsets.Max()}";
+        }
+
         static double Percentile(List<double> values, double rank)
         {
             var sorted = values.OrderBy(value => value).ToList();
@@ -215,22 +228,20 @@ namespace Kukuri.GameSdk.Live.Tests
             desktop.LiveFrameReceived += frame => received.Add(frame);
             yield return Call(desktop, "join_live_session", new JObject { ["topic"] = topic, ["session_id"] = gameLive });
             yield return Call(desktop, "watch_live_media", new JObject { ["topic"] = topic, ["session_id"] = gameLive });
-            var sample = 0;
             frameMilliseconds.Clear();
-            // EditMode では camera も audio も player loop で動かないので、frame ごとに描いて読み、音の callback を呼ぶ。
+            // EditMode では camera は player loop で描かないので、frame ごとに描いて読む。音は Unity の audio thread が
+            // `AudioListener` の出力（ここでは無音）を `OnAudioFilterRead` へ渡す。
             yield return Frames(() => received.Count(frame => frame.AudioClockUs > 0) >= 30,
                 "the desktop did not receive the game's frames with audio", () =>
                 {
                     camera.Render();
                     broadcaster.Capture();
-                    tap.OnAudioFilterRead(Tone(AudioSettings.outputSampleRate, sample), 2);
-                    sample += AudioSettings.outputSampleRate / 50;
                 }, () => $"received={received.Count} with_audio={received.Count(frame => frame.AudioClockUs > 0)} " +
                     $"sent={broadcaster.FramesSent} rate={AudioSettings.outputSampleRate}");
             var last = received.Last();
             var (_, _, v) = Sample(last, last.Width / 2, last.Height / 2);
             Assert.Greater(v, 200, "the desktop sees the red background");
-            Assert.LessOrEqual(last.TimestampUs, last.AudioClockUs + 125_000, "video does not run ahead of audio");
+            var gameAv = AssertInSync(received, "game to desktop");
             var gameP95 = Percentile(frameMilliseconds, 0.95);
             var gameP99 = Percentile(frameMilliseconds, 0.99);
 
@@ -242,37 +253,49 @@ namespace Kukuri.GameSdk.Live.Tests
                 ["topic"] = topic, ["session_id"] = desktopLive, ["source"] = "camera", ["microphone"] = false,
             });
             var frames = RedOverBlue();
-            for (var index = 0; index < 5; index++)
-                Assert.AreEqual(KukuriSendStatus.Sent, desktop.SendLiveVideo(desktopLive, Width, Height, frames));
+            // 最初の keyframe より前に見に来る。配信者に断られて `no_media` になり、SDK が間をおいて視聴をやり直す。
             var viewerObject = new GameObject("live viewer");
             objects.Add(viewerObject);
             var viewer = viewerObject.AddComponent<KukuriLiveViewer>();
             viewer.Client = game;
             viewer.Topic = topic;
+            var states = new List<string>();
+            viewer.StateChanged += state => states.Add(state);
+            var shown = new List<KukuriLiveFrame>();
+            game.LiveFrameReceived += frame => shown.Add(frame);
             var watching = viewer.StartWatching(desktopLive);
             yield return Wait(watching, "the watch did not start");
             Assert.IsTrue(watching.Result);
             var desktopSample = 0;
+            var desktopClock = Stopwatch.StartNew();
             frameMilliseconds.Clear();
             yield return Frames(() => viewer.FramesShown >= 30 && viewer.LastAudioClockUs > 0,
                 "the game did not show the desktop's frames", () =>
                 {
                     desktop.SendLiveVideo(desktopLive, Width, Height, frames);
-                    desktop.SendLiveAudio(desktopLive, 48000, 2, Tone(48000, desktopSample));
-                    desktopSample += 960;
+                    while (desktopSample < desktopClock.Elapsed.TotalSeconds * 48000)
+                    {
+                        desktop.SendLiveAudio(desktopLive, 48000, 2, Tone(48000, desktopSample));
+                        desktopSample += 960;
+                    }
                 }, () => $"shown={viewer.FramesShown} audio={viewer.LastAudioClockUs} state={viewer.State}");
             Assert.AreEqual("watching", viewer.State);
+            CollectionAssert.AreEqual(new[] { "no_media", "watching" }, states.Distinct().ToArray(), "the watch is retried");
+            // 視聴する側は自分の mic を開かず、配信もしない。
+            Assert.IsFalse(Microphone.IsRecording(null));
+            Assert.AreEqual(KukuriSendStatus.Closed, game.SendLiveVideo(desktopLive, Width, Height, frames));
             Assert.AreEqual(Width, viewer.Output.width);
             var top = Read(viewer.Output, Width / 2, Height * 3 / 4);
             var bottom = Read(viewer.Output, Width / 2, Height / 4);
             Assert.Greater(top.r, 0.7f, $"the top is red ({top})");
             Assert.Greater(bottom.b, 0.7f, $"the bottom is blue ({bottom})");
-            Assert.LessOrEqual(viewer.LastTimestampUs, viewer.LastAudioClockUs + 125_000);
+            var desktopAv = AssertInSync(shown, "desktop to game");
             Save(viewer.Output, "1-game-watches-desktop");
             Save(broadcaster.Target, "2-game-broadcast");
             var viewP95 = Percentile(frameMilliseconds, 0.95);
             var viewP99 = Percentile(frameMilliseconds, 0.99);
             Debug.Log($"KGS_LIVE desktop_received={received.Count} game_shown={viewer.FramesShown} " +
+                $"av_ms game_to_desktop={gameAv} desktop_to_game={desktopAv} " +
                 $"broadcast_frame_p95_ms={gameP95:F1} p99_ms={gameP99:F1} view_frame_p95_ms={viewP95:F1} p99_ms={viewP99:F1}");
             Assert.LessOrEqual(Math.Max(gameP95, viewP95), 16.7, "frame time p95");
             Assert.LessOrEqual(Math.Max(gameP99, viewP99), 25, "frame time p99");
