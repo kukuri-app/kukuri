@@ -440,6 +440,9 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/build-native.ps1
 powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1
 # IL2CPP の Player で同じ確認をする（EditMode は Mono の回で済んでいるので省く）
 powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -Backend IL2CPP -SkipEditMode
+# NGO 2.13.3 を入れた project で、NGO の Transport の EditMode の試験を流し、Netcode Sync sample の Player を 2 つ起動して
+# cube の同期と切断を確かめる（client は FFI と Sidecar の 2 回。%TEMP%\kgs-ngo に作る）
+powershell -ExecutionPolicy Bypass -File sdk/unity/test-netcode.ps1
 ```
 
 - 自分の project へ入れるときは、`Packages/manifest.json` の `dependencies` に `"com.kukuri.gamesdk": "file:<repo>/sdk/unity/com.kukuri.gamesdk"` を足す。
@@ -447,6 +450,7 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -Backend IL2CPP -Ski
 - 設定 asset（`kukuri/Settings`）の mode を Sidecar にすると、Play の開始時に Editor が `kukuri-sdk-sidecar.exe` を起動し、Play を止めても動かし続ける。Editor の終了か menu の「kukuri/Sidecar を止める」で止まる。Player の build は Sidecar を起動せず、既定は FFI。
 - Unity の project を深い path に置くと Windows の path の長さの上限に当たる。`test.ps1` は `%TEMP%\kgs-test` に作る。
 - ロビーは `Runtime/Lobby/KukuriLobby.prefab`（uGUI）を scene に置き、`runner` に `KukuriRunner` を、`applicationId` と `topic` にゲームの値を設定する。scene に `EventSystem` が無ければ Unity の menu の UI から足す。
+- NGO を使うときは、`NetworkManager` の Transport に `KukuriNetcodeTransport`（`runner` に `KukuriRunner`）を置き、ロビーの `RoomCreated` で `RoomId` を設定して `StartHost`、`Joined` で `SessionId` を設定して `StartClient` を呼ぶ。Package Manager の Samples から「Netcode Sync」を入れると、その組み方の sample が入る。
 - `test.ps1` は CLI の process 試験と同じく `KUKURI_DISABLE_KEYRING=1` と loopback の接続設定で動かす。Player の再起動の確認は、鍵を keyring に置かない構成での確認になる。
 
 ## Linux AppImage／Deb生成

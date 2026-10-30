@@ -194,7 +194,7 @@ async fn eventually_closed_on_host(host: &DesktopRuntime, session_id: &str) {
     .expect("the host removes the session");
 }
 
-/// 公開 topic の room は誰でも参加でき、host を含めて最大人数まで。退出・host の block・room の終了で閉じ、閉じた
+/// 公開 topic の room は誰でも参加でき、host を含めて最大人数まで。退出・host の block・host が外す・room の終了で閉じ、閉じた
 /// session は両方の端末で送受信を認可しない。終わった room には参加できない。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_public_game_session_lasts_until_leave_block_or_end() {
@@ -288,6 +288,18 @@ async fn a_public_game_session_lasts_until_leave_block_or_end() {
             .expect_err("blocked by the host"),
         "access_denied"
     );
+
+    // host が参加者を外すと、両方の端末に `removed` が届いて閉じる(NGO の DisconnectRemoteClient。#1979 AC-2)。
+    let removed = join_when_allowed(&first, topic, &public, &room).await;
+    host.leave_game_session(LeaveGameSessionRequest {
+        session_id: removed.clone(),
+    })
+    .await
+    .expect("remove the participant");
+    assert_eq!(closed(&mut first_events, &removed).await, "removed");
+    assert_eq!(closed(&mut host_events, &removed).await, "removed");
+    eventually_closed_on_host(&host, &removed).await;
+    refuses_packets([&first, &host], &removed);
 
     // host が room を終えると閉じ、それ以上は参加できない。
     let ended = join_when_allowed(&first, topic, &public, &room).await;

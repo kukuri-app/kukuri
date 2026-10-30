@@ -48,9 +48,9 @@ pub use game_channel::{
 };
 #[cfg(not(target_family = "wasm"))]
 pub use game_session::{
-    GAME_SESSION_HOST_UNAVAILABLE, GAME_SESSION_LEFT, GAME_SESSION_REQUEST_MAX_BYTES,
-    GAME_SESSION_REVALIDATE_INTERVAL, GameSessionAuthorizer, GameSessionDenied, GameSessionGrant,
-    GameSessionLink, GameSessionRevalidate, HostedGameSession,
+    GAME_SESSION_HOST_UNAVAILABLE, GAME_SESSION_LEFT, GAME_SESSION_REMOVED,
+    GAME_SESSION_REQUEST_MAX_BYTES, GAME_SESSION_REVALIDATE_INTERVAL, GameSessionAuthorizer,
+    GameSessionDenied, GameSessionGrant, GameSessionLink, GameSessionRevalidate, HostedGameSession,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use legacy::{LegacyStore, adopt_endpoint_secret, remove_dir_step, retire_legacy_layout};

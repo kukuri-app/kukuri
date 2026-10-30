@@ -1,0 +1,20 @@
+{
+    "name": "Kukuri.GameSdk.Netcode.Tests",
+    "rootNamespace": "Kukuri.GameSdk.Netcode.Tests",
+    "references": ["Kukuri.GameSdk", "Kukuri.GameSdk.Netcode", "Unity.Netcode.Runtime", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
+    "includePlatforms": ["Editor"],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": ["nunit.framework.dll", "Newtonsoft.Json.dll"],
+    "autoReferenced": false,
+    "defineConstraints": ["UNITY_INCLUDE_TESTS", "KUKURI_NGO"],
+    "versionDefines": [
+        {
+            "name": "com.unity.netcode.gameobjects",
+            "expression": "[2.13.3,3.0.0)",
+            "define": "KUKURI_NGO"
+        }
+    ],
+    "noEngineReferences": false
+}

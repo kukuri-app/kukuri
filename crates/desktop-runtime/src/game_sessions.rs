@@ -288,17 +288,14 @@ impl GameSessions {
         Ok(session_id)
     }
 
-    /// 参加中の session から退出する(知らせは閉じた後に `left` で届く)。
+    /// 参加中の session から退出する(知らせは閉じた後に `left` で届く)。host の端末では、受け付けた session の参加者を
+    /// 外す(参加者には `removed` が届く)。
     pub(crate) fn leave(&self, session_id: &str) {
-        let link = self
-            .ledger
-            .lock()
-            .expect("game session ledger")
-            .joined
-            .get(session_id)
-            .map(|(_, link, _)| link.clone());
-        if let Some(link) = link {
+        let ledger = self.ledger.lock().expect("game session ledger");
+        if let Some((_, link, _)) = ledger.joined.get(session_id) {
             link.leave();
+        } else if let Some(channel) = ledger.channel(session_id) {
+            channel.close(kukuri_iroh_node::GAME_SESSION_REMOVED);
         }
     }
 

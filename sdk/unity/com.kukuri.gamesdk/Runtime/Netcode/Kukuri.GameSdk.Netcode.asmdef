@@ -1,0 +1,20 @@
+{
+    "name": "Kukuri.GameSdk.Netcode",
+    "rootNamespace": "Kukuri.GameSdk.Netcode",
+    "references": ["Kukuri.GameSdk", "Unity.Netcode.Runtime"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": ["KUKURI_NGO"],
+    "versionDefines": [
+        {
+            "name": "com.unity.netcode.gameobjects",
+            "expression": "[2.13.3,3.0.0)",
+            "define": "KUKURI_NGO"
+        }
+    ],
+    "noEngineReferences": false
+}

@@ -101,6 +101,8 @@ impl Shared {
 pub struct GameSessionChannel {
     connection: Connection,
     shared: Arc<Shared>,
+    /// [`Self::close`] で閉じた(host が参加者を外した)。
+    closed_here: std::sync::atomic::AtomicBool,
     _tasks: [AbortOnDropHandle<()>; 4],
 }
 
@@ -118,12 +120,25 @@ impl GameSessionChannel {
         Self {
             connection,
             shared,
+            closed_here: Default::default(),
             _tasks,
         }
     }
 
     pub fn is_open(&self) -> bool {
         self.connection.close_reason().is_none()
+    }
+
+    pub(crate) fn closed_here(&self) -> bool {
+        self.closed_here.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// 理由の code を付けて session を閉じる(相手はその code を受け取る)。
+    pub fn close(&self, reason: &str) {
+        self.closed_here
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.connection
+            .close(crate::game_session::CLOSE_ENDED.into(), reason.as_bytes());
     }
 
     /// 送り待ちに置いて即座に戻る。datagram は送り待ちが溢れたら古いものを捨てる。

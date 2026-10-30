@@ -202,6 +202,7 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
     - host を含めて最大人数に達していない（`room_full`）
   - 接続できないときの code は `host_unreachable`。参加者の端末が同時に参加する session は 8 まで（`session_limit`）。
   - 接続は session の間ずっと保つ。host は評価し直しで続けられないと分かったら、理由の code（`room_ended`・`access_revoked`）を付けて閉じる。参加者が閉じれば退出（`left`）、理由が届かないまま切れたら `host_unavailable`。
+  - host の端末で `leave_game_session` を呼ぶと、その参加者の session を `removed` で閉じる（参加者を外す。#1979 AC-2 の NGO の `DisconnectRemoteClient`）。
   - 参加者の端末には、閉じた理由とともに `game_session_closed` が届く。両方の端末で session の記録を消し、閉じた session の送受信は認可しない。
   - host の端末には、受け付けて送受信を始めたときに `game_session_opened` が、閉じたときに `game_session_closed` が届く。host の端末での理由は、評価し直しで閉じたならその code、参加者が閉じたか接続が失われたなら `left`。
 - 座標などの最新の状態は QUIC の unreliable datagram、確定させる操作は reliable stream で送る。送る側の上限は次のとおりで、#1979 はこの値で実装する。
@@ -250,6 +251,12 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 ### 7. Unity 側の構成
 
 - module ごとに asmdef を分ける: Core（必須）、Lobby、Realtime、Netcode（Unity Netcode for GameObjects に依存）、Assets（glTFast に依存）、Social、Live。使わない module の依存を持ち込まない。
+- Netcode の module（`Runtime/Netcode`、#1979 AC-2）は、NGO 2.13.3 以上 3.0 未満が入った project だけで compile する（asmdef の version define）。NGO の Transport `KukuriNetcodeTransport` は、host が `RoomId` の room の session を client として受け付け、client が `SessionId` の host へつなぐ。
+  - 配送: `Unreliable` と `UnreliableSequenced` は datagram、`Reliable`・`ReliableSequenced`・`ReliableFragmentedSequenced` は stream に載せる。datagram の先頭 1 byte で 2 つを区別し、`UnreliableSequenced` は 4 bytes の通し番号で古いもの・重複を捨てる。これ以外の値の配送は送らずに error を出す。
+  - NGO の分割しない 1 batch の上限を 1088 bytes（datagram の上限から先頭の 5 bytes を引く）、分割する message の上限を 64 KiB（stream の 1 message）に合わせる。超えるものは NGO が送らない。
+  - stream の送り待ちが上限で受け付けられなかった分は、相手ごとに 1 MiB まで手元に持って順に送り直す。超えたらその相手を切る。
+  - host が開いた知らせより先に受けた packet は、session ごとに 64 件まで持ち、開いたら渡す。
+  - 切断（host が外す・client が退出する・NGO を止める）は session をすぐ閉じる。その時点の送り待ちの分（NGO の切断の理由の message を含む）は届かないことがある。
 - C# の結果（Task）と event の callback は Unity の main thread で、poll の中から呼ぶ。Rust の worker thread から GameObject や UI を触らない。
 - 1 frame で poll に使う件数と時間には上限を置く（既定値は §8）。上限を超えた分は次の frame へ回す。
 - mode（FFI / Sidecar）と profile 名は設定 asset で明示する。本番の Player の既定は FFI で、外部の daemon を自動で起動しない。
