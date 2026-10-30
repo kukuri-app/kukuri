@@ -11,6 +11,13 @@ crate-type = ["cdylib", "rlib"]
 name = "kukuri-sdk-sidecar"
 path = "src/bin/sidecar.rs"
 
+[features]
+# libvpx による VP8 の圧縮・復号と、視聴の音声の再生（Live の配信・視聴。#1982）。`KUKURI_LIBVPX_DIR` が要る。
+vp8 = ["kukuri-desktop-runtime/audio-devices"]
+
+[build-dependencies]
+cc = "1.9.0"
+
 [dependencies]
 async-trait.workspace = true
 futures-util.workspace = true

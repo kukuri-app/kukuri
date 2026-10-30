@@ -66,9 +66,14 @@ pub enum ItemKind {
     Bytes = 4,
 }
 
-/// `kukuri_sdk_send_binary` の kind（ADR 0070 §3）。映像・音声の kind は #1982 が足す。
+/// `kukuri_sdk_send_binary` の kind（ADR 0070 §3）。3 は live の映像（`[幅 u16][高さ u16][下の行からの RGBA]`。feature
+/// `vp8`）、4 はゲームの音（`[sample rate u32][channel 数 u16][interleave した f32]`。#1982）。数値は little endian。
 pub const BINARY_DATAGRAM: u32 = 1;
 pub const BINARY_STREAM: u32 = 2;
+pub const BINARY_LIVE_VIDEO: u32 = 3;
+pub const BINARY_LIVE_AUDIO: u32 = 4;
+/// 1 回に渡すゲームの音の上限（Unity の 1 回の audio の callback は数十 ms で、これを大きく下回る）。
+const MAX_LIVE_AUDIO_BYTES: usize = 64 << 10;
 /// poll で packet の event に数える JSON の大きさ（session ID と配送の名前を含む上限の見積もり）。
 const PACKET_EVENT_BYTES: usize = 128;
 
@@ -177,6 +182,8 @@ pub struct SdkClient {
     lease: Arc<Mutex<Option<ProfileLease>>>,
     /// アセットの発行（`publish_game_asset`）を受け付けるか。開発用の Sidecar の process だけが許す（ADR 0070 §5.3）。
     publish: Arc<AtomicBool>,
+    #[cfg(feature = "vp8")]
+    live: Arc<crate::live::Live>,
 }
 
 impl SdkClient {
@@ -238,6 +245,11 @@ impl SdkClient {
                 pump_events(shared, session, shutdown_rx).await;
             }
         });
+        #[cfg(feature = "vp8")]
+        let live = crate::live::Live::new(runtime.handle().clone(), {
+            let shared = shared.clone();
+            Arc::new(move |event| shared.push_event(event))
+        });
         Ok(Self {
             runtime: Some(runtime),
             shared,
@@ -247,6 +259,8 @@ impl SdkClient {
             profile,
             lease: Arc::default(),
             publish: Arc::default(),
+            #[cfg(feature = "vp8")]
+            live,
         })
     }
 
@@ -349,6 +363,8 @@ impl SdkClient {
             running: self.running.clone(),
             profile: self.profile.clone(),
             publish: self.publish.load(Ordering::Acquire),
+            #[cfg(feature = "vp8")]
+            live: self.live.clone(),
         };
         runtime.spawn(async move {
             let request_id = request.request_id.clone();
@@ -398,8 +414,11 @@ impl SdkClient {
             return status;
         }
         let delivery = match kind {
-            BINARY_DATAGRAM => GameDelivery::Datagram,
-            BINARY_STREAM => GameDelivery::Stream,
+            BINARY_DATAGRAM => Some(GameDelivery::Datagram),
+            BINARY_STREAM => Some(GameDelivery::Stream),
+            BINARY_LIVE_AUDIO => None,
+            #[cfg(feature = "vp8")]
+            BINARY_LIVE_VIDEO => None,
             _ => return Status::InvalidArgument,
         };
         if self.runtime.is_none() || self.shared.queues().closed {
@@ -408,11 +427,22 @@ impl SdkClient {
         let Some(runtime) = self.host_runtime() else {
             return Status::Closed;
         };
-        match runtime.send_game_packet(target, delivery, bytes) {
-            Ok(()) => Status::Ok,
-            Err(GameSendRefused::TooLarge) => Status::InvalidArgument,
-            Err(GameSendRefused::Backpressure) => Status::Backpressure,
-            Err(GameSendRefused::Closed) => Status::Closed,
+        match (kind, delivery) {
+            (_, Some(delivery)) => match runtime.send_game_packet(target, delivery, bytes) {
+                Ok(()) => Status::Ok,
+                Err(GameSendRefused::TooLarge) => Status::InvalidArgument,
+                Err(GameSendRefused::Backpressure) => Status::Backpressure,
+                Err(GameSendRefused::Closed) => Status::Closed,
+            },
+            (BINARY_LIVE_AUDIO, None) => push_live_audio(&runtime, target, bytes),
+            #[cfg(feature = "vp8")]
+            _ => match self.live.push_video(runtime, target, bytes) {
+                Ok(()) => Status::Ok,
+                Err(crate::live::VideoRefused::Invalid) => Status::InvalidArgument,
+                Err(crate::live::VideoRefused::NotBroadcasting) => Status::Closed,
+            },
+            #[cfg(not(feature = "vp8"))]
+            _ => Status::InvalidArgument,
         }
     }
 
@@ -514,6 +544,36 @@ impl SdkClient {
                 data: packet.bytes.to_vec(),
             });
         }
+        // 視聴中の live の映像（session ごとに最新の 1 枚。packet と同じく未解放の batch の上限に数える）。
+        #[cfg(feature = "vp8")]
+        for (session_id, (timestamp_us, audio_clock_us, frame)) in self.live.take_frames(|len| {
+            let size = PACKET_EVENT_BYTES + len;
+            let fits = accept_packets
+                && count + 2 <= max_items
+                && (count == 0 || bytes + size <= max_bytes);
+            if fits {
+                count += 2;
+                bytes += size;
+            }
+            fits
+        }) {
+            items.push(Item {
+                kind: ItemKind::Event,
+                data: serde_json::to_vec(&serde_json::json!({
+                    "type": "live_video_frame",
+                    "session_id": session_id,
+                    "width": frame.width,
+                    "height": frame.height,
+                    "timestamp_us": timestamp_us,
+                    "audio_clock_us": audio_clock_us,
+                }))
+                .expect("live frame event encodes"),
+            });
+            items.push(Item {
+                kind: ItemKind::Bytes,
+                data: frame.i420,
+            });
+        }
         Ok(items)
     }
 
@@ -593,6 +653,8 @@ struct RequestTask {
     running: Arc<Semaphore>,
     profile: String,
     publish: bool,
+    #[cfg(feature = "vp8")]
+    live: Arc<crate::live::Live>,
 }
 
 /// ゲームの Player から発行させない command。
@@ -678,16 +740,76 @@ impl RequestTask {
         };
         match reply {
             Err(_) => fail(error_code::TIMEOUT, "command timed out"),
-            Ok(DispatchReply::Unary(response, secret)) => (
-                encode(&response),
-                secret.map(|secret| secret.expose().to_vec()),
-            ),
+            Ok(DispatchReply::Unary(response, secret)) => {
+                #[cfg(feature = "vp8")]
+                if response.ok {
+                    self.follow_live(&started, &request);
+                }
+                (
+                    encode(&response),
+                    secret.map(|secret| secret.expose().to_vec()),
+                )
+            }
             // event は Ready から poll で届けるので、購読の command は受け付けない。
             Ok(DispatchReply::Events { .. }) => fail(
                 error_code::VALIDATION_FAILED,
                 "events are delivered by poll; streaming commands are not accepted",
             ),
         }
+    }
+}
+
+#[cfg(feature = "vp8")]
+impl RequestTask {
+    /// 視聴を始めた・止めた session の映像の復号を、runtime の視聴に合わせて始める・止める。
+    fn follow_live(&self, started: &Started, request: &RequestEnvelope) {
+        let session_id = request.payload["session_id"].as_str().unwrap_or_default();
+        match request.command.as_str() {
+            "watch_live_media" => {
+                let runtime = started
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.host())
+                    .map(|host| host.runtime());
+                let topic = request.payload["topic"].as_str().unwrap_or_default();
+                if let Some(runtime) = runtime {
+                    self.live
+                        .watch(runtime, topic.to_owned(), session_id.to_owned());
+                }
+            }
+            "stop_watching_live_media" => self.live.stop_watching(session_id),
+            _ => {}
+        }
+    }
+}
+
+/// `[sample rate u32][channel 数 u16][interleave した f32]` のゲームの音を配信の送り待ちへ置く。
+fn push_live_audio(runtime: &DesktopRuntime, session_id: &str, bytes: &[u8]) -> Status {
+    let (Some(rate), Some(channels)) = (
+        bytes
+            .get(0..4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+        bytes.get(4..6).map(|b| u16::from_le_bytes([b[0], b[1]])),
+    ) else {
+        return Status::InvalidArgument;
+    };
+    let samples = &bytes[6..];
+    if bytes.len() > MAX_LIVE_AUDIO_BYTES
+        || channels == 0
+        || !samples.len().is_multiple_of(4 * usize::from(channels))
+    {
+        return Status::InvalidArgument;
+    }
+    let samples: Vec<f32> = samples
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
+        .collect();
+    if runtime.push_live_game_audio(session_id, rate, channels, &samples) {
+        Status::Ok
+    } else {
+        Status::Closed
     }
 }
 

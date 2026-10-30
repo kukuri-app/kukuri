@@ -20,6 +20,10 @@ namespace Kukuri.GameSdk
         internal const uint ItemEvent = 3;
         internal const uint ItemBytes = 4;
 
+        /// `kukuri_sdk_send_binary` の live の映像とゲームの音の kind（#1982）。
+        internal const uint BinaryLiveVideo = 3;
+        internal const uint BinaryLiveAudio = 4;
+
         [StructLayout(LayoutKind.Sequential)]
         internal struct Item
         {

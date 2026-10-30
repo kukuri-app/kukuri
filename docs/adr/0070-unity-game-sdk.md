@@ -77,8 +77,8 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | event | `game_session_path` | #1979 | 接続の経路（Direct P2P / Relay Supported P2P / Relay Fallback）か RTT が変わった。その時点の送受信の bytes も持つ |
 | event | `game_asset_updated` | #1980 | 検証できる新しい release が届いた。この端末で適用中のアセットは取得・適用した後に file の path 付きで、まだ適用していないアセットは path 無しで届く |
 | event | `post_received` | #1981 | 購読中の topic・channel の投稿・返信を手元へ新しく保存した（自分の投稿を含む）。投稿 ID・topic・channel・作者・返信先・thread の root を持ち、本文は持たない。作成から 30 秒を過ぎたもの（過去の頁の読込みで届いた古い投稿）と非表示の作者（mute・block）のものは送らない。溢れたときは `post` が null で、受け手は表示中の timeline・thread を読み直す |
-| event | `live_video_frame` | #1982 | 視聴中の session の復号済みの映像（画素の形式は §8）。bytes を伴う |
-| event | `live_watch_status` | #1982 | 視聴の状態（参加中・満員で転送待ち・映像なし・停止）が変わった |
+| event | `live_video_frame` | #1982 | 視聴中の session の復号済みの映像（画素の形式は §8）。幅・高さ・frame の timestamp・そのときの音声の再生時刻を持ち、bytes を伴う。session ごとに最新の 1 枚だけを持ち、poll していない古い frame は捨てる |
+| event | `live_watch_status` | #1982 | 視聴の状態（`watching`・`full`・`no_media`・`ended`）が変わった |
 
 リアクションの受信は既存の `ReactionReceived`（対象の投稿を持つ）をそのまま使う。
 
@@ -89,7 +89,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | `kukuri_sdk_abi_version()` | ABI の版を返す。C# は読み込み直後に照合し、違えば理由を示して開始しない | なし |
 | `kukuri_sdk_open(abi_version, config, out_handle)` | ABI の版と profile（名前と directory）を指定して handle を作る。版が違えば `ABI_MISMATCH` で handle を作らない。runtime の起動は背景で進み、完了を `startup_status_changed` の event で知らせる。起動に失敗したら（`profile_in_use` 等）、要求の応答がその error を返す。Sidecar の mode では runtime は既に動いており、接続の前の event は渡さないので（§8.2）、`get_desktop_startup_status` で状態を読む | なし |
 | `kukuri_sdk_send(handle, request, secret)` | 要求を待ち行列に入れて即座に戻る。結果は poll で受ける | なし |
-| `kukuri_sdk_send_binary(handle, kind, target, bytes)` | session の packet（datagram・stream）と、配信する映像・音声の bytes を渡す。`target` は session ID または Live の session ID。kind は 1 が datagram、2 が stream（映像・音声の kind は #1982 が足す）。#1979 で足し、ABI の版を 2 にした | なし |
+| `kukuri_sdk_send_binary(handle, kind, target, bytes)` | session の packet（datagram・stream）と、配信する映像・音声の bytes を渡す。`target` は session ID または Live の session ID。kind は 1 が datagram、2 が stream、3 が live の映像（`[幅 u16][高さ u16][下の行からの RGBA32]`、1280×720 まで）、4 がゲームの音（`[sample rate u32][channel 数 u16][interleave した f32]`）。数値は little endian。#1979 で足し、ABI の版を 2 にした（3・4 は #1982 で足した。版は変えない）。映像と音は配信を始める前と止めた後は `CLOSED` | なし |
 | `kukuri_sdk_cancel(handle, request_id)` | 実行前の要求を取り消す | なし |
 | `kukuri_sdk_poll(handle, max_items, max_bytes, out_batch)` | 届いている応答・秘密の出力・event・bytes を上限まで batch に入れて返す。1 件だけで `max_bytes` を超えるものは、その poll の最初の 1 件なら単独で返す。届いていなければ batch を返さない（`out_batch` は null） | なし |
 | `kukuri_sdk_batch_release(handle, batch)` | poll で受けた batch（中の JSON と bytes を含む）を解放する | なし |
@@ -310,14 +310,17 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 #### 8.3 映像と音声
 
 - codec は既存の Live と同じ VP8（ADR 0067 D6）。Rust 側で libvpx 1.17.0（BSD-3-Clause）を静的に link して圧縮・復号する。純 Rust の VP8 実装は実用段階のものが無いので使わない。
-  - build: `configure --target=x86_64-win64-vs17 --disable-vp9 --enable-realtime-only --enable-static-msvcrt --as=nasm` の project を MSBuild で `WholeProgramOptimization=false` で build する（全体最適化の object は Rust の link と合わない）。1.17.0 の VS の project は `vp8/common/x86`・`vp8/encoder/x86` の asm と `vpx_ports` の `emms_mmx.asm`・`float_control_word.asm` を含めないので、これらは nasm で別に組み立てて同じ DLL に link する。source は `chromium.googlesource.com/webm/libvpx` の tag `v1.17.0` から取得し、手順と checksum を #1984 の CI に置く。
+  - build: `configure --target=x86_64-win64-vs17 --disable-vp9 --enable-realtime-only --as=nasm` の project を MSBuild で `WholeProgramOptimization=false` で build する（全体最適化の object は Rust の link と合わない）。1.17.0 の VS の project は `vp8/common/x86`・`vp8/encoder/x86` の asm と `vpx_ports` の `emms_mmx.asm`・`float_control_word.asm` を含めないので、これらは nasm で別に組み立てて同じ library に入れる。source は `chromium.googlesource.com/webm/libvpx` の tag `v1.17.0` から取得する。手順は `sdk/unity/build-libvpx.ps1`（#1982）で、Game SDK の feature `vp8` が `KUKURI_LIBVPX_DIR` の出力を link する。今の SDK の DLL は CRT を動的に link するので、libvpx も同じ（`--enable-static-msvcrt` を付けない）。§8.1 の静的な CRT へ移すときと、checksum を CI に置くのは #1984。
   - 圧縮の設定: realtime、CBR、`g_lag_in_frames = 0`、`VP8E_SET_CPUUSED = 10`、4 thread。
 - 画質は既存の受信側の上限に合わせ、camera の上限（1280×720・30 fps・1.5 Mbps。ADR 0067 D8）で送る。既存の受信側はこれを超える frame と bitrate を捨てるためである。
 - 取り込み: 配信する camera の RenderTexture を `AsyncGPUReadback`（RGBA32）で読み、callback で bytes を `kukuri_sdk_send_binary` へ渡す（SDK が copy する）。I420 への変換と圧縮は Rust の worker thread で行い、Unity の main thread で圧縮しない。圧縮前の送り待ちは 1 枚で、新しい frame が来たら古い frame を捨てる。
 - 表示: 復号した I420 の 3 面を `live_video_frame` で渡し、Unity は R8 の texture 3 枚へ `SetPixelData` で上げ、shader で RGB にする。
-- 音声: `AudioListener` と同じ GameObject の component の `OnAudioFilterRead` でゲームの出力音（`AudioSettings.outputSampleRate` の rate と channel 数の float）を受け、audio thread から `kukuri_sdk_send_binary` で渡す。Rust 側は 48 kHz に変換し、既存のマイクの取り込み（moq-audio）の音と混ぜて、既存の Opus の track として送る。送り待ちは 200 ms 分までで、溢れたら古いものから捨てる。
-  - 今の moq-audio はマイクの取り込みから Opus の圧縮までを一続きに行うので、取り込みの後・圧縮の前に混ぜる口は #1982 が作る。
-  - マイクを off にしても（機器は閉じる。ADR 0067 §9）、ゲーム音は送り続ける。
+- 音声: `AudioListener` と同じ GameObject の component の `OnAudioFilterRead` でゲームの出力音（`AudioSettings.outputSampleRate` の rate と channel 数の float）を受け、mic が on なら Unity の `Microphone` の音を足して、audio thread から `kukuri_sdk_send_binary` で渡す（speaker へ出す音は変えない）。Rust 側は mono にして、mic と同じく非公開の broadcast で 48 kHz の Opus に圧縮し、配信者の署名を付けて既存の音声の track へ写す。送り待ちは 200 ms 分までで、溢れたら古いものから捨てる。
+  - mic の音は Unity が混ぜる（#1982）。moq-audio の mic の取り込みは取り込みから Opus の圧縮までを一続きに行い、取り込んだ sample を外へ出さないので、Rust 側で混ぜるには fork の変更が要る。Unity で混ぜれば変更が要らず、ゲームの音を mic の機器の echo cancellation（moq-audio が再生する音だけを消す）が消すことも無いので、消える機能は無い。この節の旧案（「Rust 側で既存の mic の取り込みと混ぜる口を作る」）は失効した。
+  - SDK の配信は runtime の mic を開かない（`set_live_broadcast` の `microphone` は false）。マイクを off にしても（機器は閉じる。ADR 0067 §9）、ゲーム音は送り続ける。
+- 視聴: 視聴する側の音声は、既存の Live と同じく Rust が OS の出力で鳴らす（feature `vp8` は desktop-runtime の `audio-devices` を含む）。`live_video_frame` の frame は、desktop・Web と同じく音声の再生時刻に 125 ms を足した時刻までで最も新しいもの。視聴が `watching` 以外（満員・映像なし・終了）で終わったら、desktop・Web と同じく 5 秒おいて視聴をやり直し、`stop_watching_live_media` まで続ける（配信者は最初の keyframe までは視聴を断る）。
+- AV 同期の判定（2026-10-31 のユーザー判断）: 描く frame の時刻 − 音声の再生時刻が p95 で −200〜+125 ms に入る（遅れの側は、音声を鳴らす前に持つ 160 ms と 1 frame 分に余裕を足した値）。#1982 AC-1 は手元の 2 つの profile で 1280×720 を配信して frame time（§8.4 の閾値）とあわせて判定し、§8.4 の全条件での計測は #1984 で行う。
+- codec の相互運用: desktop・Web の配信（WebCodecs の VP8）の出力を libvpx で復号する試験を、Chromium の WebCodecs で作った fixture で置く（`crates/game-sdk/tests/fixtures/`）。
 
 #### 8.4 性能の測定条件と閾値
 

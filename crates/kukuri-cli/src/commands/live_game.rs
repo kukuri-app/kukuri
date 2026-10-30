@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use kukuri_desktop_runtime::{
     CreateGameRoomRequest, CreateLiveSessionRequest, FetchGameAssetRequest, JoinGameSessionRequest,
     LeaveGameSessionRequest, ListActionRoomsRequest, ListGameAssetsRequest, ListGameRoomsRequest,
-    ListLiveSessionsRequest, LiveSessionCommandRequest, PublishGameAssetRequest,
-    UpdateGameRoomRequest,
+    ListLiveSessionsRequest, LiveMediaRequest, LiveSessionCommandRequest, LiveVolumeRequest,
+    PublishGameAssetRequest, SetLiveBroadcastRequest, UpdateGameRoomRequest,
 };
 use serde_json::{Value, json};
 
@@ -34,6 +34,11 @@ enum Operation {
     FetchAsset,
     CreateGame,
     UpdateGame,
+    SetBroadcast,
+    StopBroadcast,
+    WatchMedia,
+    StopWatching,
+    SetVolume,
 }
 struct Handler(Operation);
 
@@ -148,6 +153,36 @@ impl CommandHandler for Handler {
             Operation::UpdateGame => encode(
                 runtime
                     .update_game_room(decode::<UpdateGameRoomRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            Operation::SetBroadcast => encode(
+                runtime
+                    .set_live_broadcast(decode::<SetLiveBroadcastRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            Operation::StopBroadcast => encode(
+                runtime
+                    .stop_live_broadcast(decode::<LiveMediaRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            Operation::WatchMedia => encode(
+                runtime
+                    .watch_live_media(decode::<LiveMediaRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            Operation::StopWatching => encode(
+                runtime
+                    .stop_watching_live_media(decode::<LiveMediaRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            Operation::SetVolume => encode(
+                runtime
+                    .set_live_volume(decode::<LiveVolumeRequest>(payload)?)
                     .await
                     .map_err(command_error)?,
             ),
@@ -336,6 +371,57 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
             Write,
             LeaveLive,
             session(),
+            json!({"type": "null"}),
+        ),
+        // #1982: live の配信・視聴（Game SDK が使う。映像と音声の bytes は SDK の send_binary と poll で渡す）。
+        (
+            "set_live_broadcast",
+            Write,
+            SetBroadcast,
+            schema::object(
+                json!({"topic": {"type": "string"}, "session_id": {"type": "string"},
+                "source": {"enum": ["camera", "screen"]}, "microphone": {"type": "boolean"}}),
+                &["topic", "session_id", "source", "microphone"],
+            ),
+            schema::object(
+                json!({"microphone": {"type": "boolean"}, "limits": schema::object(
+                    json!({"width": {"type": "integer"}, "height": {"type": "integer"},
+                    "framerate": {"type": "integer"}, "bitrate": {"type": "integer"}}),
+                    &["width", "height", "framerate", "bitrate"],
+                )}),
+                &["microphone", "limits"],
+            ),
+        ),
+        (
+            "stop_live_broadcast",
+            Write,
+            StopBroadcast,
+            session(),
+            json!({"type": "null"}),
+        ),
+        (
+            "watch_live_media",
+            Write,
+            WatchMedia,
+            session(),
+            json!({"type": "null"}),
+        ),
+        (
+            "stop_watching_live_media",
+            Write,
+            StopWatching,
+            session(),
+            json!({"type": "null"}),
+        ),
+        (
+            "set_live_volume",
+            Write,
+            SetVolume,
+            schema::object(
+                json!({"session_id": {"type": "string"},
+                "volume": {"type": "number", "minimum": 0, "maximum": 1}}),
+                &["session_id", "volume"],
+            ),
             json!({"type": "null"}),
         ),
     ]

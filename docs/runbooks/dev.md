@@ -433,6 +433,10 @@ cargo xtask desktop-package
 Unity 6.3 LTS（6000.3.27f1）と Windows x64 が対象。UPM の package は `sdk/unity/com.kukuri.gamesdk`。
 
 ```powershell
+# Live の VP8 に使う libvpx 1.17.0 を build する（初回だけ。-Source は libvpx の tag v1.17.0 の clone。source の隣に
+# <名前>-kukuri-build の dir を作る）。Git Bash・nasm・make（無ければ Strawberry Perl の gmake）・VS の C++ build tools が要る
+powershell -ExecutionPolicy Bypass -File sdk/unity/build-libvpx.ps1 -Source C:\src\libvpx -Out C:\src\libvpx-out
+$env:KUKURI_LIBVPX_DIR = "C:\src\libvpx-out"
 # native（kukuri_game_sdk.dll と kukuri-sdk-sidecar.exe）を release で build して package へ置く（git には入れない）
 powershell -ExecutionPolicy Bypass -File sdk/unity/build-native.ps1
 # 空の Unity project に package を入れて EditMode の試験（Play・Stop と domain reload の lifecycle を含む）を流し、
@@ -443,9 +447,10 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -Backend IL2CPP -Ski
 # NGO 2.13.3 を入れた project で、NGO の Transport の EditMode の試験を流し、Netcode Sync sample の Player を 2 つ起動して
 # cube の同期と切断を確かめる（client は FFI と Sidecar の 2 回。%TEMP%\kgs-ngo に作る）
 powershell -ExecutionPolicy Bypass -File sdk/unity/test-netcode.ps1
-# glTFast 6.20.0 を入れた新しい project に Skin Loader sample を入れ、発行（開発用の Sidecar）→ 更新の知らせ → P2P の取得
-# → 再起動なしの差し替えを EditMode で確かめる。差し替えの前後の描画を %TEMP%\kgs-skin-*.png に書く（%TEMP%\kgs-assets に作る）
-powershell -ExecutionPolicy Bypass -File sdk/unity/test-assets.ps1
+# graphics を使う EditMode の試験（%TEMP%\kgs-assets に作る）。glTFast 6.20.0 を入れた新しい project に Skin Loader sample を入れ、
+# 発行（開発用の Sidecar）→ 更新の知らせ → P2P の取得 → 再起動なしの差し替えを確かめる（描画を %TEMP%\kgs-skin-*.png に書く）。
+# ゲーム（FFI）と desktop（Sidecar）の Live の配信・視聴を確かめる（画面を %TEMP%\kgs-live-*.png に書く）
+powershell -ExecutionPolicy Bypass -File sdk/unity/test-graphics.ps1
 ```
 
 - 自分の project へ入れるときは、`Packages/manifest.json` の `dependencies` に `"com.kukuri.gamesdk": "file:<repo>/sdk/unity/com.kukuri.gamesdk"` を足す。
@@ -455,6 +460,8 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test-assets.ps1
 - ロビーは `Runtime/Lobby/KukuriLobby.prefab`（uGUI）を scene に置き、`runner` に `KukuriRunner` を、`applicationId` と `topic` にゲームの値を設定する。scene に `EventSystem` が無ければ Unity の menu の UI から足す。
 - NGO を使うときは、`NetworkManager` の Transport に `KukuriNetcodeTransport`（`runner` に `KukuriRunner`）を置き、ロビーの `RoomCreated` で `RoomId` を設定して `StartHost`、`Joined` で `SessionId` を設定して `StartClient` を呼ぶ。Package Manager の Samples から「Netcode Sync」を入れると、その組み方の sample が入る。
 - スキンは `KukuriSkinLoader`（glTFast が要る）を GameObject に置き、`runner` と topic・信頼する発行者の公開鍵・application ID・asset ID を設定する。新しい版は自動で取得・差し替えされる。アセットの発行は開発用の Sidecar（設定 asset の mode を Sidecar にする）か CLI の `publish_game_asset` で行う。
+- Live は、ゲームが `create_live_session` で作った session を `KukuriLiveBroadcaster`（配信する camera を `SourceCamera` に、`Client` と topic を設定。`AudioListener` の音を送り、`Microphone` が on なら mic の音を混ぜる）の `StartBroadcast` で配信する。視聴は `KukuriLiveViewer` の `StartWatching` で、映像は `Output` の RenderTexture、音は OS の出力に出る。
+- Live の SDK の Rust 試験は `KUKURI_LIBVPX_DIR` を指定して `cargo test -p kukuri-game-sdk --features vp8 --test live`（2 つの profile で向きを入れ替えて配信・視聴し、遅延を測る）。
 - `test.ps1` は CLI の process 試験と同じく `KUKURI_DISABLE_KEYRING=1` と loopback の接続設定で動かす。Player の再起動の確認は、鍵を keyring に置かない構成での確認になる。
 
 ## Linux AppImage／Deb生成
