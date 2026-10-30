@@ -78,8 +78,8 @@ async fn both_deliveries_flow_both_ways_on_a_direct_session_until_it_closes() ->
     host_side.send(GameDelivery::Stream, b"caught")?;
     host_side.send(GameDelivery::Datagram, b"state")?;
     assert_eq!(receive(guest, 2).await?.len(), 2);
-    assert_eq!(guest.path().path, "direct_p2p");
-    assert_eq!(host_side.path().path, "direct_p2p");
+    assert_eq!(guest.path().map(|path| path.path), Some("direct_p2p"));
+    assert_eq!(host_side.path().map(|path| path.path), Some("direct_p2p"));
 
     // F-SES-4: 上限を超える payload は送らない。
     assert_eq!(
@@ -207,8 +207,14 @@ async fn packets_reach_the_host_over_the_relay_when_no_direct_path_exists() -> R
     link.channel().send(GameDelivery::Datagram, b"state")?;
     let received = receive(&host_side, 2).await?;
     assert_eq!(received.len(), 2);
-    assert_eq!(link.channel().path().path, "relay_fallback");
-    assert_eq!(host_side.path().path, "relay_fallback");
+    assert_eq!(
+        link.channel().path().map(|path| path.path),
+        Some("relay_fallback")
+    );
+    assert_eq!(
+        host_side.path().map(|path| path.path),
+        Some("relay_fallback")
+    );
 
     participant.shutdown().await?;
     host.shutdown().await?;

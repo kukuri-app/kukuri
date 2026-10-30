@@ -85,7 +85,9 @@ impl HostedGameSession for Hosted {
         watch_path(&channel, self.session_id.clone(), self.events.clone());
     }
 
+    /// 記録を消してから知らせる(閉じた知らせの後に、その session の packet を取り出させない)。
     fn closed(self: Box<Self>, reason: &str) {
+        self.forget();
         let _ = self.events.send(RuntimeEvent::GameSessionClosed {
             session_id: self.session_id.clone(),
             room_id: self.room_id.clone(),
@@ -94,8 +96,8 @@ impl HostedGameSession for Hosted {
     }
 }
 
-impl Drop for Hosted {
-    fn drop(&mut self) {
+impl Hosted {
+    fn forget(&self) {
         if let Some(ledger) = self.ledger.upgrade() {
             ledger
                 .lock()
@@ -103,6 +105,12 @@ impl Drop for Hosted {
                 .hosted
                 .remove(&self.session_id);
         }
+    }
+}
+
+impl Drop for Hosted {
+    fn drop(&mut self) {
+        self.forget();
     }
 }
 
@@ -116,12 +124,15 @@ fn watch_path(
     n0_future::task::spawn(async move {
         let mut last: Option<GameSessionPath> = None;
         loop {
-            let Some(path) = channel
-                .upgrade()
-                .filter(|channel| channel.is_open())
-                .map(|channel| channel.path())
-            else {
+            let Some(open) = channel.upgrade().filter(|channel| channel.is_open()) else {
                 return;
+            };
+            // 選ばれた経路が無い間(開いた直後・切り替えの途中)は知らせない。
+            let current = open.path();
+            drop(open);
+            let Some(path) = current else {
+                n0_future::time::sleep(PATH_CHECK_INTERVAL).await;
+                continue;
             };
             let changed = last.as_ref().is_none_or(|last| {
                 let moved = path.rtt_ms.abs_diff(last.rtt_ms);

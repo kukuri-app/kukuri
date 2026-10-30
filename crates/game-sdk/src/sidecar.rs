@@ -597,6 +597,10 @@ impl SidecarClient {
             let frame = self.pipe.as_mut().map(read_sync);
             let Some(Ok(data)) = frame else {
                 // 読み終えた応答は返す。秘密の出力を読めなかった応答は、結果が欠けるので成否不明に置き換える。
+                // bytes を読めなかった packet の event は捨てる（event と bytes を分けない）。
+                if *kind == Some(ItemKind::Bytes) {
+                    items.pop();
+                }
                 if *kind == Some(ItemKind::Secret)
                     && let Some(response) = items.pop()
                     && let Some((request_id, command)) = request_id_of(&response.data)

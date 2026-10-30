@@ -203,25 +203,27 @@ impl GameSessionChannel {
         packets
     }
 
-    /// 今の経路。選ばれた経路が relay なら Relay Fallback、IP の経路で relay の経路も開いていれば(relay で
-    /// 接続を助けた)Relay Supported P2P、IP の経路だけなら Direct P2P。
-    pub fn path(&self) -> GameSessionPath {
+    /// 今の経路(選ばれた経路が無い間は None)。選ばれた経路が relay なら Relay Fallback、IP の経路で relay の経路も
+    /// 開いていれば(relay で接続を助けた)Relay Supported P2P、IP の経路だけなら Direct P2P。
+    pub fn path(&self) -> Option<GameSessionPath> {
         let paths = self.connection.paths();
-        let selected = paths.iter().find(|path| path.is_selected());
+        let selected = paths.iter().find(|path| path.is_selected())?;
         let relay_open = paths.iter().any(|path| path.is_relay());
-        let path = match &selected {
-            Some(path) if path.is_relay() => "relay_fallback",
-            Some(_) if relay_open => "relay_supported_p2p",
-            _ => "direct_p2p",
+        let path = if selected.is_relay() {
+            "relay_fallback"
+        } else if relay_open {
+            "relay_supported_p2p"
+        } else {
+            "direct_p2p"
         };
-        let rtt_ms = selected.map_or(0, |path| path.rtt().as_millis() as u64);
+        let rtt_ms = selected.rtt().as_millis() as u64;
         let stats = self.connection.stats();
-        GameSessionPath {
+        Some(GameSessionPath {
             path,
             rtt_ms,
             sent_bytes: stats.udp_tx.bytes,
             received_bytes: stats.udp_rx.bytes,
-        }
+        })
     }
 }
 
