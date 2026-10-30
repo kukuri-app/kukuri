@@ -18,7 +18,7 @@ namespace Kukuri.GameSdk.Assets.Tests
     /// スキンの動的な差し替え（#1980 AC-2）。発行者（開発用の Sidecar）と Player（FFI）の 2 つの profile で、自分で作った
     /// .glb を発行 → 更新の知らせ → P2P の取得 → 検証 → 再起動なしの差し替えを確かめる。壊れた版では今のスキンを保ち、
     /// 差し替えを繰り返しても資源が増えず、適用中の frame は契約の予算（ADR 0070 §8.4 の 33 ms）に収まる。
-    /// test-assets.ps1 が glTFast 6.20.0 を入れた project で、keyring を切って loopback だけで動かす。
+    /// test-graphics.ps1 が glTFast 6.20.0 を入れた project で、keyring を切って loopback だけで動かす。
     public sealed class SkinLoaderTests
     {
         const string Application = "com.kukuri.test.skins";

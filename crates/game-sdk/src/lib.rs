@@ -2,8 +2,12 @@
 //! process の中で起動・操作・停止する。関数は network を待たず（close を除く）、panic を ABI の外へ出さない。
 
 mod client;
+#[cfg(feature = "vp8")]
+mod live;
 #[cfg(windows)]
 pub mod sidecar;
+#[cfg(feature = "vp8")]
+pub mod vp8;
 
 use std::{
     collections::HashMap,
@@ -12,8 +16,8 @@ use std::{
 };
 
 pub use client::{
-    BINARY_DATAGRAM, BINARY_STREAM, CANCELLED, Item, ItemKind, MAX_EVENTS, MAX_PENDING,
-    MAX_POLL_ITEMS, Mode, SdkClient, SdkConfig, Started, Status,
+    BINARY_DATAGRAM, BINARY_LIVE_AUDIO, BINARY_LIVE_VIDEO, BINARY_STREAM, CANCELLED, Item,
+    ItemKind, MAX_EVENTS, MAX_PENDING, MAX_POLL_ITEMS, Mode, SdkClient, SdkConfig, Started, Status,
 };
 
 /// C# が読み込み直後に照合する ABI の版（2: `kukuri_sdk_send_binary` と batch の bytes の項目。#1979）。

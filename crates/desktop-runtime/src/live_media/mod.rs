@@ -7,6 +7,7 @@
 //! 再生時刻を添える。`screen`)。音声と映像の bytes は memory にだけ置き、docs・blob・SQLite(Web は IndexedDB)・log
 //! へ出さない。Web(#1879)も同じ処理を使い、音声の機器だけを `media_devices` の Web の実装が扱う。
 
+mod game_audio;
 mod screen;
 mod watch;
 
@@ -179,6 +180,8 @@ pub(crate) fn runtime_live_media() -> RuntimeLiveMedia {
 #[derive(Default)]
 pub(crate) struct LiveMedia {
     broadcasts: Mutex<HashMap<String, Broadcast>>,
+    /// 配信中の session のゲームの音の送り待ち（SDK の audio thread が待たずに置く。#1982）。
+    game_audio: StdMutex<HashMap<String, Arc<game_audio::GameAudio>>>,
     viewers: Mutex<HashMap<String, Viewer>>,
 }
 
@@ -194,6 +197,8 @@ struct Broadcast {
     signer: LiveMediaSigner,
     /// 開くのを待つ間も映像を置けるよう、broadcast の一覧と別に lock する。
     microphone: Arc<Mutex<Microphone>>,
+    game_audio: Arc<game_audio::GameAudio>,
+    _game_audio_task: AbortOnDropHandle<()>,
 }
 
 /// 配信の mic。一度開いた後は、止めても track と catalog を残す(視聴者の購読はそのまま続く)。
@@ -320,6 +325,8 @@ impl Broadcast {
             Container::Legacy(moq_mux::container::Kind::Video),
             video_config(source.limits()),
         )?;
+        let (game_audio, game_audio_task) =
+            game_audio::GameAudio::start(broadcast.clone(), catalog.clone(), signer.clone());
         Ok(Self {
             fanout,
             broadcast,
@@ -329,6 +336,8 @@ impl Broadcast {
             source,
             signer,
             microphone: Arc::default(),
+            game_audio,
+            _game_audio_task: game_audio_task,
         })
     }
 }
@@ -473,6 +482,10 @@ impl LiveMedia {
                         endpoint_id,
                         signer,
                     )?;
+                    self.game_audio
+                        .lock()
+                        .expect("game audio poisoned")
+                        .insert(entry.key().clone(), broadcast.game_audio.clone());
                     entry.insert(broadcast)
                 }
             };
@@ -535,7 +548,36 @@ impl LiveMedia {
 
     /// 配信を止める(broadcast を閉じ、mic を止める)。
     pub(crate) async fn stop_broadcast(&self, session_id: &str) {
+        self.game_audio
+            .lock()
+            .expect("game audio poisoned")
+            .remove(session_id);
         self.broadcasts.lock().await.remove(session_id);
+    }
+
+    /// この端末で配信中の session か（待たない。SDK が配信の前の映像を断る）。
+    pub(crate) fn broadcasting(&self, session_id: &str) -> bool {
+        self.game_audio
+            .lock()
+            .expect("game audio poisoned")
+            .contains_key(session_id)
+    }
+
+    /// SDK のゲームの音を配信の送り待ちに置く（待たない）。配信していない session、rate が最初と違う音は置かない。
+    pub(crate) fn push_game_audio(
+        &self,
+        session_id: &str,
+        sample_rate: u32,
+        channels: u16,
+        interleaved: &[f32],
+    ) -> bool {
+        let audio = self
+            .game_audio
+            .lock()
+            .expect("game audio poisoned")
+            .get(session_id)
+            .cloned();
+        audio.is_some_and(|audio| audio.push(sample_rate, channels, interleaved))
     }
 
     /// 受け口が呼ぶ(配信者の端末と、転送する視聴者)。子へ公開している session への要求だけを、要求した端末が祖先で

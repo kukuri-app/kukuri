@@ -63,6 +63,28 @@ namespace Kukuri.GameSdk
         }
     }
 
+    /// 視聴中の live の復号した frame（ADR 0070 §8.3、#1982）。`I420` は上の行から並んだ Y（幅×高さ）・U・V（それぞれ半分の
+    /// 幅×半分の高さ）で、呼出元のもの。`AudioClockUs` はそのときの音声の再生時刻（音声が無ければ 0）。
+    public readonly struct KukuriLiveFrame
+    {
+        public string SessionId { get; }
+        public int Width { get; }
+        public int Height { get; }
+        public long TimestampUs { get; }
+        public long AudioClockUs { get; }
+        public byte[] I420 { get; }
+
+        internal KukuriLiveFrame(JObject parsed, byte[] i420)
+        {
+            SessionId = (string)parsed["session_id"];
+            Width = (int)parsed["width"];
+            Height = (int)parsed["height"];
+            TimestampUs = (long)parsed["timestamp_us"];
+            AudioClockUs = (long)parsed["audio_clock_us"];
+            I420 = i420;
+        }
+    }
+
     /// 要求への応答。秘密の出力（招待 token・暗号化した鍵の export）は `Secret` だけに入り、`Raw` には入らない。
     public sealed class KukuriResponse
     {
@@ -120,7 +142,10 @@ namespace Kukuri.GameSdk
         /// native から取り出して、まだ処理していない応答と event（次の frame の Pump へ持ち越す分）。
         readonly Queue<Received> backlog = new Queue<Received>();
         long nextRequest;
-        bool closed;
+        volatile bool closed;
+        /// audio thread の送信と解放を排他する（`SendLiveAudio` だけが owner の thread の外から呼ばれる）。
+        readonly object binaryGate = new object();
+        byte[] videoBuffer = Array.Empty<byte>();
 
         struct Received
         {
@@ -141,6 +166,9 @@ namespace Kukuri.GameSdk
 
         /// 参加中・受け付けた session の packet（`game_session_packet`）。`Pump` の中から main thread で呼ぶ。
         public event Action<KukuriPacket> PacketReceived;
+
+        /// 視聴中の live の frame（`live_video_frame`。session ごとに最新の 1 枚）。`Pump` の中から main thread で呼ぶ。
+        public event Action<KukuriLiveFrame> LiveFrameReceived;
 
         public string Profile => profile;
 
@@ -240,14 +268,47 @@ namespace Kukuri.GameSdk
         public KukuriSendStatus SendPacket(string sessionId, KukuriDelivery delivery, ReadOnlySpan<byte> data)
         {
             RequireOwnerThread();
+            return closed ? KukuriSendStatus.Closed : SendBinary((uint)delivery, sessionId, data);
+        }
+
+        /// 配信中の live に、下の行から並んだ RGBA32（`AsyncGPUReadback` の並び）の frame を置く（待たない。#1982）。幅と高さは
+        /// 1280×720 まで。配信を始める前と止めた後は `Closed`。SDK が圧縮し、送り待ちは 1 枚で古い frame を捨てる。
+        public KukuriSendStatus SendLiveVideo(string sessionId, int width, int height, ReadOnlySpan<byte> rgba)
+        {
+            RequireOwnerThread();
             if (closed)
                 return KukuriSendStatus.Closed;
+            var length = 4 + rgba.Length;
+            if (videoBuffer.Length != length)
+                videoBuffer = new byte[length];
+            videoBuffer[0] = (byte)width;
+            videoBuffer[1] = (byte)(width >> 8);
+            videoBuffer[2] = (byte)height;
+            videoBuffer[3] = (byte)(height >> 8);
+            rgba.CopyTo(new Span<byte>(videoBuffer, 4, rgba.Length));
+            return SendBinary(Native.BinaryLiveVideo, sessionId, videoBuffer);
+        }
+
+        /// 配信中の live に、interleave したゲームの音（`OnAudioFilterRead` の sample。mic の音は混ぜてから渡す）を置く。audio
+        /// thread から呼べる（待たない）。送り待ちは 200 ms 分で、溢れたら古いものから捨てる。
+        public KukuriSendStatus SendLiveAudio(string sessionId, int sampleRate, int channels, ReadOnlySpan<float> samples)
+        {
+            var bytes = new byte[6 + samples.Length * 4];
+            BitConverter.TryWriteBytes(new Span<byte>(bytes, 0, 4), sampleRate);
+            BitConverter.TryWriteBytes(new Span<byte>(bytes, 4, 2), (ushort)channels);
+            MemoryMarshal.AsBytes(samples).CopyTo(new Span<byte>(bytes, 6, samples.Length * 4));
+            lock (binaryGate)
+                return closed ? KukuriSendStatus.Closed : SendBinary(Native.BinaryLiveAudio, sessionId, bytes);
+        }
+
+        KukuriSendStatus SendBinary(uint kind, string sessionId, ReadOnlySpan<byte> data)
+        {
             var target = Encoding.UTF8.GetBytes(sessionId);
             int status;
             fixed (byte* targetBytes = target)
             fixed (byte* dataBytes = data)
-                status = Native.kukuri_sdk_send_binary(handle, (uint)delivery, targetBytes, (UIntPtr)target.Length,
-                    dataBytes, (UIntPtr)data.Length);
+                status = Native.kukuri_sdk_send_binary(handle, kind, targetBytes, (UIntPtr)target.Length, dataBytes,
+                    (UIntPtr)data.Length);
             switch (status)
             {
                 case Native.Ok: return KukuriSendStatus.Sent;
@@ -340,7 +401,9 @@ namespace Kukuri.GameSdk
                 try
                 {
                     var parsed = JObject.Parse(Encoding.UTF8.GetString(received.Data));
-                    if (received.Secret != null)
+                    if (received.Secret != null && (string)parsed["type"] == "live_video_frame")
+                        LiveFrameReceived?.Invoke(new KukuriLiveFrame(parsed, received.Secret));
+                    else if (received.Secret != null)
                         PacketReceived?.Invoke(new KukuriPacket((string)parsed["session_id"],
                             (string)parsed["delivery"] == "stream" ? KukuriDelivery.Stream : KukuriDelivery.Datagram,
                             received.Secret));
@@ -401,7 +464,8 @@ namespace Kukuri.GameSdk
         {
             if (closed)
                 return;
-            closed = true;
+            lock (binaryGate)
+                closed = true;
             try
             {
                 Native.kukuri_sdk_close(handle);

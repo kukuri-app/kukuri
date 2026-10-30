@@ -258,6 +258,24 @@ impl DesktopRuntime {
             .await
     }
 
+    /// SDK のゲームの音（interleave した f32。mic の音は Unity が混ぜる）を配信の送り待ちに置く（待たない。#1982）。
+    /// 配信していない session なら false。
+    pub fn push_live_game_audio(
+        &self,
+        session_id: &str,
+        sample_rate: u32,
+        channels: u16,
+        interleaved: &[f32],
+    ) -> bool {
+        self.live_media
+            .push_game_audio(session_id, sample_rate, channels, interleaved)
+    }
+
+    /// この端末で配信中の session か（待たない。#1982）。
+    pub fn is_live_broadcasting(&self, session_id: &str) -> bool {
+        self.live_media.broadcasting(session_id)
+    }
+
     pub async fn stop_live_broadcast(&self, request: crate::LiveMediaRequest) -> Result<()> {
         self.live_media.stop_broadcast(&request.session_id).await;
         Ok(())

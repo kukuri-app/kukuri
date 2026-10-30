@@ -4372,6 +4372,7 @@ version = "0.5.1"
 dependencies = [
  "async-trait",
  "blake3",
+ "cc",
  "futures-util",
  "kukuri-cli",
  "kukuri-desktop-runtime",
