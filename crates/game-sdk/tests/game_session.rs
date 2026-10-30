@@ -14,7 +14,7 @@ use std::{
 
 use kukuri_game_sdk::{
     BINARY_DATAGRAM, BINARY_STREAM, KukuriHandle, MAX_UNRELEASED_BYTES, Status,
-    kukuri_sdk_batch_release, kukuri_sdk_close, kukuri_sdk_free,
+    kukuri_sdk_batch_release, kukuri_sdk_close,
 };
 use serde_json::{Value, json};
 use support::{
@@ -333,7 +333,7 @@ fn packets_flow_through_the_ffi_handle_within_the_limits() {
 #[cfg(windows)]
 #[test]
 fn packets_flow_through_the_sidecar_handle_within_the_limits() {
-    use kukuri_game_sdk::{Mode, SdkClient, SdkConfig};
+    use kukuri_game_sdk::{Mode, SdkClient, SdkConfig, kukuri_sdk_free};
     isolated_environment();
     let (host_dir, guest_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let host = open_real(host_dir.path());
