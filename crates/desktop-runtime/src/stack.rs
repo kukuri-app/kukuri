@@ -261,7 +261,7 @@ reloadable_service! {
         #[cfg(not(target_family = "wasm"))]
         async fn fetch_blob_ephemeral_to_file(hash: &BlobHash, path: &std::path::Path, transfer: Option<std::time::Duration>) -> Result<Option<u64>>;
         #[cfg(not(target_family = "wasm"))]
-        async fn put_owned_blob_file(path: &std::path::Path, mime: &str, reference: &str) -> Result<kukuri_blob_service::StoredBlob>;
+        async fn put_owned_blob_file(path: &std::path::Path, mime: &str) -> Result<kukuri_blob_service::StoredBlob>;
         async fn fetch_verified_receive_offer_payload(
             offer: &VerifiedReceiveOffer, provider: EndpointAddr,
         ) -> Result<Vec<u8>>;

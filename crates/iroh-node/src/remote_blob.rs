@@ -20,6 +20,8 @@ use crate::remote_fetch::{BlobTooLarge, RemoteCacheDeferred};
 pub(crate) const REMOTE_BLOB_ALPN: &[u8] = b"/kukuri/remote-blob/1";
 const CHUNK_BYTES: usize = 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(30);
+/// 転送の期限: 大きさを 1 MiB/s で送る時間(`DEADLINE` より短くしない)。大きなゲームのアセットも保持端末から渡せる(#1980)。
+const TRANSFER_BYTES_PER_SEC: u64 = 1 << 20;
 
 #[derive(Clone)]
 pub(crate) struct RemoteBlobProtocol {
@@ -42,8 +44,12 @@ impl RemoteBlobProtocol {
     }
 
     async fn serve(&self, connection: &Connection) -> Result<()> {
-        let (mut send, mut recv) = connection.accept_bi().await?;
-        let request = recv.read_to_end(128).await?;
+        let (mut send, request) = timeout(DEADLINE, async {
+            let (send, mut recv) = connection.accept_bi().await?;
+            anyhow::Ok((send, recv.read_to_end(128).await?))
+        })
+        .await
+        .context("cached blob request timed out")??;
         let hash = crate::parse_blob_hash(std::str::from_utf8(&request)?)?;
         let Some(cache) = self.cache.get() else {
             send.write_all(&[0]).await?;
@@ -57,6 +63,22 @@ impl RemoteBlobProtocol {
             send.stopped().await?;
             return Ok(());
         };
+        let transfer = DEADLINE.max(Duration::from_secs(len / TRANSFER_BYTES_PER_SEC));
+        timeout(
+            transfer,
+            self.send_cached(&mut send, cache.as_ref(), hash, len),
+        )
+        .await
+        .context("cached blob transfer timed out")?
+    }
+
+    async fn send_cached(
+        &self,
+        send: &mut iroh::endpoint::SendStream,
+        cache: &dyn ContentCacheStore,
+        hash: Hash,
+        len: u64,
+    ) -> Result<()> {
         send.write_all(&[1]).await?;
         send.write_all(&len.to_be_bytes()).await?;
         let mut offset = 0;
@@ -88,10 +110,8 @@ impl ProtocolHandler for RemoteBlobProtocol {
         let Ok(_permit) = self.permits.try_acquire() else {
             return Ok(());
         };
-        timeout(DEADLINE, self.serve(&connection))
+        self.serve(&connection)
             .await
-            .context("cached blob transfer timed out")
-            .and_then(|result| result)
             .map_err(|error| AcceptError::from_boxed(error.into_boxed_dyn_error()))
     }
 }

@@ -151,7 +151,7 @@ mod link_preview_record;
 pub use link_preview_record::{LinkPreviewRecordInput, LinkPreviewRecordView};
 pub(crate) mod hydration_support;
 pub(crate) mod session_projection;
-use game_projection_support::GameRoomProjectionLocks;
+pub(crate) use game_projection_support::GameRoomProjectionLocks;
 #[cfg(test)]
 pub(crate) use hydration_support::hydrate_game_room_from_key;
 mod live_game_support;

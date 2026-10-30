@@ -11,6 +11,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
 use anyhow::Result;
@@ -58,14 +59,9 @@ pub enum BlobStatus {
 #[async_trait]
 pub trait BlobService: Send + Sync {
     async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
-    /// 本人の file を、保護参照 `reference` を付けて置く(#1980 のゲームのアセット。最大 3 GiB を memory に載せない)。
+    /// 本人の file を置く(#1980 のゲームのアセット。最大 3 GiB を memory に載せない)。
     #[cfg(not(target_family = "wasm"))]
-    async fn put_owned_blob_file(
-        &self,
-        _path: &Path,
-        _mime: &str,
-        _reference: &str,
-    ) -> Result<StoredBlob> {
+    async fn put_owned_blob_file(&self, _path: &Path, _mime: &str) -> Result<StoredBlob> {
         anyhow::bail!("file blobs are not supported")
     }
     /// 本人の書込みを、保護参照 `reference` を付けて置く(#1221 R5-I。参照を外すと保護が解ける)。
@@ -540,22 +536,12 @@ impl BlobService for IrohBlobService {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    async fn put_owned_blob_file(
-        &self,
-        path: &Path,
-        mime: &str,
-        reference: &str,
-    ) -> Result<StoredBlob> {
+    async fn put_owned_blob_file(&self, path: &Path, mime: &str) -> Result<StoredBlob> {
         let bytes = tokio::fs::metadata(path).await?.len();
+        // iroh の store へ複製して取り込み、そこから提供する。cache へは link しない(開発者が後から元の file を書き換えても、
+        // 検証済みの中身が変わらない)。
         let absolute = std::path::absolute(path)?;
         let hash = self.node.blobs().blobs().add_path(absolute).await?.hash;
-        // 参照を内容より先に置く(後から置く内容を容量の計数と回収の外にする)。
-        if let Some(cache) = &self.remote_cache {
-            cache
-                .add_protected_ref(reference, "blob", &hash.to_string())
-                .await?;
-            cache.put_remote_blob_file(&hash.to_string(), path).await?;
-        }
         Ok(StoredBlob {
             hash: BlobHash::new(hash.to_string()),
             mime: mime.to_string(),

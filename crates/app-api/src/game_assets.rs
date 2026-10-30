@@ -5,12 +5,10 @@
 //! 適用は revision が大きいときだけで、古い release では戻さない。適用中の版の blob と記録は保護して、ほかの端末へ提供する。
 //! 更新の知らせ(hint)を受けたら、この端末で適用中のアセットは背景で新しい版を取得して適用する。
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 use kukuri_core::GameAssetFormat;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 
 use crate::AppService;
 
@@ -78,11 +76,11 @@ pub struct PublishGameAssetInput {
     pub path: PathBuf,
 }
 
-/// 背景の自動の更新(取得中の asset。同じ asset の知らせが続いても 1 つだけ取る)。
+/// アセットごとの取得の排他(前面の取得と、知らせを受けた背景の取得を 1 つずつ走らせる)。
 #[derive(Default)]
 #[cfg_attr(target_family = "wasm", allow(dead_code))]
 pub(crate) struct GameAssetUpdates {
-    running: Mutex<HashSet<(String, String, String)>>,
+    fetches: crate::service::GameRoomProjectionLocks,
 }
 
 impl AppService {
@@ -226,7 +224,7 @@ mod native {
             let stored = self
                 .services
                 .blob_service
-                .put_owned_blob_file(&input.path, input.format.mime(), "own_blob:game-asset")
+                .put_owned_blob_file(&input.path, input.format.mime())
                 .await?;
             let release = GameAssetReleaseV1 {
                 application_id: input.application_id,
@@ -272,14 +270,15 @@ mod native {
         }
 
         /// release を手元 → 発行者本人 → topic の参加者の順に読む。読めた読み先は blob の取得元の候補として覚える。
-        /// `keep` なら、読んで検証した record を保持してほかの端末へ提供する。
+        /// `keep_newer_than` があれば、その版より新しい record だけを保持してほかの端末へ提供する(保持した新しい版を古い版で
+        /// 上書きしない)。
         async fn read_game_asset(
             &self,
             topic_id: &str,
             publisher: &str,
             application_id: &str,
             asset_id: &str,
-            keep: bool,
+            keep_newer_than: Option<u64>,
         ) -> Result<Option<(GameAssetReleaseV1, Option<String>)>> {
             let blobs = self.services.blob_service.clone();
             self.read_author_object(publisher, Some(topic_id), |docs, policy| {
@@ -296,7 +295,9 @@ mod native {
                             .learn_content_source(&release.blob_hash, &provider)
                             .await;
                     }
-                    if keep && policy != DocFetchPolicy::LocalOnly {
+                    if keep_newer_than.is_some_and(|applied| release.revision > applied)
+                        && policy != DocFetchPolicy::LocalOnly
+                    {
                         docs.persist_verified_record(
                             &author_replica_id(publisher),
                             &record_key(application_id, asset_id),
@@ -324,22 +325,27 @@ mod native {
                 !asset_ids.is_empty() && asset_ids.len() <= GAME_ASSET_LIST_LIMIT,
                 "asset_ids must list 1-{GAME_ASSET_LIST_LIMIT} assets"
             );
-            let store = &self.services.projection_store;
-            let mut releases = Vec::new();
             for asset_id in asset_ids {
                 validate_asset_id(asset_id)?;
-                if let Some((release, _)) = self
-                    .read_game_asset(topic_id, publisher, application_id, asset_id, false)
-                    .await?
-                {
+            }
+            let store = &self.services.projection_store;
+            // 1 件の読みは読み先の期限まで待ちうるので、件の数だけ待たないよう並べて読む。
+            let read =
+                futures_util::future::try_join_all(asset_ids.iter().map(|asset_id| async move {
+                    let Some((release, _)) = self
+                        .read_game_asset(topic_id, publisher, application_id, asset_id, None)
+                        .await?
+                    else {
+                        return anyhow::Ok(None);
+                    };
                     let applied = store
                         .get_applied_game_asset(publisher, application_id, asset_id)
                         .await?
                         .map(|row| row.revision);
-                    releases.push(view(&release, publisher, applied));
-                }
-            }
-            Ok(releases)
+                    Ok(Some(view(&release, publisher, applied)))
+                }))
+                .await?;
+            Ok(read.into_iter().flatten().collect())
         }
 
         /// 最新の release の検証済みの file を返す。適用中の版が最新ならそれを、新しければ取得・検証・適用して返す。
@@ -353,6 +359,33 @@ mod native {
         ) -> Result<GameAssetFileView> {
             validate_application_id(application_id)?;
             validate_asset_id(asset_id)?;
+            let _fetching = self
+                .lock_game_asset(publisher, application_id, asset_id)
+                .await;
+            self.fetch_game_asset_locked(topic_id, publisher, application_id, asset_id)
+                .await
+        }
+
+        async fn lock_game_asset(
+            &self,
+            publisher: &str,
+            application_id: &str,
+            asset_id: &str,
+        ) -> tokio::sync::OwnedMutexGuard<()> {
+            self.services
+                .game_asset_running
+                .fetches
+                .lock(&format!("{publisher}\0{application_id}\0{asset_id}"))
+                .await
+        }
+
+        async fn fetch_game_asset_locked(
+            &self,
+            topic_id: &str,
+            publisher: &str,
+            application_id: &str,
+            asset_id: &str,
+        ) -> Result<GameAssetFileView> {
             let store = &self.services.projection_store;
             let applied = store
                 .get_applied_game_asset(publisher, application_id, asset_id)
@@ -365,7 +398,13 @@ mod native {
                 })
             };
             let read = self
-                .read_game_asset(topic_id, publisher, application_id, asset_id, true)
+                .read_game_asset(
+                    topic_id,
+                    publisher,
+                    application_id,
+                    asset_id,
+                    Some(applied.as_ref().map_or(0, |row| row.revision)),
+                )
                 .await?;
             let (release, author) = match (read, &applied) {
                 (Some((release, _)), Some(row)) if row.revision >= release.revision => {
@@ -398,6 +437,10 @@ mod native {
                 .await;
             if !matches!(fetched, Ok(Some(length)) if length == release.bytes) {
                 let _ = tokio::fs::remove_file(&partial).await;
+                // 新しい版を取れなくても、適用中の版はそのまま使える(更新の失敗で今のスキンを失わない)。
+                if let Some(row) = &applied {
+                    return current(row);
+                }
                 fetched?;
                 return Err(GameAssetUnavailable(GAME_ASSET_UNAVAILABLE).into());
             }
@@ -474,7 +517,7 @@ mod native {
                 return Ok(false);
             }
             let Some((release, _)) = self
-                .read_game_asset(topic_id, publisher, application_id, asset_id, false)
+                .read_game_asset(topic_id, publisher, application_id, asset_id, None)
                 .await?
             else {
                 return Ok(false);
@@ -494,38 +537,41 @@ mod native {
             match applied {
                 Some(row) if row.revision >= release.revision => return Ok(false),
                 Some(_) => {
-                    let key = (
-                        publisher.to_owned(),
-                        application_id.to_owned(),
-                        asset_id.to_owned(),
-                    );
-                    if !self
-                        .services
-                        .game_asset_running
-                        .running
-                        .lock()
-                        .await
-                        .insert(key.clone())
-                    {
-                        return Ok(true);
-                    }
                     let (app, topic) = (self.account_handle(), topic_id.to_owned());
                     n0_future::task::spawn(async move {
-                        let fetched = app.fetch_game_asset(&topic, &key.0, &key.1, &key.2).await;
-                        app.services
-                            .game_asset_running
-                            .running
-                            .lock()
+                        let (publisher, application_id, asset_id) = (
+                            &update.publisher_pubkey,
+                            &update.application_id,
+                            &update.asset_id,
+                        );
+                        // 前面の取得か、先に届いた知らせの取得が済ませていれば知らせない。取得の間に届いた次の版の知らせは、
+                        // 待った後に読み直して取る。
+                        let _fetching = app
+                            .lock_game_asset(publisher, application_id, asset_id)
+                            .await;
+                        let before = app
+                            .services
+                            .projection_store
+                            .get_applied_game_asset(publisher, application_id, asset_id)
                             .await
-                            .remove(&key);
+                            .ok()
+                            .flatten()
+                            .map_or(0, |row| row.revision);
+                        if before >= update.revision {
+                            return;
+                        }
+                        let fetched = app
+                            .fetch_game_asset_locked(&topic, publisher, application_id, asset_id)
+                            .await;
                         match fetched {
-                            Ok(file) => {
+                            Ok(file) if file.release.revision > before => {
                                 let _ = app.services.game_asset_updates.send(GameAssetUpdate {
                                     revision: file.release.revision,
                                     path: Some(file.path),
                                     ..update
                                 });
                             }
+                            Ok(_) => {}
                             Err(error) => tracing::warn!(%error, "failed to update a game asset"),
                         }
                     });
