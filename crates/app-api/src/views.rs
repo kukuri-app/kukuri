@@ -209,6 +209,21 @@ pub struct RecentReactionView {
     pub updated_at: i64,
 }
 
+/// 手元へ新しく保存した投稿・返信(#1981)。SDK の掲示板が、表示中の timeline・thread へ届いたものを知るのに使う。本文は含めない
+/// (表示は既存の一覧の読みで得る)。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct PostReceivedView {
+    pub object_id: String,
+    pub topic_id: String,
+    pub channel_id: Option<String>,
+    pub author_pubkey: String,
+    pub reply_to: Option<String>,
+    pub root_id: Option<String>,
+    pub created_at: i64,
+}
+
 /// 手元へ反映したリアクションの新しい版(#1841)。Live の表示が、新しく届いたものを浮かべるのに使う。作者は含めない。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

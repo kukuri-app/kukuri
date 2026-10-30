@@ -21,7 +21,7 @@
       "path": "crates/metaverse-host/src/lib.rs"
     },
     {
-      "lines": 1185,
+      "lines": 1187,
       "path": "apps/desktop/src/lib/api/types.generated.ts"
     },
     {
@@ -45,7 +45,7 @@
       "path": "crates/store/fixtures/schema/store_schema_full.txt"
     },
     {
-      "lines": 1054,
+      "lines": 1069,
       "path": "crates/app-api/src/views.rs"
     },
     {

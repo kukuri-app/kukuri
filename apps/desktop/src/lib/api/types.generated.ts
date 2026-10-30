@@ -83,6 +83,8 @@ export type RecentReactionView = { reaction_key_kind: string, normalized_reactio
 
 export type ReactionReceivedView = { target_object_id: string, reaction_id: string, reaction: ReactionKeyView, updated_at: number, };
 
+export type PostReceivedView = { object_id: string, topic_id: string, channel_id?: string | null, author_pubkey: string, reply_to?: string | null, root_id?: string | null, created_at: number, };
+
 export type CustomReactionAssetView = { asset_id: string, owner_pubkey: string, blob_hash: string, search_key: string, mime: string, bytes: number, width: number, height: number, };
 
 export type CustomReactionSetView = { set_hash: string, name: string, item_count: number, created_at: number, };
@@ -853,7 +855,7 @@ reference_id?: string | null,
  */
 disputed_risk_signal_id?: string | null, };
 
-export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "startup_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, } | { "type": "author_relationship_changed", pubkey?: string | null, } | { "type": "reaction_received", reaction: ReactionReceivedView, } | { "type": "live_overlay_push_received", push?: LiveOverlayPushView | null, } | { "type": "game_session_closed", session_id: string, room_id: string, reason: string, } | { "type": "game_session_opened", session_id: string, room_id: string, participant_pubkey: string, } | { "type": "game_asset_updated", publisher_pubkey: string, application_id: string, asset_id: string, revision: number, path?: string | null, } | { "type": "game_session_path", session_id: string, path: string, rtt_ms: number, sent_bytes: number, received_bytes: number, };
+export type RuntimeEvent = { "type": "notification_status_changed" } | { "type": "startup_status_changed" } | { "type": "adult_media_label_evicted", hash?: string | null, } | { "type": "sync_status_changed", sync_status?: SyncStatus | null, removed_topics: Array<string>, community_node_statuses: Array<CommunityNodeNodeStatus>, removed_community_nodes: Array<string>, } | { "type": "author_relationship_changed", pubkey?: string | null, } | { "type": "reaction_received", reaction: ReactionReceivedView, } | { "type": "live_overlay_push_received", push?: LiveOverlayPushView | null, } | { "type": "post_received", post?: PostReceivedView | null, } | { "type": "game_session_closed", session_id: string, room_id: string, reason: string, } | { "type": "game_session_opened", session_id: string, room_id: string, participant_pubkey: string, } | { "type": "game_asset_updated", publisher_pubkey: string, application_id: string, asset_id: string, revision: number, path?: string | null, } | { "type": "game_session_path", session_id: string, path: string, rtt_ms: number, sent_bytes: number, received_bytes: number, };
 
 export type LiveOverlayPushView = { event_id: string, sender_pubkey: string, target: PushLiveOverlayRequest, post_created_at: number, sent_at: number, received_at: number, };
 

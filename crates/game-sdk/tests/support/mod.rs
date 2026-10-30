@@ -214,6 +214,60 @@ pub fn call(handle: *mut KukuriHandle, id: &str, command: &str, payload: Value) 
     response["data"].clone()
 }
 
+/// これまでに受け取った項目（応答を待つ間の poll で受けたものを含む）に、`pick` が値を返す JSON か bytes が届くまで
+/// poll する。
+pub fn wait_for<T>(
+    handle: *mut KukuriHandle,
+    what: &str,
+    mut pick: impl FnMut(&Value, &[u8]) -> Option<T>,
+) -> T {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        poll_once(handle, 64).unwrap();
+        let found = seen_json(handle)
+            .iter()
+            .find_map(|raw| pick(&serde_json::from_slice(raw).unwrap_or(Value::Null), raw));
+        if let Some(value) = found {
+            return value;
+        }
+        assert!(Instant::now() < deadline, "{what}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// topic の gossip を購読する。
+pub fn subscribe(handle: *mut KukuriHandle, topic: &str) {
+    call(
+        handle,
+        "subscribe",
+        "set_topic_gossip_enabled",
+        json!({"topic": topic, "enabled": true}),
+    );
+}
+
+/// 2 つの profile に互いの peer ticket を入れる（loopback の static peer）。
+pub fn introduce(left: *mut KukuriHandle, right: *mut KukuriHandle) {
+    let ticket = |handle| {
+        call(handle, "ticket", "get_local_peer_ticket", json!({}))
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let (left_ticket, right_ticket) = (ticket(left), ticket(right));
+    call(
+        left,
+        "import",
+        "import_peer_ticket",
+        json!({"ticket": right_ticket}),
+    );
+    call(
+        right,
+        "import",
+        "import_peer_ticket",
+        json!({"ticket": left_ticket}),
+    );
+}
+
 pub fn wait_for_startup(handle: *mut KukuriHandle) {
     let deadline = Instant::now() + Duration::from_secs(30);
     while !poll_once(handle, 64)

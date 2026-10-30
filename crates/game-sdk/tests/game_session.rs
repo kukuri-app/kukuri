@@ -18,8 +18,8 @@ use kukuri_game_sdk::{
 };
 use serde_json::{Value, json};
 use support::{
-    Polled, call, consent, finish, isolated_environment, open_real, poll_hold, poll_once, request,
-    response_for, seen_json, send, send_binary,
+    Polled, call, consent, finish, introduce, isolated_environment, open_real, poll_hold,
+    poll_once, request, response_for, send, send_binary, subscribe, wait_for,
 };
 
 const OK: i32 = Status::Ok as i32;
@@ -55,57 +55,13 @@ fn packets(items: &[Polled]) -> Vec<(String, String, Vec<u8>)> {
         .collect()
 }
 
-/// これまでに受け取った項目（応答を待つ間の poll で受けたものを含む）に、`pick` が値を返す JSON か bytes が届くまで
-/// poll する。
-fn wait_for<T>(
-    handle: *mut KukuriHandle,
-    what: &str,
-    mut pick: impl FnMut(&Value, &[u8]) -> Option<T>,
-) -> T {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        poll_once(handle, 64).unwrap();
-        let found = seen_json(handle)
-            .iter()
-            .find_map(|raw| pick(&serde_json::from_slice(raw).unwrap_or(Value::Null), raw));
-        if let Some(value) = found {
-            return value;
-        }
-        assert!(Instant::now() < deadline, "{what}");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
 /// 同意済みの 2 つの profile をつなぎ、host の room に guest を参加させて session ID を返す。
 fn join(host: *mut KukuriHandle, guest: *mut KukuriHandle, topic: &str) -> String {
     for handle in [host, guest] {
         consent(handle);
-        call(
-            handle,
-            &id(),
-            "set_topic_gossip_enabled",
-            json!({"topic": topic, "enabled": true}),
-        );
+        subscribe(handle, topic);
     }
-    let ticket = |handle| {
-        call(handle, &id(), "get_local_peer_ticket", json!({}))
-            .as_str()
-            .unwrap()
-            .to_owned()
-    };
-    let (host_ticket, guest_ticket) = (ticket(host), ticket(guest));
-    call(
-        guest,
-        &id(),
-        "import_peer_ticket",
-        json!({"ticket": host_ticket}),
-    );
-    call(
-        host,
-        &id(),
-        "import_peer_ticket",
-        json!({"ticket": guest_ticket}),
-    );
+    introduce(host, guest);
     let room = call(
         host,
         &id(),
