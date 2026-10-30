@@ -81,6 +81,8 @@ pub struct PublishGameAssetInput {
 #[cfg_attr(target_family = "wasm", allow(dead_code))]
 pub(crate) struct GameAssetUpdates {
     fetches: crate::service::GameRoomProjectionLocks,
+    /// 取得を待っている背景の task(アセットごとに 1 つ。続けて届いた知らせは、待っている task が待った後に読み直して取る)。
+    waiting: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl AppService {
@@ -537,6 +539,15 @@ mod native {
             match applied {
                 Some(row) if row.revision >= release.revision => return Ok(false),
                 Some(_) => {
+                    let key = format!("{publisher} {application_id} {asset_id}");
+                    let waiting = &self.services.game_asset_running.waiting;
+                    if !waiting
+                        .lock()
+                        .expect("game asset waiting")
+                        .insert(key.clone())
+                    {
+                        return Ok(true);
+                    }
                     let (app, topic) = (self.account_handle(), topic_id.to_owned());
                     n0_future::task::spawn(async move {
                         let (publisher, application_id, asset_id) = (
@@ -549,6 +560,13 @@ mod native {
                         let _fetching = app
                             .lock_game_asset(publisher, application_id, asset_id)
                             .await;
+                        // 取得を始めたら、次の知らせは新しい task を待たせる。
+                        app.services
+                            .game_asset_running
+                            .waiting
+                            .lock()
+                            .expect("game asset waiting")
+                            .remove(&key);
                         let before = app
                             .services
                             .projection_store
@@ -571,7 +589,10 @@ mod native {
                                     ..update
                                 });
                             }
-                            Ok(_) => {}
+                            Ok(_) => tracing::warn!(
+                                revision = update.revision,
+                                "the newer game asset could not be obtained; keeping the applied one"
+                            ),
                             Err(error) => tracing::warn!(%error, "failed to update a game asset"),
                         }
                     });

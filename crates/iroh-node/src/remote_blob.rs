@@ -51,17 +51,20 @@ impl RemoteBlobProtocol {
         .await
         .context("cached blob request timed out")??;
         let hash = crate::parse_blob_hash(std::str::from_utf8(&request)?)?;
-        let Some(cache) = self.cache.get() else {
-            send.write_all(&[0]).await?;
-            send.finish()?;
-            send.stopped().await?;
-            return Ok(());
+        let len = match self.cache.get() {
+            Some(cache) => cache.remote_content_len("blob", &hash.to_string()).await?,
+            None => None,
         };
-        let Some(len) = cache.remote_content_len("blob", &hash.to_string()).await? else {
-            send.write_all(&[0]).await?;
-            send.finish()?;
-            send.stopped().await?;
-            return Ok(());
+        let (Some(cache), Some(len)) = (self.cache.get(), len) else {
+            // 手元に無いことの応答も、受け取りを返さない相手に permit を握らせない。
+            return timeout(DEADLINE, async {
+                send.write_all(&[0]).await?;
+                send.finish()?;
+                send.stopped().await?;
+                anyhow::Ok(())
+            })
+            .await
+            .context("cached blob answer timed out")?;
         };
         let transfer = DEADLINE.max(Duration::from_secs(len / TRANSFER_BYTES_PER_SEC));
         timeout(
