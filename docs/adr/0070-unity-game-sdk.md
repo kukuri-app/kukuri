@@ -76,7 +76,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | event | `game_session_packet` | #1979 | datagram または stream の message を受けた。どちらで届いたかを持ち、bytes を伴う |
 | event | `game_session_path` | #1979 | 接続の経路（Direct P2P / Relay Supported P2P / Relay Fallback）か RTT が変わった。その時点の送受信の bytes も持つ |
 | event | `game_asset_updated` | #1980 | 検証できる新しい release が届いた。この端末で適用中のアセットは取得・適用した後に file の path 付きで、まだ適用していないアセットは path 無しで届く |
-| event | `post_received` | #1981 | 表示中の timeline・thread に投稿・返信が届いた。投稿 ID・topic・channel・返信先を持つ |
+| event | `post_received` | #1981 | 購読中の topic・channel の投稿・返信を手元へ新しく保存した（自分の投稿を含む）。投稿 ID・topic・channel・作者・返信先・thread の root を持ち、本文は持たない。作成から 30 秒を過ぎたもの（過去の頁の読込みで届いた古い投稿）と非表示の作者（mute・block）のものは送らない。溢れたときは `post` が null で、受け手は表示中の timeline・thread を読み直す |
 | event | `live_video_frame` | #1982 | 視聴中の session の復号済みの映像（画素の形式は §8）。bytes を伴う |
 | event | `live_watch_status` | #1982 | 視聴の状態（参加中・満員で転送待ち・映像なし・停止）が変わった |
 
@@ -248,6 +248,9 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 #### 5.4 SNS
 
 既存の投稿・返信・リアクション・カスタムリアクション・公開 channel・private channel の分類と command をそのまま使う。SDK は投稿の形式を足さない。表示は既存の cursor・有限の取得で行い、全履歴の同期を前提にしない（#1981）。
+
+- 投稿は `create_post`（スクリーンショットは `attachments` に file の path を渡す）、表示は `list_timeline`・`list_thread`、リアクションは `toggle_reaction` を使う。desktop・Web と同じ runtime の command なので、ID・公開範囲・block の規則は同じになる（#1981 AC-1）。
+- 新着は `post_received` と `reaction_received` で知る。runtime の event は desktop・Web の画面にも届くが、画面は使わない（定期の読み直しで表示する）。
 
 #### 5.5 Live
 

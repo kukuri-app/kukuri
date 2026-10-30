@@ -113,13 +113,13 @@ pub(crate) use crate::views::{
     GameScoreView, ImportMetaverseRoomAssetInput, JoinedPrivateChannelPage,
     JoinedPrivateChannelView, LiveSessionView, MetaverseAssetRefView, MetaverseRoomEventView,
     MoveDomeInput, NotificationStatusView, NotificationView, PendingAttachment, PostLiveView,
-    PostView, PostWithdrawalView, PrivateChannelCapability, PrivateChannelController,
-    PrivateChannelControllerState, PrivateChannelControllerTake, PrivateChannelEpochCapability,
-    ProfileAssetView, ProfileInput, PublishMetaverseRoomEventInput, ReactionKeyView,
-    ReactionReceivedView, ReactionStateView, ReactionSummaryView, RecentReactionView,
-    ReplyPreviewAuthorView, ReplyPreviewView, RepostSourceView, RevokeDomeConnectionInput,
-    SocialConnectionKind, SyncStatus, TimelineView, TopicSyncStatus, UpdateGameRoomInput,
-    UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
+    PostReceivedView, PostView, PostWithdrawalView, PrivateChannelCapability,
+    PrivateChannelController, PrivateChannelControllerState, PrivateChannelControllerTake,
+    PrivateChannelEpochCapability, ProfileAssetView, ProfileInput, PublishMetaverseRoomEventInput,
+    ReactionKeyView, ReactionReceivedView, ReactionStateView, ReactionSummaryView,
+    RecentReactionView, ReplyPreviewAuthorView, ReplyPreviewView, RepostSourceView,
+    RevokeDomeConnectionInput, SocialConnectionKind, SyncStatus, TimelineView, TopicSyncStatus,
+    UpdateGameRoomInput, UpdateMetaverseRoomInput, WithdrawDomeConnectionProposalInput,
 };
 
 mod account_sync_support;
@@ -164,6 +164,7 @@ mod notifications_support;
 mod object_hydration;
 mod object_persistence_support;
 mod post_integrity;
+mod post_projection;
 mod post_withdrawal_hydration;
 mod private_channel_rows;
 pub(crate) use private_channel_rows::{
@@ -411,6 +412,8 @@ pub struct ServiceHandles {
     pub(crate) author_relationship_changes: tokio::sync::broadcast::Sender<String>,
     /// 検証済みのリアクションを手元へ反映したときの、新しい版の行(#1841)。同じ版の置き直しと古い版は送らない。
     pub(crate) reaction_changes: ReactionChanges,
+    /// 手元へ新しく保存した投稿・返信の行(#1981)。同じ投稿の置き直し(本文の補完など)は送らない。
+    pub(crate) post_changes: tokio::sync::broadcast::Sender<ObjectProjectionRow>,
     pub(crate) live_overlay_pushes: Arc<crate::live_overlay::LiveOverlayPushes>,
     /// 保持する公開 topic と取り込みの続きの位置(#1909)。native の runtime が入れる。無ければ保持の操作は失敗する。
     pub(crate) topic_retention: Option<crate::topic_retention::TopicRetentionHandles>,
@@ -432,58 +435,6 @@ impl ServiceHandles {
                 .author_relationship_changes
                 .send(edge.subject_pubkey.as_str().to_string());
         }
-    }
-
-    pub(crate) async fn put_post_projection(&self, row: ObjectProjectionRow) -> Result<()> {
-        let me = self.keys.public_key_hex();
-        // 公開 channel(#1840)の投稿は、その channel の一覧の行の最後の投稿の時刻を進める。非表示の作者(mute と、
-        // どちらの向きでも有効な block の相手)の投稿は数えない。
-        let public_channel_post = ChannelId::new(row.channel_id.as_str())
-            .is_public_channel()
-            .then(|| {
-                (
-                    row.channel_id.clone(),
-                    row.created_at,
-                    row.author_pubkey.clone(),
-                )
-            });
-        if row.author_pubkey == me {
-            self.projection_store.put_object_projection(row).await?;
-        } else {
-            self.projection_store
-                .put_remote_object_projection(row)
-                .await?;
-        }
-        let Some((channel_id, created_at, author)) = public_channel_post else {
-            return Ok(());
-        };
-        let hidden = author != me
-            && (self
-                .projection_store
-                .get_muted_author(&author)
-                .await?
-                .is_some()
-                || self.blocks_either_direction(&me, &author).await?);
-        if !hidden {
-            self.projection_store
-                .note_public_channel_post(&channel_id, created_at.saturating_mul(1_000))
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn blocks_either_direction(&self, left: &str, right: &str) -> Result<bool> {
-        for (owner, visitor) in [(left, right), (right, left)] {
-            if self
-                .store
-                .get_block_edge(owner, visitor)
-                .await?
-                .is_some_and(|edge| edge.status == BlockEdgeStatus::Active)
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
     }
 
     pub(crate) async fn active_content_scope_generation(
@@ -600,6 +551,7 @@ impl ServiceHandles {
             link_preview_reads: Arc::default(),
             author_relationship_changes: tokio::sync::broadcast::channel(64).0,
             reaction_changes: tokio::sync::broadcast::channel(64).0,
+            post_changes: tokio::sync::broadcast::channel(64).0,
             live_overlay_pushes: Arc::default(),
             topic_retention: None,
             game_assets_dir: None,

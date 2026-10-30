@@ -77,6 +77,7 @@ mod media;
 mod media_adult_gating;
 mod media_bookmarks;
 mod notifications;
+mod post_events;
 mod private_channels;
 mod public_channel_list;
 mod public_channel_live;

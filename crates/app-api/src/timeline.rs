@@ -488,6 +488,50 @@ impl AppService {
         Ok(envelope.id.0)
     }
 
+    /// 手元へ新しく保存した投稿・返信の行(#1981)。知らせるかは `post_received_view` で決める。
+    pub fn subscribe_post_changes(&self) -> tokio::sync::broadcast::Receiver<ObjectProjectionRow> {
+        self.services.post_changes.subscribe()
+    }
+
+    /// 知らせる投稿・返信(#1981)。リアクション(`reaction_received_view`)と同じく、作成から `REACTION_EVENT_RECENT_MS` を
+    /// 過ぎたもの(過去の頁の読込みや再接続で届いた古い投稿)と、非表示の作者(mute と、どちらの向きの block)のものは知らせない。
+    pub async fn post_received_view(
+        &self,
+        row: &ObjectProjectionRow,
+    ) -> Result<Option<PostReceivedView>> {
+        let me = self.current_author_pubkey();
+        if row.created_at.saturating_mul(1_000)
+            < Utc::now().timestamp_millis() - crate::reactions::REACTION_EVENT_RECENT_MS
+            || (row.author_pubkey != me
+                && (self
+                    .services
+                    .projection_store
+                    .get_muted_author(&row.author_pubkey)
+                    .await?
+                    .is_some()
+                    || self
+                        .authors_blocked_either_direction(&me, &row.author_pubkey)
+                        .await?))
+        {
+            return Ok(None);
+        }
+        Ok(Some(PostReceivedView {
+            object_id: row.object_id.as_str().to_string(),
+            topic_id: row.topic_id.clone(),
+            channel_id: channel_id_for_view(row.channel_id.as_str()),
+            author_pubkey: row.author_pubkey.clone(),
+            reply_to: row
+                .reply_to_object_id
+                .as_ref()
+                .map(|id| id.as_str().to_string()),
+            root_id: row
+                .root_object_id
+                .as_ref()
+                .map(|id| id.as_str().to_string()),
+            created_at: row.created_at,
+        }))
+    }
+
     pub async fn list_timeline(
         &self,
         topic_id: &str,
