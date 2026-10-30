@@ -31,8 +31,11 @@ const GRANTED: &str = "ok";
 pub const GAME_SESSION_LEFT: &str = "left";
 /// 理由の code を受け取れないまま接続が切れた(host の端末が止まった・経路が失われた)。
 pub const GAME_SESSION_HOST_UNAVAILABLE: &str = "host_unavailable";
+/// host が参加者を外した(#1979 AC-2。NGO の `DisconnectRemoteClient`)。
+pub const GAME_SESSION_REMOVED: &str = "removed";
 const CLOSE_DONE: u32 = 0;
-const CLOSE_ENDED: u32 = 1;
+/// 理由の code を付けて閉じる。
+pub(crate) const CLOSE_ENDED: u32 = 1;
 
 pub type GameSessionFuture<T> = BoxFuture<'static, T>;
 /// 許されている間は `None`、許されなくなったら閉じる理由の code。
@@ -146,9 +149,12 @@ impl ProtocolHandler for GameSessionSlot {
             }
         };
         session.opened(Arc::new(GameSessionChannel::new(connection.clone())));
-        // 参加者が閉じた・接続が失われたら退出として扱う。
+        // host が外した([`GameSessionChannel::close`])のでなければ、参加者が閉じた・接続が失われたので退出として扱う。
         let reason = tokio::select! {
-            _ = connection.closed() => GAME_SESSION_LEFT.to_string(),
+            closed = connection.closed() => match closed {
+                ConnectionError::LocallyClosed => GAME_SESSION_REMOVED.to_string(),
+                _ => GAME_SESSION_LEFT.to_string(),
+            },
             reason = revoked => {
                 connection.close(CLOSE_ENDED.into(), reason.as_bytes());
                 reason

@@ -126,6 +126,12 @@ impl GameSessionChannel {
         self.connection.close_reason().is_none()
     }
 
+    /// 理由の code を付けて session を閉じる(相手はその code を受け取る)。
+    pub fn close(&self, reason: &str) {
+        self.connection
+            .close(crate::game_session::CLOSE_ENDED.into(), reason.as_bytes());
+    }
+
     /// 送り待ちに置いて即座に戻る。datagram は送り待ちが溢れたら古いものを捨てる。
     pub fn send(&self, delivery: GameDelivery, bytes: &[u8]) -> Result<(), GameSendRefused> {
         if !self.is_open() {

@@ -13,6 +13,11 @@
       "displayName": "Minimal",
       "description": "profile の起動・同意・新規アカウント・既存アカウントの明示 import と接続状態を扱う最小 sample。",
       "path": "Samples~/Minimal"
+    },
+    {
+      "displayName": "Netcode Sync",
+      "description": "Netcode for GameObjects 2.13.3 以降を入れた project で、Lobby で作った・参加した room の session に NGO を載せ、cube の位置を同期する最小 sample。",
+      "path": "Samples~/NetcodeSync"
     }
   ]
 }

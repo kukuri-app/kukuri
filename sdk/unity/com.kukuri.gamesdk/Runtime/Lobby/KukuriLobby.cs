@@ -66,8 +66,14 @@ namespace Kukuri.GameSdk.Lobby
         public string JoinedSessionId { get; private set; }
         public string JoinedRoomId { get; private set; }
 
-        /// session が閉じたときの理由の code（`left`・`room_ended`・`access_revoked`・`host_unavailable`）。
+        /// session が閉じたときの理由の code（`left`・`room_ended`・`access_revoked`・`removed`・`host_unavailable`）。
         public event Action<string> SessionClosed;
+
+        /// 自分の room を作った（room ID）。host として NGO 等を始める合図に使う。
+        public event Action<string> RoomCreated;
+
+        /// room に参加した（session ID）。client として NGO 等を始める合図に使う。
+        public event Action<string> Joined;
 
         /// 変えると、読んだ一覧を捨てる（次の読み込みは先頭の頁から）。
         public string ApplicationId
@@ -183,6 +189,7 @@ namespace Kukuri.GameSdk.Lobby
                 ["action"] = new JObject { ["application_id"] = applicationId, ["max_players"] = maxPlayers },
             };
             var roomId = (string)Require(await Client.SendAsync("create_game_room", payload));
+            RoomCreated?.Invoke(roomId);
             await RefreshAsync();
             return roomId;
         }
@@ -210,6 +217,7 @@ namespace Kukuri.GameSdk.Lobby
             JoinedSessionId = sessionId;
             JoinedRoomId = roomId;
             Render();
+            Joined?.Invoke(sessionId);
             return sessionId;
         }
 
@@ -324,6 +332,7 @@ namespace Kukuri.GameSdk.Lobby
             "left" => "退出しました",
             "room_ended" => "部屋が終了しました",
             "access_revoked" => "参加の資格がなくなりました",
+            "removed" => "部屋を作った人が参加を外しました",
             "host_unavailable" => "部屋を作った人の端末に接続できなくなりました",
             "access_denied" => "この部屋には参加できません",
             "room_full" => "満員です",
