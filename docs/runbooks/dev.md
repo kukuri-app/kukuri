@@ -460,7 +460,7 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test-graphics.ps1
 - ロビーは `Runtime/Lobby/KukuriLobby.prefab`（uGUI）を scene に置き、`runner` に `KukuriRunner` を、`applicationId` と `topic` にゲームの値を設定する。scene に `EventSystem` が無ければ Unity の menu の UI から足す。
 - NGO を使うときは、`NetworkManager` の Transport に `KukuriNetcodeTransport`（`runner` に `KukuriRunner`）を置き、ロビーの `RoomCreated` で `RoomId` を設定して `StartHost`、`Joined` で `SessionId` を設定して `StartClient` を呼ぶ。Package Manager の Samples から「Netcode Sync」を入れると、その組み方の sample が入る。
 - スキンは `KukuriSkinLoader`（glTFast が要る）を GameObject に置き、`runner` と topic・信頼する発行者の公開鍵・application ID・asset ID を設定する。新しい版は自動で取得・差し替えされる。アセットの発行は開発用の Sidecar（設定 asset の mode を Sidecar にする）か CLI の `publish_game_asset` で行う。
-- Live は、ゲームが `create_live_session` で作った session を `KukuriLiveBroadcaster`（配信する camera を `SourceCamera` に、`Client` と topic を設定。`AudioListener` の音を送り、`Microphone` が on なら mic の音を混ぜる）の `StartBroadcast` で配信する。視聴は `KukuriLiveViewer` の `StartWatching` で、映像は `Output` の RenderTexture、音は OS の出力に出る。
+- Live は、ゲームが `create_live_session` で作った session を `KukuriLiveBroadcaster`（配信する camera を `SourceCamera` に、`Client` と topic を設定。`AudioListener` の音を送り、`Microphone` が on なら mic の音を混ぜる）の `StartBroadcast` で配信する。視聴は `KukuriLiveViewer` の `StartWatching` で、映像は `Output` の RenderTexture、音は OS の出力に出る。`Hops` が 2 以上なら視聴者の転送で受けている。開始 post への返信・リアクションは `ReplyReceived`・`ReactionReceived` で届く（公開スレッドの live なら、先に `set_public_channel_subscription` でスレッドを購読する）。
 - Live の SDK の Rust 試験は `KUKURI_LIBVPX_DIR` を指定して `cargo test -p kukuri-game-sdk --features vp8 --test live`（2 つの profile で向きを入れ替えて配信・視聴し、遅延を測る）。
 - `test.ps1` は CLI の process 試験と同じく `KUKURI_DISABLE_KEYRING=1` と loopback の接続設定で動かす。Player の再起動の確認は、鍵を keyring に置かない構成での確認になる。
 

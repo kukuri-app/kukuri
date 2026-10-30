@@ -45,12 +45,15 @@ namespace Kukuri.GameSdk.Live.Tests
             Path.Combine(Path.GetTempPath(), "kgs-" + Guid.NewGuid().ToString("N").Substring(0, 12));
 
         /// frame を進める（両方の client の pump と、`each` の処理）。frame の間隔を記録する。
-        IEnumerator Frames(Func<bool> condition, string what, Action each = null, Func<string> detail = null)
+        IEnumerator Frames(Func<bool> condition, string what, Action each = null, Func<string> detail = null,
+            double forSeconds = 0)
         {
             var clock = Stopwatch.StartNew();
             var frame = Stopwatch.StartNew();
             while (!condition())
             {
+                if (forSeconds > 0 && clock.Elapsed.TotalSeconds >= forSeconds)
+                    yield break;
                 Assert.Less(clock.Elapsed.TotalSeconds, 120, what + " " + detail?.Invoke());
                 each?.Invoke();
                 game?.Pump();
@@ -90,11 +93,50 @@ namespace Kukuri.GameSdk.Live.Tests
                 new JObject { ["documents"] = documents, ["language"] = "ja", ["age_attested"] = true });
         }
 
-        IEnumerator CreateLive(KukuriClient client, string topic, Action<string> session)
+        /// 視聴の音量を 0 にする（試験で speaker から音を出さない。復号・出力・再生時刻は動く）。
+        IEnumerator Mute(KukuriClient client, string session) =>
+            Call(client, "set_live_volume", new JObject { ["session_id"] = session, ["volume"] = 0.0 });
+
+        static string NewTopic() => "kukuri:topic:test-live-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+
+        /// ゲーム（FFI）と desktop（開発用の Sidecar）の profile を開き、同意して topic を購読し、互いにつなぐ。
+        IEnumerator Connect(string topic)
         {
-            yield return Call(client, "create_live_session",
-                new JObject { ["topic"] = topic, ["title"] = "test: live", ["description"] = "" },
-                data => session((string)data));
+            game = KukuriClient.Open(KukuriMode.Ffi, "game", NewDirectory());
+            desktop = KukuriClient.Open(KukuriMode.Sidecar, "desktop", NewDirectory());
+            foreach (var client in new[] { game, desktop })
+            {
+                yield return Accept(client);
+                yield return Call(client, "set_topic_gossip_enabled", new JObject { ["topic"] = topic, ["enabled"] = true });
+            }
+            string ticketA = null, ticketB = null;
+            yield return Call(game, "get_local_peer_ticket", null, data => ticketA = (string)data);
+            yield return Call(desktop, "get_local_peer_ticket", null, data => ticketB = (string)data);
+            yield return Call(desktop, "import_peer_ticket", new JObject { ["ticket"] = ticketA });
+            yield return Call(game, "import_peer_ticket", new JObject { ["ticket"] = ticketB });
+        }
+
+        IEnumerator CreateLive(KukuriClient client, string topic, Action<string> session, JObject channel = null)
+        {
+            var payload = new JObject
+                { ["topic"] = topic, ["title"] = "test: live", ["description"] = "", ["start_post"] = "test: live" };
+            if (channel != null)
+                payload["channel_ref"] = channel;
+            yield return Call(client, "create_live_session", payload, data => session((string)data));
+        }
+
+        /// 1 色で塗った下の行からの RGBA。
+        static byte[] Solid(Color32 color)
+        {
+            var rgba = new byte[Width * Height * 4];
+            for (var at = 0; at < rgba.Length; at += 4)
+            {
+                rgba[at] = color.r;
+                rgba[at + 1] = color.g;
+                rgba[at + 2] = color.b;
+                rgba[at + 3] = 255;
+            }
+            return rgba;
         }
 
         /// 上の行から並んだ I420 の点の Y・U・V。
@@ -179,19 +221,8 @@ namespace Kukuri.GameSdk.Live.Tests
         {
             if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
                 Assert.Ignore("the live capture needs graphics (run test-graphics.ps1)");
-            var topic = "kukuri:topic:test-live-" + Guid.NewGuid().ToString("N").Substring(0, 8);
-            game = KukuriClient.Open(KukuriMode.Ffi, "game", NewDirectory());
-            desktop = KukuriClient.Open(KukuriMode.Sidecar, "desktop", NewDirectory());
-            foreach (var client in new[] { game, desktop })
-            {
-                yield return Accept(client);
-                yield return Call(client, "set_topic_gossip_enabled", new JObject { ["topic"] = topic, ["enabled"] = true });
-            }
-            string ticketA = null, ticketB = null;
-            yield return Call(game, "get_local_peer_ticket", null, data => ticketA = (string)data);
-            yield return Call(desktop, "get_local_peer_ticket", null, data => ticketB = (string)data);
-            yield return Call(desktop, "import_peer_ticket", new JObject { ["ticket"] = ticketA });
-            yield return Call(game, "import_peer_ticket", new JObject { ["ticket"] = ticketB });
+            var topic = NewTopic();
+            yield return Connect(topic);
 
             // ゲーム → desktop: 赤い背景の camera を配信する。
             var cameraObject = new GameObject("live camera");
@@ -228,6 +259,7 @@ namespace Kukuri.GameSdk.Live.Tests
             desktop.LiveFrameReceived += frame => received.Add(frame);
             yield return Call(desktop, "join_live_session", new JObject { ["topic"] = topic, ["session_id"] = gameLive });
             yield return Call(desktop, "watch_live_media", new JObject { ["topic"] = topic, ["session_id"] = gameLive });
+            yield return Mute(desktop, gameLive);
             frameMilliseconds.Clear();
             // EditMode では camera は player loop で描かないので、frame ごとに描いて読む。音は Unity の audio thread が
             // `AudioListener` の出力（ここでは無音）を `OnAudioFilterRead` へ渡す。
@@ -266,6 +298,9 @@ namespace Kukuri.GameSdk.Live.Tests
             var watching = viewer.StartWatching(desktopLive);
             yield return Wait(watching, "the watch did not start");
             Assert.IsTrue(watching.Result);
+            yield return Mute(game, desktopLive);
+            // 配信者に断られる（`no_media`）まで送らない。その後に送り始め、SDK のやり直しで見えるようになる。
+            yield return Frames(() => states.Contains("no_media"), "the first watch was not refused");
             var desktopSample = 0;
             var desktopClock = Stopwatch.StartNew();
             frameMilliseconds.Clear();
@@ -280,7 +315,7 @@ namespace Kukuri.GameSdk.Live.Tests
                     }
                 }, () => $"shown={viewer.FramesShown} audio={viewer.LastAudioClockUs} state={viewer.State}");
             Assert.AreEqual("watching", viewer.State);
-            CollectionAssert.AreEqual(new[] { "no_media", "watching" }, states.Distinct().ToArray(), "the watch is retried");
+            Assert.AreEqual("watching", states.Last(), "the watch is retried after the refusal");
             // 視聴する側は自分の mic を開かず、配信もしない。
             Assert.IsFalse(Microphone.IsRecording(null));
             Assert.AreEqual(KukuriSendStatus.Closed, game.SendLiveVideo(desktopLive, Width, Height, frames));
@@ -313,6 +348,99 @@ namespace Kukuri.GameSdk.Live.Tests
             Assert.IsNull(camera.targetTexture);
             Assert.AreEqual(KukuriSendStatus.Closed, game.SendLiveVideo(gameLive, Width, Height, RedOverBlue()));
             Assert.AreEqual(KukuriSendStatus.Closed, game.SendLiveAudio(gameLive, 48000, 2, Tone(48000, 0)));
+        }
+
+        /// 同じ公開スレッドに 2 つの live（#1982 AC-2）。ゲームは両方を見て、映像と、開始 post への返信・リアクションをそれぞれの
+        /// 視聴に混ぜずに受ける。片方の視聴をやめると、その購読だけが止まり、もう片方は続く。
+        [UnityTest]
+        public IEnumerator TwoLivesInOneThreadKeepTheirVideoAndReactionsApart()
+        {
+            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+                Assert.Ignore("the live view needs graphics (run test-graphics.ps1)");
+            var topic = NewTopic();
+            yield return Connect(topic);
+            string thread = null;
+            yield return Call(desktop, "create_public_channel",
+                new JObject { ["topic"] = topic, ["title"] = "test: thread", ["first_post"] = "test: thread" },
+                data => thread = (string)data["channel_id"]);
+            // ゲームはスレッドの投稿・リアクションの知らせを購読する（desktop・Web の開いている列にあたる）。
+            yield return Call(game, "set_public_channel_subscription",
+                new JObject { ["topic"] = topic, ["channel_id"] = thread, ["enabled"] = true });
+            var inThread = new JObject { ["kind"] = "public_channel", ["channel_id"] = thread };
+            string first = null, second = null;
+            yield return CreateLive(desktop, topic, value => first = value, inThread);
+            yield return CreateLive(desktop, topic, value => second = value, inThread);
+            foreach (var live in new[] { first, second })
+                yield return Call(desktop, "set_live_broadcast", new JObject
+                {
+                    ["topic"] = topic, ["session_id"] = live, ["source"] = "camera", ["microphone"] = false,
+                });
+            var red = Solid(new Color32(230, 20, 20, 255));
+            var blue = Solid(new Color32(20, 20, 230, 255));
+            Action broadcast = () =>
+            {
+                desktop.SendLiveVideo(first, Width, Height, red);
+                desktop.SendLiveVideo(second, Width, Height, blue);
+            };
+            yield return Frames(() => false, "", broadcast, null, 0.5);
+
+            var viewers = new List<KukuriLiveViewer>();
+            var replies = new[] { new List<JObject>(), new List<JObject>() };
+            var reactions = new[] { new List<JObject>(), new List<JObject>() };
+            foreach (var live in new[] { first, second })
+            {
+                var viewerObject = new GameObject("viewer " + viewers.Count);
+                objects.Add(viewerObject);
+                var viewer = viewerObject.AddComponent<KukuriLiveViewer>();
+                var index = viewers.Count;
+                viewer.ReplyReceived += post => replies[index].Add(post);
+                viewer.ReactionReceived += reaction => reactions[index].Add(reaction);
+                viewer.Client = game;
+                viewer.Topic = topic;
+                var watching = viewer.StartWatching(live);
+                yield return Wait(watching, "the watch did not start");
+                Assert.IsTrue(watching.Result);
+                yield return Mute(game, live);
+                Assert.IsNotNull(viewer.StartPostId, "the live has its own start post");
+                viewers.Add(viewer);
+            }
+            Assert.AreNotEqual(viewers[0].StartPostId, viewers[1].StartPostId);
+            yield return Frames(() => viewers.All(viewer => viewer.FramesShown >= 10), "the game did not show both lives",
+                broadcast, () => string.Join(",", viewers.Select(viewer => $"{viewer.FramesShown}/{viewer.State}")));
+            Assert.Greater(Read(viewers[0].Output, Width / 2, Height / 2).r, 0.7f, "the first live is red");
+            Assert.Greater(Read(viewers[1].Output, Width / 2, Height / 2).b, 0.7f, "the second live is blue");
+            Save(viewers[0].Output, "3-thread-first-live");
+            Save(viewers[1].Output, "4-thread-second-live");
+
+            // desktop が 1 つ目の開始 post にリアクションし、2 つ目の開始 post に返信する。
+            yield return Call(desktop, "toggle_reaction", new JObject
+            {
+                ["target_topic_id"] = topic, ["target_object_id"] = viewers[0].StartPostId,
+                ["reaction_key"] = new JObject { ["kind"] = "emoji", ["emoji"] = "👍" }, ["channel_ref"] = inThread,
+            });
+            yield return Call(desktop, "create_post", new JObject
+            {
+                ["topic"] = topic, ["content"] = "test: reply to the second live", ["reply_to"] = viewers[1].StartPostId,
+                ["channel_ref"] = inThread,
+            });
+            yield return Frames(() => reactions[0].Count > 0 && replies[1].Count > 0,
+                "the reaction and the reply did not reach their lives", broadcast,
+                () => $"reactions={reactions[0].Count}/{reactions[1].Count} replies={replies[0].Count}/{replies[1].Count}");
+            yield return Frames(() => false, "", broadcast, null, 2);
+            Assert.AreEqual(viewers[0].StartPostId, (string)reactions[0][0]["target_object_id"]);
+            Assert.IsEmpty(reactions[1], "the second live does not get the first live's reaction");
+            Assert.AreEqual(viewers[1].StartPostId, (string)replies[1][0]["reply_to"]);
+            Assert.IsEmpty(replies[0], "the first live does not get the second live's reply");
+
+            // 1 つ目の視聴をやめると、その映像の購読だけが止まり、2 つ目は続く。
+            var stop = viewers[0].StopWatching();
+            yield return Wait(stop, "the watch did not stop");
+            var firstShown = viewers[0].FramesShown;
+            var secondShown = viewers[1].FramesShown;
+            yield return Frames(() => false, "", broadcast, null, 2);
+            Assert.IsNull(viewers[0].Output);
+            Assert.AreEqual(firstShown, viewers[0].FramesShown, "the stopped watch receives nothing");
+            Assert.Greater(viewers[1].FramesShown, secondShown, "the other live keeps playing");
         }
     }
 }

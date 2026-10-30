@@ -8,7 +8,8 @@ namespace Kukuri.GameSdk
     /// live session を視聴し、復号した映像を `Output` の RenderTexture に描く（ADR 0070 §8.3、#1982）。音声は SDK が OS の
     /// 出力で鳴らす（音量は `set_live_volume`）。視聴は見るだけで、投稿・反応・自分の取り込みや配信を始めない。`screen` を
     /// 指定すれば、その Renderer の material の texture を `Output` にする。満員・映像なし・終了になったら、SDK が 5 秒
-    /// おいて視聴をやり直す（`State` が変わる）。
+    /// おいて視聴をやり直す（`State` が変わる）。この live の開始 post への返信とリアクションだけを `ReplyReceived`・
+    /// `ReactionReceived` で知らせる（同じスレッドの別の live のものは渡さない。返信とリアクションは開始 post に属する）。
     public sealed class KukuriLiveViewer : MonoBehaviour
     {
         [SerializeField] Renderer screen;
@@ -41,14 +42,21 @@ namespace Kukuri.GameSdk
 
         public string Topic { get; set; }
         public string SessionId { get; private set; }
+        /// この live の開始 post の ID（無ければ null）。
+        public string StartPostId { get; private set; }
         public RenderTexture Output { get; private set; }
         /// 視聴の状態（`watching`・`full`・`no_media`・`ended`）。視聴の前は null。
         public string State { get; private set; }
         public event Action<string> StateChanged;
+        /// 開始 post への返信（`post_received` の `post`）とリアクション（`reaction_received` の `reaction`）。
+        public event Action<JObject> ReplyReceived;
+        public event Action<JObject> ReactionReceived;
         /// 描いた frame の数と、最後に描いた frame の timestamp・音声の再生時刻（μs）。
         public int FramesShown { get; private set; }
         public long LastTimestampUs { get; private set; }
         public long LastAudioClockUs { get; private set; }
+        /// 最後に描いた frame の、配信者からの段数（1 は直接、2 以上は視聴者の転送）。
+        public int Hops { get; private set; }
 
         /// `sessionId` に参加して視聴を始める。
         public async Task<bool> StartWatching(string sessionId)
@@ -63,6 +71,8 @@ namespace Kukuri.GameSdk
                 return false;
             }
             SessionId = sessionId;
+            var live = await client.SendAsync("get_live_session", session);
+            StartPostId = live.Ok && live.Data is JObject view ? (string)view["start_post_id"] : null;
             var watched = await client.SendAsync("watch_live_media", session);
             return watched.Ok;
         }
@@ -74,6 +84,7 @@ namespace Kukuri.GameSdk
                 return;
             var session = new JObject { ["topic"] = Topic, ["session_id"] = SessionId };
             SessionId = null;
+            StartPostId = null;
             Release();
             await client.SendAsync("stop_watching_live_media", session);
             await client.SendAsync("leave_live_session", session);
@@ -81,10 +92,22 @@ namespace Kukuri.GameSdk
 
         void OnEvent(JObject parsed)
         {
-            if ((string)parsed["type"] != "live_watch_status" || (string)parsed["session_id"] != SessionId)
-                return;
-            State = (string)parsed["state"];
-            StateChanged?.Invoke(State);
+            switch ((string)parsed["type"])
+            {
+                case "live_watch_status" when (string)parsed["session_id"] == SessionId:
+                    State = (string)parsed["state"];
+                    StateChanged?.Invoke(State);
+                    break;
+                case "reaction_received" when StartPostId != null &&
+                                              (string)parsed["reaction"]?["target_object_id"] == StartPostId:
+                    ReactionReceived?.Invoke((JObject)parsed["reaction"]);
+                    break;
+                case "post_received" when StartPostId != null &&
+                                          ((string)parsed["post"]?["reply_to"] == StartPostId ||
+                                           (string)parsed["post"]?["root_id"] == StartPostId):
+                    ReplyReceived?.Invoke((JObject)parsed["post"]);
+                    break;
+            }
         }
 
         void OnFrame(KukuriLiveFrame frame)
@@ -118,6 +141,7 @@ namespace Kukuri.GameSdk
             FramesShown++;
             LastTimestampUs = frame.TimestampUs;
             LastAudioClockUs = frame.AudioClockUs;
+            Hops = frame.Hops;
         }
 
         void OnDestroy()

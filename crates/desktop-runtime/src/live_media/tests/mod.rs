@@ -758,6 +758,20 @@ async fn live_volume_is_kept_per_watched_session() {
     assert_eq!(gain().await, 1.0, "full volume until changed");
     pair.viewer.live.set_volume(&pair.session_id, 0.0).await;
     assert_eq!(gain().await, 0.0, "silent at zero");
+    // #1982: 止めずに見直しても(SDK の自動のやり直し)、設定した音量を保つ。
+    pair.viewer
+        .live
+        .watch(
+            &pair.viewer.app,
+            Some(pair.viewer.node.clone()),
+            LiveMediaRequest {
+                topic: TOPIC.into(),
+                session_id: pair.session_id.clone(),
+            },
+        )
+        .await
+        .expect("watch again");
+    assert_eq!(gain().await, 0.0, "kept across a re-watch");
     pair.viewer.live.set_volume(&pair.session_id, 2.0).await;
     assert_eq!(gain().await, 1.0, "clamped to one");
     pair.shutdown().await;

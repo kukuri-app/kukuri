@@ -678,7 +678,11 @@ impl LiveMedia {
         let node = node.context("the iroh stack is not running")?;
         let mut viewers = self.viewers.lock().await;
         let screen = Arc::new(ScreenQueue::default());
-        let gain = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        // 同じ session を見直す(視聴のやり直し)ときは、設定した音量を保つ。
+        let gain = viewers.get(&request.session_id).map_or_else(
+            || Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            |viewer| Arc::clone(&viewer.gain),
+        );
         let fanout = Fanout::new(request.topic.clone(), MAX_FORWARDED_VIEWERS, Vec::new());
         let viewer_fanout = Arc::downgrade(&fanout);
         let task = n0_future::task::spawn(watch::watch_session(Watch {
@@ -717,6 +721,15 @@ impl LiveMedia {
             }
             None => encode_screen_batch(LiveWatchState::Ended, 0, &[]),
         }
+    }
+
+    /// 視聴中の session の、配信者からこの端末までの段数(配信者から直接なら 1、視聴者の転送を 1 つ通れば 2)。まだ
+    /// 親が無い・視聴していなければ None。
+    pub(crate) async fn watch_hops(&self, session_id: &str) -> Option<usize> {
+        let viewers = self.viewers.lock().await;
+        let fanout = viewers.get(session_id)?.fanout.upgrade()?;
+        let hops = fanout.links().route.len().checked_sub(1)?;
+        (hops > 0).then_some(hops)
     }
 
     /// 視聴中の session の音量を変える(0〜1)。視聴していなければ何もしない。

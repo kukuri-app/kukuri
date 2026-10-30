@@ -546,17 +546,19 @@ impl SdkClient {
         }
         // 視聴中の live の映像（session ごとに最新の 1 枚。packet と同じく未解放の batch の上限に数える）。
         #[cfg(feature = "vp8")]
-        for (session_id, (timestamp_us, audio_clock_us, frame)) in self.live.take_frames(|len| {
-            let size = PACKET_EVENT_BYTES + len;
-            let fits = accept_packets
-                && count + 2 <= max_items
-                && (count == 0 || bytes + size <= max_bytes);
-            if fits {
-                count += 2;
-                bytes += size;
-            }
-            fits
-        }) {
+        for (session_id, (timestamp_us, audio_clock_us, hops, frame)) in
+            self.live.take_frames(|len| {
+                let size = PACKET_EVENT_BYTES + len;
+                let fits = accept_packets
+                    && count + 2 <= max_items
+                    && (count == 0 || bytes + size <= max_bytes);
+                if fits {
+                    count += 2;
+                    bytes += size;
+                }
+                fits
+            })
+        {
             items.push(Item {
                 kind: ItemKind::Event,
                 data: serde_json::to_vec(&serde_json::json!({
@@ -566,6 +568,7 @@ impl SdkClient {
                     "height": frame.height,
                     "timestamp_us": timestamp_us,
                     "audio_clock_us": audio_clock_us,
+                    "hops": hops,
                 }))
                 .expect("live frame event encodes"),
             });
