@@ -8,13 +8,14 @@ use kukuri_core::{
 };
 
 use crate::models::{
-    AuthorRelationshipProjectionRow, BookmarkCursor, BookmarkedCustomReactionRow,
-    BookmarkedPostRow, ContentObservationRow, DirectMessageConversationRow,
-    DirectMessageMessageRow, DirectMessageOutboxCursor, DirectMessageOutboxPage,
-    DirectMessageOutboxRow, DirectMessageTombstoneRow, DomeConnectionProjectionRow,
-    DomeHostingProjectionRow, GameRoomProjectionRow, LiveSessionProjectionRow, MutedAuthorRow,
-    NotificationCursor, NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow,
-    PrivateChannelParticipantRow, ReactionProjectionRow, TimelineCursor, WithdrawalWriteRow,
+    AppliedGameAssetRow, AuthorRelationshipProjectionRow, BookmarkCursor,
+    BookmarkedCustomReactionRow, BookmarkedPostRow, ContentObservationRow,
+    DirectMessageConversationRow, DirectMessageMessageRow, DirectMessageOutboxCursor,
+    DirectMessageOutboxPage, DirectMessageOutboxRow, DirectMessageTombstoneRow,
+    DomeConnectionProjectionRow, DomeHostingProjectionRow, GameRoomProjectionRow,
+    LiveSessionProjectionRow, MutedAuthorRow, NotificationCursor, NotificationRow,
+    ObjectProjectionRow, Page, PostWithdrawalRow, PrivateChannelParticipantRow,
+    ReactionProjectionRow, TimelineCursor, WithdrawalWriteRow,
 };
 
 /// 内容の観測を残す期間と、残す行の数（新しい順）。
@@ -335,6 +336,24 @@ pub trait LiveGameProjectionStore: Send + Sync {
         topic_id: &str,
         room_id: &str,
     ) -> Result<Option<GameRoomProjectionRow>>;
+    /// この端末で適用したゲームのアセットの release(#1980。CLI と SDK の SQLite だけ)。
+    async fn get_applied_game_asset(
+        &self,
+        _publisher_pubkey: &str,
+        _application_id: &str,
+        _asset_id: &str,
+    ) -> Result<Option<AppliedGameAssetRow>> {
+        anyhow::bail!("game assets are not available in this store")
+    }
+    /// `row` の revision が適用済みより大きいときだけ適用し、保護参照(`refs` の種類と cache key)をその版へ付け替える。
+    /// 古い版の blob と記録は保護が外れて通常の cache の規則に戻る。適用したら true。
+    async fn apply_game_asset(
+        &self,
+        _row: &AppliedGameAssetRow,
+        _refs: &[(String, String)],
+    ) -> Result<bool> {
+        anyhow::bail!("game assets are not available in this store")
+    }
     async fn upsert_dome_connection_projection(
         &self,
         row: DomeConnectionProjectionRow,

@@ -386,6 +386,12 @@ fn command_future_sizes() -> Vec<(&'static str, usize)> {
             size1(DesktopRuntime::join_game_session),
         ),
         (
+            "publish_game_asset",
+            size1(DesktopRuntime::publish_game_asset),
+        ),
+        ("list_game_assets", size1(DesktopRuntime::list_game_assets)),
+        ("fetch_game_asset", size1(DesktopRuntime::fetch_game_asset)),
+        (
             "leave_game_session",
             size1(DesktopRuntime::leave_game_session),
         ),

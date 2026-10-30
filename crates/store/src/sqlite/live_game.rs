@@ -324,6 +324,24 @@ impl LiveGameProjectionStore for SqliteStore {
         row.map(row_to_game_room_projection).transpose()
     }
 
+    async fn get_applied_game_asset(
+        &self,
+        publisher_pubkey: &str,
+        application_id: &str,
+        asset_id: &str,
+    ) -> Result<Option<crate::AppliedGameAssetRow>> {
+        self.applied_game_asset(publisher_pubkey, application_id, asset_id)
+            .await
+    }
+
+    async fn apply_game_asset(
+        &self,
+        row: &crate::AppliedGameAssetRow,
+        refs: &[(String, String)],
+    ) -> Result<bool> {
+        self.apply_game_asset_row(row, refs).await
+    }
+
     async fn upsert_dome_connection_projection(
         &self,
         row: DomeConnectionProjectionRow,

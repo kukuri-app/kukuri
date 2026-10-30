@@ -43,17 +43,17 @@ pub use cache::{
 };
 pub use memory::MemoryStore;
 pub use models::{
-    AuthorRelationshipProjectionRow, BlobCacheStatus, BookmarkCursor, BookmarkedCustomReactionRow,
-    BookmarkedPostRow, ContentObservationRow, DIRECT_MESSAGE_OUTBOX_PAGE_LIMIT,
-    DirectMessageConversationRow, DirectMessageMessageRow, DirectMessageOutboxCursor,
-    DirectMessageOutboxPage, DirectMessageOutboxRow, DirectMessageTombstoneRow,
-    DomeConnectionProjectionRow, DomeHostingProjectionRow, GameRoomProjectionRow,
-    LiveSessionProjectionRow, MutedAuthorRow, NotificationCursor, NotificationKind,
-    NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow, PrivateChannelParticipantRow,
-    ReactionProjectionRow, TimelineCursor, VERIFIED_OBJECT_PROJECTION_VERSION,
-    VERIFIED_REACTION_PROJECTION_VERSION, VERIFIED_SESSION_PROJECTION_VERSION, WithdrawalWriteRow,
-    adult_media_hashes_for_row, bookmark_cache_refs, public_blob_hashes_for_reaction,
-    public_blob_hashes_for_row,
+    AppliedGameAssetRow, AuthorRelationshipProjectionRow, BlobCacheStatus, BookmarkCursor,
+    BookmarkedCustomReactionRow, BookmarkedPostRow, ContentObservationRow,
+    DIRECT_MESSAGE_OUTBOX_PAGE_LIMIT, DirectMessageConversationRow, DirectMessageMessageRow,
+    DirectMessageOutboxCursor, DirectMessageOutboxPage, DirectMessageOutboxRow,
+    DirectMessageTombstoneRow, DomeConnectionProjectionRow, DomeHostingProjectionRow,
+    GameRoomProjectionRow, LiveSessionProjectionRow, MutedAuthorRow, NotificationCursor,
+    NotificationKind, NotificationRow, ObjectProjectionRow, Page, PostWithdrawalRow,
+    PrivateChannelParticipantRow, ReactionProjectionRow, TimelineCursor,
+    VERIFIED_OBJECT_PROJECTION_VERSION, VERIFIED_REACTION_PROJECTION_VERSION,
+    VERIFIED_SESSION_PROJECTION_VERSION, WithdrawalWriteRow, adult_media_hashes_for_row,
+    bookmark_cache_refs, public_blob_hashes_for_reaction, public_blob_hashes_for_row,
 };
 pub use peer_candidates::{
     LEARNED_BUDGET_BYTES, LEARNED_PRUNE_STEP, LEARNED_RETENTION_MS, LEARNED_SOURCE, MAX_ADDR_BYTES,

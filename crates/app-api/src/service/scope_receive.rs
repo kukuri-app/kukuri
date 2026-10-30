@@ -622,6 +622,11 @@ impl AppService {
                     .await?
                     .is_some())
             }
+            // #1980: ゲームのアセットの新しい release の知らせ(公開 topic の hint。SDK を持つ native だけ)。
+            #[cfg(not(target_family = "wasm"))]
+            crate::GAME_ASSET_HINT_KIND if *scope == TimelineScope::Public => {
+                self.receive_game_asset_hint(topic_id, session_id).await
+            }
             _ => Ok(false),
         }
     }

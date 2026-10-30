@@ -154,6 +154,15 @@ pub enum RuntimeEvent {
         room_id: String,
         participant_pubkey: String,
     },
+    /// 検証できるゲームのアセットの新しい release が届いた(#1980)。この端末で適用中のアセットは取得・適用した後に `path`
+    /// 付きで、まだ適用していないアセットは `path` 無しで届く。
+    GameAssetUpdated {
+        publisher_pubkey: String,
+        application_id: String,
+        asset_id: String,
+        revision: u64,
+        path: Option<String>,
+    },
     /// session の実データの経路(`direct_p2p`・`relay_supported_p2p`・`relay_fallback`)か RTT が変わった(#1979)。
     /// 送受信量はその時点の接続の UDP の bytes。
     GameSessionPath {
@@ -693,7 +702,8 @@ impl DesktopRuntime {
         // #1909: 公開 topic の保持は native の SQLite に置く(Web は保持しない)。大きな blob は cache と同じ volume で受け取る。
         #[cfg(not(target_family = "wasm"))]
         let services = services
-            .with_topic_retention(sqlite.clone(), db_path.with_extension("retention-staging"));
+            .with_topic_retention(sqlite.clone(), db_path.with_extension("retention-staging"))
+            .with_game_assets(db_path.with_extension("game-assets"));
         let metaverse_budget = kukuri_core::MetaverseResourceBudgetConfig::from_json_override(
             std::env::var("KUKURI_METAVERSE_RESOURCE_BUDGET_JSON")
                 .ok()
@@ -826,6 +836,8 @@ impl DesktopRuntime {
             );
             let mut pushes = app_service.subscribe_live_overlay_pushes();
             let push_sender = event_sender.clone();
+            let mut assets = app_service.subscribe_game_asset_updates();
+            let asset_sender = event_sender.clone();
             n0_future::task::spawn(async move {
                 // reactionの表示データの読みを待つ間も、短命のPushを画面へ渡す。
                 let forward_pushes = async move {
@@ -838,7 +850,25 @@ impl DesktopRuntime {
                         let _ = push_sender.send(RuntimeEvent::LiveOverlayPushReceived { push });
                     }
                 };
-                tokio::select! { _ = notifications => {}, _ = forward_pushes => {} }
+                // ゲームのアセットの知らせは溢れた分を送り直さない(受け手は一覧を読み直せる。ADR 0070 §3)。
+                let forward_assets = async move {
+                    loop {
+                        match assets.recv().await {
+                            Ok(update) => {
+                                let _ = asset_sender.send(RuntimeEvent::GameAssetUpdated {
+                                    publisher_pubkey: update.publisher_pubkey,
+                                    application_id: update.application_id,
+                                    asset_id: update.asset_id,
+                                    revision: update.revision,
+                                    path: update.path,
+                                });
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                };
+                tokio::select! { _ = notifications => {}, _ = forward_pushes => {}, _ = forward_assets => {} }
             })
         };
 

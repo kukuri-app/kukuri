@@ -297,6 +297,7 @@ async fn discovered_holders_use_a_fixed_window() -> Result<()> {
                 hash,
                 mode: FetchMode::Ephemeral,
                 file_path: None,
+                transfer: REMOTE_FETCH_TRANSFER_TIMEOUT,
             };
             let read = Arc::new(AtomicUsize::new(0));
             let stream = futures_util::stream::iter((0..total).map({

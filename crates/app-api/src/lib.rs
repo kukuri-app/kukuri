@@ -32,6 +32,7 @@ mod dome_management;
 mod dome_move;
 mod dome_session;
 mod game;
+mod game_assets;
 mod game_sessions;
 mod live;
 mod live_overlay;
@@ -70,6 +71,11 @@ mod topic_retention;
 pub use topic_retention::{RetainedTopicView, RetentionProgressView, TopicRetentionView};
 mod views;
 
+pub use game_assets::{
+    GAME_ASSET_HINT_KIND, GAME_ASSET_LIST_LIMIT, GAME_ASSET_NOT_FOUND, GAME_ASSET_UNAVAILABLE,
+    GameAssetFileView, GameAssetReleaseView, GameAssetUnavailable, GameAssetUpdate,
+    PublishGameAssetInput,
+};
 pub use game_sessions::{
     AdmittedGameSession, GAME_SESSION_ACCESS_DENIED, GAME_SESSION_ACCESS_REVOKED,
     GAME_SESSION_ROOM_ENDED, GAME_SESSION_ROOM_FULL, GAME_SESSION_ROOM_NOT_FOUND, GameSessionJoin,

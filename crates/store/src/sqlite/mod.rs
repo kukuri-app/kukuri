@@ -41,6 +41,7 @@ mod bookmarks;
 mod connection;
 mod direct_messages;
 mod envelopes;
+mod game_assets;
 mod legacy_store_retirement;
 pub(crate) mod live_game;
 mod media_bookmarks;

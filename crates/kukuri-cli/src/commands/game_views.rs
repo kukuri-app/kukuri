@@ -25,6 +25,31 @@ fn vector() -> Value {
     json!({"type": "array", "items": integer(), "minItems": 3, "maxItems": 3})
 }
 
+/// #1980: アセットの形式。`asset_bundle` のときだけ Unity の版と build の対象を持つ(core の検証が確かめる)。
+pub(super) fn asset_format() -> Value {
+    object(
+        json!({"kind": {"enum": ["glb", "png", "jpeg", "asset_bundle"]},
+            "unity_version": string(), "build_target": string()}),
+        &["kind"],
+    )
+}
+
+fn asset_release_properties() -> Value {
+    json!({"publisher_pubkey": string(), "application_id": string(), "asset_id": string(),
+        "revision": unsigned(), "bytes": unsigned(), "format": asset_format(), "published_at": integer(),
+        "applied_revision": nullable(unsigned())})
+}
+
+pub(super) fn asset_release() -> Value {
+    view(asset_release_properties())
+}
+
+pub(super) fn asset_file() -> Value {
+    let mut properties = asset_release_properties();
+    properties["path"] = string();
+    view(properties)
+}
+
 pub(super) fn score() -> Value {
     view(json!({"participant_id": string(), "label": string(), "score": integer()}))
 }

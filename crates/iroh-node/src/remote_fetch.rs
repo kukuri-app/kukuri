@@ -82,6 +82,7 @@ pub async fn prepare_display_fetch(
             "local manifest unavailable",
             FetchMode::Ephemeral,
             None,
+            REMOTE_FETCH_TRANSFER_TIMEOUT,
         ));
         let result = tokio::select! {
             biased;
@@ -484,6 +485,7 @@ async fn fetch_bytes_with_cooldown_mode(
                 local_error,
                 mode,
                 None,
+                REMOTE_FETCH_TRANSFER_TIMEOUT,
             )
             .await
         }
@@ -700,6 +702,7 @@ async fn fetch_bytes_from_remote(
     local_error: impl Display,
     mode: FetchMode,
     file_path: Option<&std::path::Path>,
+    transfer: Duration,
 ) -> Result<Option<Vec<u8>>> {
     let started = Instant::now();
     let imported_peers = peers.ranked_peers_for(hash_text).await;
@@ -719,6 +722,7 @@ async fn fetch_bytes_from_remote(
         hash,
         mode,
         file_path,
+        transfer,
     };
     let mut tried = Vec::new();
     for imported_peer in imported_peers {
@@ -756,6 +760,8 @@ struct PeerFetch<'a> {
     hash: iroh_blobs::Hash,
     mode: FetchMode,
     file_path: Option<&'a std::path::Path>,
+    /// 端末 1 件の転送の期限(既定は `REMOTE_FETCH_TRANSFER_TIMEOUT`。大きなゲームのアセットは大きさに合わせて延ばす)。
+    transfer: Duration,
 }
 
 impl PeerFetch<'_> {
@@ -803,6 +809,7 @@ impl PeerFetch<'_> {
             hash,
             mode,
             file_path,
+            transfer: transfer_timeout,
         } = *self;
         for peer in peers.connect_candidates(imported_peer).await {
             if let RequestRateDecision::Limited { retry_after } =
@@ -825,7 +832,7 @@ impl PeerFetch<'_> {
                 Ok(Ok(conn)) => {
                     attempt.connection(PeerConnectionStatus::Connected).await;
                     attempt_started = Instant::now();
-                    let transfer = timeout(REMOTE_FETCH_TRANSFER_TIMEOUT, async {
+                    let transfer = timeout(transfer_timeout, async {
                         match mode {
                             FetchMode::Store => {
                                 let blobs = node.blobs().clone();
@@ -889,8 +896,7 @@ impl PeerFetch<'_> {
                                 };
                                 cached_transfer_outcome(
                                     timeout(
-                                        REMOTE_FETCH_CONNECT_TIMEOUT
-                                            + REMOTE_FETCH_TRANSFER_TIMEOUT,
+                                        REMOTE_FETCH_CONNECT_TIMEOUT + transfer_timeout,
                                         async {
                                             match file_path {
                                                 #[cfg(not(target_family = "wasm"))]

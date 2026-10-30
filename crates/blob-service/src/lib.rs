@@ -11,6 +11,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -57,6 +58,16 @@ pub enum BlobStatus {
 #[async_trait]
 pub trait BlobService: Send + Sync {
     async fn put_blob(&self, data: Vec<u8>, mime: &str) -> Result<StoredBlob>;
+    /// 本人の file を、保護参照 `reference` を付けて置く(#1980 のゲームのアセット。最大 3 GiB を memory に載せない)。
+    #[cfg(not(target_family = "wasm"))]
+    async fn put_owned_blob_file(
+        &self,
+        _path: &Path,
+        _mime: &str,
+        _reference: &str,
+    ) -> Result<StoredBlob> {
+        anyhow::bail!("file blobs are not supported")
+    }
     /// 本人の書込みを、保護参照 `reference` を付けて置く(#1221 R5-I。参照を外すと保護が解ける)。
     /// 保護所有先の無い実装は `put_blob` と同じ。
     async fn put_owned_blob(
@@ -117,11 +128,13 @@ pub trait BlobService: Send + Sync {
     }
     /// Write display bytes in bounded chunks. Unsupported adapters must not
     /// fall back to a whole-blob allocation on the desktop path.
+    /// `transfer` は端末 1 件の転送の期限(None は既定。大きなゲームのアセットは大きさに合わせて延ばす。#1980)。
     #[cfg(not(target_family = "wasm"))]
     async fn fetch_blob_ephemeral_to_file(
         &self,
         _hash: &BlobHash,
         _path: &Path,
+        _transfer: Option<Duration>,
     ) -> Result<Option<u64>> {
         anyhow::bail!("streaming display fetch is not supported")
     }
@@ -289,6 +302,7 @@ impl BlobService for MemoryBlobService {
         &self,
         hash: &BlobHash,
         path: &Path,
+        _transfer: Option<Duration>,
     ) -> Result<Option<u64>> {
         let Some(bytes) = self.fetch_local_blob(hash).await? else {
             return Ok(None);
@@ -393,6 +407,7 @@ impl BlobService for IrohBlobService {
         &self,
         hash: &BlobHash,
         path: &Path,
+        transfer: Option<Duration>,
     ) -> Result<Option<u64>> {
         use tokio::io::AsyncWriteExt;
         let parsed = kukuri_iroh_node::parse_blob_hash(hash.as_str())?;
@@ -415,6 +430,7 @@ impl BlobService for IrohBlobService {
             &self.peers,
             parsed,
             path.to_path_buf(),
+            transfer.unwrap_or(remote_fetch::REMOTE_FETCH_TRANSFER_TIMEOUT),
         )
         .await?
         .await
@@ -520,6 +536,30 @@ impl BlobService for IrohBlobService {
             hash: BlobHash::new(hash.to_string()),
             mime: mime.to_string(),
             bytes: byte_len,
+        })
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    async fn put_owned_blob_file(
+        &self,
+        path: &Path,
+        mime: &str,
+        reference: &str,
+    ) -> Result<StoredBlob> {
+        let bytes = tokio::fs::metadata(path).await?.len();
+        let absolute = std::path::absolute(path)?;
+        let hash = self.node.blobs().blobs().add_path(absolute).await?.hash;
+        // 参照を内容より先に置く(後から置く内容を容量の計数と回収の外にする)。
+        if let Some(cache) = &self.remote_cache {
+            cache
+                .add_protected_ref(reference, "blob", &hash.to_string())
+                .await?;
+            cache.put_remote_blob_file(&hash.to_string(), path).await?;
+        }
+        Ok(StoredBlob {
+            hash: BlobHash::new(hash.to_string()),
+            mime: mime.to_string(),
+            bytes,
         })
     }
 

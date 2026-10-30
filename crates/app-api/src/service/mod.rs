@@ -414,6 +414,12 @@ pub struct ServiceHandles {
     pub(crate) live_overlay_pushes: Arc<crate::live_overlay::LiveOverlayPushes>,
     /// 保持する公開 topic と取り込みの続きの位置(#1909)。native の runtime が入れる。無ければ保持の操作は失敗する。
     pub(crate) topic_retention: Option<crate::topic_retention::TopicRetentionHandles>,
+    /// ゲームのアセットの file の dir と、更新の知らせ・背景の取得(#1980。発行と取得は native だけ)。
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
+    pub(crate) game_assets_dir: Option<std::path::PathBuf>,
+    pub(crate) game_asset_updates: tokio::sync::broadcast::Sender<crate::GameAssetUpdate>,
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
+    pub(crate) game_asset_running: Arc<crate::game_assets::GameAssetUpdates>,
 }
 
 pub(crate) type ReactionChanges = tokio::sync::broadcast::Sender<ReactionProjectionRow>;
@@ -596,6 +602,9 @@ impl ServiceHandles {
             reaction_changes: tokio::sync::broadcast::channel(64).0,
             live_overlay_pushes: Arc::default(),
             topic_retention: None,
+            game_assets_dir: None,
+            game_asset_updates: tokio::sync::broadcast::channel(64).0,
+            game_asset_running: Arc::default(),
         }
     }
 }

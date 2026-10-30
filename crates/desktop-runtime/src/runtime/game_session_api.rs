@@ -1,7 +1,54 @@
 use super::*;
 
-// SDK のゲームの action session への参加・退出(#1978)と packet の送受信(#1979)。CLI と SDK だけが使う。
+// SDK のゲームの action session への参加・退出(#1978)と packet の送受信(#1979)、アセットの配布(#1980)。CLI と SDK
+// だけが使う。
 impl DesktopRuntime {
+    pub async fn publish_game_asset(
+        &self,
+        request: crate::PublishGameAssetRequest,
+    ) -> Result<kukuri_app_api::GameAssetReleaseView> {
+        anyhow::ensure!(request.path.is_absolute(), "path must be absolute");
+        self.app_service
+            .publish_game_asset(
+                request.topic.as_str(),
+                kukuri_app_api::PublishGameAssetInput {
+                    application_id: request.application_id,
+                    asset_id: request.asset_id,
+                    format: request.format,
+                    path: request.path,
+                },
+            )
+            .await
+    }
+
+    pub async fn list_game_assets(
+        &self,
+        request: crate::ListGameAssetsRequest,
+    ) -> Result<Vec<kukuri_app_api::GameAssetReleaseView>> {
+        self.app_service
+            .list_game_assets(
+                request.topic.as_str(),
+                request.publisher_pubkey.as_str(),
+                request.application_id.as_str(),
+                &request.asset_ids,
+            )
+            .await
+    }
+
+    pub async fn fetch_game_asset(
+        &self,
+        request: crate::FetchGameAssetRequest,
+    ) -> Result<kukuri_app_api::GameAssetFileView> {
+        self.app_service
+            .fetch_game_asset(
+                request.topic.as_str(),
+                request.publisher_pubkey.as_str(),
+                request.application_id.as_str(),
+                request.asset_id.as_str(),
+            )
+            .await
+    }
+
     pub async fn join_game_session(
         &self,
         request: crate::JoinGameSessionRequest,

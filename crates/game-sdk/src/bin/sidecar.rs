@@ -48,7 +48,11 @@ fn main() -> std::process::ExitCode {
                 profile_dir: profile_dir.clone(),
                 mode: Mode::Ffi,
             }) {
-                Ok(client) => client,
+                Ok(client) => {
+                    // アセットの発行は開発用の Sidecar だけに許す(ゲームの Player の FFI には許さない。ADR 0070 §5.3)。
+                    client.allow_publish();
+                    client
+                }
                 Err(_) => {
                     eprintln!("internal_error: the runtime could not start");
                     return ExitCode::from(1);

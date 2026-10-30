@@ -480,6 +480,34 @@ pub struct CreateGameRoomRequest {
     pub action: Option<kukuri_app_api::CreateActionSessionInput>,
 }
 
+/// ゲームのアセットを発行者の profile で署名して公開する(#1980。CLI と開発用の Sidecar だけ)。`path` は絶対 path。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublishGameAssetRequest {
+    pub topic: String,
+    pub application_id: String,
+    pub asset_id: String,
+    pub format: kukuri_core::GameAssetFormat,
+    pub path: std::path::PathBuf,
+}
+
+/// 発行者の公開鍵と application ID で、`asset_ids`(最大 32 件)の最新の release を読む(#1980)。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListGameAssetsRequest {
+    pub topic: String,
+    pub publisher_pubkey: String,
+    pub application_id: String,
+    pub asset_ids: Vec<String>,
+}
+
+/// 最新の release の検証済みの file を得る(#1980)。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchGameAssetRequest {
+    pub topic: String,
+    pub publisher_pubkey: String,
+    pub application_id: String,
+    pub asset_id: String,
+}
+
 /// SDK のゲームの action session の host へ参加する(#1978)。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoinGameSessionRequest {

@@ -1,12 +1,14 @@
 use super::*;
 
+/// 取得して `path` へ書く。`transfer` は端末 1 件の転送の期限で、全体の期限はその 2 倍(既定の 30 秒より短くしない)。
 pub async fn prepare_display_file_fetch(
     node: &Arc<IrohDocsNode>,
     peers: &Arc<PeerAddrBook>,
     hash: iroh_blobs::Hash,
     path: std::path::PathBuf,
+    transfer: Duration,
 ) -> Result<DisplayBlobFileFetch> {
-    let deadline = Instant::now() + REMOTE_FETCH_TOTAL_TIMEOUT;
+    let deadline = Instant::now() + REMOTE_FETCH_TOTAL_TIMEOUT.max(transfer * 2);
     let lease = node
         .network_work
         .acquire(*hash.as_bytes(), deadline)
@@ -24,6 +26,7 @@ pub async fn prepare_display_file_fetch(
             "local blob unavailable",
             FetchMode::Ephemeral,
             Some(&path),
+            transfer,
         );
         let result = tokio::select! {
             biased;
