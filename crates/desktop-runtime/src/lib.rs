@@ -16,6 +16,8 @@ mod discovery;
 #[cfg(not(target_family = "wasm"))]
 mod game_sessions;
 pub use kukuri_app_api::GameSessionRejected;
+#[cfg(not(target_family = "wasm"))]
+pub use kukuri_iroh_node::{GameDelivery, GamePacket, GameSendRefused};
 mod host;
 mod identity;
 #[cfg(feature = "ts")]

@@ -18,6 +18,7 @@ namespace Kukuri.GameSdk
         internal const uint ItemResponse = 1;
         internal const uint ItemSecret = 2;
         internal const uint ItemEvent = 3;
+        internal const uint ItemBytes = 4;
 
         [StructLayout(LayoutKind.Sequential)]
         internal struct Item
@@ -42,6 +43,9 @@ namespace Kukuri.GameSdk
 
         [DllImport(Library)]
         internal static extern int kukuri_sdk_send(IntPtr handle, byte* request, UIntPtr length, byte* secret, UIntPtr secretLength);
+
+        [DllImport(Library)]
+        internal static extern int kukuri_sdk_send_binary(IntPtr handle, uint kind, byte* target, UIntPtr targetLength, byte* data, UIntPtr length);
 
         [DllImport(Library)]
         internal static extern int kukuri_sdk_cancel(IntPtr handle, byte* requestId, UIntPtr length);

@@ -148,6 +148,21 @@ pub enum RuntimeEvent {
         room_id: String,
         reason: String,
     },
+    /// host の端末で SDK のゲームの session を受け付け、送受信を始めた(#1979)。
+    GameSessionOpened {
+        session_id: String,
+        room_id: String,
+        participant_pubkey: String,
+    },
+    /// session の実データの経路(`direct_p2p`・`relay_supported_p2p`・`relay_fallback`)か RTT が変わった(#1979)。
+    /// 送受信量はその時点の接続の UDP の bytes。
+    GameSessionPath {
+        session_id: String,
+        path: String,
+        rtt_ms: u64,
+        sent_bytes: u64,
+        received_bytes: u64,
+    },
 }
 
 /// #1841: 画面へ送るリアクションの新着の上限(1 秒あたり)。画面が浮かべる同時の数と待ちの数の和で、表示できる分は減らさない。

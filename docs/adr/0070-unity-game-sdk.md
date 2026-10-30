@@ -71,9 +71,10 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | command | `list_game_assets` / `fetch_game_asset` | #1980 | 発行者の公開鍵と application ID で release を一覧し、検証済みの file の path を得る |
 | command | `set_live_broadcast` / `stop_live_broadcast` / `watch_live_media` / `stop_watching_live_media` / `set_live_volume` | #1982 | desktop-runtime にある Live の配信・視聴の操作を登録簿へ載せる |
 | event | `events_lost` | #1975 | 知らせの event を捨てた件数 |
-| event | `game_session_closed` | #1978 | session が閉じた（退出・room の終了・権限の失効・host の不在）。理由の code を持つ |
+| event | `game_session_closed` | #1978 | session が閉じた（退出・room の終了・権限の失効・host の不在）。理由の code を持つ。参加者と host の両方の端末に届く（host の端末は #1979 から） |
+| event | `game_session_opened` | #1979 | host の端末で session を受け付け、送受信を始めた。session ID・room ID・参加者の公開鍵を持つ |
 | event | `game_session_packet` | #1979 | datagram または stream の message を受けた。どちらで届いたかを持ち、bytes を伴う |
-| event | `game_session_path` | #1979 | 接続の経路（Direct P2P / Relay Supported P2P / Relay Fallback）と RTT が変わった |
+| event | `game_session_path` | #1979 | 接続の経路（Direct P2P / Relay Supported P2P / Relay Fallback）か RTT が変わった。その時点の送受信の bytes も持つ |
 | event | `game_asset_updated` | #1980 | 検証できる新しい release の manifest が届いた |
 | event | `post_received` | #1981 | 表示中の timeline・thread に投稿・返信が届いた。投稿 ID・topic・channel・返信先を持つ |
 | event | `live_video_frame` | #1982 | 視聴中の session の復号済みの映像（画素の形式は §8）。bytes を伴う |
@@ -88,7 +89,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | `kukuri_sdk_abi_version()` | ABI の版を返す。C# は読み込み直後に照合し、違えば理由を示して開始しない | なし |
 | `kukuri_sdk_open(abi_version, config, out_handle)` | ABI の版と profile（名前と directory）を指定して handle を作る。版が違えば `ABI_MISMATCH` で handle を作らない。runtime の起動は背景で進み、完了を `startup_status_changed` の event で知らせる。起動に失敗したら（`profile_in_use` 等）、要求の応答がその error を返す。Sidecar の mode では runtime は既に動いており、接続の前の event は渡さないので（§8.2）、`get_desktop_startup_status` で状態を読む | なし |
 | `kukuri_sdk_send(handle, request, secret)` | 要求を待ち行列に入れて即座に戻る。結果は poll で受ける | なし |
-| `kukuri_sdk_send_binary(handle, kind, target, bytes)` | session の packet（datagram・stream）と、配信する映像・音声の bytes を渡す。`target` は session ID または Live の session ID。最初に使う #1979 が、kind と batch の bytes の項目と一緒に足す | なし |
+| `kukuri_sdk_send_binary(handle, kind, target, bytes)` | session の packet（datagram・stream）と、配信する映像・音声の bytes を渡す。`target` は session ID または Live の session ID。kind は 1 が datagram、2 が stream（映像・音声の kind は #1982 が足す）。#1979 で足し、ABI の版を 2 にした | なし |
 | `kukuri_sdk_cancel(handle, request_id)` | 実行前の要求を取り消す | なし |
 | `kukuri_sdk_poll(handle, max_items, max_bytes, out_batch)` | 届いている応答・秘密の出力・event・bytes を上限まで batch に入れて返す。1 件だけで `max_bytes` を超えるものは、その poll の最初の 1 件なら単独で返す。届いていなければ batch を返さない（`out_batch` は null） | なし |
 | `kukuri_sdk_batch_release(handle, batch)` | poll で受けた batch（中の JSON と bytes を含む）を解放する | なし |
@@ -97,6 +98,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 
 - ABI の関数は同期的な状態 code を返す: `OK`、`INVALID_ARGUMENT`、`BACKPRESSURE`、`CLOSED`、`FAULTED`、`ABI_MISMATCH`。要求の成否は poll で受ける応答で返す。
 - `kukuri_sdk_send_binary` には応答が無く、結果はこの状態 code だけで返す。上限を超える大きさ・不明な kind は `INVALID_ARGUMENT`、閉じた session・Live は `CLOSED`、stream の送り待ちが上限に達したら `BACKPRESSURE`（bytes は受け付けない）。datagram と映像は送り待ちが溢れても `OK` を返し、§3 の上限の規則で古いものを捨てる。
+- 受けた packet は、`game_session_packet` の event（item の種類 3）の直後に bytes の項目（種類 4）を置いて返す。2 つは同じ batch に入れ、分けない。
 - batch の中の JSON と bytes は、`kukuri_sdk_batch_release` を呼ぶまで有効で、呼んだ後は使えない。解放した batch・別の handle の batch を渡すと `INVALID_ARGUMENT` を返し、何も解放しない。
 - handle は opaque な pointer とし、Rust の内部型を ABI の外へ出さない。
 - `kukuri_sdk_close` 以外は network の待ちをしない。Unity の main thread から呼んでも止まらない。
@@ -201,9 +203,12 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
   - 接続できないときの code は `host_unreachable`。参加者の端末が同時に参加する session は 8 まで（`session_limit`）。
   - 接続は session の間ずっと保つ。host は評価し直しで続けられないと分かったら、理由の code（`room_ended`・`access_revoked`）を付けて閉じる。参加者が閉じれば退出（`left`）、理由が届かないまま切れたら `host_unavailable`。
   - 参加者の端末には、閉じた理由とともに `game_session_closed` が届く。両方の端末で session の記録を消し、閉じた session の送受信は認可しない。
+  - host の端末には、受け付けて送受信を始めたときに `game_session_opened` が、閉じたときに `game_session_closed` が届く。host の端末での理由は、評価し直しで閉じたならその code、参加者が閉じたか接続が失われたなら `left`。
 - 座標などの最新の状態は QUIC の unreliable datagram、確定させる操作は reliable stream で送る。送る側の上限は次のとおりで、#1979 はこの値で実装する。
   - datagram: payload は 1 件 1100 bytes 以下で、さらに接続の `max_datagram_size` 以下。送り待ちは session ごとに 64 件で、溢れたら古いものから捨てる。
-  - stream: message は 1 件 64 KiB 以下で、session の中の順に全部届く。送り待ちは session ごとに 256 KiB で、超えたら `BACKPRESSURE`。
+  - stream: message は 1 件 64 KiB 以下で、session の中の順に全部届く。送り待ちは session ごとに 256 KiB で、超えたら `BACKPRESSURE`。送り待ちには QUIC へ書いている途中の message も数える。受け手が読み取りを止めると QUIC の flow control で書けなくなり、送り手に `BACKPRESSURE` が返る。
+  - stream は向きごとに 1 本の単方向 stream で、message ごとに長さ（u32）を前に置く。64 KiB を超える長さを受けたら接続を閉じる。
+  - 経路は 1 秒ごとに確かめ、経路の分類が変わったとき、または RTT が 5 ms 以上かつ 2 割以上変わったときに `game_session_path` で知らせる（最初は開いたとき）。分類は、選ばれた経路が relay なら Relay Fallback、IP の経路で relay の経路も開いていれば Relay Supported P2P、IP の経路だけなら Direct P2P。送受信の bytes は接続の UDP の量。
   - 受ける側の上限は §3。
 - 接続は Direct P2P → Relay Supported P2P の順で試し、実データが relay を通るときは Relay Fallback として区別して記録する。central な lobby の authority は置かない。
 

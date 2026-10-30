@@ -1,7 +1,9 @@
-//! #1978 AC-2: SDK のゲームの action session への参加と寿命(ADR 0070 §5.2)。分離した profile(loopback の runtime)で、
-//! 4 種類の公開範囲の許可と拒否、退出・終了・既存の権限の失効で session が閉じることを確かめる。
+//! #1978 AC-2・#1979 AC-1: SDK のゲームの action session への参加と寿命、packet の送受信(ADR 0070 §5.2)。分離した
+//! profile(loopback の runtime)で、4 種類の公開範囲の許可と拒否、退出・終了・既存の権限の失効で session が閉じ、
+//! 閉じた session では packet を送受信しないことを確かめる。
 
 use super::*;
+use crate::{GameDelivery, GameSendRefused};
 use kukuri_test_support::{PollState, poll_until};
 use tokio::sync::broadcast::Receiver;
 
@@ -114,23 +116,65 @@ async fn join_when_allowed(
     })
 }
 
-/// 参加者の端末に `session_id` の session が閉じた知らせが届くまで待ち、理由を返す。
-async fn closed(events: &mut Receiver<RuntimeEvent>, session_id: &str) -> String {
+/// `pick` が値を返す event が届くまで待つ。
+async fn event<T>(
+    events: &mut Receiver<RuntimeEvent>,
+    mut pick: impl FnMut(RuntimeEvent) -> Option<T>,
+) -> T {
     timeout(Duration::from_secs(60), async {
         loop {
-            if let Ok(RuntimeEvent::GameSessionClosed {
-                session_id: closed,
-                reason,
-                ..
-            }) = events.recv().await
-                && closed == session_id
+            if let Ok(event) = events.recv().await
+                && let Some(value) = pick(event)
             {
-                return reason;
+                return value;
             }
         }
     })
     .await
-    .expect("game_session_closed")
+    .expect("the expected event")
+}
+
+/// `session_id` の session が閉じた知らせが届くまで待ち、理由を返す。
+async fn closed(events: &mut Receiver<RuntimeEvent>, session_id: &str) -> String {
+    event(events, |event| match event {
+        RuntimeEvent::GameSessionClosed {
+            session_id: closed,
+            reason,
+            ..
+        } if closed == session_id => Some(reason),
+        _ => None,
+    })
+    .await
+}
+
+/// `session_id` の packet が届くまで取り出す。
+async fn packet(runtime: &DesktopRuntime, session_id: &str) -> kukuri_iroh_node::GamePacket {
+    poll_until(
+        Duration::from_secs(30),
+        Duration::from_millis(20),
+        1,
+        || async {
+            Ok::<_, anyhow::Error>(
+                runtime
+                    .take_game_packets(true, |_| true)
+                    .into_iter()
+                    .find(|(id, _)| id == session_id)
+                    .map_or(PollState::Pending, |(_, packet)| PollState::Ready(packet)),
+            )
+        },
+    )
+    .await
+    .expect("a packet")
+}
+
+/// 閉じた session には、どちらの端末からも送れない。
+fn refuses_packets(runtimes: [&DesktopRuntime; 2], session_id: &str) {
+    for runtime in runtimes {
+        assert_eq!(
+            runtime.send_game_packet(session_id, GameDelivery::Stream, b"late"),
+            Err(GameSendRefused::Closed)
+        );
+    }
 }
 
 async fn eventually_closed_on_host(host: &DesktopRuntime, session_id: &str) {
@@ -172,9 +216,44 @@ async fn a_public_game_session_lasts_until_leave_block_or_end() {
     let room = create_room(&host, topic, ChannelRef::Public, 2).await;
 
     let mut first_events = first.subscribe_events();
+    let mut host_events = host.subscribe_events();
     let session = join_when_allowed(&first, topic, &public, &room).await;
     assert!(first.game_sessions.is_open(&session));
     assert!(host.game_sessions.is_open(&session));
+    // host には参加者とともに開いた知らせが届き、両方の向きで datagram と stream が届く。
+    let first_key = pubkey(&first).await;
+    event(&mut host_events, |event| match event {
+        RuntimeEvent::GameSessionOpened {
+            session_id,
+            participant_pubkey,
+            ..
+        } if session_id == session && participant_pubkey == first_key => Some(()),
+        _ => None,
+    })
+    .await;
+    first
+        .send_game_packet(&session, GameDelivery::Stream, b"catch")
+        .expect("send to the host");
+    let received = packet(&host, &session).await;
+    assert_eq!(
+        (received.delivery, &received.bytes[..]),
+        (GameDelivery::Stream, &b"catch"[..])
+    );
+    host.send_game_packet(&session, GameDelivery::Datagram, b"state")
+        .expect("send to the participant");
+    let received = packet(&first, &session).await;
+    assert_eq!(
+        (received.delivery, &received.bytes[..]),
+        (GameDelivery::Datagram, &b"state"[..])
+    );
+    let path = event(&mut first_events, |event| match event {
+        RuntimeEvent::GameSessionPath {
+            session_id, path, ..
+        } if session_id == session => Some(path),
+        _ => None,
+    })
+    .await;
+    assert_eq!(path, "direct_p2p");
     // host を含めて 2 人の room は満員。
     let _ = join_when_allowed_or(&second, topic, &public, &room, "room_full").await;
 
@@ -186,7 +265,9 @@ async fn a_public_game_session_lasts_until_leave_block_or_end() {
         .expect("leave");
     assert_eq!(closed(&mut first_events, &session).await, "left");
     assert!(!first.game_sessions.is_open(&session));
+    assert_eq!(closed(&mut host_events, &session).await, "left");
     eventually_closed_on_host(&host, &session).await;
+    refuses_packets([&first, &host], &session);
 
     // 退出で空いた枠に入れる。host が block すると、評価し直しで閉じる。
     let mut second_events = second.subscribe_events();
@@ -199,6 +280,7 @@ async fn a_public_game_session_lasts_until_leave_block_or_end() {
     assert_eq!(closed(&mut second_events, &blocked).await, "access_revoked");
     assert!(!second.game_sessions.is_open(&blocked));
     eventually_closed_on_host(&host, &blocked).await;
+    refuses_packets([&second, &host], &blocked);
     // 一覧には出ていて参加者の端末は要求を作れるが、host が断る。
     assert_eq!(
         join(&second, topic, &public, &room)
@@ -221,6 +303,7 @@ async fn a_public_game_session_lasts_until_leave_block_or_end() {
     assert_eq!(closed(&mut first_events, &ended).await, "room_ended");
     assert!(!first.game_sessions.is_open(&ended));
     assert!(!host.game_sessions.is_open(&ended));
+    refuses_packets([&first, &host], &ended);
     assert_eq!(
         join(&first, topic, &public, &room)
             .await

@@ -29,6 +29,40 @@ namespace Kukuri.GameSdk
         }
     }
 
+    /// action session の packet の配送（ADR 0070 §5.2）。最新の状態は欠けてよい `Datagram`（1 件 1100 bytes まで）、
+    /// 確定させる操作は順に全部届く `Stream`（1 件 64 KiB まで）。
+    public enum KukuriDelivery
+    {
+        Datagram = 1,
+        Stream = 2,
+    }
+
+    /// `SendPacket` の結果。`TooLarge` は上限を超える大きさ、`Backpressure` は stream の送り待ちが上限で受け付けなかった、
+    /// `Closed` は閉じた・知らない session。
+    public enum KukuriSendStatus
+    {
+        Sent,
+        TooLarge,
+        Backpressure,
+        Closed,
+        Faulted,
+    }
+
+    /// 受け取った packet。`Data` は呼出元のもの（SDK は保持しない）。
+    public readonly struct KukuriPacket
+    {
+        public string SessionId { get; }
+        public KukuriDelivery Delivery { get; }
+        public byte[] Data { get; }
+
+        internal KukuriPacket(string sessionId, KukuriDelivery delivery, byte[] data)
+        {
+            SessionId = sessionId;
+            Delivery = delivery;
+            Data = data;
+        }
+    }
+
     /// 要求への応答。秘密の出力（招待 token・暗号化した鍵の export）は `Secret` だけに入り、`Raw` には入らない。
     public sealed class KukuriResponse
     {
@@ -46,7 +80,7 @@ namespace Kukuri.GameSdk
     public sealed unsafe class KukuriClient : IDisposable
     {
         /// この C# が対応する C ABI の版。DLL の版と違えば開かない。
-        public const uint AbiVersion = 1;
+        public const uint AbiVersion = 2;
 
         /// Editor が Sidecar の mode の Open の前に呼ぶ（動いていなければ Sidecar を起動する）。Player では null。
         public static Action<string, string> EnsureSidecar;
@@ -92,6 +126,7 @@ namespace Kukuri.GameSdk
         {
             public uint Kind;
             public byte[] Data;
+            /// 応答の秘密の出力、または packet の event の bytes。
             public byte[] Secret;
         }
 
@@ -103,6 +138,9 @@ namespace Kukuri.GameSdk
 
         /// runtime の event（`RuntimeEvent` と `events_lost`）。`Pump` の中から main thread で呼ぶ。
         public event Action<JObject> EventReceived;
+
+        /// 参加中・受け付けた session の packet（`game_session_packet`）。`Pump` の中から main thread で呼ぶ。
+        public event Action<KukuriPacket> PacketReceived;
 
         public string Profile => profile;
 
@@ -195,6 +233,28 @@ namespace Kukuri.GameSdk
             return entry.Completion.Task;
         }
 
+        /// session の packet を送り待ちに置いて即座に戻る（network を待たない）。datagram は送り待ちが溢れたら古いものを捨てる。
+        public KukuriSendStatus SendPacket(string sessionId, KukuriDelivery delivery, ReadOnlySpan<byte> data)
+        {
+            RequireOwnerThread();
+            if (closed)
+                return KukuriSendStatus.Closed;
+            var target = Encoding.UTF8.GetBytes(sessionId);
+            int status;
+            fixed (byte* targetBytes = target)
+            fixed (byte* dataBytes = data)
+                status = Native.kukuri_sdk_send_binary(handle, (uint)delivery, targetBytes, (UIntPtr)target.Length,
+                    dataBytes, (UIntPtr)data.Length);
+            switch (status)
+            {
+                case Native.Ok: return KukuriSendStatus.Sent;
+                case Native.InvalidArgument: return KukuriSendStatus.TooLarge;
+                case Native.Backpressure: return KukuriSendStatus.Backpressure;
+                case Native.Closed: return KukuriSendStatus.Closed;
+                default: return KukuriSendStatus.Faulted;
+            }
+        }
+
         /// 実行前の要求を取り消す（応答は `cancelled`）。実行中の要求は取り消せず、実際の結果が返る。
         void Cancel(string requestId)
         {
@@ -246,9 +306,10 @@ namespace Kukuri.GameSdk
                 {
                     var item = batch->Items[index];
                     var received = new Received { Kind = item.Kind, Data = Copy(item) };
-                    // 秘密の出力は直前の応答と組にする（SDK は必ず応答の直後に置く）。
-                    if (item.Kind == Native.ItemResponse && index + 1 < count &&
-                        batch->Items[index + 1].Kind == Native.ItemSecret)
+                    // 秘密の出力は直前の応答と、bytes は直前の packet の event と組にする（SDK は必ず直後に置く）。
+                    var next = index + 1 < count ? batch->Items[index + 1].Kind : 0;
+                    if ((item.Kind == Native.ItemResponse && next == Native.ItemSecret) ||
+                        (item.Kind == Native.ItemEvent && next == Native.ItemBytes))
                         received.Secret = Copy(batch->Items[++index]);
                     if (item.Kind == Native.ItemResponse || item.Kind == Native.ItemEvent)
                         backlog.Enqueue(received);
@@ -271,11 +332,17 @@ namespace Kukuri.GameSdk
         {
             if (received.Kind == Native.ItemEvent)
             {
-                if (!events || EventReceived == null)
+                if (!events)
                     return;
                 try
                 {
-                    EventReceived(JObject.Parse(Encoding.UTF8.GetString(received.Data)));
+                    var parsed = JObject.Parse(Encoding.UTF8.GetString(received.Data));
+                    if (received.Secret != null)
+                        PacketReceived?.Invoke(new KukuriPacket((string)parsed["session_id"],
+                            (string)parsed["delivery"] == "stream" ? KukuriDelivery.Stream : KukuriDelivery.Datagram,
+                            received.Secret));
+                    else
+                        EventReceived?.Invoke(parsed);
                 }
                 catch (Exception error)
                 {

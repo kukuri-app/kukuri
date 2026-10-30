@@ -6,18 +6,20 @@ mod client;
 pub mod sidecar;
 
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{Mutex, Once},
 };
 
 pub use client::{
-    CANCELLED, Item, ItemKind, MAX_EVENTS, MAX_PENDING, MAX_POLL_ITEMS, Mode, SdkClient, SdkConfig,
-    Started, Status,
+    BINARY_DATAGRAM, BINARY_STREAM, CANCELLED, Item, ItemKind, MAX_EVENTS, MAX_PENDING,
+    MAX_POLL_ITEMS, Mode, SdkClient, SdkConfig, Started, Status,
 };
 
-/// C# が読み込み直後に照合する ABI の版。
-pub const ABI_VERSION: u32 = 1;
+/// C# が読み込み直後に照合する ABI の版（2: `kukuri_sdk_send_binary` と batch の bytes の項目。#1979）。
+pub const ABI_VERSION: u32 = 2;
+/// poll 済みで未解放の batch の合計の上限。達したら新しい packet を受け取らない（ADR 0070 §3、F-ABI-16）。
+pub const MAX_UNRELEASED_BYTES: usize = 64 << 20;
 
 #[repr(C)]
 pub struct KukuriItem {
@@ -64,11 +66,24 @@ impl Backend {
         }
     }
 
-    fn poll(&mut self, max_items: usize, max_bytes: usize) -> Result<Vec<Item>, Status> {
+    fn send_binary(&mut self, kind: u32, target: &str, bytes: &[u8]) -> Status {
         match self {
-            Self::Local(client) => client.poll(max_items, max_bytes),
+            Self::Local(client) => client.send_binary(kind, target, bytes),
             #[cfg(windows)]
-            Self::Sidecar(client) => client.poll(max_items, max_bytes),
+            Self::Sidecar(client) => client.send_binary(kind, target, bytes),
+        }
+    }
+
+    fn poll(
+        &mut self,
+        max_items: usize,
+        max_bytes: usize,
+        accept: bool,
+    ) -> Result<Vec<Item>, Status> {
+        match self {
+            Self::Local(client) => client.poll(max_items, max_bytes, accept),
+            #[cfg(windows)]
+            Self::Sidecar(client) => client.poll(max_items, max_bytes, accept),
         }
     }
 
@@ -81,10 +96,16 @@ impl Backend {
     }
 }
 
+#[derive(Default)]
+struct Batches {
+    /// 解放されていない batch の address と bytes。別の handle の batch・解放済みの batch を見分ける。
+    owned: HashMap<usize, usize>,
+    bytes: usize,
+}
+
 pub struct KukuriHandle {
     client: Mutex<Backend>,
-    /// 解放されていない batch の address。別の handle の batch・解放済みの batch を見分ける。
-    batches: Mutex<HashSet<usize>>,
+    batches: Mutex<Batches>,
 }
 
 impl KukuriHandle {
@@ -96,12 +117,18 @@ impl KukuriHandle {
     pub fn from_backend(client: Backend) -> *mut Self {
         Box::into_raw(Box::new(Self {
             client: Mutex::new(client),
-            batches: Mutex::new(HashSet::new()),
+            batches: Mutex::default(),
         }))
     }
 
     fn client(&self) -> std::sync::MutexGuard<'_, Backend> {
         self.client
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn batches(&self) -> std::sync::MutexGuard<'_, Batches> {
+        self.batches
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -207,6 +234,36 @@ pub unsafe extern "C" fn kukuri_sdk_send(
     })
 }
 
+/// session の packet を送り待ちに置いて即座に戻る。`kind` は 1 が datagram、2 が stream、`target` は session ID。
+/// 上限を超える大きさ・不明な kind は `INVALID_ARGUMENT`、閉じた session は `CLOSED`、stream の送り待ちが上限に
+/// 達したら `BACKPRESSURE`（受け付けない）。datagram は送り待ちが溢れたら古いものを捨てて `OK`。
+///
+/// # Safety
+/// `handle` は解放前の handle、`target` と `bytes` はそれぞれの長さだけ読めること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kukuri_sdk_send_binary(
+    handle: *mut KukuriHandle,
+    kind: u32,
+    target: *const u8,
+    target_len: usize,
+    data: *const u8,
+    len: usize,
+) -> i32 {
+    guard(|| {
+        let (Some(handle), Some(target), Some(data)) = (
+            unsafe { handle.as_ref() },
+            unsafe { bytes(target, target_len) },
+            unsafe { bytes(data, len) },
+        ) else {
+            return Status::InvalidArgument;
+        };
+        let Ok(target) = std::str::from_utf8(target) else {
+            return Status::InvalidArgument;
+        };
+        handle.client().send_binary(kind, target, data)
+    })
+}
+
 /// 実行前の要求を取り消す。
 ///
 /// # Safety
@@ -249,7 +306,8 @@ pub unsafe extern "C" fn kukuri_sdk_poll(
             return Status::InvalidArgument;
         }
         unsafe { *out = std::ptr::null() };
-        let items = match handle.client().poll(max_items, max_bytes) {
+        let accept = handle.batches().bytes < MAX_UNRELEASED_BYTES;
+        let items = match handle.client().poll(max_items, max_bytes, accept) {
             Ok(items) => items,
             Err(status) => return status,
         };
@@ -276,12 +334,11 @@ pub unsafe extern "C" fn kukuri_sdk_poll(
             items: owned.items.as_ptr(),
             count: owned.items.len(),
         };
+        let size = owned.data.iter().map(Vec::len).sum::<usize>();
         let batch = Box::into_raw(owned);
-        handle
-            .batches
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(batch as usize);
+        let mut batches = handle.batches();
+        batches.owned.insert(batch as usize, size);
+        batches.bytes += size;
         unsafe { *out = batch.cast::<KukuriBatch>() };
         Status::Ok
     })
@@ -300,14 +357,12 @@ pub unsafe extern "C" fn kukuri_sdk_batch_release(
         let Some(handle) = (unsafe { handle.as_ref() }) else {
             return Status::InvalidArgument;
         };
-        let owned = handle
-            .batches
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&(batch as usize));
-        if !owned {
+        let mut batches = handle.batches();
+        let Some(size) = batches.owned.remove(&(batch as usize)) else {
             return Status::InvalidArgument;
-        }
+        };
+        batches.bytes -= size;
+        drop(batches);
         drop(unsafe { Box::from_raw(batch.cast_mut().cast::<OwnedBatch>()) });
         Status::Ok
     })
@@ -337,13 +392,8 @@ pub unsafe extern "C" fn kukuri_sdk_free(handle: *mut KukuriHandle) {
             return;
         }
         let handle = unsafe { Box::from_raw(handle) };
-        let batches = std::mem::take(
-            &mut *handle
-                .batches
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()),
-        );
-        for batch in batches {
+        let batches = std::mem::take(&mut handle.batches().owned);
+        for batch in batches.into_keys() {
             drop(unsafe { Box::from_raw(batch as *mut OwnedBatch) });
         }
         drop(handle);

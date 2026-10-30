@@ -1,4 +1,5 @@
 mod dome_session;
+mod game_channel;
 mod game_session;
 mod legacy;
 mod media;
