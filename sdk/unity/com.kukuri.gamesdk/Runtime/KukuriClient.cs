@@ -200,7 +200,7 @@ namespace Kukuri.GameSdk
 
         /// 要求を送る（handle を開いた thread から）。結果は `Pump` が完了させる。`secret` は秘密の入力（passphrase・export・招待 token）で、JSON や log に出さない。
         public Task<KukuriResponse> SendAsync(string command, JObject payload = null, byte[] secret = null,
-            bool acceptsSecretOutput = false, CancellationToken cancellation = default)
+            bool acceptsSecretOutput = false, CancellationToken cancellation = default, int timeoutMilliseconds = 0)
         {
             RequireOwnerThread();
             if (closed)
@@ -218,6 +218,9 @@ namespace Kukuri.GameSdk
                 envelope["secret_bytes"] = secret.Length;
             if (acceptsSecretOutput)
                 envelope["accepts_secret_output"] = true;
+            // 要求の期限（既定 30 秒、上限 5 分。ADR 0070 §3）。大きなアセットの取得などで延ばす。
+            if (timeoutMilliseconds > 0)
+                envelope["timeout_ms"] = timeoutMilliseconds;
             var bytes = Encoding.UTF8.GetBytes(envelope.ToString(Formatting.None));
             int status;
             fixed (byte* request = bytes)

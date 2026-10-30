@@ -18,6 +18,11 @@
       "displayName": "Netcode Sync",
       "description": "Netcode for GameObjects 2.13.3 以降を入れた project で、Lobby で作った・参加した room の session に NGO を載せ、cube の位置を同期する最小 sample。",
       "path": "Samples~/NetcodeSync"
+    },
+    {
+      "displayName": "Skin Loader",
+      "description": "glTFast 6.20.0 以降を入れた project で、信頼する発行者が署名したスキンを P2P で取得し、新しい版を再起動せずに差し替える sample。",
+      "path": "Samples~/SkinLoader"
     }
   ]
 }

@@ -269,6 +269,9 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
   - stream の送り待ちが上限で受け付けられなかった分は、相手ごとに 1 MiB まで手元に持って順に送り直す。超えたらその相手を切る。
   - host が開いた知らせより先に受けた packet は、session ごとに 64 件まで持ち、開いたら渡す。
   - 切断（host が外す・client が退出する・NGO を止める）は session をすぐ閉じる。その時点の送り待ちの分（NGO の切断の理由の message を含む）は届かないことがある。
+- Assets の module（`Runtime/Assets`、#1980 AC-2）は、glTFast 6.20.0 以上 7.0 未満が入った project だけで compile する。`KukuriSkinLoader` は、信頼する発行者の公開鍵・application ID・asset ID の最新の検証済みの file を `fetch_game_asset` で得て表示する。`game_asset_updated` を受けたら読み直し、再起動せずに差し替える。
+  - .glb は glTFast で読み、`TimeBudgetPerFrameDeferAgent` で 1 frame の処理を予算の中に抑える。PNG・JPEG は renderer の material の texture にする。AssetBundle は自分の Unity の版と build の対象が manifest と合うときだけ読み、最初の GameObject を置く。
+  - 新しい版を読み終えてから入れ替え、前の版の GameObject・glTF の資源・texture・AssetBundle を解放する。読めなければ理由を `Failed` で知らせ、今のスキンを保つ。
 - C# の結果（Task）と event の callback は Unity の main thread で、poll の中から呼ぶ。Rust の worker thread から GameObject や UI を触らない。
 - 1 frame で poll に使う件数と時間には上限を置く（既定値は §8）。上限を超えた分は次の frame へ回す。
 - mode（FFI / Sidecar）と profile 名は設定 asset で明示する。本番の Player の既定は FFI で、外部の daemon を自動で起動しない。
