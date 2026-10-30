@@ -422,7 +422,9 @@ async fn a_friend_plus_game_session_admits_the_share_chain_only() {
     let dir = tempdir().expect("tempdir");
     let topic = "kukuri:topic:test-game-session-friend-plus";
     let [owner, sponsor, outsider] = three(dir.path(), topic).await;
-    let member = new_runtime(dir.path(), "chain-member").await.expect("member");
+    let member = new_runtime(dir.path(), "chain-member")
+        .await
+        .expect("member");
     refresh_runtime_peer_tickets(&[&owner, &sponsor, &outsider, &member])
         .await
         .expect("tickets");
