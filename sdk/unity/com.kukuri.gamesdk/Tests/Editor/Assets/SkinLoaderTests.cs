@@ -91,17 +91,53 @@ namespace Kukuri.GameSdk.Assets.Tests
             return path;
         }
 
-        IEnumerator Publish(string topic, string path, Action<long> revision)
+        IEnumerator Publish(string topic, string path, Action<long> revision, string asset = "skin", string kind = "glb",
+            string buildTarget = null)
         {
+            var format = new JObject { ["kind"] = kind };
+            if (kind == "asset_bundle")
+            {
+                format["unity_version"] = UnityEngine.Application.unityVersion;
+                format["build_target"] = buildTarget;
+            }
             yield return Call(publisher, "publish_game_asset", new JObject
             {
                 ["topic"] = topic,
                 ["application_id"] = Application,
-                ["asset_id"] = "skin",
-                ["format"] = new JObject { ["kind"] = "glb" },
+                ["asset_id"] = asset,
+                ["format"] = format,
                 ["path"] = path,
             }, data => revision((long)data["revision"]));
         }
+
+        /// primitive の prefab だけを入れた AssetBundle を、同じ bundle 名で作る（版ごとに作り直す）。
+        static string Bundle(PrimitiveType shape)
+        {
+            const string prefab = "Assets/KgsSkinBundle.prefab";
+            var source = GameObject.CreatePrimitive(shape);
+            UnityEditor.PrefabUtility.SaveAsPrefabAsset(source, prefab);
+            Object.DestroyImmediate(source);
+            var output = Path.Combine(Path.GetTempPath(), "kgs-bundle-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Directory.CreateDirectory(output);
+            UnityEditor.BuildPipeline.BuildAssetBundles(output,
+                new[] { new UnityEditor.AssetBundleBuild { assetBundleName = "kgs-skin", assetNames = new[] { prefab } } },
+                UnityEditor.BuildAssetBundleOptions.None, UnityEditor.BuildTarget.StandaloneWindows64);
+            UnityEditor.AssetDatabase.DeleteAsset(prefab);
+            return Path.Combine(output, "kgs-skin");
+        }
+
+        /// 1 色で塗った PNG の texture を書く（自己生成の fixture）。
+        static string Png(Color color)
+        {
+            var texture = new Texture2D(4, 4);
+            texture.SetPixels(Enumerable.Repeat(color, 16).ToArray());
+            var path = Path.Combine(Path.GetTempPath(), $"kgs-banner-{Guid.NewGuid():N}.png");
+            File.WriteAllBytes(path, texture.EncodeToPNG());
+            Object.DestroyImmediate(texture);
+            return path;
+        }
+
+        static Color Shown(Renderer renderer) => ((Texture2D)renderer.sharedMaterial.mainTexture).GetPixel(0, 0);
 
         static int Vertices(KukuriSkinLoader loader) =>
             loader.Instance.GetComponentsInChildren<MeshFilter>(true).Sum(filter => filter.sharedMesh.vertexCount);
@@ -214,6 +250,70 @@ namespace Kukuri.GameSdk.Assets.Tests
             for (var index = 0; index < before.Length; index++)
                 Assert.LessOrEqual(after[index], before[index], "repeated swaps release the previous skins");
             Assert.LessOrEqual(slowestFrameMilliseconds, 33, "a frame while applying stays within the budget");
+
+            // texture の fixture（PNG）でも、差し替え・壊れた版での維持・資源の回収が同じく働く。
+            var quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            quad.transform.SetParent(loaderObject.transform, false);
+            var bannerObject = new GameObject("banner");
+            bannerObject.transform.SetParent(loaderObject.transform, false);
+            var banner = bannerObject.AddComponent<KukuriSkinLoader>();
+            string bannerFailure = null;
+            banner.Failed += reason => bannerFailure = reason;
+            typeof(KukuriSkinLoader).GetField("textureTarget", System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance).SetValue(banner, quad.GetComponent<Renderer>());
+            banner.Topic = topic;
+            banner.PublisherPubkey = publisherKey;
+            banner.ApplicationId = Application;
+            banner.AssetId = "banner";
+            yield return Publish(topic, Png(Color.red), value => revision = value, "banner", "png");
+            banner.Client = player;
+            yield return Frames(() => banner.AppliedRevision == revision, "the first banner was not applied");
+            Assert.AreEqual(Color.red, Shown(quad.GetComponent<Renderer>()));
+            yield return Publish(topic, Png(Color.blue), value => revision = value, "banner", "png");
+            yield return Frames(() => banner.AppliedRevision == revision, "the new banner was not applied");
+            Assert.AreEqual(Color.blue, Shown(quad.GetComponent<Renderer>()));
+            var brokenPng = Path.Combine(Path.GetTempPath(), $"kgs-broken-{Guid.NewGuid():N}.png");
+            File.WriteAllBytes(brokenPng, new byte[] { 0x89, (byte)'P', (byte)'N', (byte)'G', 13, 10, 26, 10, 0, 1, 2, 3 });
+            yield return Publish(topic, brokenPng, value => revision = value, "banner", "png");
+            yield return Frames(() => bannerFailure != null, "the broken banner was not reported");
+            Assert.AreEqual("invalid_asset", bannerFailure);
+            Assert.AreEqual(Color.blue, Shown(quad.GetComponent<Renderer>()), "the current banner is kept");
+            var textures = UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Length;
+            foreach (var color in new[] { Color.green, Color.yellow, Color.cyan })
+            {
+                yield return Publish(topic, Png(color), value => revision = value, "banner", "png");
+                yield return Frames(() => banner.AppliedRevision == revision, "a repeated banner was not applied");
+                Assert.AreEqual(color, Shown(quad.GetComponent<Renderer>()));
+            }
+            Assert.LessOrEqual(UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Length, textures,
+                "repeated banners release the previous textures");
+            Capture("4-banner");
+
+            // AssetBundle: 同じ bundle 名で作り直した新しい版にも差し替わる。build の対象が合わない版は読まない。
+            var bundleObject = new GameObject("bundle");
+            bundleObject.transform.SetParent(loaderObject.transform, false);
+            bundleObject.transform.localPosition = new Vector3(5, 0, 0);
+            var bundled = bundleObject.AddComponent<KukuriSkinLoader>();
+            string bundleFailure = null;
+            bundled.Failed += reason => bundleFailure = reason;
+            bundled.Topic = topic;
+            bundled.PublisherPubkey = publisherKey;
+            bundled.ApplicationId = Application;
+            bundled.AssetId = "bundle";
+            yield return Publish(topic, Bundle(PrimitiveType.Cube), value => revision = value, "bundle", "asset_bundle",
+                "StandaloneWindows64");
+            bundled.Client = player;
+            yield return Frames(() => bundled.AppliedRevision == revision, "the first bundle was not applied");
+            var bundledCube = Vertices(bundled);
+            yield return Publish(topic, Bundle(PrimitiveType.Sphere), value => revision = value, "bundle", "asset_bundle",
+                "StandaloneWindows64");
+            yield return Frames(() => bundled.AppliedRevision == revision, "the rebuilt bundle was not applied");
+            Assert.AreNotEqual(bundledCube, Vertices(bundled), "the bundle with the same name was swapped");
+            yield return Publish(topic, Bundle(PrimitiveType.Cube), value => revision = value, "bundle", "asset_bundle",
+                "Android");
+            yield return Frames(() => bundleFailure != null, "the incompatible bundle was not reported");
+            Assert.AreEqual("incompatible_asset_bundle", bundleFailure);
+            Assert.AreEqual(revision - 1, bundled.AppliedRevision, "the current bundle is kept");
         }
     }
 }

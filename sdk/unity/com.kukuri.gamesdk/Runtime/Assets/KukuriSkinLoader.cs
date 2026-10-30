@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using GLTFast;
+using GLTFast.Loading;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
@@ -31,6 +32,8 @@ namespace Kukuri.GameSdk.Assets
 
         KukuriClient client;
         KukuriClient subscribed;
+        /// PNG・JPEG を貼るために複製した material（loader が持ち、破棄する）。
+        Material ownMaterial;
         bool loading;
         bool again;
         GltfImport currentImport;
@@ -83,6 +86,8 @@ namespace Kukuri.GameSdk.Assets
             if (subscribed != null)
                 subscribed.EventReceived -= OnEvent;
             Release(Instance, currentImport, currentTexture, currentBundle);
+            if (ownMaterial != null)
+                DestroyNow(ownMaterial);
         }
 
         void OnEvent(JObject @event)
@@ -141,7 +146,19 @@ namespace Kukuri.GameSdk.Assets
                 return;
             var path = (string)response.Data["path"];
             var format = (JObject)response.Data["format"];
-            var reason = await ApplyAsync(path, format);
+            string reason;
+            try
+            {
+                reason = await ApplyAsync(path, format);
+            }
+            catch (Exception error)
+            {
+                // file を開けない（新しい版の適用で前の file が消えた等）・読み込みの例外。今のスキンはそのまま。
+                Debug.LogWarning($"kukuri: the skin could not be loaded: {error.Message}");
+                reason = "invalid_asset";
+            }
+            if (this == null)
+                return;
             if (reason != null)
             {
                 Failed?.Invoke(reason);
@@ -159,14 +176,24 @@ namespace Kukuri.GameSdk.Assets
             {
                 case "glb":
                 {
-                    var import = new GltfImport(deferAgent: GetComponent<TimeBudgetPerFrameDeferAgent>());
+                    // .glb の外の URI（buffer・image）は読まない。署名と hash で確かめた file の中だけを使う。
+                    var import = new GltfImport(new NoDownloads(), GetComponent<TimeBudgetPerFrameDeferAgent>());
                     var holder = new GameObject("skin");
                     holder.SetActive(false);
                     holder.transform.SetParent(root, false);
-                    if (!await import.LoadFile(path) || !await import.InstantiateMainSceneAsync(holder.transform))
+                    try
+                    {
+                        if (!await import.LoadFile(path) || !await import.InstantiateMainSceneAsync(holder.transform) ||
+                            this == null)
+                        {
+                            Release(holder, import, null, null);
+                            return "invalid_asset";
+                        }
+                    }
+                    catch
                     {
                         Release(holder, import, null, null);
-                        return "invalid_asset";
+                        throw;
                     }
                     Swap(holder, import, null, null);
                     return null;
@@ -176,13 +203,22 @@ namespace Kukuri.GameSdk.Assets
                 {
                     if (textureTarget == null)
                         return "no_texture_target";
+                    var bytes = await File.ReadAllBytesAsync(path);
+                    if (this == null)
+                        return "destroyed";
                     var texture = new Texture2D(2, 2);
-                    if (!texture.LoadImage(await File.ReadAllBytesAsync(path)))
+                    if (!texture.LoadImage(bytes))
                     {
                         Release(null, null, texture, null);
                         return "invalid_asset";
                     }
-                    textureTarget.material.mainTexture = texture;
+                    if (ownMaterial == null)
+                    {
+                        // 共有の material を書き換えないよう、1 度だけ複製して renderer に持たせる。
+                        ownMaterial = new Material(textureTarget.sharedMaterial);
+                        textureTarget.sharedMaterial = ownMaterial;
+                    }
+                    ownMaterial.mainTexture = texture;
                     Swap(null, null, texture, null);
                     return null;
                 }
@@ -192,6 +228,13 @@ namespace Kukuri.GameSdk.Assets
                     if ((string)format["unity_version"] != Application.unityVersion ||
                         (string)format["build_target"] != BuildTarget)
                         return "incompatible_asset_bundle";
+                    // 同じ名前で作り直した bundle は、前の bundle を開いたままでは読めない。前の bundle を閉じてから読む
+                    // （置いた GameObject と読み出した asset は残るので、今のスキンは表示されたまま）。
+                    if (currentBundle != null)
+                    {
+                        currentBundle.Unload(false);
+                        currentBundle = null;
+                    }
                     var request = AssetBundle.LoadFromFileAsync(path);
                     await Until(request);
                     var bundle = request.assetBundle;
@@ -199,13 +242,15 @@ namespace Kukuri.GameSdk.Assets
                         return "invalid_asset";
                     var assets = bundle.LoadAllAssetsAsync<GameObject>();
                     await Until(assets);
-                    if (assets.asset is not GameObject prefab)
+                    if (assets.asset is not GameObject prefab || this == null)
                     {
                         bundle.Unload(true);
                         return "invalid_asset";
                     }
                     var instance = Instantiate(prefab, root, false);
                     Swap(instance, null, null, bundle);
+                    // 閉じた前の bundle から読み出していた asset を解放する。
+                    _ = Resources.UnloadUnusedAssets();
                     return null;
                 }
                 default:
@@ -246,6 +291,26 @@ namespace Kukuri.GameSdk.Assets
                 Destroy(target);
             else
                 DestroyImmediate(target);
+        }
+
+        /// glTF の外の URI を読まない download provider。GLB の BIN chunk と data URI だけが使われる。
+        sealed class NoDownloads : IDownloadProvider
+        {
+            public Task<IDownload> Request(Uri url) => Task.FromResult<IDownload>(new Refused());
+
+            public Task<ITextureDownload> RequestTexture(Uri url, bool nonReadable) =>
+                Task.FromResult<ITextureDownload>(new Refused());
+
+            sealed class Refused : ITextureDownload
+            {
+                public bool Success => false;
+                public string Error => "kukuri skins do not load data from outside the signed file";
+                public byte[] Data => null;
+                public string Text => null;
+                public bool? IsBinary => null;
+                public Texture2D Texture => null;
+                public void Dispose() { }
+            }
         }
 
         static async Task Until(AsyncOperation operation)
