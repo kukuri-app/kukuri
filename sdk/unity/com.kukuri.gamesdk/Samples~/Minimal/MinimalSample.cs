@@ -10,6 +10,8 @@ using UnityEngine;
 /// 前は SNS・ロビーを開かない。既存の kukuri アカウントを使う人は「kukuriアカウントを使う」で、kukuri app の「別の端末へ
 /// 移す」のリンクを貼り付け、両方に出る確認コードの一致を承認して移行で受ける（鍵・export の文字列は扱わない）。kukuri app で
 /// 暗号化 export したアカウントの取り込みは、端末を失ったときの「復旧」の上級の操作として開始の画面から分ける。
+/// プレイ中の「kukuriで続ける」は、このゲームのアカウントを同じ鍵のまま kukuri app へ移すリンクをコピーする（ADR 0070
+/// §4.2）。
 public sealed class MinimalSample : MonoBehaviour
 {
     [SerializeField] KukuriRunner runner;
@@ -33,6 +35,8 @@ public sealed class MinimalSample : MonoBehaviour
     JArray documents;
     /// 移行の画面に入るたびに増やす（「戻る」の後に入り直したとき、前の読み直しを止める）。
     int transferRun;
+    /// 移行の画面が、このゲームのアカウントを kukuri app へ移す向き（「kukuriで続ける」）か。
+    bool handingOff;
 
     JObject ThisGame => new JObject { ["application_id"] = applicationId };
 
@@ -109,12 +113,29 @@ public sealed class MinimalSample : MonoBehaviour
     }
 
     /// 「kukuriアカウントを使う」。移行で受ける前の説明と「貼り付け」の画面を出す。
-    public void UseKukuriAccount()
+    public void UseKukuriAccount() => EnterTransfer(false);
+
+    void EnterTransfer(bool handOff)
     {
         message = "";
         Transfer = null;
         transferRun++;
+        handingOff = handOff;
         Screen = "transfer";
+    }
+
+    /// 「kukuriで続ける」。移行のリンクを作って clipboard へコピーし、kukuri app が受けて終わるまで状態を読み直す。
+    public async Task HandOff()
+    {
+        EnterTransfer(true);
+        var invite = await runner.Client.SendAsync("create_account_transfer_invite", new JObject(), acceptsSecretOutput: true);
+        if (!invite.Ok || invite.Secret == null)
+        {
+            message = $"リンクを作れません: {invite.ErrorCode}";
+            return;
+        }
+        GUIUtility.systemCopyBuffer = Encoding.UTF8.GetString(invite.Secret);
+        await Follow(transferRun);
     }
 
     /// 「貼り付け」。clipboard の移行のリンクを秘密の入力で渡し、終わるまで状態を読み直す。
@@ -143,6 +164,13 @@ public sealed class MinimalSample : MonoBehaviour
             var status = await runner.Client.SendAsync("get_account_transfer_status");
             Transfer = status.Data as JObject;
             var state = (string)Transfer?["state"];
+            if (state == "completed" && handingOff)
+            {
+                message = "kukuri app へ移しました。kukuri app で「このアカウントを使う」を押すと、同じアカウントで会話を続けられます";
+                Transfer = null;
+                Screen = "playing";
+                return;
+            }
             if (state == "completed")
             {
                 // 移行は受けたアカウントを足すだけなので、切り替えてから開始の画面に戻る。
@@ -160,9 +188,9 @@ public sealed class MinimalSample : MonoBehaviour
             {
                 message = (string)Transfer["reason"] switch
                 {
-                    "expired" => "リンクの期限が切れました。もう一度コピーしてください",
-                    "rejected" => "確認コードが一致しなかったので、受け取りませんでした",
-                    _ => "受け取れませんでした。もう一度試してください",
+                    "expired" => "リンクの期限が切れました。もう一度やり直してください",
+                    "rejected" => "確認コードが一致しなかったので、やめました",
+                    _ => "移せませんでした。もう一度試してください",
                 };
                 Transfer = null;
                 return;
@@ -173,7 +201,7 @@ public sealed class MinimalSample : MonoBehaviour
 
     async Task LeaveTransfer()
     {
-        Screen = "start";
+        Screen = handingOff ? "playing" : "start";
         Transfer = null;
         transferRun++;
         await runner.Client.SendAsync("cancel_account_transfer");
@@ -243,6 +271,11 @@ public sealed class MinimalSample : MonoBehaviour
                             _ = Decide(false);
                     }
                 }
+                else if (handingOff)
+                {
+                    GUILayout.Label("このゲームのアカウントを、同じ鍵のまま kukuri app へ移します。");
+                    GUILayout.Label("リンクをコピーしました。kukuri app のアカウントメニューの「アカウント追加」→「別の端末から移す」に貼り付けてください。リンクは 5 分間、1 回だけ使えます。他の人に見せないでください。");
+                }
                 else if (state != null)
                     GUILayout.Label("kukuri app とつないでいます…");
                 else
@@ -270,6 +303,8 @@ public sealed class MinimalSample : MonoBehaviour
                 GUILayout.Label("プレイ中");
                 GUILayout.Label($"game player: {GamePlayerId}");
                 GUILayout.Label($"公開鍵: {PublicKey}");
+                if (GUILayout.Button("kukuriで続ける"))
+                    _ = HandOff();
                 break;
         }
         if (message.Length > 0)
