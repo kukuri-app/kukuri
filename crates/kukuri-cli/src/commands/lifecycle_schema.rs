@@ -94,7 +94,10 @@ pub(super) fn input(name: &str) -> Value {
         ),
         "import_account_key" => object(json!({"label": nullable(string())}), &[]),
         "switch_account" | "logout_account" => fields(json!({"account_id": string()})),
-        "start_game_player" | "get_game_player" => fields(json!({"application_id": string()})),
+        "start_game_player" | "get_game_player" | "get_cloud_account" => {
+            fields(json!({"application_id": string()}))
+        }
+        "set_cloud_account" => fields(json!({"application_id": string(), "enabled": boolean()})),
         "create_account" => fields(json!({"account_id": string(), "operation_id": string()})),
         "create_device_backup_command" | "preview_device_backup_command" => {
             fields(json!({"path": string()}))
@@ -122,6 +125,9 @@ pub(super) fn output(name: &str) -> Value {
         "import_account_key" | "switch_account" | "logout_account" | "create_account" => account(),
         "start_game_player" => game_player(),
         "get_game_player" => nullable(game_player()),
+        "get_cloud_account" | "set_cloud_account" => fields(
+            json!({"state": {"enum": ["off", "on", "restorable", "other_account", "unreadable"]}}),
+        ),
         "get_account_display" => array(fields(
             json!({"id": string(), "name": nullable(string()), "display_name": nullable(string()), "picture": nullable(string()), "unavailable": boolean()}),
         )),

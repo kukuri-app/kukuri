@@ -28,6 +28,12 @@ impl DesktopRuntime {
         self.author_keys.public_key_hex()
     }
 
+    /// この account の秘密鍵(hex)。Steam Cloud で同期する game の file に書くためだけに使う（ADR 0070 §4.3、#1997）。
+    /// 応答・event・log に出さない。
+    pub fn local_author_secret_hex(&self) -> String {
+        self.author_keys.export_secret_hex()
+    }
+
     pub async fn export_account_key(
         &self,
         request: ExportAccountKeyRequest,

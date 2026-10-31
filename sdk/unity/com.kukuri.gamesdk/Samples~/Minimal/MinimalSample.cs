@@ -11,12 +11,15 @@ using UnityEngine;
 /// 移す」のリンクを貼り付け、両方に出る確認コードの一致を承認して移行で受ける（鍵・export の文字列は扱わない）。kukuri app で
 /// 暗号化 export したアカウントの取り込みは、端末を失ったときの「復旧」の上級の操作として開始の画面から分ける。
 /// プレイ中の「kukuriで続ける」は、このゲームのアカウントを同じ鍵のまま kukuri app へ移すリンクをコピーする（ADR 0070
-/// §4.2）。
+/// §4.2）。Steam で配るゲームは「Steam Cloud に保存」で、ゲームで作ったアカウントと game player を Steam Cloud に置き、
+/// 別の PC でも同じアカウントで再開できる（§4.3。同期はゲームの Steam Auto-Cloud の設定が行う）。
 public sealed class MinimalSample : MonoBehaviour
 {
     [SerializeField] KukuriRunner runner;
     /// このゲームの application ID。1 つの profile は 1 つのゲームの game player だけを持つ。
     [SerializeField] string applicationId = "com.example.minimal";
+    /// Steam で動くとき true にする（「Steam Cloud に保存」を出す）。
+    [SerializeField] bool steamCloud;
 
     // 秘密の値は scene・prefab・PlayerPrefs に残さない（serialize しない）。
     [NonSerialized] string exportText = "";
@@ -28,6 +31,8 @@ public sealed class MinimalSample : MonoBehaviour
     public string GamePlayerId { get; private set; } = "";
     public string PublicKey { get; private set; } = "";
 
+    /// Steam Cloud への保存の状態（`get_cloud_account` の `state`。`off`・`on`・`other_account` など）。
+    public string CloudState { get; private set; } = "off";
     /// 移行の状態（`get_account_transfer_status`。`transfer` の画面で読み直す）。
     public JObject Transfer { get; private set; }
 
@@ -110,6 +115,28 @@ public sealed class MinimalSample : MonoBehaviour
         message = "";
         Screen = "playing";
         Debug.Log($"kukuri sample: playing game_player_id={GamePlayerId}");
+        await ReadCloud();
+    }
+
+    async Task ReadCloud()
+    {
+        var read = await runner.Client.SendAsync("get_cloud_account", ThisGame);
+        CloudState = read.Ok ? (string)read.Data["state"] : CloudState;
+    }
+
+    /// 「Steam Cloud に保存」（`enabled: true`）・「保存をやめる」（`false`）。
+    public async Task SetCloud(bool enabled)
+    {
+        var request = ThisGame;
+        request["enabled"] = enabled;
+        var set = await runner.Client.SendAsync("set_cloud_account", request);
+        message = set.Ok ? "" : (string)set.Raw?["error"]?["details"]?["reason"] switch
+        {
+            "not_game_account" => "このゲームで作ったアカウントだけを Steam Cloud に保存できます",
+            "integration_required" => "Steam Cloud には別の PC で保存したアカウントがあります",
+            _ => $"保存を変えられません: {set.ErrorCode}",
+        };
+        await ReadCloud();
     }
 
     /// 「kukuriアカウントを使う」。移行で受ける前の説明と「貼り付け」の画面を出す。
@@ -310,6 +337,18 @@ public sealed class MinimalSample : MonoBehaviour
                 GUILayout.Label($"公開鍵: {PublicKey}");
                 if (GUILayout.Button("kukuriで続ける"))
                     _ = HandOff();
+                if (steamCloud && CloudState == "on")
+                {
+                    GUILayout.Label("Steam Cloud に保存しています。同じ Steam アカウントなら別の PC でも再開できます。");
+                    if (GUILayout.Button("保存をやめる"))
+                        _ = SetCloud(false);
+                }
+                else if (steamCloud && CloudState == "off")
+                {
+                    GUILayout.Label("Steam Cloud に保存すると、同じ Steam アカウントでログインした別の PC でも、このアカウントと進行で再開できます。Steam アカウントを使える人は、このゲームの kukuri のアカウントも使えます。保存をやめると別の PC では再開できません（この PC のアカウントと進行は残り、すでに Steam に渡った写しは取り消せません）。");
+                    if (GUILayout.Button("Steam Cloud に保存"))
+                        _ = SetCloud(true);
+                }
                 break;
         }
         if (message.Length > 0)

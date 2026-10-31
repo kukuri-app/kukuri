@@ -46,6 +46,12 @@ struct GamePlayerInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct CloudAccountInput {
+    application_id: String,
+    enabled: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BackupInput {
     path: String,
     #[serde(default)]
@@ -110,11 +116,19 @@ impl CommandHandler for Handler {
             }
             "accept_app_consents" => {
                 let request: ConsentInput = decode(payload)?;
-                encode(
-                    session
-                        .accept_consents(request.documents, request.language, request.age_attested)
-                        .await?,
-                )
+                // 同意の前にアカウントが無く、端末の backup の復元でもなければ、同意で作るアカウントはゲームで作ったもの。
+                let created = kukuri_desktop_runtime::list_accounts(&session.app_data_dir)
+                    .await
+                    .map_or(true, |accounts| accounts.accounts.is_empty())
+                    && kukuri_desktop_runtime::pending_device_restore_phase(&session.app_data_dir)
+                        .is_ok_and(|phase| phase.is_none());
+                let status = session
+                    .accept_consents(request.documents, request.language, request.age_attested)
+                    .await?;
+                if created {
+                    game_player::record_origin(&session.app_data_dir).await?;
+                }
+                encode(status)
             }
             "list_accounts" => encode(
                 kukuri_desktop_runtime::list_accounts(&session.app_data_dir)
@@ -143,6 +157,23 @@ impl CommandHandler for Handler {
                     )
                     .await?,
                 )
+            }
+            "get_cloud_account" => {
+                let request: GamePlayerInput = decode(payload)?;
+                encode(
+                    json!({"state": game_player::get_cloud(&session.app_data_dir, &request.application_id).await?}),
+                )
+            }
+            "set_cloud_account" => {
+                let request: CloudAccountInput = decode(payload)?;
+                let state = game_player::set_cloud(
+                    &session.app_data_dir,
+                    context.host.ok_or_else(crate::session::failed)?,
+                    &request.application_id,
+                    request.enabled,
+                )
+                .await?;
+                encode(json!({"state": state}))
             }
             "get_game_player" => {
                 let request: GamePlayerInput = decode(payload)?;
@@ -305,6 +336,8 @@ pub(super) fn registrations(session: Option<Arc<ClientSession>>) -> Vec<CommandR
         ("get_account_display", Read, false, false, true),
         ("start_game_player", Write, false, false, true),
         ("get_game_player", Read, false, false, false),
+        ("get_cloud_account", Read, false, false, false),
+        ("set_cloud_account", Write, false, false, true),
         ("open_account_transfer", Write, true, false, true),
         ("create_account_transfer_invite", Write, false, true, true),
         ("get_account_transfer_status", Read, false, false, true),

@@ -190,6 +190,18 @@ fn an_existing_account_is_received_by_paste_and_kept_across_restarts() {
     assert_eq!(public_key(handle), existing);
     let player = call(handle, "start", "start_game_player", game.clone());
     assert_eq!(player["public_key"], existing);
+    // 受けたアカウントは Steam Cloud に保存できない（ADR 0070 §4.3）。
+    let cloud = request(
+        "cloud",
+        "set_cloud_account",
+        json!({"application_id": GAME, "enabled": true}),
+    );
+    assert_eq!(send(handle, &cloud), 0);
+    let response = response_for(handle, "cloud", Duration::from_secs(60));
+    assert_eq!(
+        response["error"]["details"]["reason"], "not_game_account",
+        "{response}"
+    );
     finish(handle);
 
     let handle = reopen(&dir.path().join("game"));
