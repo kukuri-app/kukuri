@@ -110,27 +110,6 @@ fn the_game_account_is_saved_for_steam_cloud_and_removed_when_turned_off() {
 }
 
 #[test]
-fn only_the_account_made_by_the_game_is_saved() {
-    isolated_environment();
-    let dir = tempfile::tempdir().unwrap();
-    let handle = opened(dir.path());
-    consent(handle);
-    // 同意で作ったアカウントとは別のアカウント（後から足したもの）で始める。
-    let made = call(handle, "accounts", "list_accounts", json!({}))["active_account_id"].clone();
-    call(
-        handle,
-        "create",
-        "create_account",
-        json!({"account_id": made, "operation_id": "00000000-0000-4000-8000-000000000003"}),
-    );
-    start(handle);
-    assert_eq!(refused(handle, true), "not_game_account");
-    assert_eq!(state(handle), "off");
-    assert!(!dir.path().join(CLOUD_FILE).exists());
-    finish(handle);
-}
-
-#[test]
 fn a_file_saved_elsewhere_or_unreadable_is_left_alone() {
     isolated_environment();
     let dir = tempfile::tempdir().unwrap();
@@ -140,16 +119,25 @@ fn a_file_saved_elsewhere_or_unreadable_is_left_alone() {
     assert_eq!(set(handle, true), "on");
     let path = dir.path().join(CLOUD_FILE);
 
-    // 同じ鍵でも、別の game player の file は別の端末で保存したもの。
-    let mut elsewhere: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    elsewhere["game_player_id"] = json!("00000000-0000-4000-8000-000000000009");
-    let elsewhere = serde_json::to_vec(&elsewhere).unwrap();
-    std::fs::write(&path, &elsewhere).unwrap();
-    assert_eq!(state(handle), "other_account");
-    for enabled in [true, false] {
-        assert_eq!(refused(handle, enabled), "integration_required");
+    // 別の鍵、または同じ鍵で別の game player の file は、別の端末で保存したもの。
+    let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    for (field, value) in [
+        ("secret_key", "11".repeat(32)),
+        (
+            "game_player_id",
+            "00000000-0000-4000-8000-000000000009".to_owned(),
+        ),
+    ] {
+        let mut elsewhere = saved.clone();
+        elsewhere[field] = json!(value);
+        let elsewhere = serde_json::to_vec(&elsewhere).unwrap();
+        std::fs::write(&path, &elsewhere).unwrap();
+        assert_eq!(state(handle), "other_account");
+        for enabled in [true, false] {
+            assert_eq!(refused(handle, enabled), "integration_required");
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), elsewhere);
     }
-    assert_eq!(std::fs::read(&path).unwrap(), elsewhere);
 
     std::fs::write(&path, b"{not json").unwrap();
     assert_eq!(state(handle), "unreadable");

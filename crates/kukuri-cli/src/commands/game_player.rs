@@ -257,7 +257,7 @@ pub(super) async fn set_cloud(
             .await
             .map_err(|_| crate::session::failed())?,
         (Cloud::Off, true) => {
-            let binding = read(dir).await?.ok_or_else(not_started)?;
+            let binding = bound(dir, application_id).await?.ok_or_else(not_started)?;
             let origin: Option<Origin> = read_file(dir, ORIGIN_FILE).await?;
             if origin.is_none_or(|origin| origin.account_id != binding.account_id) {
                 return Err(rejected(
