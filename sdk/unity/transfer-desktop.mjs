@@ -31,72 +31,99 @@ const shoot = async (name) => {
 };
 const status = () => desktop.invoke('get_account_transfer_status');
 
+// #1981 AC-2: ゲームの掲示板の投稿に、ゲームを終えている間に返信し、再起動したゲームが読むまで保持する。
+const board = async () => {
+  writeFileSync(join(root, 'desktop-key'), (await desktop.invoke('get_sync_status')).local_author_pubkey);
+  await openTopic(desktop, TOPIC, 'timeline');
+  writeFileSync(join(root, 'desktop-ticket'), await desktop.invoke('get_local_peer_ticket'));
+  await desktop.invoke('import_peer_ticket', { request: { ticket: await marker('game-ticket') } });
+  const post = await marker('game-post');
+  const request = { topic: TOPIC, scope: { kind: 'public' }, cursor: null, limit: 20 };
+  await eventually('the game board post on desktop', () =>
+    desktop.invoke('list_timeline', { request }).then((view) => view.items.some((item) => item.object_id === post)),
+    120_000
+  );
+  writeFileSync(join(root, 'seen'), post);
+  await marker('game-exited');
+  const reply = await desktop.invoke('create_post', {
+    request: { topic: TOPIC, channel_ref: { kind: 'public' }, content: 'test: reply while the game is closed', reply_to: post },
+  });
+  console.log(`replied ${reply}`);
+  writeFileSync(join(root, 'replied'), reply);
+  await marker('done');
+  await shoot('desktop-timeline.png');
+};
+
 const desktop = await launch({ app, root, name: 'desktop', port: 9700 });
 try {
   await accept(desktop);
-  await click(desktop, text('shell', 'accountMenu.open'));
-  await click(desktop, text('shell', 'accountMenu.add'));
-  if (mode === 'source') {
-    const key = (await desktop.invoke('get_sync_status')).local_author_pubkey;
-    await click(desktop, text('shell', 'accountMenu.transferOut'));
-    await click(desktop, text('settings', 'accountTransfer.source.copy'));
-    await eventually('the link to be copied', () => visible(text('settings', 'accountTransfer.source.copied')), 10_000);
-    writeFileSync(join(root, 'copied'), key);
-    console.log(`copied the transfer link of ${key}`);
+  if (mode === 'board') {
+    await board();
   } else {
-    await click(desktop, text('shell', 'accountMenu.transferIn'));
-    const key = await marker('handoff');
-    // 利用者が貼り付けるのと同じく、OS の clipboard のリンクを入力欄へ入れる。
-    const link = execFileSync('powershell', ['-NoProfile', '-Command', 'Get-Clipboard'], { encoding: 'utf8' }).trim();
-    await desktop.evaluate(
-      `(() => {
-        const node = document.querySelector('[data-testid="account-transfer-target"] input');
-        Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), 'value').set.call(node, ${JSON.stringify(link)});
-        node.dispatchEvent(new Event('input', { bubbles: true }));
-        return true;
-      })()`
-    );
-    await choose(desktop, text('settings', 'accountTransfer.history.label'), text('settings', 'accountTransfer.history.choice.month'));
-    await click(desktop, text('settings', 'accountTransfer.target.connect'));
-    console.log(`pasted the transfer link of ${key}`);
-  }
-  const code = await eventually('the confirmation code', () => status().then((each) => (each.state === 'confirming' ? each.code : null)), 120_000);
-  console.log(`confirming ${code}`);
-  await eventually('the match button', () => visible(text('settings', 'accountTransfer.confirm.match')));
-  await shoot('desktop-confirming.png');
-  await click(desktop, text('settings', 'accountTransfer.confirm.match'));
-  await eventually('the transfer to complete', () => status().then((each) => each.state === 'completed'), 60_000);
-  console.log('completed');
-  if (mode === 'target') {
-    const key = await marker('handoff');
-    await click(desktop, text('settings', 'accountTransfer.completed.use'));
-    await eventually('the game account to be active', () =>
-      desktop.invoke('get_sync_status').then((sync) => sync.local_author_pubkey === key).catch(() => false)
-    );
-    console.log(`switched to ${key}`);
-    // 切り替えたアカウントも、試験の端末どうしだけでつながるようにコミュニティノードを外し、案内を閉じる（accept と同じ）。
-    await desktop.invoke('set_community_node_config', { request: { nodes: [], trust_node_priority: null } });
-    await click(desktop, text('settings', 'communityNode.onboarding.later'), { timeout: 10_000 }).catch(() => undefined);
-    await openTopic(desktop, TOPIC, 'timeline');
-    writeFileSync(join(root, 'desktop-ticket'), await desktop.invoke('get_local_peer_ticket'));
-    await desktop.invoke('import_peer_ticket', { request: { ticket: await marker('game-ticket') } });
-    const post = await marker('game-post');
-    const request = { topic: TOPIC, scope: { kind: 'public' }, cursor: null, limit: 20 };
-    await eventually('the game post on desktop', () =>
-      desktop.invoke('list_timeline', { request }).then((view) => view.items.some((item) => item.object_id === post && item.author_pubkey === key)),
-      120_000
-    );
-    const reply = await desktop.invoke('create_post', {
-      request: { topic: TOPIC, channel_ref: { kind: 'public' }, content: 'test: reply from kukuri app', reply_to: post },
-    });
-    console.log(`replied ${reply}`);
-    await marker('received');
-    await eventually('the game post on the timeline', () =>
-      desktop.evaluate(`document.body.innerText.includes('test: from the game')`),
-      60_000
-    );
-    await shoot('desktop-timeline.png');
-    console.log('shown');
+    await click(desktop, text('shell', 'accountMenu.open'));
+    await click(desktop, text('shell', 'accountMenu.add'));
+    if (mode === 'source') {
+      const key = (await desktop.invoke('get_sync_status')).local_author_pubkey;
+      await click(desktop, text('shell', 'accountMenu.transferOut'));
+      await click(desktop, text('settings', 'accountTransfer.source.copy'));
+      await eventually('the link to be copied', () => visible(text('settings', 'accountTransfer.source.copied')), 10_000);
+      writeFileSync(join(root, 'copied'), key);
+      console.log(`copied the transfer link of ${key}`);
+    } else {
+      await click(desktop, text('shell', 'accountMenu.transferIn'));
+      const key = await marker('handoff');
+      // 利用者が貼り付けるのと同じく、OS の clipboard のリンクを入力欄へ入れる。
+      const link = execFileSync('powershell', ['-NoProfile', '-Command', 'Get-Clipboard'], { encoding: 'utf8' }).trim();
+      await desktop.evaluate(
+        `(() => {
+          const node = document.querySelector('[data-testid="account-transfer-target"] input');
+          Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), 'value').set.call(node, ${JSON.stringify(link)});
+          node.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()`
+      );
+      await choose(desktop, text('settings', 'accountTransfer.history.label'), text('settings', 'accountTransfer.history.choice.month'));
+      await click(desktop, text('settings', 'accountTransfer.target.connect'));
+      console.log(`pasted the transfer link of ${key}`);
+    }
+    const code = await eventually('the confirmation code', () => status().then((each) => (each.state === 'confirming' ? each.code : null)), 120_000);
+    console.log(`confirming ${code}`);
+    await eventually('the match button', () => visible(text('settings', 'accountTransfer.confirm.match')));
+    await shoot('desktop-confirming.png');
+    await click(desktop, text('settings', 'accountTransfer.confirm.match'));
+    await eventually('the transfer to complete', () => status().then((each) => each.state === 'completed'), 60_000);
+    console.log('completed');
+    if (mode === 'target') {
+      const key = await marker('handoff');
+      await click(desktop, text('settings', 'accountTransfer.completed.use'));
+      await eventually('the game account to be active', () =>
+        desktop.invoke('get_sync_status').then((sync) => sync.local_author_pubkey === key).catch(() => false)
+      );
+      console.log(`switched to ${key}`);
+      // 切り替えたアカウントも、試験の端末どうしだけでつながるようにコミュニティノードを外し、案内を閉じる（accept と同じ）。
+      await desktop.invoke('set_community_node_config', { request: { nodes: [], trust_node_priority: null } });
+      await click(desktop, text('settings', 'communityNode.onboarding.later'), { timeout: 10_000 }).catch(() => undefined);
+      await openTopic(desktop, TOPIC, 'timeline');
+      writeFileSync(join(root, 'desktop-ticket'), await desktop.invoke('get_local_peer_ticket'));
+      await desktop.invoke('import_peer_ticket', { request: { ticket: await marker('game-ticket') } });
+      const post = await marker('game-post');
+      const request = { topic: TOPIC, scope: { kind: 'public' }, cursor: null, limit: 20 };
+      await eventually('the game post on desktop', () =>
+        desktop.invoke('list_timeline', { request }).then((view) => view.items.some((item) => item.object_id === post && item.author_pubkey === key)),
+        120_000
+      );
+      const reply = await desktop.invoke('create_post', {
+        request: { topic: TOPIC, channel_ref: { kind: 'public' }, content: 'test: reply from kukuri app', reply_to: post },
+      });
+      console.log(`replied ${reply}`);
+      await marker('received');
+      await eventually('the game post on the timeline', () =>
+        desktop.evaluate(`document.body.innerText.includes('test: from the game')`),
+        60_000
+      );
+      await shoot('desktop-timeline.png');
+      console.log('shown');
+    }
   }
 } finally {
   await desktop.close();

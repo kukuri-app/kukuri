@@ -1,0 +1,14 @@
+{
+    "name": "Kukuri.GameSdk.Social",
+    "rootNamespace": "Kukuri.GameSdk.Social",
+    "references": ["Kukuri.GameSdk", "UnityEngine.UI"],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

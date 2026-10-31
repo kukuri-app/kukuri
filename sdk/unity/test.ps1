@@ -61,7 +61,8 @@ if ($lock -match "com\.unity\.netcode") { throw "the test project unexpectedly d
 # 開始の画面の確認用の probe。`-kgs-close`・`-kgs-begin`・`-kgs-resume`・`-kgs-transfer`・`-kgs-handoff` のときだけ sample
 # を操作し、画面・公開鍵・game player ID を log に書き、画面を %TEMP%\kgs-start-*.png に撮って終わる。`-kgs-transfer` は、
 # desktop がリンクをコピーした印（%KGS_TRANSFER_DIR%\copied）を待ってから貼り付ける。`-kgs-handoff` は試験の topic に投稿し、
-# 「kukuriで続ける」でリンクをコピーしてから desktop と %KGS_TRANSFER_DIR% の file でやり取りする。
+# 「kukuriで続ける」でリンクをコピーしてから desktop と %KGS_TRANSFER_DIR% の file でやり取りする。`-kgs-board-post` は、始めてから掲示板の prefab で投稿し、desktop
+# が読んだ印を待って終わる。`-kgs-board-resume` は、desktop の返信の印を待ってから掲示板でその投稿の thread を開き、返信を読む。
 @"
 using System.IO;
 using System.Linq;
@@ -73,10 +74,11 @@ public sealed class KgsStartProbe : MonoBehaviour
 {
     [SerializeField] KukuriRunner runner;
     [SerializeField] MinimalSample sample;
+    [SerializeField] Kukuri.GameSdk.Social.KukuriBoard board;
     static string Mode()
     {
         var args = System.Environment.GetCommandLineArgs();
-        return new[] { "close", "begin", "resume", "transfer", "handoff", "cloud-save", "cloud-restore" }.FirstOrDefault(mode => args.Contains("-kgs-" + mode));
+        return new[] { "close", "begin", "resume", "transfer", "handoff", "board-post", "board-resume", "cloud-save", "cloud-restore" }.FirstOrDefault(mode => args.Contains("-kgs-" + mode));
     }
     async Task Shot(string name)
     {
@@ -85,6 +87,16 @@ public sealed class KgsStartProbe : MonoBehaviour
         ScreenCapture.CaptureScreenshot(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "kgs-start-" + name + ".png"));
         for (var i = 0; i < 5; i++) await Awaitable.NextFrameAsync();
     }
+    /// desktop と互いの ticket を取り込む（loopback の static peer）。
+    async Task Exchange(string dir)
+    {
+        var ticket = await runner.Client.SendAsync("get_local_peer_ticket");
+        File.WriteAllText(Path.Combine(dir, "game-ticket"), (string)ticket.Data);
+        var desktopTicket = Path.Combine(dir, "desktop-ticket");
+        while (!File.Exists(desktopTicket)) await Task.Delay(200);
+        await runner.Client.SendAsync("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(desktopTicket).Trim() });
+    }
+
     async Task<string> Key()
     {
         var sync = await runner.Client.SendAsync("get_sync_status");
@@ -158,6 +170,44 @@ public sealed class KgsStartProbe : MonoBehaviour
             await Shot(mode + "-4");
             File.WriteAllText(Path.Combine(dir, "received"), reply ?? "none");
         }
+        if (mode == "board-post" && sample.Screen == "start")
+        {
+            var dir = System.Environment.GetEnvironmentVariable("KGS_TRANSFER_DIR");
+            await sample.Begin();
+            // 画面には掲示板だけを出す（sample の OnGUI は Canvas の上に描かれる）。
+            sample.enabled = false;
+            board.gameObject.SetActive(true);
+            await board.RefreshAsync();
+            var post = await board.PostAsync("test: from the game board");
+            File.WriteAllText(Path.Combine(dir, "game-post"), post);
+            await Exchange(dir);
+            var seen = Path.Combine(dir, "seen");
+            for (var waited = 0; !File.Exists(seen) && waited < 1800; waited++) await Task.Delay(100);
+            await Shot(mode + "-2");
+            Debug.Log("KGS_BOARD_POST " + post + " " + await Key());
+        }
+        if (mode == "board-resume" && sample.Screen == "playing")
+        {
+            var dir = System.Environment.GetEnvironmentVariable("KGS_TRANSFER_DIR");
+            var replied = Path.Combine(dir, "replied");
+            while (!File.Exists(replied)) await Task.Delay(200);
+            var reply = File.ReadAllText(replied).Trim();
+            await Exchange(dir);
+            sample.enabled = false;
+            board.gameObject.SetActive(true);
+            await board.OpenThreadAsync(File.ReadAllText(Path.Combine(dir, "game-post")).Trim());
+            for (var waited = 0; board.Posts.All(item => item.ObjectId != reply) && waited < 240; waited++)
+            {
+                await Task.Delay(500);
+                await board.ReadNewAsync();
+            }
+            var root = board.Posts.FirstOrDefault();
+            var answer = board.Posts.FirstOrDefault(item => item.ObjectId == reply);
+            Debug.Log("KGS_BOARD_THREAD " + (root?.ObjectId ?? "none") + " " + (root?.AuthorPubkey ?? "none") + " " +
+                (answer?.ObjectId ?? "none") + " " + (answer?.AuthorPubkey ?? "none") + " " + (answer?.ThreadId ?? "none"));
+            await Shot(mode + "-2");
+            File.WriteAllText(Path.Combine(dir, "done"), "done");
+        }
         if (mode == "cloud-save" && sample.Screen == "start")
         {
             await sample.Begin();
@@ -209,6 +259,14 @@ public static class KgsBuild
         var probe = host.AddComponent<KgsStartProbe>();
         Link(probe, "runner", runner);
         Link(probe, "sample", sample);
+        // 掲示板は prefab のまま置き、probe が開くまで止めておく（使わない SNS の UI は動かさない）。
+        var board = (GameObject)PrefabUtility.InstantiatePrefab(
+            AssetDatabase.LoadAssetAtPath<GameObject>("Packages/com.kukuri.gamesdk/Runtime/Social/KukuriBoard.prefab"));
+        var boardComponent = board.GetComponent<Kukuri.GameSdk.Social.KukuriBoard>();
+        Link(boardComponent, "runner", runner);
+        Link(boardComponent, "topic", "kukuri:topic:test");
+        board.SetActive(false);
+        Link(probe, "board", boardComponent);
         EditorSceneManager.SaveScene(scene, "Assets/Sample.unity");
         PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, ScriptingImplementation.$Backend);
         // 試験の Player の window が focus を取れなくても frame を止めない（既定では focus を失うと止まる）。
@@ -322,6 +380,7 @@ function Start-Desktop([string]$mode) {
 
 $transferOk = $true
 $handoffOk = $true
+$boardOk = $true
 if ($DesktopApp) {
     # 新しい profile で、desktop の既存のアカウントを移行で受けてから始め、次の起動で再開する（#1996 AC-3）。
     $source = Start-Desktop "source"
@@ -372,6 +431,25 @@ if ($DesktopApp) {
         ($id -match "^[0-9a-f-]{36}$") -and ($handed[0] -eq "playing $id $gameKey") -and ($handed[1] -eq "playing $id $gameKey") -and
         (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0)
     Write-Output "Player handoff ($Backend): game=$gameKey codes=$code/$targetCode reply=$reply players=$($handed -join ' | ') exits=$($exits -join ',') ok=$handoffOk"
+
+    # 掲示板の prefab で投稿してゲームを終える。desktop がその間に返信し、再起動したゲームの掲示板がその thread で返信を
+    # 読む（同じ投稿の ID・thread。desktop が保持者）（#1981 AC-2）。
+    $desktop = Start-Desktop "board"
+    $exits = @()
+    $run = Start-Player "start-board-post" "-kgs-board-post"
+    if (-not $run.Process.WaitForExit(300000)) { Stop-Process -Id $run.Process.Id -Force; $exits += "timeout" } else { $exits += $run.Process.ExitCode }
+    $posted = Find-Value $run.Log "KGS_BOARD_POST (\S+ \S+)"
+    Set-Content (Join-Path $env:KGS_TRANSFER_DIR "game-exited") "exited"
+    $run = Start-Player "start-board-resume" "-kgs-board-resume"
+    if (-not $run.Process.WaitForExit(300000)) { Stop-Process -Id $run.Process.Id -Force; $exits += "timeout" } else { $exits += $run.Process.ExitCode }
+    $thread = Find-Value $run.Log "KGS_BOARD_THREAD (\S+ \S+ \S+ \S+ \S+)"
+    if (-not $desktop.Process.WaitForExit(120000)) { Stop-Process -Id $desktop.Process.Id -Force; $exits += "desktop-timeout" } else { $exits += $desktop.Process.ExitCode }
+    $post, $gameKey = $posted -split " "
+    $reply = Find-Value $desktop.Log "replied (\S+)"
+    $desktopKey = Get-Content (Join-Path $env:KGS_TRANSFER_DIR "desktop-key") -ErrorAction SilentlyContinue
+    $boardOk = ($gameKey -match "^[0-9a-f]{64}$") -and ($desktopKey -match "^[0-9a-f]{64}$") -and
+        ($thread -eq "$post $gameKey $reply $desktopKey $post") -and (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0)
+    Write-Output "Player board ($Backend): post=$posted reply=$reply desktop=$desktopKey thread=$thread exits=$($exits -join ',') ok=$boardOk"
 }
 
-if ($failed -or -not $sampleOk -or -not $startOk -or -not $cloudOk -or -not $transferOk -or -not $handoffOk) { exit 1 }
+if ($failed -or -not $sampleOk -or -not $startOk -or -not $cloudOk -or -not $transferOk -or -not $handoffOk -or -not $boardOk) { exit 1 }
