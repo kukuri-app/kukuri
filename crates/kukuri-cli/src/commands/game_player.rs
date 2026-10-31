@@ -1,9 +1,10 @@
 //! ゲームの開始で作る game player（ADR 0070 §4.1、#1996）。profile ごとに 1 件、`game-players.json` に保存し、network へは
-//! 出さない。保存・読取りは Write の command として dispatcher が直列に実行する。
+//! 出さない。保存（`start_game_player`）は Write の command として dispatcher が直列に実行し、書込みは temp からの rename
+//! なので、読取りには無いか完全な file だけが見える。
 
 use std::path::Path;
 
-use kukuri_desktop_runtime::{ClientHost, list_accounts};
+use kukuri_desktop_runtime::{ClientHost, list_accounts, write_private_file_atomically};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -45,13 +46,10 @@ async fn read(dir: &Path) -> Result<Option<Binding>, ProtocolError> {
 
 async fn write(dir: &Path, binding: &Binding) -> Result<(), ProtocolError> {
     let path = dir.join(FILE_NAME);
-    let temp = dir.join(format!("{FILE_NAME}.tmp"));
     let bytes = serde_json::to_vec_pretty(binding).map_err(|_| crate::session::failed())?;
-    tokio::fs::write(&temp, bytes)
+    tokio::task::spawn_blocking(move || write_private_file_atomically(&path, &bytes))
         .await
-        .map_err(|_| crate::session::failed())?;
-    tokio::fs::rename(&temp, &path)
-        .await
+        .map_err(|_| crate::session::failed())?
         .map_err(|_| crate::session::failed())
 }
 

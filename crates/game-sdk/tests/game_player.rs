@@ -130,6 +130,13 @@ fn a_started_player_does_not_switch_to_another_account() {
     )["id"]
         .clone();
     assert_ne!(other, bound);
+    // 結び付けたアカウントへは切り替えられる。別のアカウントへは断り、active を変えない。
+    call(
+        handle,
+        "switch-back",
+        "switch_account",
+        json!({"account_id": bound}),
+    );
     assert_eq!(
         refused(
             handle,
@@ -139,13 +146,12 @@ fn a_started_player_does_not_switch_to_another_account() {
         ),
         "integration_required"
     );
-    // 結び付けたアカウントへは切り替えられ、開始は結び付けたアカウントで再開する。
-    call(
-        handle,
-        "switch-back",
-        "switch_account",
-        json!({"account_id": bound}),
+    assert_eq!(
+        call(handle, "kept", "list_accounts", json!({}))["active_account_id"],
+        bound
     );
+    assert_eq!(public_key(handle), player["public_key"]);
+    // active が移っても、開始は結び付けたアカウントで再開する。
     call(
         handle,
         "create-again",

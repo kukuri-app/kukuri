@@ -129,6 +129,8 @@ public static class KgsBuild
         Link(probe, "sample", sample);
         EditorSceneManager.SaveScene(scene, "Assets/Sample.unity");
         PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, ScriptingImplementation.$Backend);
+        // 試験の Player の window が focus を取れなくても frame を止めない（既定では focus を失うと止まる）。
+        PlayerSettings.runInBackground = true;
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
         {
             scenes = new[] { "Assets/Sample.unity" },
