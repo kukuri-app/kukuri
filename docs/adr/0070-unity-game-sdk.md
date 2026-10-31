@@ -75,6 +75,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | command | `open_account_transfer` / `get_account_transfer_status` / `decide_account_transfer` / `cancel_account_transfer` | #1996 | desktop・Web から既存のアカウントを移行で受ける（ADR 0062 の既存の操作を登録簿へ載せる。リンクは秘密の入力。§4.1） |
 | command | `create_account_transfer_invite` | #1998 | SDK の profile を移行元にして、ゲームのアカウントを desktop・Web へ移す招待を出す（リンクは秘密の出力。§4.2） |
 | command | `merge_game_player` | #1998 | ゲームの結び付きを、profile にある別のアカウントへ付け替える（§4.2） |
+| command | `get_cloud_account` / `set_cloud_account` | #1997 | Steam Cloud で同期する、ゲームで作ったアカウントの鍵と game player の file を読む・書く・消す（§4.3） |
 | event | `events_lost` | #1975 | 知らせの event を捨てた件数 |
 | event | `game_session_closed` | #1978 | session が閉じた（退出・room の終了・権限の失効・host の不在）。理由の code を持つ。参加者と host の両方の端末に届く（host の端末は #1979 から） |
 | event | `game_session_opened` | #1979 | host の端末で session を受け付け、送受信を始めた。session ID・room ID・参加者の公開鍵を持つ |
@@ -270,6 +271,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
   - 参加している private channel には、まとめた先のアカウントを招待し直してもらう。
   - まとめた後、このゲームでは前のアカウントを使えない。前のアカウントで作った private channel への招待、投稿の取り下げ、プロフィールの変更をしたいときは、先に「kukuriで続ける」で kukuri app へ移す。この端末が担っていた private channel の鍵の更新は止まる。
   - まとめた先のアカウントの鍵がこの端末に残り、kukuri app から後で取り消せない（§4.1 と同じ）。
+  - Steam Cloud に保存していれば、保存をやめる（まとめた先の鍵は Steam に置かない。§4.3）。
 - 両方の所有の確認は、B は移行元の desktop・Web での確認コードの承認、A はゲームの画面での確定とする。A の鍵はゲームの profile にあり、確定はゲームの利用者にしかできない。
 - desktop・Web の画面は既存の移行の画面のまま変えない（相手がゲームだと分からない。ADR 0062 §8）。
 
@@ -288,7 +290,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 
 確定の前のどの失敗・取消も、A の結び付き・active・投稿・ゲームの進行を変えない。
 
-確定（`merge_game_player`）は次の順に進む。
+確定（`merge_game_player`）は次の順に進む。Steam Cloud に保存していれば（§4.3）、1 の前に `game-account.json` を消す。
 
 1. 付け直しの file（A と B の account ID と、対象の種類ごとの進んだ位置）を書く。
 2. 結び付きの file を B へ書き換える（temp からの rename）。確定はこの rename で決まる。
@@ -357,6 +359,125 @@ SDK はセーブを持たず、何も消さない。ゲームが B の進行の 
   - A の投稿の ID・署名・著者は変わらず読める。B で新しく投稿・返信でき、desktop で読める。B が A のフォロー・ブロック・ミュートの相手を持ち、B 自身はフォロー・ミュートしない。A が参加していた C の private channel に B は入っておらず、C に招待されれば入れる。A の参加資格は残っている。B が自分で参加していた private channel には参加し続けられる。A への切替は `integration_required` で断る。
   - SDK の試験に加え、Windows の実 Player と作者が管理する desktop で、まとめる → 再開 → B での投稿 → desktop での表示を確かめる。
 
+#### 4.3 Steam Cloud によるアカウントの保存と、別の端末での再開（#1997 AC-1）
+
+2026-10-31 のユーザー判断で、次の 5 点を決めた。
+
+- 最初の外部ログインは Steam とし、連携と再開は Unity（ゲームの中）だけに作る。desktop・Web とは既存の移行（§4.1・§4.2）で行き来する。
+- アカウントの鍵と game player は、Steam Cloud に置く。SDK は profile の中に鍵と game player の file を書くだけで、ゲームの Steamworks の Auto-Cloud が、その file をその Steam 利用者の分として同期する。新しい端末では Steam が file を戻し、SDK はそこから同じ鍵と game player で再開する。Steam アカウントの本人確認は Steam が担い、SDK・Community Node は Steam の認証券を扱わない。ゲームの作者は検証の服務を運用しない。
+- 復旧コードは使わず、Steam のログインだけで戻す。Steam（Valve）や、Steam アカウントを乗っ取った人も、kukuri の鍵を得られる。利便性と UX のために、この信頼を受け入れる。
+- Steam Cloud に鍵を置けるのは、ゲームで作ったアカウントだけとする。「kukuriアカウントを使う」（§4.1）で受けたアカウントや、まとめた先（§4.2）は、desktop・Web で普段使う主のアカウントなので置かない。その人は、別の PC でも desktop・Web からの移行で受ける。
+- 実際の Steam（Steamworks の AppID）での実機確認は、AC-2・AC-3 の判定から外す（Issue #1997 の受入条件の変更）。Steam Cloud の同期は「`game-account.json` を別の directory へ写す」ことで模し、実際の Steam で動くことは未確認として記録する。
+
+選ばなかった案は次のとおり。
+
+- Community Node が Steam の認証を検証し、復旧コードで暗号化した鍵を預かる形。Community Node の役割を増やしすぎる。
+- NIP-05 のように Steam のプロフィールへ公開鍵を書く形。同じ人だと示せるが、公開鍵からは鍵を戻せず、旧端末なしの再開ができない。
+- 受けた既存のアカウントの鍵も Steam Cloud に置ける形。Steam アカウントを乗っ取られると、主のアカウントも使われる。
+
+##### ゲームで作ったアカウント
+
+「ゲームで作ったアカウント」は、Local Only の `game-account-origin.json` に記録した account ID（1 件）とする。登録簿の順では決めない（最も古いアカウントを外すと、受けたアカウントを指してしまうため）。記録するのは次の 2 つの時点だけである。
+
+- 同意（`accept_app_consents`）でアカウントを作った直後。このとき登録簿にはそのアカウントしか無い。
+- Steam Cloud の file から戻したとき。戻したアカウントで書き換える。
+
+受けたアカウント（移行・export の取り込み）と、`create_account` で後から足したアカウントは含めない。この記録の前の版で同意した profile は記録が無く、保存を有効にできない（SDK は未配布で、そうした利用者はいない）。
+
+##### 状態
+
+`get_cloud_account`（application ID）は次のどれかを返す。比べるのは `game-account.json` と手元の結び付きの、鍵と game player ID の両方である。
+
+| 値 | 条件 |
+| --- | --- |
+| `off` | file が無い |
+| `on` | 手元の結び付きがあり、file の鍵と game player ID が両方とも結び付きと同じ |
+| `restorable` | 手元の結び付きが無く、同じ application ID の読める file がある |
+| `other_account` | 手元の結び付きがあり、file の鍵か game player ID のどちらかが違う（別の端末で保存した） |
+| `unreadable` | file が読めない（壊れている、知らない版、別の application ID） |
+
+##### 入口と状態の表
+
+「Steam Cloud に保存」は、Steam で動くゲームが、開始済みの profile で有効にする。SDK は Steam の有無を見ず、有効にするかはゲームが決める（Steam の API が使えるときだけ有効にする、など）。
+
+| 今の状態 | 操作・出来事 | 次の状態 |
+| --- | --- | --- |
+| 開始済み・`off`・結び付きがゲームで作ったアカウント | 有効にする（`set_cloud_account` で `enabled: true`） | `on`。profile の `game-account.json` に鍵と game player を書く。Steam が終了の後に同期する |
+| 開始済み・`off`・結び付きがゲームで作ったアカウント以外（受けたアカウント・まとめた先・後から足したアカウント） | 有効にする | 断る（`not_game_account`）。file を書かない |
+| 開始済み・`on` | §4.2 のまとめの確定 | `off`。確定の 1 の前に `game-account.json` を消す（まとめた先は置かない）。消した後に止まっても、結び付きは A のままで、あとで有効にし直せる |
+| 開始済み・`on` | 無効にする（解除。`enabled: false`） | `off`。`game-account.json` を消す（Steam が同期の後に Steam Cloud からも消す）。手元のアカウントと進行は残す |
+| 開始済み・`other_account` | 有効にする・無効にする | 断る（`integration_required`）。file も手元の結び付きも変えない（まとめは §4.2） |
+| `unreadable` | 有効にする・無効にする | 断る（`cloud_account_unreadable`）。file に触れない |
+| 未開始・`restorable`・active がゲームで作ったアカウント | 「はじめる」（`start_game_player`） | `on`。file の鍵をアカウントとして足し、file の game player ID で結び付けて切り替え、`game-account-origin.json` に記録する。同意で作ったアカウントは使わずに残す |
+| 未開始・`restorable`・active がゲームで作ったアカウント以外（「kukuriアカウントを使う」で受けた、`create_account` で足した、など） | 「はじめる」 | 利用者が選んだ active で §4.1 のとおり始める。file は戻さず、触れない（次は `other_account`） |
+| 未開始・`unreadable` | 「はじめる」 | file を読まずに §4.1 のとおり始める（登録不要の経路）。file に触れない |
+| どれでも | Steam の失敗・利用停止・ログインの取り消し | 手元の profile の鍵・アカウント・進行は消さない。file は SDK が消すまで残る |
+
+- 再訪（同じ端末）は §4.1 のとおり手元の結び付きで再開し、file から戻さない。
+- 同じ Steam 利用者が同じゲームを 2 つの端末で別々に始めると、後から有効にしようとする側は `other_account` で断る（先に保存した側の file が Steam から戻っているため）。Steam の同期の衝突（両方の端末で同時に書く）は、Steam の画面で利用者が選ぶ。
+- 新しい端末で戻すと、同意で作ったアカウントが profile に 1 つ使われずに残る。作るのは profile ごとに同意の 1 回だけで、公開の記録は作らず、同じ profile での再開では増えない（INVAR-3）。
+- ゲームの画面で有効にする前に、次のことを示す。
+  - 同じ Steam アカウントでログインすれば、別の PC でもこのアカウントと進行の参照で再開できる。
+  - Steam アカウントを使える人は、このゲームの kukuri のアカウントも使える。
+  - 保存をやめると、別の PC での再開はできなくなる（この PC のアカウントと進行は残る）。すでに Steam に渡った写しは、やめても取り消せない。
+- §4.2 のまとめの前の説明に、Steam Cloud への保存をやめることを足す。
+
+##### 新しい端末での profile
+
+Steam の Auto-Cloud は起動の前に file を戻すので、新しい端末では、profile の印（`.kukuri-profile.json`）が無いまま `game-account.json` だけが置かれた directory になる。`GameSdk` の profile は、印が無く `game-account.json` だけがある directory を、空の directory と同じく新しい profile として採用する（他の file があれば、今の判定のまま断る）。
+
+##### 外部の主体の照合
+
+- 照合するのは Steam で、SDK は Steam ID を受け取らず、保存もしない。file は Steam Cloud の利用者ごと・ゲーム（AppID）ごとの領域にあり、その Steam 利用者のログインで戻る。表示名やメールは使わない。
+- `game-account.json` は application ID を持ち、別のゲームの file は戻さない（`unreadable`）。
+- Steam の公開のプロフィールや kukuri の公開の記録に、両者の対応を書かない。
+
+##### API・保存・互換
+
+- 足す command:
+  - `get_cloud_account`（application ID）: 上の「状態」の値を返す。
+  - `set_cloud_account`（application ID・`enabled`）: 上の表のとおり書く・消す・断る。消すのは `on` の file だけ。
+- `start_game_player` は、上の表のとおり `restorable` の file から戻す。
+- 鍵の登録は、ClientHost に、秘密鍵を受けて登録簿へアカウントを足す公開の入口を足す。中身は移行で受けたアカウントの登録（`register_transferred_account`）と共用し、同じ公開鍵なら二重に足さない。必須 bundle は無く、空の DB のアカウントとして足す（鍵の保存は他のアカウントと同じく keyring か、keyring を使わない設定の file）。
+- `game-account.json`: 版、application ID、game player ID、アカウントの秘密鍵。
+  - 既定ではアカウントの鍵は OS の keyring にあり、file には置かない。有効にすると、平文の鍵の写しを profile の file に置く。書込みは temp からの rename で、Unix では持ち主だけが読める権限にする。Windows は継承した利用者の ACL に頼り、同じ OS 利用者の process は読める（§4 の「ゲームのコードは profile と同じ OS の権限で動く」と同じ）。
+  - 応答・event・log に鍵を出さない。
+- `game-account-origin.json`: ゲームで作ったアカウントの account ID（1 件）。Local Only。
+- desktop・Web・Community Node・既存の DB・backup・wire は変えない。旧版の SDK は `game-account.json` を読まない。
+
+##### 外部への送信の分類と、前の契約の置き換え
+
+- `game-account.json` は、SDK にとっては Local Only の file である。有効にすると、ゲームの Auto-Cloud の設定によって Steam Cloud（Steam 利用者ごと・AppID ごと）へ複製される。送るのはゲームで、ゲームの作者が Steam の規約と利用者への説明を持つ（§5.1）。
+- §4.1 の「`game-players.json` は network へは出さない」は、有効にしたときだけ、game player ID と鍵の写しが `game-account.json` として Steam Cloud へ出ることに置き換わる。`game-players.json` そのものは出さない。
+- §4.2 の「結び付きを B の端末どうしの同期に載せない」判断は変えない。Steam Cloud に置くのは、ゲームで作ったアカウントの結び付きだけである。
+
+##### 運用
+
+- ゲームの作者は、Steamworks の Auto-Cloud に、SDK の profile の `game-account.json` の path と、利用者ごとの容量（file 1 件・数 KB）を設定する。費用は Steam Cloud のもので、kukuri 側の新しい服務・費用・中央の正本は無い。手順は導入の文書（`docs/runbooks/dev.md`）に書く。
+- Steam で配らないゲームは、この保存を使わない。#1996 の登録不要の開始と、desktop・Web との移行だけになる。
+
+##### 担当
+
+- AC-2: `get_cloud_account`・`set_cloud_account`、ゲームで作ったアカウントの判定、§4.2 のまとめでの消去、Minimal sample の「Steam Cloud に保存」。
+- AC-3: 新しい profile での採用と `start_game_player` での復元、解除の後に戻せないこと。
+
+##### AC-2・AC-3 の固定の確認
+
+実際の Steam での確認は判定から外したので、Steam Cloud の同期は `game-account.json` を写すことで模す。Close の記録には、実際の Steam で動くことを未確認と書く。
+
+- AC-2:
+  - 同意 →「はじめる」→ 有効にすると `on` になり、再起動しても同じ公開鍵と game player ID のまま。
+  - ゲスト（保存なし）で始めた profile で後から有効にしても、game player ID が変わらない。
+  - 「kukuriアカウントを使う」で受けたアカウントで始めた profile では、有効にできない（`not_game_account`）。
+  - `other_account`（別の鍵、または同じ鍵で別の game player ID）の file がある profile では、有効にも無効にもできず、file と結び付きが変わらない。
+  - §4.2 のまとめで `off` になる。
+- AC-3:
+  - 有効にした profile の `game-account.json` だけを、一度も開いていない directory へ写す。その directory を profile として開き、同意 → `restorable` →「はじめる」で同じ公開鍵と game player ID で再開する。鍵も token も他の file も写さない。
+  - 戻した端末で無効にして有効にし直せる（戻したアカウントもゲームで作ったアカウント）。
+  - 無効にすると file が消え、写す file が無い新しい profile では新しいアカウントで始まる。元の profile のアカウントと進行は残る。
+  - 読めない file では、通常の開始に戻り、file に触れない。
+  - SDK の試験と、Windows の実 Player の 2 つの profile で確かめる。
+
 ### 5. 4 本柱のデータ分類
 
 SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく分類するのは §5.1〜§5.3 の 3 つである。
@@ -368,7 +489,7 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 - Canonical Source: profile directory の account registry と既存の各 feature の store。要求の形は `kukuri-cli` の登録簿
 - Replicated?: 製品データだけが各 feature の既存の規則で複製される。handle と待ち行列は No
 - Rebuildable From: 登録簿と runtime の event から作り直す
-- Public Replica / Private Replica / Local Only: Local Only（製品データは各 feature の分類に従う）
+- Public Replica / Private Replica / Local Only: Local Only（製品データは各 feature の分類に従う）。ただし、Steam Cloud への保存を有効にした `game-account.json`（鍵の写しと game player）は、ゲームの Auto-Cloud が Steam Cloud（Steam 利用者ごと・AppID ごと）へ複製する外部送信で、送るのはゲームである（§4.3）
 - Gossip Hint 必要有無: 不要
 - Blob 必要有無: 不要
 - SQLite projection 必要有無: 既存の profile DB を使う。新しい表は作らない
