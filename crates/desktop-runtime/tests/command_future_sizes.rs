@@ -21,14 +21,17 @@ const MAX_COMMAND_FUTURE_BYTES: usize = 64 * 1024;
 
 /// `impl DesktopRuntime` の `pub async fn` のうち IPC command ではないもの。
 const NOT_COMMANDS: &[&str] = &[
-    "from_env",                               // constructor
-    "new",                                    // constructor
-    "new_with_config",                        // constructor
-    "new_with_public_blob_discovery",         // constructor（harness）
-    "open_in_memory_node",                    // constructor（Web）
+    "account_transfer_merged", // SDK のまとめの付け直し（背景 task、#1998）
+    "copy_social_page",        // SDK のまとめの付け直し（背景 task、#1998）
+    "open",                    // SocialCopySource の constructor（#1998）
+    "from_env",                // constructor
+    "new",                     // constructor
+    "new_with_config",         // constructor
+    "new_with_public_blob_discovery", // constructor（harness）
+    "open_in_memory_node",     // constructor（Web）
     "start_community_node_session_scheduler", // background task
-    "start_legacy_store_retirement",          // background task
-    "start_sync_status_observer",             // background task
+    "start_legacy_store_retirement", // background task
+    "start_sync_status_observer", // background task
 ];
 
 fn size0<F, R>(_: F) -> usize
