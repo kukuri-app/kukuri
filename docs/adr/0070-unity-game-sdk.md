@@ -377,12 +377,12 @@ SDK はセーブを持たず、何も消さない。ゲームが B の進行の 
 
 ##### ゲームで作ったアカウント
 
-次のどちらかを「ゲームで作ったアカウント」とする。
+「ゲームで作ったアカウント」は、Local Only の `game-account-origin.json` に記録した account ID（1 件）とする。登録簿の順では決めない（最も古いアカウントを外すと、受けたアカウントを指してしまうため）。記録するのは次の 2 つの時点だけである。
 
-- この profile の同意で作ったアカウント（登録簿で最も古いもの。§4.1 の自動の作成）。
-- Steam Cloud の file から戻したアカウント。戻したときに、Local Only の `game-account-origin.json` にその account ID を 1 件記録する。
+- 同意（`accept_app_consents`）でアカウントを作った直後。このとき登録簿にはそのアカウントしか無い。
+- Steam Cloud の file から戻したとき。戻したアカウントで書き換える。
 
-受けたアカウント（移行・export の取り込み）と、`create_account` で後から足したアカウントは含めない。
+受けたアカウント（移行・export の取り込み）と、`create_account` で後から足したアカウントは含めない。この記録の前の版で同意した profile は記録が無く、保存を有効にできない（SDK は未配布で、そうした利用者はいない）。
 
 ##### 状態
 
@@ -403,13 +403,13 @@ SDK はセーブを持たず、何も消さない。ゲームが B の進行の 
 | 今の状態 | 操作・出来事 | 次の状態 |
 | --- | --- | --- |
 | 開始済み・`off`・結び付きがゲームで作ったアカウント | 有効にする（`set_cloud_account` で `enabled: true`） | `on`。profile の `game-account.json` に鍵と game player を書く。Steam が終了の後に同期する |
-| 開始済み・`off`・結び付きが受けたアカウント・まとめた先 | 有効にする | 断る（`not_game_account`）。file を書かない |
+| 開始済み・`off`・結び付きがゲームで作ったアカウント以外（受けたアカウント・まとめた先・後から足したアカウント） | 有効にする | 断る（`not_game_account`）。file を書かない |
 | 開始済み・`on` | §4.2 のまとめの確定 | `off`。確定の 1 の前に `game-account.json` を消す（まとめた先は置かない）。消した後に止まっても、結び付きは A のままで、あとで有効にし直せる |
 | 開始済み・`on` | 無効にする（解除。`enabled: false`） | `off`。`game-account.json` を消す（Steam が同期の後に Steam Cloud からも消す）。手元のアカウントと進行は残す |
 | 開始済み・`other_account` | 有効にする・無効にする | 断る（`integration_required`）。file も手元の結び付きも変えない（まとめは §4.2） |
 | `unreadable` | 有効にする・無効にする | 断る（`cloud_account_unreadable`）。file に触れない |
-| 未開始・`restorable`・active が同意で作ったアカウント | 「はじめる」（`start_game_player`） | `on`。file の鍵をアカウントとして足し、file の game player ID で結び付けて切り替え、`game-account-origin.json` に記録する。同意で作ったアカウントは使わずに残す |
-| 未開始・`restorable`・active が受けたアカウント（「kukuriアカウントを使う」で切り替えた後） | 「はじめる」 | 利用者が選んだ active で §4.1 のとおり始める。file は戻さず、触れない（次は `other_account`） |
+| 未開始・`restorable`・active がゲームで作ったアカウント | 「はじめる」（`start_game_player`） | `on`。file の鍵をアカウントとして足し、file の game player ID で結び付けて切り替え、`game-account-origin.json` に記録する。同意で作ったアカウントは使わずに残す |
+| 未開始・`restorable`・active がゲームで作ったアカウント以外（「kukuriアカウントを使う」で受けた、`create_account` で足した、など） | 「はじめる」 | 利用者が選んだ active で §4.1 のとおり始める。file は戻さず、触れない（次は `other_account`） |
 | 未開始・`unreadable` | 「はじめる」 | file を読まずに §4.1 のとおり始める（登録不要の経路）。file に触れない |
 | どれでも | Steam の失敗・利用停止・ログインの取り消し | 手元の profile の鍵・アカウント・進行は消さない。file は SDK が消すまで残る |
 
@@ -442,7 +442,7 @@ Steam の Auto-Cloud は起動の前に file を戻すので、新しい端末�
 - `game-account.json`: 版、application ID、game player ID、アカウントの秘密鍵。
   - 既定ではアカウントの鍵は OS の keyring にあり、file には置かない。有効にすると、平文の鍵の写しを profile の file に置く。書込みは temp からの rename で、Unix では持ち主だけが読める権限にする。Windows は継承した利用者の ACL に頼り、同じ OS 利用者の process は読める（§4 の「ゲームのコードは profile と同じ OS の権限で動く」と同じ）。
   - 応答・event・log に鍵を出さない。
-- `game-account-origin.json`: 戻したアカウントの account ID（1 件）。Local Only。
+- `game-account-origin.json`: ゲームで作ったアカウントの account ID（1 件）。Local Only。
 - desktop・Web・Community Node・既存の DB・backup・wire は変えない。旧版の SDK は `game-account.json` を読まない。
 
 ##### 外部への送信の分類と、前の契約の置き換え
