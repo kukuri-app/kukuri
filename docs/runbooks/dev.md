@@ -445,6 +445,10 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/build-native.ps1
 powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1
 # IL2CPP の Player で同じ確認をする（EditMode は Mono の回で済んでいるので省く）
 powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -Backend IL2CPP -SkipEditMode
+# desktop（配布と同じ release build。下の「実際のアプリを複数動かす自動の試験」と同じ作り方）を移行元にして、Player の
+# 「kukuriアカウントを使う」→「貼り付け」→ 確認コードの承認 →「はじめる」→ 再起動も確かめる（OS の clipboard を使う。
+# 画面を %TEMP%\kgs-start-transfer-*.png と %TEMP%\kgs-transfer\desktop-confirming.png に書く）
+powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -DesktopApp <kukuri-desktop-tauri.exe>
 # NGO 2.13.3 を入れた project で、NGO の Transport の EditMode の試験を流し、Netcode Sync sample の Player を 2 つ起動して
 # cube の同期と切断を確かめる（client は FFI と Sidecar の 2 回。%TEMP%\kgs-ngo に作る）
 powershell -ExecutionPolicy Bypass -File sdk/unity/test-netcode.ps1
@@ -458,7 +462,7 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test-graphics.ps1
 - DLL を build し直したら、DLL を読み込んだ Unity Editor を再起動する（Windows は読み込んだ native plugin を解放しないので、Editor が開いたままでは差し替わらない）。
 - 設定 asset（`kukuri/Settings`）の mode を Sidecar にすると、Play の開始時に Editor が `kukuri-sdk-sidecar.exe` を起動し、Play を止めても動かし続ける。Editor の終了か menu の「kukuri/Sidecar を止める」で止まる。Player の build は Sidecar を起動せず、既定は FFI。
 - Unity の project を深い path に置くと Windows の path の長さの上限に当たる。`test.ps1` は `%TEMP%\kgs-test` に作る。
-- ゲームの開始は Minimal sample の形にする。同意の後、起動ごとに `get_game_player`（ゲームの application ID）を呼び、null なら開始の画面（主の操作は「はじめる」）を出して、「はじめる」で `start_game_player` を呼ぶ。保存済みなら `start_game_player` で同じ game player とアカウントで再開する。ゲームのセーブは `game_player_id` で参照する。「はじめる」の前は SNS・ロビーを開かない。暗号化 export の取り込み（`import_account_key`）は「復旧」の上級の操作で、開始の画面には出さない（ADR 0070 §4.1）。
+- ゲームの開始は Minimal sample の形にする。同意の後、起動ごとに `get_game_player`（ゲームの application ID）を呼び、null なら開始の画面（主の操作は「はじめる」）を出して、「はじめる」で `start_game_player` を呼ぶ。保存済みなら `start_game_player` で同じ game player とアカウントで再開する。ゲームのセーブは `game_player_id` で参照する。「はじめる」の前は SNS・ロビーを開かない。既存の kukuri アカウントを使う人には、開始の画面に「kukuriアカウントを使う」を並べる。kukuri app の「別の端末へ移す」でコピーしたリンクを clipboard から読んで `open_account_transfer`（リンクは Secret frame）に渡し、`get_account_transfer_status` の確認コードを示して `decide_account_transfer` で承認する。`completed` の `account_id` へ `switch_account` で切り替えてから「はじめる」。開始済みの profile では `switch_account` が `integration_required` で断る。暗号化 export の取り込み（`import_account_key`）は「復旧」の上級の操作で、開始の画面には出さない（ADR 0070 §4.1）。
 - ロビーは `Runtime/Lobby/KukuriLobby.prefab`（uGUI）を scene に置き、`runner` に `KukuriRunner` を、`applicationId` と `topic` にゲームの値を設定する。scene に `EventSystem` が無ければ Unity の menu の UI から足す。
 - NGO を使うときは、`NetworkManager` の Transport に `KukuriNetcodeTransport`（`runner` に `KukuriRunner`）を置き、ロビーの `RoomCreated` で `RoomId` を設定して `StartHost`、`Joined` で `SessionId` を設定して `StartClient` を呼ぶ。Package Manager の Samples から「Netcode Sync」を入れると、その組み方の sample が入る。
 - スキンは `KukuriSkinLoader`（glTFast が要る）を GameObject に置き、`runner` と topic・信頼する発行者の公開鍵・application ID・asset ID を設定する。新しい版は自動で取得・差し替えされる。アセットの発行は開発用の Sidecar（設定 asset の mode を Sidecar にする）か CLI の `publish_game_asset` で行う。

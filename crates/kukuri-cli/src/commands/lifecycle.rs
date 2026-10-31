@@ -9,7 +9,8 @@ use crate::{
 use async_trait::async_trait;
 use kukuri_desktop_runtime::{
     AcceptedAppConsentDocument, CreateDeviceBackupRequest, ExportAccountKeyRequest,
-    PreviewDeviceBackupRequest, RestoreDeviceBackupRequest, SwitchAccountRequest,
+    OpenAccountTransferRequest, PreviewDeviceBackupRequest, RestoreDeviceBackupRequest,
+    SwitchAccountRequest,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -147,6 +148,39 @@ impl CommandHandler for Handler {
                 let request: GamePlayerInput = decode(payload)?;
                 encode(game_player::get(&session.app_data_dir, &request.application_id).await?)
             }
+            // #1996 AC-3: 既存のアカウントを移行で受ける（ADR 0070 §4.1）。履歴は受けない。完了の後の切替はゲームが
+            // `switch_account` で行う。
+            "open_account_transfer" => {
+                let link = secret_text(secret)?.trim().to_owned();
+                context
+                    .host
+                    .ok_or_else(crate::session::failed)?
+                    .open_account_transfer(OpenAccountTransferRequest {
+                        link,
+                        history: None,
+                    })
+                    .await
+                    .map_err(command_error)?;
+                encode(())
+            }
+            "get_account_transfer_status" => encode(
+                runtime(&context)?
+                    .account_transfer_status()
+                    .await
+                    .map_err(command_error)?,
+            ),
+            "decide_account_transfer" => encode(
+                runtime(&context)?
+                    .decide_account_transfer(decode(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
+            "cancel_account_transfer" => encode(
+                runtime(&context)?
+                    .cancel_account_transfer()
+                    .await
+                    .map_err(command_error)?,
+            ),
             "export_account_key" => {
                 let runtime = runtime(&context)?;
                 let passphrase = secret_text(secret)?;
@@ -260,6 +294,10 @@ pub(super) fn registrations(session: Option<Arc<ClientSession>>) -> Vec<CommandR
         ("get_account_display", Read, false, false, true),
         ("start_game_player", Write, false, false, true),
         ("get_game_player", Read, false, false, false),
+        ("open_account_transfer", Write, true, false, true),
+        ("get_account_transfer_status", Read, false, false, true),
+        ("decide_account_transfer", Write, false, false, true),
+        ("cancel_account_transfer", Write, false, false, true),
         ("create_device_backup_command", Write, true, false, true),
         ("preview_device_backup_command", Read, true, false, true),
         (
@@ -279,6 +317,8 @@ pub(super) fn registrations(session: Option<Arc<ClientSession>>) -> Vec<CommandR
                 "import_account_key" =>
                     "Secret frame: exportとpassphraseを含むJSON。labelは通常payload。",
                 "preview_account_key_import" => "Secret frame: 暗号化された鍵exportのUTF-8文字列。",
+                "open_account_transfer" =>
+                    "Secret frame: 移行元が出した移行のリンクのUTF-8文字列。",
                 _ => "Secret frame: passphraseのUTF-8文字列。改行もpassphraseの一部として扱う。",
             });
         }
