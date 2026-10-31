@@ -189,12 +189,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 public static class KgsBuild
 {
-    static void Link(Object component, string field, Object value)
-    {
-        component.GetType().GetField(field, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).SetValue(component, value);
-    }
-
-    static void Link(Object component, string field, bool value)
+    static void Link(Object component, string field, object value)
     {
         component.GetType().GetField(field, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).SetValue(component, value);
     }

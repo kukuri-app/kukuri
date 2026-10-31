@@ -202,19 +202,18 @@ impl Cloud {
 async fn cloud_file(
     dir: &Path,
     application_id: &str,
-) -> Result<Option<Option<(CloudAccount, KukuriKeys)>>, ProtocolError> {
+) -> Result<Option<Option<(KukuriKeys, CloudAccount)>>, ProtocolError> {
     Ok(load(dir, CLOUD_FILE).await?.map(|bytes| {
         serde_json::from_slice::<CloudAccount>(&bytes)
             .ok()
             .filter(|file| file.version == VERSION && file.application_id == application_id)
             .and_then(|file| Some((KukuriKeys::parse(&file.secret_key).ok()?, file)))
-            .map(|(keys, file)| (file, keys))
     }))
 }
 
 /// `game-account.json` を手元の結び付きと、鍵と game player ID の両方で比べる。
 async fn cloud(dir: &Path, application_id: &str) -> Result<Cloud, ProtocolError> {
-    let (file, keys) = match cloud_file(dir, application_id).await? {
+    let (keys, file) = match cloud_file(dir, application_id).await? {
         None => return Ok(Cloud::Off),
         Some(None) => return Ok(Cloud::Unreadable),
         Some(Some(readable)) => readable,
@@ -248,7 +247,7 @@ async fn restore(
     application_id: &str,
     accounts: &AccountsSnapshot,
 ) -> Result<Option<GamePlayerView>, ProtocolError> {
-    let Some(Some((file, keys))) = cloud_file(dir, application_id).await? else {
+    let Some(Some((keys, file))) = cloud_file(dir, application_id).await? else {
         return Ok(None);
     };
     let public_key = keys.public_key_hex();
