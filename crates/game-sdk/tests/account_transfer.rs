@@ -1,5 +1,6 @@
 //! 既存の kukuri アカウントを移行で受けて始める入口（ADR 0070 §4.1。#1996 AC-3）。desktop の runtime を移行元にし、
-//! SDK は「貼り付け」の経路（リンクを秘密の入力で渡す）で受ける。keyring を使わず loopback だけで動かす。期限切れは
+//! SDK は「貼り付け」の経路（リンクを秘密の入力で渡す）で受ける。逆に、ゲームのアカウントを同じ鍵のまま desktop へ
+//! 移して会話を続ける（§4.2「kukuriで続ける」。#1998 AC-2）。keyring を使わず loopback だけで動かす。期限切れは
 //! 拒否・取消と同じ失敗の経路で、`kukuri-iroh-node` の移行の試験が確かめている。
 #![allow(clippy::unwrap_used)]
 
@@ -12,11 +13,12 @@ use kukuri_desktop_runtime::{DecideAccountTransferRequest, DesktopRuntime};
 use kukuri_game_sdk::KukuriHandle;
 use serde_json::{Value, json};
 use support::{
-    call, consent, error_code, finish, isolated_environment, open_real, request, response_for,
-    send, send_secret, wait_for_startup,
+    call, consent, error_code, finish, introduce, isolated_environment, open_real, request,
+    response_for, secret_output, send, send_secret, subscribe, wait_for, wait_for_startup,
 };
 
 const GAME: &str = "com.example.cyber-disc-arena";
+const TOPIC: &str = "kukuri:topic:test-game-sdk-handoff";
 
 fn id(prefix: &str) -> String {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -250,4 +252,165 @@ fn refused_or_cancelled_transfers_keep_the_started_player() {
     assert_eq!(public_key(handle), player["public_key"]);
     assert_eq!(call(handle, "resume", "start_game_player", game), player);
     finish(handle);
+}
+
+/// 「kukuriで続ける」: ゲームが招待を出し、desktop（別の profile の同じ runtime）が受けて両方で承認する。desktop の
+/// 移行先の完了の状態を返す。
+fn hand_off(game: *mut KukuriHandle, desktop: *mut KukuriHandle) -> Value {
+    let link = secret_output(
+        game,
+        &id("invite"),
+        "create_account_transfer_invite",
+        json!({}),
+    );
+    assert!(wait_state(game, "waiting")["expires_at_ms"].is_i64());
+    paste(desktop, &link);
+    let code = wait_state(desktop, "confirming")["code"].clone();
+    assert_eq!(wait_state(game, "confirming")["code"], code);
+    decide(game, true);
+    decide(desktop, true);
+    let completed = wait_state(desktop, "completed");
+    assert_eq!(wait_state(game, "completed")["role"], "source");
+    completed
+}
+
+#[test]
+fn the_game_account_moves_to_desktop_with_the_same_key_and_the_conversation_continues() {
+    isolated_environment();
+    let dir = tempfile::tempdir().unwrap();
+    let game = open_real(&dir.path().join("game"));
+    let desktop = open_real(&dir.path().join("desktop"));
+    for handle in [game, desktop] {
+        wait_for_startup(handle);
+        consent(handle);
+    }
+    let player = call(
+        game,
+        "start",
+        "start_game_player",
+        json!({"application_id": GAME}),
+    );
+    let before = accounts(game);
+    subscribe(game, TOPIC);
+    let post = call(
+        game,
+        "post",
+        "create_post",
+        json!({"topic": TOPIC, "content": "test: from the game", "channel_ref": {"kind": "public"}}),
+    )
+    .as_str()
+    .unwrap()
+    .to_owned();
+
+    let received = hand_off(game, desktop)["account_id"].clone();
+    call(
+        desktop,
+        "switch",
+        "switch_account",
+        json!({"account_id": received}),
+    );
+    assert_eq!(public_key(desktop), player["public_key"]);
+
+    // desktop は履歴を移さずに、ゲームの端末から topic の timeline で同じ投稿を読み、返信する。
+    subscribe(desktop, TOPIC);
+    introduce(game, desktop);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !call(
+        desktop,
+        &id("timeline"),
+        "list_timeline",
+        json!({"topic": TOPIC, "scope": {"kind": "public"}, "limit": 20}),
+    )["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| {
+            item["object_id"] == post.as_str() && item["author_pubkey"] == player["public_key"]
+        })
+    {
+        assert!(Instant::now() < deadline, "the game's post on desktop");
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    let reply = call(
+        desktop,
+        "reply",
+        "create_post",
+        json!({"topic": TOPIC, "content": "test: reply from desktop", "reply_to": post,
+            "channel_ref": {"kind": "public"}}),
+    );
+    let seen = wait_for(game, "the reply", |json, _| {
+        (json["type"] == "post_received" && json["post"]["object_id"] == reply)
+            .then(|| json["post"].clone())
+    });
+    assert_eq!(seen["reply_to"], post.as_str());
+    assert_eq!(seen["author_pubkey"], player["public_key"]);
+
+    // ゲームは同じ game player とアカウントのまま続く。
+    assert_eq!(accounts(game), before);
+    assert_eq!(
+        call(
+            game,
+            "resume",
+            "start_game_player",
+            json!({"application_id": GAME})
+        ),
+        player
+    );
+    finish(desktop);
+    finish(game);
+}
+
+#[test]
+fn a_refused_or_cancelled_hand_off_keeps_the_game_account() {
+    isolated_environment();
+    let dir = tempfile::tempdir().unwrap();
+    let game = open_real(&dir.path().join("game"));
+    let desktop = open_real(&dir.path().join("desktop"));
+    for handle in [game, desktop] {
+        wait_for_startup(handle);
+        consent(handle);
+    }
+    let player = call(
+        game,
+        "start",
+        "start_game_player",
+        json!({"application_id": GAME}),
+    );
+    let before = accounts(game);
+
+    // ゲームで「一致しない」を選ぶ。
+    let link = secret_output(
+        game,
+        &id("invite"),
+        "create_account_transfer_invite",
+        json!({}),
+    );
+    paste(desktop, &link);
+    wait_state(game, "confirming");
+    decide(game, false);
+    assert_eq!(wait_state(game, "failed")["reason"], "rejected");
+
+    // 招待を出した後、相手が来る前に取り消す。
+    secret_output(
+        game,
+        &id("invite"),
+        "create_account_transfer_invite",
+        json!({}),
+    );
+    call(game, "cancel", "cancel_account_transfer", json!({}));
+    wait_state(game, "idle");
+
+    assert_eq!(accounts(game), before);
+    assert_eq!(public_key(game), player["public_key"]);
+    assert_eq!(
+        call(
+            game,
+            "resume",
+            "start_game_player",
+            json!({"application_id": GAME})
+        ),
+        player
+    );
+    finish(desktop);
+    finish(game);
 }

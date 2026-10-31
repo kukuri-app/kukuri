@@ -178,12 +178,8 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
         "gui_content_recovery" => tauri == "retry_post_elements",
         // #1221 R2-C: GUIの表示中の要素・列だけを対象にする照会と購読の需要。
         "gui_visible_membership" => matches!(tauri, "bookmarked_post_ids" | "set_scope_display"),
-        // #1211: QR・リンクを出す移行元。#1650: 両端末の画面で始める本人の端末どうしの同期。移行先の操作は SDK が
-        // 使うので登録簿へ載せる（#1996）。
-        "gui_device_pairing" => matches!(
-            tauri,
-            "create_account_transfer_invite" | "start_account_union_sync"
-        ),
+        // #1650: 両端末の画面で始める本人の端末どうしの同期。移行の操作は SDK が使うので登録簿へ載せる（#1996・#1998）。
+        "gui_device_pairing" => tauri == "start_account_union_sync",
         // #1033: GUIのmic・speakerを使う空間音声。#1034: GUIのcamera・画面・mic・speakerを使うlive配信と視聴。
         // CLI／daemonには機器と3D・映像の表示がない。
         "gui_media_device" => matches!(

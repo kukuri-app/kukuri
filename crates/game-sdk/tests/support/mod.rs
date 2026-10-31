@@ -206,6 +206,37 @@ pub fn isolated_environment() {
     });
 }
 
+/// 秘密の出力（招待の token・移行のリンク）を返す command を送り、秘密を受け取る。
+pub fn secret_output(
+    handle: *mut KukuriHandle,
+    request_id: &str,
+    command: &str,
+    payload: Value,
+) -> String {
+    let mut envelope: Value =
+        serde_json::from_slice(&request(request_id, command, payload)).unwrap();
+    envelope["accepts_secret_output"] = json!(true);
+    assert_eq!(send(handle, envelope.to_string().as_bytes()), 0);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let items = poll_once(handle, 64).unwrap();
+        if let Some(position) = items
+            .iter()
+            .position(|item| item.kind == 1 && item.json["request_id"] == request_id)
+        {
+            assert_eq!(items[position].json["ok"], true, "{}", items[position].json);
+            assert_eq!(
+                items[position + 1].kind,
+                2,
+                "the secret follows as its own item"
+            );
+            return String::from_utf8(items[position + 1].raw.clone()).unwrap();
+        }
+        assert!(Instant::now() < deadline, "{command}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 /// 応答の data を返す。失敗なら error を見せて止まる。
 pub fn call(handle: *mut KukuriHandle, id: &str, command: &str, payload: Value) -> Value {
     assert_eq!(send(handle, &request(id, command, payload)), 0, "{command}");
