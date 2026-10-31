@@ -599,7 +599,7 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 - Assets の module（`Runtime/Assets`、#1980 AC-2）は、glTFast 6.20.0 以上 7.0 未満が入った project だけで compile する。`KukuriSkinLoader` は、信頼する発行者の公開鍵・application ID・asset ID の最新の検証済みの file を `fetch_game_asset` で得て表示する。`game_asset_updated` を受けたら読み直し、再起動せずに差し替える。
   - .glb は glTFast で読み、`TimeBudgetPerFrameDeferAgent` で 1 frame の処理を予算の中に抑える。PNG・JPEG は renderer の material の texture にする。AssetBundle は自分の Unity の版と build の対象が manifest と合うときだけ読み、最初の GameObject を置く。
   - 新しい版を読み終えてから入れ替え、前の版の GameObject・glTF の資源・texture・AssetBundle を解放する。読めなければ理由を `Failed` で知らせ、今のスキンを保つ。
-- Social の module（`Runtime/Social`、#1981 AC-2）の `KukuriBoard` は、1 つの topic（または private channel）の投稿を `list_timeline`・`list_thread` で 20 件ずつ読む uGUI の掲示板で、投稿・返信は `create_post` を使う。新着は `post_received` で知り、表示中の先頭の頁だけを読み直す（読んだ続きの頁は保つ）。1 回の読込みは件数に依存しない（履歴が増えても 20 件）。開いている間だけ topic を購読し、閉じる（無効にする・scene を変える）と、自分で始めた購読だけを外す（`get_sync_status` で開く前に購読していなかった topic）。投稿先と公開範囲を画面に示す。
+- Social の module（`Runtime/Social`、#1981 AC-2）の `KukuriBoard` は、1 つの topic（または private channel）の投稿を `list_timeline`・`list_thread` で 20 件ずつ読む uGUI の掲示板で、投稿・返信は `create_post` を使う。新着は `post_received` で知り、表示中の先頭の頁だけを読み直す（読んだ続きの頁は保つ）。1 回の読込みは件数に依存しない（履歴が増えても 20 件）。手元に持つ投稿は 100 件までで、超えたら足した側と反対の端を捨てる（新着で超えたら古い側を捨てて「さらに表示」で読み直し、「さらに表示」で超えたら新しい側を捨てて「先頭へ戻る」で先頭の頁を読み直す。thread で root の側を捨てたら、開き直すと読める）。開いている間だけ topic を購読し、閉じる（無効にする・scene を変える）と、自分で始めた購読だけを外す（`get_sync_status` で開く前に購読していなかった topic）。投稿先と公開範囲を画面に示す。
 - C# の結果（Task）と event の callback は Unity の main thread で、poll の中から呼ぶ。Rust の worker thread から GameObject や UI を触らない。
 - 1 frame で poll に使う件数と時間には上限を置く（既定値は §8）。上限を超えた分は次の frame へ回す。
 - mode（FFI / Sidecar）と profile 名は設定 asset で明示する。本番の Player の既定は FFI で、外部の daemon を自動で起動しない。

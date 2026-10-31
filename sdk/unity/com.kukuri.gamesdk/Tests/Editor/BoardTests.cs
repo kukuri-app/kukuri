@@ -227,5 +227,56 @@ namespace Kukuri.GameSdk.Tests
             yield return Subscribed(a, shared, value => subscribed = value);
             Assert.IsTrue(subscribed);
         }
+
+        [UnityTest]
+        public IEnumerator HeldPostsStayWithinTheLimitAndTheDroppedSideCanBeReadAgain()
+        {
+            var topic = NewTopic();
+            a = KukuriClient.Open(KukuriMode.Ffi, "a", NewProfileDirectory());
+            yield return Accept(a);
+            var board = Board(a, topic, out boardA);
+            for (var index = 0; index < 110; index++)
+                yield return Call(a, "create_post", new JObject
+                {
+                    ["topic"] = topic,
+                    ["content"] = $"test: post {index}",
+                    ["channel_ref"] = new JObject { ["kind"] = "public" },
+                });
+            yield return Wait(board.RefreshAsync());
+            for (var page = 0; page < 4; page++)
+                yield return Wait(board.LoadMoreAsync());
+            Assert.AreEqual(100, board.Posts.Count);
+            Assert.AreEqual("test: post 10", board.Posts[99].Content);
+
+            // 新着を足すと、末尾（古い側）を捨て、「さらに表示」で捨てた投稿から読み直す。
+            yield return Call(a, "create_post", new JObject
+            {
+                ["topic"] = topic,
+                ["content"] = "test: newest",
+                ["channel_ref"] = new JObject { ["kind"] = "public" },
+            });
+            yield return Wait(board.ReadNewAsync());
+            Assert.AreEqual(100, board.Posts.Count);
+            Assert.AreEqual("test: newest", board.Posts[0].Content);
+            Assert.AreEqual("test: post 11", board.Posts[99].Content);
+            Assert.IsTrue(board.HasMore);
+            Assert.AreEqual(100, Shown(boardA).Length);
+
+            // 「さらに表示」で上限を超えると、先頭（新しい側）を捨て、「先頭へ戻る」で先頭の頁を読み直す。
+            yield return Wait(board.LoadMoreAsync());
+            Assert.AreEqual(100, board.Posts.Count);
+            Assert.AreEqual("test: post 99", board.Posts[0].Content);
+            Assert.AreEqual("test: post 0", board.Posts[99].Content);
+            Assert.AreEqual(100, Shown(boardA).Length);
+            var back = boardA.GetComponentsInChildren<UnityEngine.UI.Button>(true).Single(button => button.name == "Back");
+            Assert.IsTrue(back.gameObject.activeSelf);
+            Assert.AreEqual("先頭へ戻る", back.GetComponentInChildren<UnityEngine.UI.Text>(true).text);
+            yield return Wait(board.ReadNewAsync());
+            Assert.AreEqual("test: post 99", board.Posts[0].Content);
+            yield return Wait(board.BackAsync());
+            Assert.AreEqual(20, board.Posts.Count);
+            Assert.AreEqual("test: newest", board.Posts[0].Content);
+            Assert.IsFalse(back.gameObject.activeSelf);
+        }
     }
 }

@@ -28,10 +28,12 @@ namespace Kukuri.GameSdk.Social
     /// 掲示板（#1981）。行を押すとその thread を開き、thread では返信を書く。続きは「さらに表示」で読む。新着は
     /// `post_received` と、開いている間の一定の間隔の読み直し（遅れて届いた投稿には知らせが来ない）で知り、表示中の頁の
     /// 新しい側だけを読む。開いている間だけ topic を購読し、閉じる（無効にする・scene を変える・`ReleaseAsync`）と、自分で
-    /// 始めた購読を外す。操作は 1 つずつ順に実行する。`runner` の client が開くまでは何もしない。
+    /// 始めた購読を外す。手元に持つ投稿は 100 件までで、超えたら足した側と反対の端を捨てる（古い側は「さらに表示」、
+    /// 新しい側は「先頭へ戻る」で読み直す）。操作は 1 つずつ順に実行する。`runner` の client が開くまでは何もしない。
     public sealed class KukuriBoard : MonoBehaviour
     {
         const int PageSize = 20;
+        const int MaxPosts = 100;
         const string AdultHidden = "成人向けの内容を含むため表示していません（設定で表示できます）";
 
         [SerializeField] KukuriRunner runner;
@@ -62,6 +64,8 @@ namespace Kukuri.GameSdk.Social
         int generation;
         bool closed;
         JToken nextCursor;
+        /// 上限を超えて新しい側（一覧の先頭・thread の root の側）を捨てた。
+        bool headCut;
         bool stale;
         float retryAt;
         float refreshAt;
@@ -158,7 +162,7 @@ namespace Kukuri.GameSdk.Social
         /// 投稿の thread を開く（root と返信を古い順に読む）。読めなければ元の表示のまま。
         public Task OpenThreadAsync(string threadId) => Switch(threadId);
 
-        /// thread から一覧へ戻る。
+        /// thread から一覧へ戻る。一覧で上限を超えて先頭を捨てていれば、先頭の頁を読み直す。
         public Task BackAsync() => Switch(null);
 
         /// 一覧では topic（または private channel）へ投稿し、thread では root へ返信する。投稿の ID を返す。
@@ -282,7 +286,8 @@ namespace Kukuri.GameSdk.Social
         {
             stale = false;
             refreshAt = Time.unscaledTime + refreshSeconds;
-            if (ThreadId != null && nextCursor != null)
+            // 一覧の先頭を捨てていれば先頭の頁は続かない。thread の続きが残っていれば「さらに表示」に任せる。
+            if (ThreadId == null ? headCut : nextCursor != null)
                 return;
             var view = View();
             JToken cursor = null;
@@ -329,6 +334,8 @@ namespace Kukuri.GameSdk.Social
                 items.Insert(0, row);
                 ShowRow(0);
             }
+            if (posts.Count > MaxPosts)
+                Trim(false);
         }
 
         async Task<JToken> ListAsync(JToken cursor)
@@ -409,6 +416,7 @@ namespace Kukuri.GameSdk.Social
         /// 表示を `next` に置き換える（行は使い回す）。
         void Replace(List<BoardPost> next)
         {
+            headCut = false;
             posts.Clear();
             known.Clear();
             foreach (var post in next)
@@ -431,6 +439,11 @@ namespace Kukuri.GameSdk.Social
             }
             if (withCursor)
                 nextCursor = page["next_cursor"] is JObject cursor ? cursor : null;
+            if (posts.Count > MaxPosts)
+            {
+                Trim(true);
+                return;
+            }
             RenderHeader();
             if (listContent == null || itemTemplate == null)
                 return;
@@ -440,6 +453,24 @@ namespace Kukuri.GameSdk.Social
                     items.Add(Instantiate(itemTemplate, listContent));
                 ShowRow(index);
             }
+        }
+
+        /// 上限を超えた分を、先頭（`fromHead`）か末尾から捨てる。末尾を捨てたら、続きの位置を残った最後の投稿にする。
+        void Trim(bool fromHead)
+        {
+            var over = posts.Count - MaxPosts;
+            var start = fromHead ? 0 : MaxPosts;
+            for (var index = start; index < start + over; index++)
+                known.Remove(posts[index].ObjectId);
+            posts.RemoveRange(start, over);
+            if (fromHead)
+                headCut = true;
+            else
+            {
+                var last = posts[posts.Count - 1];
+                nextCursor = new JObject { ["created_at"] = last.CreatedAt, ["object_id"] = last.ObjectId };
+            }
+            Render();
         }
 
         BoardPost ToPost(JToken item)
@@ -499,7 +530,13 @@ namespace Kukuri.GameSdk.Social
                 destinationText.text = (ThreadId == null ? "投稿先: " : "返信先の thread: ") + topic +
                     (channelId.Length == 0 ? "（公開。誰でも読めます）" : "（private channel。参加者だけが読めます）");
             if (backButton != null)
-                backButton.gameObject.SetActive(ThreadId != null);
+            {
+                // thread からは一覧へ、先頭を捨てた一覧からは先頭の頁へ戻る（どちらも先頭の頁を読み直す）。
+                backButton.gameObject.SetActive(ThreadId != null || headCut);
+                var label = backButton.GetComponentInChildren<Text>(true);
+                if (label != null)
+                    label.text = ThreadId != null ? "一覧へ戻る" : "先頭へ戻る";
+            }
             if (moreButton != null)
                 moreButton.interactable = nextCursor != null;
         }
