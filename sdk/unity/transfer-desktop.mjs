@@ -3,9 +3,10 @@
 // - source（#1996 AC-3）: アカウントメニューの「アカウント追加」→「別の端末へ移す」で「リンクをコピー」し（OS の clipboard
 //   へ書く）、<作業 dir>/copied に公開鍵を書く。同じ確認コードが出たら「一致する」を押し、完了を待って終わる。
 // - target（#1998 AC-2「kukuriで続ける」）: 「別の端末から移す」を開き、Player が <作業 dir>/handoff を書いたら OS の
-//   clipboard のリンクを貼り付けて接続する。「一致する」→「このアカウントを使う」でゲームのアカウントに切り替え、Player と
+//   clipboard のリンクを貼り付け、投稿の履歴に「直近 30 日」を選んで接続する（ゲームは履歴を送り終えるのを待たずに
+//   プレイに戻る）。「一致する」→「このアカウントを使う」でゲームのアカウントに切り替え、Player と
 //   互いの ticket を取り込み、試験の topic の timeline でゲームの投稿（<作業 dir>/game-post）を読んで返信する。Player が
-//   <作業 dir>/received を書くまで待って終わる。
+//   <作業 dir>/received を書いたら、ゲームの投稿が画面の timeline に出るのを待って `shown` を log に書き、終わる。
 // どちらも確認コードの画面を <作業 dir>/desktop-confirming.png に撮る。target は返信の後の timeline も
 // <作業 dir>/desktop-timeline.png に撮る。
 import { execFileSync } from 'node:child_process';
@@ -14,7 +15,7 @@ import { join, resolve } from 'node:path';
 
 import { launch } from '../../apps/desktop/tests/real-app/driver.mjs';
 import { TOPIC, accept, openTopic } from '../../apps/desktop/tests/real-app/session.mjs';
-import { click, text } from '../../apps/desktop/tests/real-app/ui.mjs';
+import { choose, click, text } from '../../apps/desktop/tests/real-app/ui.mjs';
 import { eventually } from '../../apps/desktop/tests/web-e2e/wait.mjs';
 
 const [app, root] = process.argv.slice(2, 4).map((path) => resolve(path));
@@ -55,6 +56,7 @@ try {
         return true;
       })()`
     );
+    await choose(desktop, text('settings', 'accountTransfer.history.label'), text('settings', 'accountTransfer.history.choice.month'));
     await click(desktop, text('settings', 'accountTransfer.target.connect'));
     console.log(`pasted the transfer link of ${key}`);
   }
@@ -94,6 +96,7 @@ try {
       60_000
     );
     await shoot('desktop-timeline.png');
+    console.log('shown');
   }
 } finally {
   await desktop.close();

@@ -272,6 +272,8 @@ function Start-Desktop([string]$mode) {
     $log = Join-Path $env:KGS_TRANSFER_DIR "desktop.log"
     $process = Start-Process -FilePath "node" -ArgumentList "`"$(Join-Path $PSScriptRoot "transfer-desktop.mjs")`" `"$DesktopApp`" `"$env:KGS_TRANSFER_DIR`" $mode" `
         -RedirectStandardOutput $log -RedirectStandardError (Join-Path $env:KGS_TRANSFER_DIR "desktop.err") -NoNewWindow -PassThru
+    # handle を先に開いておかないと、終了の後に ExitCode が読めない（Start-Process -PassThru の挙動）。
+    $null = $process.Handle
     return @{ Process = $process; Log = $log }
 }
 
@@ -317,13 +319,13 @@ if ($DesktopApp) {
             $reply = Find-Value $run.Log "KGS_REPLY (\S+ \S+)"
         }
     }
-    if (-not $target.Process.WaitForExit(60000)) { Stop-Process -Id $target.Process.Id -Force }
+    if (-not $target.Process.WaitForExit(120000)) { Stop-Process -Id $target.Process.Id -Force; $exits += "desktop-timeout" } else { $exits += $target.Process.ExitCode }
     $gameKey = Get-Content (Join-Path $env:KGS_TRANSFER_DIR "handoff") -ErrorAction SilentlyContinue
     $targetCode = Find-Value $target.Log "confirming (\d{6})"
     $replyId = Find-Value $target.Log "replied (\S+)"
     $id = ($handed[0] -split " ")[1]
     $handoffOk = ($gameKey -match "^[0-9a-f]{64}$") -and ($code -eq $targetCode) -and ($reply -eq "$replyId $gameKey") -and
-        (Select-String -Path $target.Log -Pattern "^switched to $gameKey" -Quiet) -and
+        (Select-String -Path $target.Log -Pattern "^switched to $gameKey" -Quiet) -and (Select-String -Path $target.Log -Pattern "^shown" -Quiet) -and
         ($id -match "^[0-9a-f-]{36}$") -and ($handed[0] -eq "playing $id $gameKey") -and ($handed[1] -eq "playing $id $gameKey") -and
         (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0)
     Write-Output "Player handoff ($Backend): game=$gameKey codes=$code/$targetCode reply=$reply players=$($handed -join ' | ') exits=$($exits -join ',') ok=$handoffOk"

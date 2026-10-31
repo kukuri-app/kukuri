@@ -131,6 +131,7 @@ public sealed class MinimalSample : MonoBehaviour
         var invite = await runner.Client.SendAsync("create_account_transfer_invite", new JObject(), acceptsSecretOutput: true);
         if (!invite.Ok || invite.Secret == null)
         {
+            Screen = "playing";
             message = $"リンクを作れません: {invite.ErrorCode}";
             return;
         }
@@ -164,7 +165,9 @@ public sealed class MinimalSample : MonoBehaviour
             var status = await runner.Client.SendAsync("get_account_transfer_status");
             Transfer = status.Data as JObject;
             var state = (string)Transfer?["state"];
-            if (state == "completed" && handingOff)
+            // 移す向きは、アカウントを送り終えたらプレイに戻る。kukuri app が投稿の履歴を選んでいれば、履歴は背景で送り続ける
+            // （取り消さない）。
+            if (handingOff && (state == "completed" || state == "history"))
             {
                 message = "kukuri app へ移しました。kukuri app で「このアカウントを使う」を押すと、同じアカウントで会話を続けられます";
                 Transfer = null;
@@ -193,6 +196,8 @@ public sealed class MinimalSample : MonoBehaviour
                     _ => "移せませんでした。もう一度試してください",
                 };
                 Transfer = null;
+                if (handingOff)
+                    Screen = "playing";
                 return;
             }
             await Task.Delay(500);
