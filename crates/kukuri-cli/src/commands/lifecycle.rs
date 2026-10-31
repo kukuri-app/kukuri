@@ -46,6 +46,14 @@ struct GamePlayerInput {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct MergeInput {
+    application_id: String,
+    account_id: String,
+    #[serde(default)]
+    game_player_id: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CloudAccountInput {
     application_id: String,
     enabled: bool,
@@ -153,7 +161,23 @@ impl CommandHandler for Handler {
                     game_player::start(
                         &session.app_data_dir,
                         context.host.ok_or_else(crate::session::failed)?,
+                        &session.game_copy,
                         &request.application_id,
+                    )
+                    .await?,
+                )
+            }
+            // #1998 AC-3: ゲームの結び付きを profile にある既存のアカウントへ付け替える（ADR 0070 §4.2）。
+            "merge_game_player" => {
+                let request: MergeInput = decode(payload)?;
+                encode(
+                    game_player::merge(
+                        &session.app_data_dir,
+                        context.host.ok_or_else(crate::session::failed)?,
+                        &session.game_copy,
+                        &request.application_id,
+                        &request.account_id,
+                        request.game_player_id.as_deref(),
                     )
                     .await?,
                 )
@@ -336,6 +360,7 @@ pub(super) fn registrations(session: Option<Arc<ClientSession>>) -> Vec<CommandR
         ("get_account_display", Read, false, false, true),
         ("start_game_player", Write, false, false, true),
         ("get_game_player", Read, false, false, false),
+        ("merge_game_player", Write, false, false, true),
         ("get_cloud_account", Read, false, false, false),
         ("set_cloud_account", Write, false, false, true),
         ("open_account_transfer", Write, true, false, true),

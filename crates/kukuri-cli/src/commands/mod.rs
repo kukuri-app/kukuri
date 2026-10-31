@@ -8,6 +8,7 @@ mod direct_messages;
 mod dome_connection_views;
 mod errors;
 mod game_player;
+pub(crate) use game_player::CopyTask;
 mod game_views;
 mod lifecycle;
 mod lifecycle_schema;

@@ -20,7 +20,7 @@ fn fields(properties: Value) -> Value {
     object(properties.clone(), &keys)
 }
 fn game_player() -> Value {
-    fields(json!({"game_player_id": string(), "public_key": string()}))
+    fields(json!({"game_player_id": string(), "public_key": string(), "copying": boolean()}))
 }
 /// 移行の状態（`state` で種類が決まる）。SDK が移行先のときは履歴を受けないが、移行元のときは相手が選べば履歴を送る。
 fn transfer_status() -> Value {
@@ -98,6 +98,10 @@ pub(super) fn input(name: &str) -> Value {
             fields(json!({"application_id": string()}))
         }
         "set_cloud_account" => fields(json!({"application_id": string(), "enabled": boolean()})),
+        "merge_game_player" => object(
+            json!({"application_id": string(), "account_id": string(), "game_player_id": nullable(string())}),
+            &["application_id", "account_id"],
+        ),
         "create_account" => fields(json!({"account_id": string(), "operation_id": string()})),
         "create_device_backup_command" | "preview_device_backup_command" => {
             fields(json!({"path": string()}))
@@ -123,7 +127,7 @@ pub(super) fn output(name: &str) -> Value {
             json!({"version": integer(), "kdf": string(), "public_key": string(), "already_registered": boolean()}),
         ),
         "import_account_key" | "switch_account" | "logout_account" | "create_account" => account(),
-        "start_game_player" => game_player(),
+        "start_game_player" | "merge_game_player" => game_player(),
         "get_game_player" => nullable(game_player()),
         "get_cloud_account" | "set_cloud_account" => fields(
             json!({"state": {"enum": ["off", "on", "restorable", "other_account", "unreadable"]}}),

@@ -22,6 +22,8 @@ pub struct ClientSession {
     startup: ClientStartupState,
     host: RwLock<Option<Arc<ClientHost>>>,
     pub(crate) operation: ClientOperationState,
+    /// ゲームのアカウントのまとめの付け直し（ADR 0070 §4.2）。
+    pub(crate) game_copy: crate::commands::CopyTask,
 }
 
 impl ClientSession {
@@ -32,6 +34,7 @@ impl ClientSession {
             startup: ClientStartupState::initializing(),
             host: RwLock::new(None),
             operation: ClientOperationState::default(),
+            game_copy: Default::default(),
         });
         let consent = app_consent_status(&session.consent_db_path()).await;
         match restore_startup_action(pending, consent.satisfied) {
@@ -179,6 +182,7 @@ impl ClientSession {
     }
 
     pub async fn shutdown(&self) {
+        self.game_copy.abort();
         self.startup.set_status(ClientStartupStatus::Initializing);
         let host = self.host.write().expect("session host lock").take();
         if let Some(host) = host {

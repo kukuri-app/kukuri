@@ -1,5 +1,5 @@
 // test.ps1 の移行の確認で、desktop（配布と同じ build）を画面から動かす。Player とは <作業 dir> の file でやり取りする。
-// 使い方: node sdk/unity/transfer-desktop.mjs <desktop の実行 file> <作業 dir> <source|target>
+// 使い方: node sdk/unity/transfer-desktop.mjs <desktop の実行 file> <作業 dir> <source|target|merge>
 // - source（#1996 AC-3）: アカウントメニューの「アカウント追加」→「別の端末へ移す」で「リンクをコピー」し（OS の clipboard
 //   へ書く）、<作業 dir>/copied に公開鍵を書く。同じ確認コードが出たら「一致する」を押し、完了を待って終わる。
 // - target（#1998 AC-2「kukuriで続ける」）: 「別の端末から移す」を開き、Player が <作業 dir>/handoff を書いたら OS の
@@ -7,8 +7,11 @@
 //   プレイに戻る）。「一致する」→「このアカウントを使う」でゲームのアカウントに切り替え、Player と
 //   互いの ticket を取り込み、試験の topic の timeline でゲームの投稿（<作業 dir>/game-post）を読んで返信する。Player が
 //   <作業 dir>/received を書いたら、ゲームの投稿が画面の timeline に出るのを待って `shown` を log に書き、終わる。
-// どちらも確認コードの画面を <作業 dir>/desktop-confirming.png に撮る。target は返信の後の timeline も
-// <作業 dir>/desktop-timeline.png に撮る。
+// - merge（#1998 AC-3「既存のアカウントへまとめる」）: source と同じくリンクをコピーして承認する。その後 Player と互いの
+//   ticket を取り込み、まとめた後に Player が書いた投稿（<作業 dir>/game-post）が desktop のアカウントの投稿として画面の
+//   timeline に出るのを待って `shown` を log に書き、<作業 dir>/received を書いて終わる。
+// どれも確認コードの画面を <作業 dir>/desktop-confirming.png に撮る。target は返信の後の timeline も
+// <作業 dir>/desktop-timeline.png に撮る（merge も同じ）。
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -36,7 +39,7 @@ try {
   await accept(desktop);
   await click(desktop, text('shell', 'accountMenu.open'));
   await click(desktop, text('shell', 'accountMenu.add'));
-  if (mode === 'source') {
+  if (mode !== 'target') {
     const key = (await desktop.invoke('get_sync_status')).local_author_pubkey;
     await click(desktop, text('shell', 'accountMenu.transferOut'));
     await click(desktop, text('settings', 'accountTransfer.source.copy'));
@@ -97,6 +100,25 @@ try {
     );
     await shoot('desktop-timeline.png');
     console.log('shown');
+  }
+  if (mode === 'merge') {
+    const key = (await desktop.invoke('get_sync_status')).local_author_pubkey;
+    await openTopic(desktop, TOPIC, 'timeline');
+    writeFileSync(join(root, 'desktop-ticket'), await desktop.invoke('get_local_peer_ticket'));
+    await desktop.invoke('import_peer_ticket', { request: { ticket: await marker('game-ticket') } });
+    const post = await marker('game-post');
+    const request = { topic: TOPIC, scope: { kind: 'public' }, cursor: null, limit: 20 };
+    await eventually('the merged game post on desktop', () =>
+      desktop.invoke('list_timeline', { request }).then((view) => view.items.some((item) => item.object_id === post && item.author_pubkey === key)),
+      120_000
+    );
+    await eventually('the merged game post on the timeline', () =>
+      desktop.evaluate(`document.body.innerText.includes('test: after the merge')`),
+      60_000
+    );
+    await shoot('desktop-timeline.png');
+    console.log(`shown ${post} ${key}`);
+    writeFileSync(join(root, 'received'), post);
   }
 } finally {
   await desktop.close();

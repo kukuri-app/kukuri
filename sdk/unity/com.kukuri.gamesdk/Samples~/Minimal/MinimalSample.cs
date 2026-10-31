@@ -12,7 +12,8 @@ using UnityEngine;
 /// 暗号化 export したアカウントの取り込みは、端末を失ったときの「復旧」の上級の操作として開始の画面から分ける。
 /// プレイ中の「kukuriで続ける」は、このゲームのアカウントを同じ鍵のまま kukuri app へ移すリンクをコピーする（ADR 0070
 /// §4.2）。Steam で配るゲームは「Steam Cloud に保存」で、ゲームで作ったアカウントと game player を Steam Cloud に置き、
-/// 別の PC でも同じアカウントで再開できる（§4.3。同期はゲームの Steam Auto-Cloud の設定が行う）。
+/// 別の PC でも同じアカウントで再開できる（§4.3。同期はゲームの Steam Auto-Cloud の設定が行う）。「既存のアカウントへ
+/// まとめる」は、このゲームの進行を既存の kukuri アカウントへ付け替え、以後はそのアカウントで遊ぶ（§4.2）。
 public sealed class MinimalSample : MonoBehaviour
 {
     [SerializeField] KukuriRunner runner;
@@ -25,11 +26,14 @@ public sealed class MinimalSample : MonoBehaviour
     [NonSerialized] string exportText = "";
     [NonSerialized] string passphrase = "";
 
-    /// 今の画面（`loading`・`consent`・`start`・`transfer`・`recovery`・`playing`）。
+    /// 今の画面（`loading`・`consent`・`start`・`transfer`・`recovery`・`playing`・`merge`・`merge-confirm`）。
     public string Screen { get; private set; } = "loading";
     /// 始めた game player の ID とアカウントの公開鍵（`playing` のとき）。ゲームはセーブの参照に game player ID を使う。
     public string GamePlayerId { get; private set; } = "";
     public string PublicKey { get; private set; } = "";
+
+    /// まとめた後に、前のアカウントのフォロー・ブロック・ミュートを付け直している途中か。
+    public bool Copying { get; private set; }
 
     /// Steam Cloud への保存の状態（`get_cloud_account` の `state`。`off`・`on`・`other_account` など）。
     public string CloudState { get; private set; } = "off";
@@ -42,6 +46,11 @@ public sealed class MinimalSample : MonoBehaviour
     int transferRun;
     /// 移行の画面が、このゲームのアカウントを kukuri app へ移す向き（「kukuriで続ける」）か。
     bool handingOff;
+    /// 移行の画面が、まとめる先のアカウントを受ける向き（「既存のアカウントへまとめる」）か。
+    bool merging;
+    /// まとめる先の候補（profile にある、今のアカウント以外）と、選んだアカウント。
+    JArray mergeCandidates = new JArray();
+    string mergeTarget = "";
 
     JObject ThisGame => new JObject { ["application_id"] = applicationId };
 
@@ -110,11 +119,70 @@ public sealed class MinimalSample : MonoBehaviour
             message = $"始められません: {started.ErrorCode}";
             return;
         }
-        GamePlayerId = (string)started.Data["game_player_id"];
-        PublicKey = (string)started.Data["public_key"];
+        Play(started.Data);
         message = "";
+        await ReadCloud();
+    }
+
+    void Play(JToken player)
+    {
+        GamePlayerId = (string)player["game_player_id"];
+        PublicKey = (string)player["public_key"];
+        Copying = (bool)player["copying"];
         Screen = "playing";
         Debug.Log($"kukuri sample: playing game_player_id={GamePlayerId}");
+        if (Copying)
+            _ = WatchCopy();
+    }
+
+    /// 付け直しが終わるまで読み直す。
+    async Task WatchCopy()
+    {
+        while (Copying && Screen == "playing")
+        {
+            await Task.Delay(2000);
+            var read = await runner.Client.SendAsync("get_game_player", ThisGame);
+            Copying = read.Ok && read.Data is JObject && (bool)read.Data["copying"];
+        }
+    }
+
+    /// 「既存のアカウントへまとめる」。説明と、まとめる先の選択を出す。
+    public async Task EnterMerge()
+    {
+        var listed = await runner.Client.SendAsync("list_accounts");
+        mergeCandidates = new JArray();
+        foreach (var account in listed.Data?["accounts"] as JArray ?? new JArray())
+            if ((string)account["pubkey"] != PublicKey)
+                mergeCandidates.Add(account);
+        message = "";
+        Screen = "merge";
+    }
+
+    /// 「kukuri app から受けてまとめる」。まとめる先を移行で受ける（受けた後に残す進行を選ぶ）。
+    public void ReceiveForMerge() => EnterTransfer(false, true);
+
+    void ChooseMerge(string accountId)
+    {
+        mergeTarget = accountId;
+        Screen = "merge-confirm";
+    }
+
+    /// 確定。今の進行（この game player）を残して、選んだアカウントへまとめる。
+    public async Task Merge()
+    {
+        var request = ThisGame;
+        request["account_id"] = mergeTarget;
+        var merged = await runner.Client.SendAsync("merge_game_player", request);
+        if (!merged.Ok)
+        {
+            message = (string)merged.Raw?["error"]?["details"]?["reason"] == "merge_in_progress"
+                ? "前のまとめの付け直しが終わってから、やり直してください"
+                : $"まとめられません: {merged.ErrorCode}";
+            Screen = "playing";
+            return;
+        }
+        message = "まとめました。以後はまとめた先のアカウントで投稿・参加します";
+        Play(merged.Data);
         await ReadCloud();
     }
 
@@ -142,12 +210,13 @@ public sealed class MinimalSample : MonoBehaviour
     /// 「kukuriアカウントを使う」。移行で受ける前の説明と「貼り付け」の画面を出す。
     public void UseKukuriAccount() => EnterTransfer(false);
 
-    void EnterTransfer(bool handOff)
+    void EnterTransfer(bool handOff, bool merge = false)
     {
         message = "";
         Transfer = null;
         transferRun++;
         handingOff = handOff;
+        merging = merge;
         Screen = "transfer";
     }
 
@@ -201,6 +270,14 @@ public sealed class MinimalSample : MonoBehaviour
                 Screen = "playing";
                 return;
             }
+            if (state == "completed" && merging)
+            {
+                // 受けたアカウントは profile に加わるだけなので、まとめる先として選ぶ。
+                var received = (string)Transfer["account_id"];
+                Transfer = null;
+                ChooseMerge(received);
+                return;
+            }
             if (state == "completed")
             {
                 // 移行は受けたアカウントを足すだけなので、切り替えてから開始の画面に戻る。
@@ -223,7 +300,7 @@ public sealed class MinimalSample : MonoBehaviour
                     _ => "移せませんでした。もう一度試してください",
                 };
                 Transfer = null;
-                if (handingOff)
+                if (handingOff || merging)
                     Screen = "playing";
                 return;
             }
@@ -233,7 +310,7 @@ public sealed class MinimalSample : MonoBehaviour
 
     async Task LeaveTransfer()
     {
-        Screen = handingOff ? "playing" : "start";
+        Screen = handingOff || merging ? "playing" : "start";
         Transfer = null;
         transferRun++;
         await runner.Client.SendAsync("cancel_account_transfer");
@@ -310,6 +387,12 @@ public sealed class MinimalSample : MonoBehaviour
                 }
                 else if (state != null)
                     GUILayout.Label("kukuri app とつないでいます…");
+                else if (merging)
+                {
+                    GUILayout.Label("kukuri app のアカウントメニューの「アカウント追加」→「別の端末へ移す」で「リンクをコピー」してから、貼り付けてください。");
+                    if (GUILayout.Button("貼り付け", GUILayout.Height(40)))
+                        _ = Paste();
+                }
                 else
                 {
                     GUILayout.Label("持っている kukuri アカウントでこのゲームを始めます。");
@@ -335,8 +418,12 @@ public sealed class MinimalSample : MonoBehaviour
                 GUILayout.Label("プレイ中");
                 GUILayout.Label($"game player: {GamePlayerId}");
                 GUILayout.Label($"公開鍵: {PublicKey}");
+                if (Copying)
+                    GUILayout.Label("前のアカウントのフォロー・ブロック・ミュートを付け直しています…");
                 if (GUILayout.Button("kukuriで続ける"))
                     _ = HandOff();
+                if (GUILayout.Button("既存のアカウントへまとめる"))
+                    _ = EnterMerge();
                 if (steamCloud && CloudState == "on")
                 {
                     GUILayout.Label("Steam Cloud に保存しています。同じ Steam アカウントなら別の PC でも再開できます。");
@@ -349,6 +436,31 @@ public sealed class MinimalSample : MonoBehaviour
                     if (GUILayout.Button("Steam Cloud に保存"))
                         _ = SetCloud(true);
                 }
+                break;
+            case "merge":
+                GUILayout.Label("このゲームの進行を、持っている kukuri アカウントへまとめます。");
+                GUILayout.Label("・以後はまとめた先のアカウントで投稿・参加し、ゲームの進行はそのアカウントに付きます。");
+                GUILayout.Label("・このゲームのアカウントの過去の投稿は、このゲームのアカウントのまま残ります。他の人からは別の人に見え、フォロワーは移りません。");
+                GUILayout.Label("・フォロー・ブロック・ミュートはまとめた先で付け直します。フォローとブロックは公開されるので、関係を推測されることがあります。");
+                GUILayout.Label("・参加している private channel には、まとめた先のアカウントを招待し直してもらってください。");
+                GUILayout.Label("・まとめた後、このゲームでは前のアカウントを使えません。前のアカウントの private channel への招待、投稿の取り下げ、プロフィールの変更をしたいときは、先に「kukuriで続ける」で kukuri app へ移してください。この端末が担っていた private channel の鍵の更新は止まります。");
+                GUILayout.Label("・まとめた先のアカウントの鍵がこの端末に残り、kukuri app から後で取り消せません。");
+                if (steamCloud && CloudState == "on")
+                    GUILayout.Label("・Steam Cloud への保存はやめます（まとめた先の鍵は Steam に置きません）。");
+                foreach (var account in mergeCandidates)
+                    if (GUILayout.Button($"{(string)account["label"] ?? ((string)account["pubkey"]).Substring(0, 12)} へまとめる"))
+                        ChooseMerge((string)account["id"]);
+                if (GUILayout.Button("kukuri app から受けてまとめる"))
+                    ReceiveForMerge();
+                if (GUILayout.Button("戻る"))
+                    Screen = "playing";
+                break;
+            case "merge-confirm":
+                GUILayout.Label("残す進行: このゲームの今の進行（まとめた先のアカウントで続けます）");
+                if (GUILayout.Button("まとめる", GUILayout.Height(40)))
+                    _ = Merge();
+                if (GUILayout.Button("やめる"))
+                    Screen = "playing";
                 break;
         }
         if (message.Length > 0)

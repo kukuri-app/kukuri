@@ -7,7 +7,7 @@ use syn::{Token, parse::Parser, punctuated::Punctuated, visit::Visit};
 const TAURI_SOURCE: &str = include_str!("../../../apps/desktop/src-tauri/src/lib.rs");
 const MANIFEST: &str = include_str!("../command-parity.json");
 /// GUI の入口に対応しない CLI の command。daemon の制御と、CLI daemon だけの機能(#1909 の公開 topic の保持)。
-const CLI_ONLY: [&str; 18] = [
+const CLI_ONLY: [&str; 19] = [
     "client.status",
     "events.watch",
     "protocol.commands",
@@ -28,6 +28,8 @@ const CLI_ONLY: [&str; 18] = [
     // #1996: ゲームの開始で作る game player(SDK の profile だけ)。
     "start_game_player",
     "get_game_player",
+    // #1998: ゲームのアカウントの既存のアカウントへのまとめ(SDK の profile だけ)。
+    "merge_game_player",
     // #1997: Steam Cloud へのゲームのアカウントの保存(SDK の profile だけ)。
     "get_cloud_account",
     "set_cloud_account",
