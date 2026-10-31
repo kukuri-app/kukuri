@@ -100,6 +100,10 @@ mod private_channels_game_api;
 #[cfg(not(target_family = "wasm"))]
 mod protected_migration;
 mod public_channels_api;
+#[cfg(not(target_family = "wasm"))]
+mod social_copy;
+#[cfg(not(target_family = "wasm"))]
+pub use social_copy::{SocialCopyKind, SocialCopySource};
 mod sync_live_api;
 mod sync_status_observer;
 mod topic_retention_api;

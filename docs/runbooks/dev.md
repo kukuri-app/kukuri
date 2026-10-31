@@ -449,8 +449,10 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1
 powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -Backend IL2CPP -SkipEditMode
 # desktop（配布と同じ release build。下の「実際のアプリを複数動かす自動の試験」と同じ作り方）を移行元にして、Player の
 # 「kukuriアカウントを使う」→「貼り付け」→ 確認コードの承認 →「はじめる」→ 再起動も確かめる。続けて、逆向きの「kukuriで続ける」
-# → desktop の「別の端末から移す」→ 承認 → desktop での返信 → Player での受信 → 再起動も確かめる（OS の clipboard を使う。画面を
-# %TEMP%\kgs-start-transfer-*.png・%TEMP%\kgs-start-handoff-*.png と %TEMP%\kgs-transfer-<source|target>\desktop-*.png に書く）
+# → desktop の「別の端末から移す」→ 承認 → desktop での返信 → Player での受信 → 再起動も確かめる。さらに、Player の「既存のアカウントへ
+# まとめる」→「kukuri app から受けてまとめる」→ desktop の「別の端末へ移す」のリンクの貼り付け → 承認 →「まとめる」→ まとめた後の
+# 投稿を desktop が自分のアカウントの投稿として表示 → 再起動も確かめる（OS の clipboard を使う。画面を %TEMP%\kgs-start-transfer-*.png・
+# %TEMP%\kgs-start-handoff-*.png・%TEMP%\kgs-start-merge-*.png と %TEMP%\kgs-transfer-<source|target|merge>\desktop-*.png に書く）
 powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -DesktopApp <kukuri-desktop-tauri.exe>
 # NGO 2.13.3 を入れた project で、NGO の Transport の EditMode の試験を流し、Netcode Sync sample の Player を 2 つ起動して
 # cube の同期と切断を確かめる（client は FFI と Sidecar の 2 回。%TEMP%\kgs-ngo に作る）
@@ -465,7 +467,7 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test-graphics.ps1
 - DLL を build し直したら、DLL を読み込んだ Unity Editor を再起動する（Windows は読み込んだ native plugin を解放しないので、Editor が開いたままでは差し替わらない）。
 - 設定 asset（`kukuri/Settings`）の mode を Sidecar にすると、Play の開始時に Editor が `kukuri-sdk-sidecar.exe` を起動し、Play を止めても動かし続ける。Editor の終了か menu の「kukuri/Sidecar を止める」で止まる。Player の build は Sidecar を起動せず、既定は FFI。
 - Unity の project を深い path に置くと Windows の path の長さの上限に当たる。`test.ps1` は `%TEMP%\kgs-test` に作る。
-- ゲームの開始は Minimal sample の形にする。同意の後、起動ごとに `get_game_player`（ゲームの application ID）を呼び、null なら開始の画面（主の操作は「はじめる」）を出して、「はじめる」で `start_game_player` を呼ぶ。保存済みなら `start_game_player` で同じ game player とアカウントで再開する。ゲームのセーブは `game_player_id` で参照する。「はじめる」の前は SNS・ロビーを開かない。既存の kukuri アカウントを使う人には、開始の画面に「kukuriアカウントを使う」を並べる。kukuri app の「別の端末へ移す」でコピーしたリンクを clipboard から読んで `open_account_transfer`（リンクは Secret frame）に渡し、`get_account_transfer_status` の確認コードを示して `decide_account_transfer` で承認する。`completed` の `account_id` へ `switch_account` で切り替えてから「はじめる」。開始済みの profile では `switch_account` が `integration_required` で断る。プレイ中には「kukuriで続ける」を置き、`create_account_transfer_invite`（リンクは Secret の出力）で作ったリンクを clipboard へコピーして、kukuri app の「別の端末から移す」で受けてもらう。ゲームは同じアカウントと game player のまま続く。暗号化 export の取り込み（`import_account_key`）は「復旧」の上級の操作で、開始の画面には出さない（ADR 0070 §4.1）。
+- ゲームの開始は Minimal sample の形にする。同意の後、起動ごとに `get_game_player`（ゲームの application ID）を呼び、null なら開始の画面（主の操作は「はじめる」）を出して、「はじめる」で `start_game_player` を呼ぶ。保存済みなら `start_game_player` で同じ game player とアカウントで再開する。ゲームのセーブは `game_player_id` で参照する。「はじめる」の前は SNS・ロビーを開かない。既存の kukuri アカウントを使う人には、開始の画面に「kukuriアカウントを使う」を並べる。kukuri app の「別の端末へ移す」でコピーしたリンクを clipboard から読んで `open_account_transfer`（リンクは Secret frame）に渡し、`get_account_transfer_status` の確認コードを示して `decide_account_transfer` で承認する。`completed` の `account_id` へ `switch_account` で切り替えてから「はじめる」。開始済みの profile では `switch_account` が `integration_required` で断る。プレイ中には「kukuriで続ける」を置き、`create_account_transfer_invite`（リンクは Secret の出力）で作ったリンクを clipboard へコピーして、kukuri app の「別の端末から移す」で受けてもらう。ゲームは同じアカウントと game player のまま続く。プレイ中の「既存のアカウントへまとめる」は、まとめる前の説明（ADR 0070 §4.2 の「入口」）を出し、profile にある別のアカウント（`list_accounts`）か、「別の端末へ移す」のリンクで受けたアカウントを選んで `merge_game_player` を呼ぶ。ゲームが自分のセーブで B の進行を選んだときは、その game player ID を `game_player_id` に渡す（既定は今の ID）。まとめた後は B で投稿・参加し、`copying` が true の間は A のフォロー・ブロック・ミュートを背景で B に付け直している。暗号化 export の取り込み（`import_account_key`）は「復旧」の上級の操作で、開始の画面には出さない（ADR 0070 §4.1）。
 - Steam で配るゲームは、プレイ中に「Steam Cloud に保存」（`set_cloud_account` の `enabled: true`）を出せる（ADR 0070 §4.3）。SDK は Steam を扱わず、ゲームで作ったアカウントの鍵と game player を profile の `game-account.json` に書くだけで、同期は Steamworks の Auto-Cloud が行う。Steam の API が使えるときだけ出すのはゲームが決める（Minimal sample は `steamCloud` の設定）。
   - Steamworks の App Admin の Cloud で、Auto-Cloud に SDK の profile の `game-account.json` を足す。既定の profile は `Application.persistentDataPath/kukuri/profiles/<profile>` なので、Windows は Root を `WinAppDataLocalLow`、Subdirectory を `<会社名>/<製品名>/kukuri/profiles/<profile>`、Pattern を `game-account.json` にする。利用者ごとの容量は file 1 件・数 KB で足りる。
   - 新しい PC では Steam が起動の前に file を戻し、同意 →「はじめる」で同じアカウントと game player で再開する。

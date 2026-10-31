@@ -76,6 +76,8 @@ mod reloadable_docs_sync;
 mod replication_heuristics;
 mod runtime_events;
 mod seeded_dht;
+#[cfg(not(target_family = "wasm"))]
+mod social_copy;
 mod static_peer;
 
 mod account_logout;

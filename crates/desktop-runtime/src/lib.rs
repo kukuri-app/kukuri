@@ -201,6 +201,8 @@ pub use requests::{
     WithdrawDomeConnectionProposalRequest, WithdrawPostRequest, WithdrawalReasonVisibilityRequest,
 };
 pub use runtime::{DesktopRuntime, RuntimeEvent};
+#[cfg(not(target_family = "wasm"))]
+pub use runtime::{SocialCopyKind, SocialCopySource};
 
 /// Generation-bound owner deletion request.
 pub use kukuri_app_api::DeleteDomeInput as DeleteDomeRequest;
