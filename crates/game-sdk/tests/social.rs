@@ -16,7 +16,7 @@ use kukuri_game_sdk::KukuriHandle;
 use serde_json::{Value, json};
 use support::{
     call, consent, finish, introduce, isolated_environment, open_real, poll_once, request,
-    response_for, seen_json, send, send_secret, subscribe, wait_for,
+    response_for, secret_output, seen_json, send, send_secret, subscribe, wait_for,
 };
 
 const TOPIC: &str = "kukuri:topic:test-game-sdk-social";
@@ -135,33 +135,6 @@ fn announced(handle: *mut KukuriHandle, object_id: &str) -> bool {
     })
 }
 
-/// 秘密の出力（招待の token）を返す command を送り、token を受け取る。
-fn secret_output(handle: *mut KukuriHandle, command: &str, payload: Value) -> String {
-    let request_id = id();
-    let mut envelope: Value =
-        serde_json::from_slice(&request(&request_id, command, payload)).unwrap();
-    envelope["accepts_secret_output"] = json!(true);
-    assert_eq!(send(handle, envelope.to_string().as_bytes()), 0);
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let items = poll_once(handle, 64).unwrap();
-        if let Some(position) = items
-            .iter()
-            .position(|item| item.kind == 1 && item.json["request_id"] == request_id.as_str())
-        {
-            assert_eq!(items[position].json["ok"], true, "{}", items[position].json);
-            assert_eq!(
-                items[position + 1].kind,
-                2,
-                "the token follows as a secret item"
-            );
-            return String::from_utf8(items[position + 1].raw.clone()).unwrap();
-        }
-        assert!(Instant::now() < deadline, "{command}");
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
 fn import_invite(handle: *mut KukuriHandle, token: &str) {
     let request_id = id();
     assert_eq!(
@@ -272,6 +245,7 @@ fn game_and_desktop_share_posts_replies_and_reactions_within_the_existing_rules(
         .to_owned();
     let invite = secret_output(
         game,
+        &id(),
         "export_private_channel_invite",
         json!({"topic": TOPIC, "channel_id": channel}),
     );

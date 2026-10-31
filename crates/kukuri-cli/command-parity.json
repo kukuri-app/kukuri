@@ -31,7 +31,7 @@
     {"tauri":"commands::app_consent::get_app_consent_status","cli":"get_app_consent_status","inventory":"INV-1"},
     {"tauri":"commands::app_consent::accept_app_consents","cli":"accept_app_consents","inventory":"INV-1"},
     {"tauri":"export_account_key","cli":"export_account_key","inventory":"INV-1"},
-    {"tauri":"create_account_transfer_invite","excluded":"gui_device_pairing","reason":"#1211: QR・リンクの表示と、両端末の確認コードの目視の比較をGUIのDialogで行う端末間の移行。CLI／daemonにはQR・確認コードの表示面がない。"},
+    {"tauri":"create_account_transfer_invite","cli":"create_account_transfer_invite","inventory":"INV-1"},
     {"tauri":"open_account_transfer","cli":"open_account_transfer","inventory":"INV-1"},
     {"tauri":"get_account_transfer_status","cli":"get_account_transfer_status","inventory":"INV-1"},
     {"tauri":"decide_account_transfer","cli":"decide_account_transfer","inventory":"INV-1"},

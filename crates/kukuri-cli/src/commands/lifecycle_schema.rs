@@ -22,18 +22,30 @@ fn fields(properties: Value) -> Value {
 fn game_player() -> Value {
     fields(json!({"game_player_id": string(), "public_key": string()}))
 }
-/// 移行の状態（`state` で種類が決まる）。SDK は移行先だけで履歴を受けないので、`history` の種類と結果は出ない。
+/// 移行の状態（`state` で種類が決まる）。SDK が移行先のときは履歴を受けないが、移行元のときは相手が選べば履歴を送る。
 fn transfer_status() -> Value {
     let role = json!({"enum": ["source", "target", "sync"]});
+    let reasons = [
+        "expired",
+        "invalid",
+        "unreachable",
+        "rejected",
+        "cancelled",
+        "interrupted",
+        "storage",
+    ];
+    let mut stopped = reasons.map(Value::from).to_vec();
+    stopped.push(Value::Null);
     let mut schema = object(
-        json!({"state": {"enum": ["idle", "waiting", "connecting", "confirming", "transferring", "completed", "failed"]},
+        json!({"state": {"enum": ["idle", "waiting", "connecting", "confirming", "transferring", "history", "completed", "failed"]},
         "expires_at_ms": integer(), "role": role, "code": string(), "local_accepted": boolean(), "items": integer(),
-        "account_id": nullable(string()), "history": {"type": "null"},
-        "reason": {"enum": ["expired", "invalid", "unreachable", "rejected", "cancelled", "interrupted", "storage"]}}),
+        "account_id": nullable(string()), "posts": integer(), "unavailable": integer(),
+        "history": nullable(fields(json!({"posts": integer(), "unavailable": integer(), "stopped": {"enum": stopped}}))),
+        "reason": {"enum": reasons}}),
         &["state"],
     );
     schema["description"] = json!(
-        "waiting: expires_at_ms。confirming: role・code・local_accepted。transferring: role・items。completed: role・account_id（受けたアカウント）・history。failed: role・reason。"
+        "waiting: expires_at_ms。confirming: role・code・local_accepted。transferring: role・items。history: role・account_id・posts・unavailable。completed: role・account_id（移行先が受けたアカウント）・history。failed: role・reason。"
     );
     schema
 }
@@ -73,6 +85,7 @@ pub(super) fn input(name: &str) -> Value {
         | "export_account_key"
         | "preview_account_key_import"
         | "open_account_transfer"
+        | "create_account_transfer_invite"
         | "get_account_transfer_status"
         | "cancel_account_transfer" => object(json!({}), &[]),
         "decide_account_transfer" => fields(json!({"accept": boolean()})),
@@ -117,6 +130,7 @@ pub(super) fn output(name: &str) -> Value {
         | "decide_account_transfer"
         | "cancel_account_transfer" => json!({"type": "null"}),
         "get_account_transfer_status" => transfer_status(),
+        "create_account_transfer_invite" => fields(json!({"expires_at_ms": integer()})),
         "create_device_backup_command" => {
             fields(json!({"path": string(), "public_key": string(), "bytes": integer()}))
         }

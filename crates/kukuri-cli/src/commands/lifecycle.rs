@@ -163,6 +163,17 @@ impl CommandHandler for Handler {
                     .map_err(command_error)?;
                 encode(())
             }
+            // #1998 AC-2: ゲームのアカウントを同じ鍵のまま desktop・Web へ移す。リンクは秘密の出力で返す。
+            "create_account_transfer_invite" => {
+                let invite = runtime(&context)?
+                    .create_account_transfer_invite()
+                    .await
+                    .map_err(command_error)?;
+                Ok(CommandOutput::Secret {
+                    data: json!({"expires_at_ms": invite.expires_at_ms}),
+                    secret: SecretOutput::new(invite.link.into_bytes()),
+                })
+            }
             "get_account_transfer_status" => encode(
                 runtime(&context)?
                     .account_transfer_status()
@@ -295,6 +306,7 @@ pub(super) fn registrations(session: Option<Arc<ClientSession>>) -> Vec<CommandR
         ("start_game_player", Write, false, false, true),
         ("get_game_player", Read, false, false, false),
         ("open_account_transfer", Write, true, false, true),
+        ("create_account_transfer_invite", Write, false, true, true),
         ("get_account_transfer_status", Read, false, false, true),
         ("decide_account_transfer", Write, false, false, true),
         ("cancel_account_transfer", Write, false, false, true),

@@ -6,7 +6,9 @@
 #   game player と公開鍵で自動で再開する（#1996 AC-2）
 # - -DesktopApp に desktop（配布と同じ build）を渡すと、desktop の「リンクをコピー」を Player の「kukuriアカウントを使う」→
 #   「貼り付け」で受け、両方で同じ確認コードを承認して desktop の公開鍵で「はじめる」、次の起動で同じ game player と公開鍵で
-#   再開する（#1996 AC-3。desktop は transfer-source.mjs が画面から動かす。node が要る）
+#   再開する（#1996 AC-3）。続けて、Player の「kukuriで続ける」のリンクを desktop の「別の端末から移す」で受けて
+#   desktop をゲームのアカウントに切り替え、desktop がゲームの投稿に返信し、Player がその返信を受けて同じ game player の
+#   まま続く（#1998 AC-2）。desktop は transfer-desktop.mjs が画面から動かす。node が要る
 # 先に build-native.ps1 で native を置く。Unity の project は短い path に作る（深い path は MAX_PATH に当たる）。
 param(
     [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
@@ -54,12 +56,15 @@ if (-not $SkipEditMode) {
 $lock = Get-Content (Join-Path $ProjectDir "Packages\packages-lock.json") -Raw
 if ($lock -match "com\.unity\.netcode") { throw "the test project unexpectedly depends on Netcode" }
 
-# 開始の画面の確認用の probe。`-kgs-close`・`-kgs-begin`・`-kgs-resume`・`-kgs-transfer` のときだけ sample を操作し、画面・
-# 公開鍵・game player ID を log に書き、画面を %TEMP%\kgs-start-*.png に撮って終わる。`-kgs-transfer` は、desktop が
-# リンクをコピーした印（%KGS_TRANSFER_DIR%\copied）を待ってから貼り付ける。
+# 開始の画面の確認用の probe。`-kgs-close`・`-kgs-begin`・`-kgs-resume`・`-kgs-transfer`・`-kgs-handoff` のときだけ sample
+# を操作し、画面・公開鍵・game player ID を log に書き、画面を %TEMP%\kgs-start-*.png に撮って終わる。`-kgs-transfer` は、
+# desktop がリンクをコピーした印（%KGS_TRANSFER_DIR%\copied）を待ってから貼り付ける。`-kgs-handoff` は試験の topic に投稿し、
+# 「kukuriで続ける」でリンクをコピーしてから desktop と %KGS_TRANSFER_DIR% の file でやり取りする。
 @"
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
 using Kukuri.GameSdk;
 using UnityEngine;
 public sealed class KgsStartProbe : MonoBehaviour
@@ -69,7 +74,7 @@ public sealed class KgsStartProbe : MonoBehaviour
     static string Mode()
     {
         var args = System.Environment.GetCommandLineArgs();
-        return new[] { "close", "begin", "resume", "transfer" }.FirstOrDefault(mode => args.Contains("-kgs-" + mode));
+        return new[] { "close", "begin", "resume", "transfer", "handoff" }.FirstOrDefault(mode => args.Contains("-kgs-" + mode));
     }
     async Task Shot(string name)
     {
@@ -112,6 +117,44 @@ public sealed class KgsStartProbe : MonoBehaviour
             Debug.Log("KGS_RECEIVED " + sample.Screen + " " + await Key());
             await sample.Begin();
             await Shot(mode + "-4");
+        }
+        if (mode == "handoff" && sample.Screen == "start")
+        {
+            var dir = System.Environment.GetEnvironmentVariable("KGS_TRANSFER_DIR");
+            const string topic = "kukuri:topic:test";
+            await sample.Begin();
+            await runner.Client.SendAsync("set_topic_gossip_enabled", new JObject { ["topic"] = topic, ["enabled"] = true });
+            var posted = await runner.Client.SendAsync("create_post", new JObject
+            {
+                ["topic"] = topic, ["content"] = "test: from the game", ["channel_ref"] = new JObject { ["kind"] = "public" },
+            });
+            var post = (string)posted.Data;
+            string reply = null;
+            runner.Client.EventReceived += item =>
+            {
+                if ((string)item["type"] == "post_received" && (string)item["post"]?["reply_to"] == post)
+                    reply = (string)item["post"]["object_id"] + " " + (string)item["post"]["author_pubkey"];
+            };
+            File.WriteAllText(Path.Combine(dir, "game-post"), post);
+            var handing = sample.HandOff();
+            while ((string)sample.Transfer?["state"] != "waiting" && !handing.IsCompleted) await Task.Yield();
+            File.WriteAllText(Path.Combine(dir, "handoff"), await Key());
+            await Shot(mode + "-2");
+            while ((string)sample.Transfer?["state"] != "confirming" && !handing.IsCompleted) await Task.Yield();
+            Debug.Log("KGS_CODE " + (sample.Transfer?["code"] ?? "none"));
+            await Shot(mode + "-3");
+            await sample.Decide(true);
+            await handing;
+            Debug.Log("KGS_HANDED " + sample.Screen + " " + await Key());
+            var ticket = await runner.Client.SendAsync("get_local_peer_ticket");
+            File.WriteAllText(Path.Combine(dir, "game-ticket"), (string)ticket.Data);
+            var desktopTicket = Path.Combine(dir, "desktop-ticket");
+            while (!File.Exists(desktopTicket)) await Task.Delay(200);
+            await runner.Client.SendAsync("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(desktopTicket).Trim() });
+            for (var waited = 0; reply == null && waited < 1200; waited++) await Task.Delay(100);
+            Debug.Log("KGS_REPLY " + (reply ?? "none none"));
+            await Shot(mode + "-4");
+            File.WriteAllText(Path.Combine(dir, "received"), reply ?? "none");
         }
         Debug.Log("KGS_PLAYER " + sample.Screen + " " + (sample.GamePlayerId == "" ? "none" : sample.GamePlayerId) + " " + await Key());
         Application.Quit(0);
@@ -220,16 +263,27 @@ function Find-Value([string]$path, [string]$pattern) {
     if ($found) { $found.Matches[0].Groups[1].Value } else { "missing" }
 }
 
-$transferOk = $true
-if ($DesktopApp) {
-    # 新しい profile で、desktop の既存のアカウントを移行で受けてから始め、次の起動で再開する。
+# 新しい profile と作業 dir（%TEMP%\kgs-transfer-<mode>）を用意し、desktop を transfer-desktop.mjs で動かす。
+function Start-Desktop([string]$mode) {
     if (Test-Path $profileRoot) { Remove-Item -Recurse -Force $profileRoot }
-    $env:KGS_TRANSFER_DIR = Join-Path $env:TEMP "kgs-transfer"
+    $env:KGS_TRANSFER_DIR = Join-Path $env:TEMP "kgs-transfer-$mode"
     if (Test-Path $env:KGS_TRANSFER_DIR) { Remove-Item -Recurse -Force $env:KGS_TRANSFER_DIR }
     New-Item -ItemType Directory -Force $env:KGS_TRANSFER_DIR | Out-Null
-    $sourceLog = Join-Path $env:KGS_TRANSFER_DIR "source.log"
-    $source = Start-Process -FilePath "node" -ArgumentList "`"$(Join-Path $PSScriptRoot "transfer-source.mjs")`" `"$DesktopApp`" `"$env:KGS_TRANSFER_DIR`"" `
-        -RedirectStandardOutput $sourceLog -RedirectStandardError (Join-Path $env:KGS_TRANSFER_DIR "source.err") -NoNewWindow -PassThru
+    $log = Join-Path $env:KGS_TRANSFER_DIR "desktop.log"
+    $process = Start-Process -FilePath "node" -ArgumentList "`"$(Join-Path $PSScriptRoot "transfer-desktop.mjs")`" `"$DesktopApp`" `"$env:KGS_TRANSFER_DIR`" $mode" `
+        -RedirectStandardOutput $log -RedirectStandardError (Join-Path $env:KGS_TRANSFER_DIR "desktop.err") -NoNewWindow -PassThru
+    # handle を先に開いておかないと、終了の後に ExitCode が読めない（Start-Process -PassThru の挙動）。
+    $null = $process.Handle
+    return @{ Process = $process; Log = $log }
+}
+
+$transferOk = $true
+$handoffOk = $true
+if ($DesktopApp) {
+    # 新しい profile で、desktop の既存のアカウントを移行で受けてから始め、次の起動で再開する（#1996 AC-3）。
+    $source = Start-Desktop "source"
+    $sourceLog = $source.Log
+    $source = $source.Process
     $received = @()
     $exits = @()
     foreach ($mode in "transfer", "resume") {
@@ -250,6 +304,31 @@ if ($DesktopApp) {
         ($id -match "^[0-9a-f-]{36}$") -and ($received[0] -eq "playing $id $desktopKey") -and ($received[1] -eq "playing $id $desktopKey") -and
         (Select-String -Path $sourceLog -Pattern "^completed" -Quiet) -and (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0)
     Write-Output "Player transfer ($Backend): desktop=$desktopKey codes=$code/$sourceCode received=$screen players=$($received -join ' | ') exits=$($exits -join ',') ok=$transferOk"
+
+    # 新しい profile で始めて投稿し、「kukuriで続ける」で desktop へ移す。desktop が返信し、Player が受けて続く（#1998 AC-2）。
+    $target = Start-Desktop "target"
+    $handed = @()
+    $exits = @()
+    foreach ($mode in "handoff", "resume") {
+        $run = Start-Player "start-$mode-handoff" "-kgs-$mode"
+        if (-not $run.Process.WaitForExit(300000)) { Stop-Process -Id $run.Process.Id -Force; $exits += "timeout" } else { $exits += $run.Process.ExitCode }
+        $player = Select-String -Path $run.Log -Pattern "KGS_PLAYER (\S+) (\S+) (\S+)" | Select-Object -First 1
+        $handed += if ($player) { ($player.Matches[0].Groups[1..3] | ForEach-Object Value) -join " " } else { "missing" }
+        if ($mode -eq "handoff") {
+            $code = Find-Value $run.Log "KGS_CODE (\S+)"
+            $reply = Find-Value $run.Log "KGS_REPLY (\S+ \S+)"
+        }
+    }
+    if (-not $target.Process.WaitForExit(120000)) { Stop-Process -Id $target.Process.Id -Force; $exits += "desktop-timeout" } else { $exits += $target.Process.ExitCode }
+    $gameKey = Get-Content (Join-Path $env:KGS_TRANSFER_DIR "handoff") -ErrorAction SilentlyContinue
+    $targetCode = Find-Value $target.Log "confirming (\d{6})"
+    $replyId = Find-Value $target.Log "replied (\S+)"
+    $id = ($handed[0] -split " ")[1]
+    $handoffOk = ($gameKey -match "^[0-9a-f]{64}$") -and ($code -eq $targetCode) -and ($reply -eq "$replyId $gameKey") -and
+        (Select-String -Path $target.Log -Pattern "^switched to $gameKey" -Quiet) -and (Select-String -Path $target.Log -Pattern "^shown" -Quiet) -and
+        ($id -match "^[0-9a-f-]{36}$") -and ($handed[0] -eq "playing $id $gameKey") -and ($handed[1] -eq "playing $id $gameKey") -and
+        (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0)
+    Write-Output "Player handoff ($Backend): game=$gameKey codes=$code/$targetCode reply=$reply players=$($handed -join ' | ') exits=$($exits -join ',') ok=$handoffOk"
 }
 
-if ($failed -or -not $sampleOk -or -not $startOk -or -not $transferOk) { exit 1 }
+if ($failed -or -not $sampleOk -or -not $startOk -or -not $transferOk -or -not $handoffOk) { exit 1 }
