@@ -182,7 +182,7 @@ fn exclusion_allowed(tauri: &str, kind: &str) -> bool {
         // #1284: 表示中の投稿cardだけに作用する局所的な欠損blobの回復。
         "gui_content_recovery" => tauri == "retry_post_elements",
         // #1221 R2-C: GUIの表示中の要素・列だけを対象にする照会と購読の需要。
-        "gui_visible_membership" => matches!(tauri, "bookmarked_post_ids" | "set_scope_display"),
+        "gui_visible_membership" => tauri == "bookmarked_post_ids",
         // #1650: 両端末の画面で始める本人の端末どうしの同期。移行の操作は SDK が使うので登録簿へ載せる（#1996・#1998）。
         "gui_device_pairing" => tauri == "start_account_union_sync",
         // #1033: GUIのmic・speakerを使う空間音声。#1034: GUIのcamera・画面・mic・speakerを使うlive配信と視聴。

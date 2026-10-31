@@ -1,4 +1,4 @@
-use super::schema::{array, nullable, object};
+use super::schema::{array, nullable, object, timeline_scope};
 use serde_json::{Value, json};
 
 fn string() -> Value {
@@ -68,6 +68,17 @@ pub(super) fn input(name: &str) -> Value {
             json!({"topic": string(), "channel_id": string(), "enabled": boolean()}),
             &["topic", "channel_id", "enabled"],
         ),
+        "set_scope_display" => object(
+            json!({
+                "observer": string(),
+                "target": object(
+                    json!({"kind": {"enum": ["timeline"]}, "topic": string(), "scope": timeline_scope()}),
+                    &["kind", "topic", "scope"],
+                ),
+                "visible": boolean()
+            }),
+            &["observer", "target", "visible"],
+        ),
         _ => unreachable!("network input schema"),
     }
 }
@@ -90,7 +101,8 @@ pub(super) fn output(name: &str) -> Value {
         | "unsubscribe_topic"
         | "set_topic_gossip_enabled"
         | "set_channel_gossip_enabled"
-        | "set_public_channel_subscription" => json!({"type": "null"}),
+        | "set_public_channel_subscription"
+        | "set_scope_display" => json!({"type": "null"}),
         _ => unreachable!("network output schema"),
     }
 }

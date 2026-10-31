@@ -27,8 +27,8 @@ namespace Kukuri.GameSdk.Social
     /// 1 つの topic（`channelId` を指定すれば private channel）の投稿を新しい順に 20 件ずつ表示し、投稿・返信する uGUI の
     /// 掲示板（#1981）。行を押すとその thread を開き、thread では返信を書く。続きは「さらに表示」で読む。新着は
     /// `post_received` と、開いている間の一定の間隔の読み直し（遅れて届いた投稿には知らせが来ない）で知り、表示中の頁の
-    /// 新しい側だけを読む。開いている間だけ topic を購読し、閉じる（無効にする・scene を変える・`ReleaseAsync`）と、自分で
-    /// 始めた購読を外す。手元に持つ投稿は 100 件までで、超えたら足した側と反対の端を捨てる（古い側は「さらに表示」、
+    /// 新しい側だけを読む。開いている間だけ topic を購読し（画面の列と同じ、保存しない購読。client を閉じれば消える）、
+    /// 閉じる（無効にする・scene を変える・`ReleaseAsync`）と外す。手元に持つ投稿は 100 件までで、超えたら足した側と反対の端を捨てる（古い側は「さらに表示」、
     /// 新しい側は「先頭へ戻る」で読み直す）。操作は 1 つずつ順に実行する。`runner` の client が開くまでは何もしない。
     public sealed class KukuriBoard : MonoBehaviour
     {
@@ -55,10 +55,12 @@ namespace Kukuri.GameSdk.Social
         readonly HashSet<string> known = new HashSet<string>();
         readonly List<KukuriBoardItem> items = new List<KukuriBoardItem>();
         readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
+        /// 掲示板ごとの購読の名義。ゲームの他の部分の購読とは別に数えるので、外しても他の部分の購読は残る。
+        readonly string observer = "game-board:" + Guid.NewGuid().ToString("N");
         KukuriClient client;
         KukuriClient subscribed;
-        string subscribedTopic;
-        bool ownsSubscription;
+        JObject subscribedTarget;
+        Task hiding = Task.CompletedTask;
         bool showAdult;
         /// 閉じるたびに進める（閉じた後に返った購読の応答を取り消す）。
         int generation;
@@ -200,20 +202,37 @@ namespace Kukuri.GameSdk.Social
         /// 読んでいれば最後の投稿の後ろを読む（続きを残していれば「さらに表示」に任せる）。
         public Task ReadNewAsync() => Serial(LoadNewAsync);
 
-        /// 閉じる。自分で始めた購読を外し、新着を受けるのをやめる（`OnDisable` でも呼ぶ）。次に開く操作をするまで開き直さない。
-        public async Task ReleaseAsync()
+        /// 閉じる。購読を外し、新着を受けるのをやめる（`OnDisable` でも呼ぶ）。次に開く操作をするまで開き直さない。
+        public Task ReleaseAsync()
         {
             closed = true;
             generation++;
+            return DetachAsync();
+        }
+
+        async Task DetachAsync()
+        {
             var releasing = subscribed;
             if (releasing == null)
                 return;
             releasing.EventReceived -= OnEvent;
             subscribed = null;
-            if (ownsSubscription)
+            hiding = HideAsync(releasing, subscribedTarget);
+            await hiding;
+        }
+
+        Task<KukuriResponse> Display(KukuriClient target, JObject scope, bool visible) =>
+            target.SendAsync("set_scope_display", new JObject { ["observer"] = observer, ["target"] = scope, ["visible"] = visible });
+
+        async Task HideAsync(KukuriClient target, JObject scope)
+        {
+            // 閉じた client の購読は、client とともに消える。
+            try
             {
-                ownsSubscription = false;
-                await releasing.SendAsync("unsubscribe_topic", new JObject { ["topic"] = subscribedTopic });
+                await Display(target, scope, false);
+            }
+            catch (KukuriException)
+            {
             }
         }
 
@@ -240,7 +259,7 @@ namespace Kukuri.GameSdk.Social
 
         Task Switch(string threadId) => Serial(async () =>
         {
-            var previous = (ThreadId, posts: new List<BoardPost>(posts), nextCursor);
+            var previous = (ThreadId, posts: new List<BoardPost>(posts), nextCursor, headCut);
             ThreadId = threadId;
             try
             {
@@ -250,6 +269,8 @@ namespace Kukuri.GameSdk.Social
             {
                 (ThreadId, nextCursor) = (previous.ThreadId, previous.nextCursor);
                 Replace(previous.posts);
+                headCut = previous.headCut;
+                RenderHeader();
                 throw;
             }
         });
@@ -326,10 +347,14 @@ namespace Kukuri.GameSdk.Social
             }
             for (var index = fresh.Count - 1; index >= 0; index--)
             {
+                // 上限で捨てた投稿の行（末尾の使っていない行）があれば使い回す。
+                var spare = items.Count > posts.Count;
                 posts.Insert(0, fresh[index]);
                 if (itemTemplate == null || listContent == null)
                     continue;
-                var row = Instantiate(itemTemplate, listContent);
+                var row = spare ? items[items.Count - 1] : Instantiate(itemTemplate, listContent);
+                if (spare)
+                    items.RemoveAt(items.Count - 1);
                 row.transform.SetSiblingIndex(itemTemplate.transform.GetSiblingIndex() + 1);
                 items.Insert(0, row);
                 ShowRow(0);
@@ -349,36 +374,29 @@ namespace Kukuri.GameSdk.Social
             return Require(await Client.SendAsync(ThreadId == null ? "list_timeline" : "list_thread", payload));
         }
 
-        /// 開いている間、topic を購読し、新着を受ける。すでに購読している topic（ゲームの他の部分が使っている）は閉じても外さない。
+        /// 開いている間、表示中の topic（と channel）を購読し、新着を受ける。topic を変えると、同じ名義の購読を置き換える。
         async Task EnsureSubscribedAsync()
         {
             var current = Client ?? throw new KukuriException("not_ready", "the kukuri client is not open");
-            if (subscribed == current && subscribedTopic == topic)
+            var target = new JObject { ["kind"] = "timeline", ["topic"] = topic, ["scope"] = Scope() };
+            if (subscribed == current && JToken.DeepEquals(subscribedTarget, target))
                 return;
-            if (subscribed != null)
-            {
-                await ReleaseAsync();
-                closed = false;
-            }
             var opened = generation;
-            var requested = topic;
-            var status = Require(await current.SendAsync("get_sync_status"));
-            var already = false;
-            foreach (var name in status["subscribed_topics"] as JArray ?? new JArray())
-                already |= (string)name == requested;
-            if (!already)
-                Require(await current.SendAsync("set_topic_gossip_enabled", new JObject { ["topic"] = requested, ["enabled"] = true }));
+            if (subscribed != current)
+                await DetachAsync();
+            // 外す要求より先に購読の要求が処理されないよう、外し終えるのを待つ。
+            await hiding;
+            Require(await Display(current, target, true));
             showAdult = (bool?)Require(await current.SendAsync("get_content_display_settings"))["adult_content_enabled"] ?? false;
-            // 待つ間に閉じたら、始めた購読を取り消して戻る。
+            // 待つ間に閉じたら、購読を取り消して戻る。
             if (opened != generation)
             {
-                if (!already)
-                    await current.SendAsync("unsubscribe_topic", new JObject { ["topic"] = requested });
+                await HideAsync(current, target);
                 throw new ClosedException();
             }
-            ownsSubscription = !already;
-            subscribedTopic = requested;
-            current.EventReceived += OnEvent;
+            subscribedTarget = target;
+            if (subscribed == null)
+                current.EventReceived += OnEvent;
             subscribed = current;
         }
 

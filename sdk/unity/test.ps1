@@ -244,6 +244,9 @@ public sealed class KgsStartProbe : MonoBehaviour
             // 閉じると、掲示板が始めた購読を外す。
             board.gameObject.SetActive(false);
             Debug.Log("KGS_BOARD_RELEASED " + await Released());
+            // 開き直し、開いたままゲームを終える（購読は保存されず、次の起動に残らない）。
+            board.gameObject.SetActive(true);
+            while (!board.Subscribed) await Task.Yield();
         }
         if (mode == "board-resume" && sample.Screen == "playing")
         {
@@ -252,6 +255,8 @@ public sealed class KgsStartProbe : MonoBehaviour
             while (!File.Exists(replied)) await Task.Delay(200);
             var reply = File.ReadAllText(replied).Trim();
             await Exchange(dir);
+            // 前の起動で開いたまま終えた掲示板の購読が、起動時に戻っていない。
+            Debug.Log("KGS_BOARD_CLEAN " + await Released());
             sample.enabled = false;
             board.gameObject.SetActive(true);
             // 一覧に投稿が出たら、その行の「thread を開く」を押す。返信は掲示板自身の読み直しで出るのを待つ（probe は読まない）。
@@ -538,14 +543,15 @@ if ($DesktopApp) {
     if (-not $run.Process.WaitForExit(300000)) { Stop-Process -Id $run.Process.Id -Force; $exits += "timeout" } else { $exits += $run.Process.ExitCode }
     $thread = Find-Value $run.Log "KGS_BOARD_THREAD (\S+ \S+ \S+ \S+ \S+ \S+ \S+)"
     $released = Find-Value (Join-Path $ProjectDir "start-board-post.log") "KGS_BOARD_RELEASED (\S+)"
+    $clean = Find-Value $run.Log "KGS_BOARD_CLEAN (\S+)"
     if (-not $desktop.Process.WaitForExit(120000)) { Stop-Process -Id $desktop.Process.Id -Force; $exits += "desktop-timeout" } else { $exits += $desktop.Process.ExitCode }
     $post, $gameKey = $posted -split " "
     $reply = Find-Value $desktop.Log "replied (\S+)"
     $desktopKey = Get-Content (Join-Path $env:KGS_TRANSFER_DIR "desktop-key") -ErrorAction SilentlyContinue
     $boardOk = ($gameKey -match "^[0-9a-f]{64}$") -and ($desktopKey -match "^[0-9a-f]{64}$") -and
-        ($thread -eq "$post $gameKey $reply $desktopKey $post Public Public") -and ($released -eq "True") -and
+        ($thread -eq "$post $gameKey $reply $desktopKey $post Public Public") -and ($released -eq "True") -and ($clean -eq "True") -and
         (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0)
-    Write-Output "Player board ($Backend): post=$posted reply=$reply desktop=$desktopKey thread=$thread released=$released exits=$($exits -join ',') ok=$boardOk"
+    Write-Output "Player board ($Backend): post=$posted reply=$reply desktop=$desktopKey thread=$thread released=$released clean=$clean exits=$($exits -join ',') ok=$boardOk"
 }
 
 if ($failed -or -not $sampleOk -or -not $startOk -or -not $cloudOk -or -not $transferOk -or -not $handoffOk -or -not $mergeOk -or -not $boardOk) { exit 1 }
