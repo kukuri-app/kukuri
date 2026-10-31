@@ -8,7 +8,9 @@
 use std::path::Path;
 
 use kukuri_core::KukuriKeys;
-use kukuri_desktop_runtime::{ClientHost, list_accounts, write_private_file_atomically};
+use kukuri_desktop_runtime::{
+    AccountsSnapshot, ClientHost, list_accounts, write_private_file_atomically,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 
@@ -133,6 +135,9 @@ pub(super) async fn start(
         }
         return Ok(view(binding));
     }
+    if let Some(restored) = restore(dir, host, application_id, &accounts).await? {
+        return Ok(restored);
+    }
     let active = accounts
         .accounts
         .iter()
@@ -193,21 +198,28 @@ impl Cloud {
     }
 }
 
+/// `game-account.json`。無ければ `None`、読めなければ（壊れている・知らない版・別のゲーム）`Some(None)`。
+async fn cloud_file(
+    dir: &Path,
+    application_id: &str,
+) -> Result<Option<Option<(CloudAccount, KukuriKeys)>>, ProtocolError> {
+    Ok(load(dir, CLOUD_FILE).await?.map(|bytes| {
+        serde_json::from_slice::<CloudAccount>(&bytes)
+            .ok()
+            .filter(|file| file.version == VERSION && file.application_id == application_id)
+            .and_then(|file| Some((KukuriKeys::parse(&file.secret_key).ok()?, file)))
+            .map(|(keys, file)| (file, keys))
+    }))
+}
+
 /// `game-account.json` を手元の結び付きと、鍵と game player ID の両方で比べる。
 async fn cloud(dir: &Path, application_id: &str) -> Result<Cloud, ProtocolError> {
-    let Some(bytes) = load(dir, CLOUD_FILE).await? else {
-        return Ok(Cloud::Off);
+    let (file, keys) = match cloud_file(dir, application_id).await? {
+        None => return Ok(Cloud::Off),
+        Some(None) => return Ok(Cloud::Unreadable),
+        Some(Some(readable)) => readable,
     };
-    let Some((file, public_key)) = serde_json::from_slice::<CloudAccount>(&bytes)
-        .ok()
-        .filter(|file| file.version == VERSION && file.application_id == application_id)
-        .and_then(|file| {
-            let public_key = KukuriKeys::parse(&file.secret_key).ok()?.public_key_hex();
-            Some((file, public_key))
-        })
-    else {
-        return Ok(Cloud::Unreadable);
-    };
+    let public_key = keys.public_key_hex();
     Ok(match bound(dir, application_id).await? {
         None => Cloud::Restorable,
         Some(binding)
@@ -225,6 +237,54 @@ pub(super) async fn get_cloud(
     application_id: &str,
 ) -> Result<&'static str, ProtocolError> {
     Ok(cloud(dir, application_id).await?.name())
+}
+
+/// 新しい端末で Steam が戻した file から、ゲームで作ったアカウントと game player で再開する（§4.3）。利用者が受けた
+/// アカウントを選んでいるとき（active がゲームで作ったアカウントでない）と、読めない file からは戻さない。足す・記録する・
+/// 結び付ける・切り替えるの順で、途中で止まっても次の開始で同じ file から続ける（戻したアカウントを記録済みなら続けてよい）。
+async fn restore(
+    dir: &Path,
+    host: &ClientHost,
+    application_id: &str,
+    accounts: &AccountsSnapshot,
+) -> Result<Option<GamePlayerView>, ProtocolError> {
+    let Some(Some((file, keys))) = cloud_file(dir, application_id).await? else {
+        return Ok(None);
+    };
+    let public_key = keys.public_key_hex();
+    let restoring = accounts
+        .accounts
+        .iter()
+        .find(|account| account.pubkey == public_key)
+        .map(|account| account.id.as_str());
+    let origin: Option<Origin> = read_file(dir, ORIGIN_FILE).await?;
+    if !origin.is_some_and(|origin| {
+        origin.account_id == accounts.active_account_id
+            || Some(origin.account_id.as_str()) == restoring
+    }) {
+        return Ok(None);
+    }
+    let record = host
+        .register_transferred_account(&keys)
+        .await
+        .map_err(command_error)?;
+    let origin = Origin {
+        version: VERSION,
+        account_id: record.id.clone(),
+    };
+    write_file(dir, ORIGIN_FILE, &origin).await?;
+    let binding = Binding {
+        version: VERSION,
+        application_id: application_id.to_owned(),
+        game_player_id: file.game_player_id,
+        account_id: record.id.clone(),
+        public_key,
+    };
+    write(dir, &binding).await?;
+    host.switch_account(&record.id)
+        .await
+        .map_err(command_error)?;
+    Ok(Some(view(binding)))
 }
 
 fn not_started() -> ProtocolError {
