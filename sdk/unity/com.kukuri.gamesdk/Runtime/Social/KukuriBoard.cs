@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -16,6 +17,7 @@ namespace Kukuri.GameSdk.Social
         public string ReplyTo { get; internal set; }
         public string AuthorPubkey { get; internal set; }
         public string AuthorName { get; internal set; }
+        /// 本文。成人向けの申告があり、表示設定で成人向けを出さないときは伏せた旨。
         public string Content { get; internal set; }
         /// 公開範囲の表示名（既存の投稿の `audience_label`）。
         public string Audience { get; internal set; }
@@ -24,16 +26,20 @@ namespace Kukuri.GameSdk.Social
 
     /// 1 つの topic（`channelId` を指定すれば private channel）の投稿を新しい順に 20 件ずつ表示し、投稿・返信する uGUI の
     /// 掲示板（#1981）。行を押すとその thread を開き、thread では返信を書く。続きは「さらに表示」で読む。新着は
-    /// `post_received` で知り、表示中の先頭の頁だけを読み直す。開いている間だけ topic を購読し、閉じる（無効にする・scene を
-    /// 変える）と、自分で始めた購読を外す。`runner` の client が開くまでは何もしない。
+    /// `post_received` と、開いている間の一定の間隔の読み直し（遅れて届いた投稿には知らせが来ない）で知り、表示中の頁の
+    /// 新しい側だけを読む。開いている間だけ topic を購読し、閉じる（無効にする・scene を変える・`ReleaseAsync`）と、自分で
+    /// 始めた購読を外す。操作は 1 つずつ順に実行する。`runner` の client が開くまでは何もしない。
     public sealed class KukuriBoard : MonoBehaviour
     {
         const int PageSize = 20;
+        const string AdultHidden = "成人向けの内容を含むため表示していません（設定で表示できます）";
 
         [SerializeField] KukuriRunner runner;
         [SerializeField] string topic = "kukuri:topic:game";
         [Tooltip("private channel の掲示板にするときの channel ID。空なら topic の公開の投稿。")]
         [SerializeField] string channelId = "";
+        [Tooltip("開いている間、表示中の頁の新しい側を読み直す間隔（秒）。0 なら新着の知らせのときだけ読む。")]
+        [SerializeField] float refreshSeconds = 10f;
         [SerializeField] Text destinationText;
         [SerializeField] InputField postInput;
         [SerializeField] Button postButton;
@@ -44,16 +50,24 @@ namespace Kukuri.GameSdk.Social
         [SerializeField] Text statusText;
 
         readonly List<BoardPost> posts = new List<BoardPost>();
+        readonly HashSet<string> known = new HashSet<string>();
         readonly List<KukuriBoardItem> items = new List<KukuriBoardItem>();
+        readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
         KukuriClient client;
         KukuriClient subscribed;
         string subscribedTopic;
         bool ownsSubscription;
-        /// 続きの位置（timeline・thread の `next_cursor`。形は command が決める）。
+        bool showAdult;
+        /// 閉じるたびに進める（閉じた後に返った購読の応答を取り消す）。
+        int generation;
+        bool closed;
         JToken nextCursor;
-        bool busy;
         bool stale;
         float retryAt;
+        float refreshAt;
+
+        /// 閉じた後に返った応答。画面には出さない。
+        sealed class ClosedException : Exception { }
 
         public IReadOnlyList<BoardPost> Posts => posts;
         public bool HasMore => nextCursor != null;
@@ -109,52 +123,46 @@ namespace Kukuri.GameSdk.Social
                 button.onClick.AddListener(() => _ = Run(operation));
         }
 
-        void Update()
-        {
-            if (Client == null || busy || Time.unscaledTime < retryAt)
-                return;
-            if (subscribed == null || stale)
-                _ = Run(posts.Count == 0 ? RefreshAsync : ReadNewAsync);
-        }
+        void OnEnable() => closed = false;
 
         void OnDisable() => _ = ReleaseAsync();
+
+        void Update()
+        {
+            if (closed || Client == null || gate.CurrentCount == 0 || Time.unscaledTime < retryAt)
+                return;
+            if (subscribed == null)
+                _ = Run(RefreshAsync);
+            else if (stale || (refreshSeconds > 0 && Time.unscaledTime >= refreshAt))
+                _ = Run(ReadNewAsync);
+        }
 
         JObject Scope() => channelId.Length == 0
             ? new JObject { ["kind"] = "public" }
             : new JObject { ["kind"] = "channel", ["channel_id"] = channelId };
 
         /// 先頭の頁を読み直す（続きを読んでいた分は捨てる）。
-        public async Task RefreshAsync()
-        {
-            var page = await ListAsync(null);
-            stale = false;
-            posts.Clear();
-            Append(page);
-        }
+        public Task RefreshAsync() => Serial(LoadHeadAsync);
 
         /// 前の頁の続きを読む。
-        public async Task LoadMoreAsync()
+        public Task LoadMoreAsync() => Serial(async () =>
         {
-            if (nextCursor != null)
-                Append(await ListAsync(nextCursor));
-        }
+            if (nextCursor == null)
+                return;
+            var view = View();
+            var page = await ListAsync(nextCursor);
+            if (view == View())
+                Append(page, true);
+        });
 
-        /// 投稿の thread を開く（root と返信を古い順に読む）。
-        public Task OpenThreadAsync(string threadId)
-        {
-            ThreadId = threadId;
-            return RefreshAsync();
-        }
+        /// 投稿の thread を開く（root と返信を古い順に読む）。読めなければ元の表示のまま。
+        public Task OpenThreadAsync(string threadId) => Switch(threadId);
 
         /// thread から一覧へ戻る。
-        public Task BackAsync()
-        {
-            ThreadId = null;
-            return RefreshAsync();
-        }
+        public Task BackAsync() => Switch(null);
 
         /// 一覧では topic（または private channel）へ投稿し、thread では root へ返信する。投稿の ID を返す。
-        public async Task<string> PostAsync(string content)
+        public Task<string> PostAsync(string content) => Serial(async () =>
         {
             if (content.Trim().Length == 0)
                 return null;
@@ -172,13 +180,27 @@ namespace Kukuri.GameSdk.Social
             var objectId = (string)Require(await Client.SendAsync("create_post", payload));
             if (postInput != null)
                 postInput.text = "";
-            await ReadNewAsync();
+            // 投稿はできている。表示の読み直しの失敗は、次の読み直しに回す（送り直しを促さない）。
+            try
+            {
+                await LoadNewAsync();
+            }
+            catch (KukuriException)
+            {
+                stale = true;
+            }
             return objectId;
-        }
+        });
 
-        /// 閉じる。自分で始めた購読を外し、新着を受けるのをやめる（`OnDisable` でも呼ぶ）。
+        /// 表示中の頁の新しい側を読み、読んでいない投稿を足す（読んだ続きの頁は保つ）。一覧は先頭の頁、thread は末尾まで
+        /// 読んでいれば最後の投稿の後ろを読む（続きを残していれば「さらに表示」に任せる）。
+        public Task ReadNewAsync() => Serial(LoadNewAsync);
+
+        /// 閉じる。自分で始めた購読を外し、新着を受けるのをやめる（`OnDisable` でも呼ぶ）。次に開く操作をするまで開き直さない。
         public async Task ReleaseAsync()
         {
+            closed = true;
+            generation++;
             var releasing = subscribed;
             if (releasing == null)
                 return;
@@ -191,29 +213,122 @@ namespace Kukuri.GameSdk.Social
             }
         }
 
-        /// 新着の分だけ先頭の頁を読み直し、読んでいない投稿を足す（読んだ続きの頁は保つ）。`Update` が新着の知らせで呼ぶ。
-        public async Task ReadNewAsync()
+        Task Serial(Func<Task> body) => Serial(async () =>
+        {
+            await body();
+            return true;
+        });
+
+        /// 操作を 1 つずつ順に実行する（開く操作は、閉じた後でも開き直す）。
+        async Task<T> Serial<T>(Func<Task<T>> body)
+        {
+            closed = false;
+            await gate.WaitAsync();
+            try
+            {
+                return await body();
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        Task Switch(string threadId) => Serial(async () =>
+        {
+            var previous = (ThreadId, posts: new List<BoardPost>(posts), nextCursor);
+            ThreadId = threadId;
+            try
+            {
+                await LoadHeadAsync();
+            }
+            catch
+            {
+                (ThreadId, nextCursor) = (previous.ThreadId, previous.nextCursor);
+                Replace(previous.posts);
+                throw;
+            }
+        });
+
+        /// 読み始めた時の表示（topic・channel・thread）。読む間に変わったら結果を捨てる。
+        (string, string, string) View() => (topic, channelId, ThreadId);
+
+        async Task LoadHeadAsync()
         {
             stale = false;
-            var page = await ListAsync(null);
-            if (posts.Count == 0)
+            refreshAt = Time.unscaledTime + refreshSeconds;
+            var view = View();
+            JToken page;
+            try
             {
-                Append(page);
+                page = await ListAsync(null);
+            }
+            catch
+            {
+                stale = true;
+                throw;
+            }
+            if (view != View())
+            {
+                stale = true;
                 return;
             }
-            var known = new HashSet<string>();
-            foreach (var post in posts)
-                known.Add(post.ObjectId);
+            nextCursor = null;
+            Replace(new List<BoardPost>());
+            Append(page, true);
+        }
+
+        async Task LoadNewAsync()
+        {
+            stale = false;
+            refreshAt = Time.unscaledTime + refreshSeconds;
+            if (ThreadId != null && nextCursor != null)
+                return;
+            var view = View();
+            JToken cursor = null;
+            if (ThreadId != null && posts.Count > 0)
+            {
+                var last = posts[posts.Count - 1];
+                cursor = new JObject { ["created_at"] = last.CreatedAt, ["object_id"] = last.ObjectId };
+            }
+            JToken page;
+            try
+            {
+                page = await ListAsync(cursor);
+            }
+            catch
+            {
+                stale = true;
+                throw;
+            }
+            if (view != View())
+            {
+                stale = true;
+                return;
+            }
+            if (posts.Count == 0 || ThreadId != null)
+            {
+                Append(page, cursor == null);
+                return;
+            }
+            // 一覧は新しい順に並ぶ。先頭の頁の読んでいない投稿を、先頭に足す（足した行だけを描く）。
             var fresh = new List<BoardPost>();
             foreach (var item in (JArray)page["items"])
-                if (!known.Contains((string)item["object_id"]))
-                    fresh.Add(ToPost(item));
-            // 一覧は新しい順、thread は古い順に並ぶ。
-            if (ThreadId == null)
-                posts.InsertRange(0, fresh);
-            else
-                posts.AddRange(fresh);
-            Render();
+            {
+                var post = ToPost(item);
+                if (known.Add(post.ObjectId))
+                    fresh.Add(post);
+            }
+            for (var index = fresh.Count - 1; index >= 0; index--)
+            {
+                posts.Insert(0, fresh[index]);
+                if (itemTemplate == null || listContent == null)
+                    continue;
+                var row = Instantiate(itemTemplate, listContent);
+                row.transform.SetSiblingIndex(itemTemplate.transform.GetSiblingIndex() + 1);
+                items.Insert(0, row);
+                ShowRow(0);
+            }
         }
 
         async Task<JToken> ListAsync(JToken cursor)
@@ -233,24 +348,44 @@ namespace Kukuri.GameSdk.Social
             var current = Client ?? throw new KukuriException("not_ready", "the kukuri client is not open");
             if (subscribed == current && subscribedTopic == topic)
                 return;
-            await ReleaseAsync();
+            if (subscribed != null)
+            {
+                await ReleaseAsync();
+                closed = false;
+            }
+            var opened = generation;
+            var requested = topic;
             var status = Require(await current.SendAsync("get_sync_status"));
             var already = false;
-            foreach (var subscribedName in status["subscribed_topics"] as JArray ?? new JArray())
-                already |= (string)subscribedName == topic;
+            foreach (var name in status["subscribed_topics"] as JArray ?? new JArray())
+                already |= (string)name == requested;
             if (!already)
-                Require(await current.SendAsync("set_topic_gossip_enabled", new JObject { ["topic"] = topic, ["enabled"] = true }));
+                Require(await current.SendAsync("set_topic_gossip_enabled", new JObject { ["topic"] = requested, ["enabled"] = true }));
+            showAdult = (bool?)Require(await current.SendAsync("get_content_display_settings"))["adult_content_enabled"] ?? false;
+            // 待つ間に閉じたら、始めた購読を取り消して戻る。
+            if (opened != generation)
+            {
+                if (!already)
+                    await current.SendAsync("unsubscribe_topic", new JObject { ["topic"] = requested });
+                throw new ClosedException();
+            }
             ownsSubscription = !already;
-            subscribedTopic = topic;
+            subscribedTopic = requested;
             current.EventReceived += OnEvent;
             subscribed = current;
         }
 
         void OnEvent(JObject @event)
         {
-            if ((string)@event["type"] != "post_received")
+            var type = (string)@event["type"];
+            // 知らせが溢れたときは、何の投稿か分からないので読み直す。
+            if (type == "events_lost")
+            {
+                stale = true;
                 return;
-            // 溢れたときは何の投稿か分からないので読み直す。
+            }
+            if (type != "post_received")
+                return;
             var post = @event["post"] as JObject;
             if (post == null)
             {
@@ -265,32 +400,65 @@ namespace Kukuri.GameSdk.Social
 
         void Clear()
         {
-            posts.Clear();
             nextCursor = null;
             ThreadId = null;
+            Replace(new List<BoardPost>());
             stale = true;
+        }
+
+        /// 表示を `next` に置き換える（行は使い回す）。
+        void Replace(List<BoardPost> next)
+        {
+            posts.Clear();
+            known.Clear();
+            foreach (var post in next)
+            {
+                posts.Add(post);
+                known.Add(post.ObjectId);
+            }
             Render();
         }
 
-        void Append(JToken page)
+        /// 頁を後ろに足す（読んでいない投稿だけ）。`withCursor` なら続きの位置を頁のものにする。
+        void Append(JToken page, bool withCursor)
         {
+            var from = posts.Count;
             foreach (var item in (JArray)page["items"])
-                posts.Add(ToPost(item));
-            nextCursor = page["next_cursor"] is JObject cursor ? cursor : null;
-            Render();
+            {
+                var post = ToPost(item);
+                if (known.Add(post.ObjectId))
+                    posts.Add(post);
+            }
+            if (withCursor)
+                nextCursor = page["next_cursor"] is JObject cursor ? cursor : null;
+            RenderHeader();
+            if (listContent == null || itemTemplate == null)
+                return;
+            for (var index = from; index < posts.Count; index++)
+            {
+                if (index == items.Count)
+                    items.Add(Instantiate(itemTemplate, listContent));
+                ShowRow(index);
+            }
         }
 
-        static BoardPost ToPost(JToken item) => new BoardPost
+        BoardPost ToPost(JToken item)
         {
-            ObjectId = (string)item["object_id"],
-            ThreadId = (string)item["root_id"] ?? (string)item["object_id"],
-            ReplyTo = (string)item["reply_to"],
-            AuthorPubkey = (string)item["author_pubkey"],
-            AuthorName = (string)item["author_display_name"] ?? (string)item["author_name"],
-            Content = (string)item["content"],
-            Audience = (string)item["audience_label"],
-            CreatedAt = (long?)item["created_at"] ?? 0,
-        };
+            var adult = false;
+            foreach (var label in item["content_labels"] as JArray ?? new JArray())
+                adult |= (string)label == "adult";
+            return new BoardPost
+            {
+                ObjectId = (string)item["object_id"],
+                ThreadId = (string)item["root_id"] ?? (string)item["object_id"],
+                ReplyTo = (string)item["reply_to"],
+                AuthorPubkey = (string)item["author_pubkey"] ?? "",
+                AuthorName = (string)item["author_display_name"] ?? (string)item["author_name"],
+                Content = adult && !showAdult ? AdultHidden : (string)item["content"],
+                Audience = (string)item["audience_label"],
+                CreatedAt = (long?)item["created_at"] ?? 0,
+            };
+        }
 
         static JToken Require(KukuriResponse response)
         {
@@ -299,26 +467,23 @@ namespace Kukuri.GameSdk.Social
             return response.Data;
         }
 
-        /// 画面の操作と新着の読み直しを 1 つずつ実行し、失敗は状態の欄に出す。
+        /// 画面の操作と読み直しを実行し、失敗は状態の欄に出す（5 秒は自動では繰り返さない）。
         async Task Run(Func<Task> operation)
         {
-            if (busy || Client == null)
+            if (Client == null)
                 return;
-            busy = true;
             try
             {
                 await operation();
                 SetStatus("");
             }
-            catch (KukuriException error)
+            catch (ClosedException)
             {
-                SetStatus($"失敗しました（{error.Code}）");
-                // 開く・読み直すの失敗を毎 frame 繰り返さない。
-                retryAt = Time.unscaledTime + 5f;
             }
-            finally
+            catch (Exception error)
             {
-                busy = false;
+                SetStatus(error is KukuriException failure ? $"失敗しました（{failure.Code}）" : "失敗しました");
+                retryAt = Time.unscaledTime + 5f;
             }
         }
 
@@ -328,7 +493,7 @@ namespace Kukuri.GameSdk.Social
                 statusText.text = text;
         }
 
-        void Render()
+        void RenderHeader()
         {
             if (destinationText != null)
                 destinationText.text = (ThreadId == null ? "投稿先: " : "返信先の thread: ") + topic +
@@ -337,17 +502,28 @@ namespace Kukuri.GameSdk.Social
                 backButton.gameObject.SetActive(ThreadId != null);
             if (moreButton != null)
                 moreButton.interactable = nextCursor != null;
+        }
+
+        void ShowRow(int index)
+        {
+            items[index].gameObject.SetActive(true);
+            items[index].Show(posts[index], ThreadId == null, threadId => _ = Run(() => OpenThreadAsync(threadId)));
+        }
+
+        /// 全部の行を描き直す（表示を置き換えたときだけ）。
+        void Render()
+        {
+            RenderHeader();
             if (listContent == null || itemTemplate == null)
                 return;
             while (items.Count < posts.Count)
                 items.Add(Instantiate(itemTemplate, listContent));
             for (var index = 0; index < items.Count; index++)
             {
-                var visible = index < posts.Count;
-                items[index].gameObject.SetActive(visible);
-                if (visible)
-                    items[index].Show(posts[index], ThreadId == null,
-                        threadId => _ = Run(() => OpenThreadAsync(threadId)));
+                if (index < posts.Count)
+                    ShowRow(index);
+                else
+                    items[index].gameObject.SetActive(false);
             }
         }
     }

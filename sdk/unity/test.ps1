@@ -72,6 +72,7 @@ using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using Kukuri.GameSdk;
 using UnityEngine;
+using UnityEngine.UI;
 public sealed class KgsStartProbe : MonoBehaviour
 {
     [SerializeField] KukuriRunner runner;
@@ -89,6 +90,22 @@ public sealed class KgsStartProbe : MonoBehaviour
         ScreenCapture.CaptureScreenshot(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "kgs-start-" + name + ".png"));
         for (var i = 0; i < 5; i++) await Awaitable.NextFrameAsync();
     }
+    T Part<T>(string name) where T : Component =>
+        board.GetComponentsInChildren<T>(true).First(part => part.name == name);
+
+    /// 掲示板の試験の topic の購読が外れるまで待つ（最大 10 秒）。
+    async Task<bool> Released()
+    {
+        for (var waited = 0; waited < 100; waited++)
+        {
+            var sync = await runner.Client.SendAsync("get_sync_status");
+            if (sync.Ok && !((JArray)sync.Data["subscribed_topics"]).Any(name => (string)name == "kukuri:topic:test"))
+                return true;
+            await Task.Delay(100);
+        }
+        return false;
+    }
+
     /// desktop と互いの ticket を取り込む（loopback の static peer）。
     async Task Exchange(string dir)
     {
@@ -209,17 +226,24 @@ public sealed class KgsStartProbe : MonoBehaviour
         {
             var dir = System.Environment.GetEnvironmentVariable("KGS_TRANSFER_DIR");
             await sample.Begin();
-            // 画面には掲示板だけを出す（sample の OnGUI は Canvas の上に描かれる）。
+            // 画面には掲示板だけを出す（sample の OnGUI は Canvas の上に描かれる）。掲示板は開くと自分で読み、操作は画面の
+            // 部品から行う。
             sample.enabled = false;
             board.gameObject.SetActive(true);
-            await board.RefreshAsync();
-            var post = await board.PostAsync("test: from the game board");
+            while (!board.Subscribed) await Task.Yield();
+            Part<InputField>("PostInput").text = "test: from the game board";
+            Part<Button>("Post").onClick.Invoke();
+            while (board.Posts.Count == 0) await Task.Yield();
+            var post = board.Posts[0].ObjectId;
             File.WriteAllText(Path.Combine(dir, "game-post"), post);
             await Exchange(dir);
             var seen = Path.Combine(dir, "seen");
             for (var waited = 0; !File.Exists(seen) && waited < 1800; waited++) await Task.Delay(100);
             await Shot(mode + "-2");
             Debug.Log("KGS_BOARD_POST " + post + " " + await Key());
+            // 閉じると、掲示板が始めた購読を外す。
+            board.gameObject.SetActive(false);
+            Debug.Log("KGS_BOARD_RELEASED " + await Released());
         }
         if (mode == "board-resume" && sample.Screen == "playing")
         {
@@ -230,16 +254,23 @@ public sealed class KgsStartProbe : MonoBehaviour
             await Exchange(dir);
             sample.enabled = false;
             board.gameObject.SetActive(true);
-            await board.OpenThreadAsync(File.ReadAllText(Path.Combine(dir, "game-post")).Trim());
-            for (var waited = 0; board.Posts.All(item => item.ObjectId != reply) && waited < 240; waited++)
-            {
-                await Task.Delay(500);
-                await board.ReadNewAsync();
-            }
+            // 一覧に投稿が出たら、その行の「thread を開く」を押す。返信は掲示板自身の読み直しで出るのを待つ（probe は読まない）。
+            var postId = File.ReadAllText(Path.Combine(dir, "game-post")).Trim();
+            for (var waited = 0; board.Posts.All(item => item.ObjectId != postId) && waited < 1200; waited++) await Task.Delay(100);
+            var rows = board.GetComponentsInChildren<Kukuri.GameSdk.Social.KukuriBoardItem>()
+                .Where(row => row.name.EndsWith("(Clone)")).ToList();
+            var at = board.Posts.ToList().FindIndex(item => item.ObjectId == postId);
+            if (at >= 0)
+                rows[at].GetComponentsInChildren<Button>().First(button => button.name == "Open").onClick.Invoke();
+            // 返信は一覧にも出るので、thread（先頭が元の投稿）を読み終えてから返信を待つ。
+            for (var waited = 0; waited < 1200 && !(board.ThreadId == postId && board.Posts.Count > 0 &&
+                board.Posts[0].ObjectId == postId && board.Posts.Any(item => item.ObjectId == reply)); waited++)
+                await Task.Delay(100);
             var root = board.Posts.FirstOrDefault();
             var answer = board.Posts.FirstOrDefault(item => item.ObjectId == reply);
             Debug.Log("KGS_BOARD_THREAD " + (root?.ObjectId ?? "none") + " " + (root?.AuthorPubkey ?? "none") + " " +
-                (answer?.ObjectId ?? "none") + " " + (answer?.AuthorPubkey ?? "none") + " " + (answer?.ThreadId ?? "none"));
+                (answer?.ObjectId ?? "none") + " " + (answer?.AuthorPubkey ?? "none") + " " + (answer?.ThreadId ?? "none") + " " +
+                (root?.Audience ?? "none") + " " + (answer?.Audience ?? "none"));
             await Shot(mode + "-2");
             File.WriteAllText(Path.Combine(dir, "done"), "done");
         }
@@ -505,14 +536,16 @@ if ($DesktopApp) {
     Set-Content (Join-Path $env:KGS_TRANSFER_DIR "game-exited") "exited"
     $run = Start-Player "start-board-resume" "-kgs-board-resume"
     if (-not $run.Process.WaitForExit(300000)) { Stop-Process -Id $run.Process.Id -Force; $exits += "timeout" } else { $exits += $run.Process.ExitCode }
-    $thread = Find-Value $run.Log "KGS_BOARD_THREAD (\S+ \S+ \S+ \S+ \S+)"
+    $thread = Find-Value $run.Log "KGS_BOARD_THREAD (\S+ \S+ \S+ \S+ \S+ \S+ \S+)"
+    $released = Find-Value (Join-Path $ProjectDir "start-board-post.log") "KGS_BOARD_RELEASED (\S+)"
     if (-not $desktop.Process.WaitForExit(120000)) { Stop-Process -Id $desktop.Process.Id -Force; $exits += "desktop-timeout" } else { $exits += $desktop.Process.ExitCode }
     $post, $gameKey = $posted -split " "
     $reply = Find-Value $desktop.Log "replied (\S+)"
     $desktopKey = Get-Content (Join-Path $env:KGS_TRANSFER_DIR "desktop-key") -ErrorAction SilentlyContinue
     $boardOk = ($gameKey -match "^[0-9a-f]{64}$") -and ($desktopKey -match "^[0-9a-f]{64}$") -and
-        ($thread -eq "$post $gameKey $reply $desktopKey $post") -and (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0)
-    Write-Output "Player board ($Backend): post=$posted reply=$reply desktop=$desktopKey thread=$thread exits=$($exits -join ',') ok=$boardOk"
+        ($thread -eq "$post $gameKey $reply $desktopKey $post Public Public") -and ($released -eq "True") -and
+        (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0)
+    Write-Output "Player board ($Backend): post=$posted reply=$reply desktop=$desktopKey thread=$thread released=$released exits=$($exits -join ',') ok=$boardOk"
 }
 
 if ($failed -or -not $sampleOk -or -not $startOk -or -not $cloudOk -or -not $transferOk -or -not $handoffOk -or -not $mergeOk -or -not $boardOk) { exit 1 }

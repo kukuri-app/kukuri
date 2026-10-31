@@ -27,7 +27,9 @@ namespace Kukuri.GameSdk.Social
         {
             threadId = post.ThreadId;
             open = onOpen;
-            var author = string.IsNullOrEmpty(post.AuthorName) ? post.AuthorPubkey.Substring(0, 12) : post.AuthorName;
+            var author = string.IsNullOrEmpty(post.AuthorName)
+                ? post.AuthorPubkey.Substring(0, Math.Min(12, post.AuthorPubkey.Length))
+                : post.AuthorName;
             if (authorText != null)
                 authorText.text = $"{author}・{post.Audience}" + (post.ReplyTo != null ? "・返信" : "");
             if (contentText != null)

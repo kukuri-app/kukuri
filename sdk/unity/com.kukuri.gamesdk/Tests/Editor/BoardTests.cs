@@ -156,6 +156,7 @@ namespace Kukuri.GameSdk.Tests
             Assert.AreEqual(post.Result, shown.ThreadId);
             Assert.AreEqual("test: reply on the board", shown.Content);
             Assert.IsNotEmpty(shown.Audience);
+            Assert.AreEqual(mine.Posts[0].Audience, shown.Audience);
         }
 
         [UnityTest]
@@ -182,6 +183,31 @@ namespace Kukuri.GameSdk.Tests
             yield return Wait(board.LoadMoreAsync());
             Assert.AreEqual(25, board.Posts.Count);
             Assert.AreEqual(25, Shown(boardA).Length);
+
+            // 20 件を超える thread: 先頭の 20 件を読み、末尾まで読む前は新しい側を読まない。末尾まで読んだら、自分の返信が
+            // 最後に並ぶ。
+            var root = board.Posts[0].ObjectId;
+            for (var index = 0; index < 21; index++)
+                yield return Call(a, "create_post", new JObject
+                {
+                    ["topic"] = topic,
+                    ["content"] = $"test: reply {index}",
+                    ["reply_to"] = root,
+                    ["channel_ref"] = new JObject { ["kind"] = "public" },
+                });
+            yield return Wait(board.OpenThreadAsync(root));
+            Assert.AreEqual(20, board.Posts.Count);
+            Assert.IsTrue(board.HasMore);
+            yield return Wait(board.ReadNewAsync());
+            Assert.AreEqual(20, board.Posts.Count);
+            yield return Wait(board.LoadMoreAsync());
+            Assert.AreEqual(22, board.Posts.Count);
+            Assert.IsFalse(board.HasMore);
+            var latest = board.PostAsync("test: the latest reply");
+            yield return Wait(latest);
+            Assert.AreEqual(23, board.Posts.Count);
+            Assert.AreEqual(latest.Result, board.Posts[22].ObjectId);
+            yield return Wait(board.BackAsync());
 
             // 閉じると、掲示板が始めた購読を外す。
             var subscribed = false;
