@@ -1,4 +1,6 @@
-use super::{command, command_error, decode, encode, host_guards, lifecycle_schema, runtime};
+use super::{
+    command, command_error, decode, encode, game_player, host_guards, lifecycle_schema, runtime,
+};
 use crate::{
     protocol::{CommandEffect, ProtocolError, SecretInput, SecretOutput, error_code},
     registry::{CommandHandler, CommandOutput, CommandRegistration, HandlerContext},
@@ -35,6 +37,11 @@ struct KeySecret {
 #[serde(deny_unknown_fields)]
 struct ImportInput {
     label: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GamePlayerInput {
+    application_id: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -115,6 +122,7 @@ impl CommandHandler for Handler {
             ),
             "switch_account" => {
                 let request: SwitchAccountRequest = decode(payload)?;
+                game_player::check_switch(&session.app_data_dir, &request.account_id).await?;
                 encode(
                     context
                         .host
@@ -123,6 +131,21 @@ impl CommandHandler for Handler {
                         .await
                         .map_err(command_error)?,
                 )
+            }
+            "start_game_player" => {
+                let request: GamePlayerInput = decode(payload)?;
+                encode(
+                    game_player::start(
+                        &session.app_data_dir,
+                        context.host.ok_or_else(crate::session::failed)?,
+                        &request.application_id,
+                    )
+                    .await?,
+                )
+            }
+            "get_game_player" => {
+                let request: GamePlayerInput = decode(payload)?;
+                encode(game_player::get(&session.app_data_dir, &request.application_id).await?)
             }
             "export_account_key" => {
                 let runtime = runtime(&context)?;
@@ -235,6 +258,8 @@ pub(super) fn registrations(session: Option<Arc<ClientSession>>) -> Vec<CommandR
         ("create_account", Write, false, false, true),
         ("logout_account", Write, false, false, true),
         ("get_account_display", Read, false, false, true),
+        ("start_game_player", Write, false, false, true),
+        ("get_game_player", Read, false, false, false),
         ("create_device_backup_command", Write, true, false, true),
         ("preview_device_backup_command", Read, true, false, true),
         (

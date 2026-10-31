@@ -7,7 +7,7 @@ use syn::{Token, parse::Parser, punctuated::Punctuated, visit::Visit};
 const TAURI_SOURCE: &str = include_str!("../../../apps/desktop/src-tauri/src/lib.rs");
 const MANIFEST: &str = include_str!("../command-parity.json");
 /// GUI の入口に対応しない CLI の command。daemon の制御と、CLI daemon だけの機能(#1909 の公開 topic の保持)。
-const CLI_ONLY: [&str; 14] = [
+const CLI_ONLY: [&str; 16] = [
     "client.status",
     "events.watch",
     "protocol.commands",
@@ -25,6 +25,9 @@ const CLI_ONLY: [&str; 14] = [
     "fetch_game_asset",
     // #1982: 公開スレッドの知らせの購読(GUI は開いている列の lease で購読する)。
     "set_public_channel_subscription",
+    // #1996: ゲームの開始で作る game player(SDK の profile だけ)。
+    "start_game_player",
+    "get_game_player",
 ];
 
 #[derive(Clone, Deserialize)]

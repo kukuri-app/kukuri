@@ -440,7 +440,8 @@ $env:KUKURI_LIBVPX_DIR = "C:\src\libvpx-out"
 # native（kukuri_game_sdk.dll と kukuri-sdk-sidecar.exe）を release で build して package へ置く（git には入れない）
 powershell -ExecutionPolicy Bypass -File sdk/unity/build-native.ps1
 # 空の Unity project に package を入れて EditMode の試験（Play・Stop と domain reload の lifecycle を含む）を流し、
-# NGO なしで Player を build して、Minimal sample と同じ profile での 2 回の起動・終了を確かめる
+# NGO なしで Player を build して、Minimal sample の開始の画面を同じ profile で 3 回起動・終了して確かめる（同意して閉じる →
+# 同じアカウントで「はじめる」→ 同じ game player と公開鍵で自動の再開。画面を %TEMP%\kgs-start-*.png に書く）
 powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1
 # IL2CPP の Player で同じ確認をする（EditMode は Mono の回で済んでいるので省く）
 powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -Backend IL2CPP -SkipEditMode
@@ -457,6 +458,7 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test-graphics.ps1
 - DLL を build し直したら、DLL を読み込んだ Unity Editor を再起動する（Windows は読み込んだ native plugin を解放しないので、Editor が開いたままでは差し替わらない）。
 - 設定 asset（`kukuri/Settings`）の mode を Sidecar にすると、Play の開始時に Editor が `kukuri-sdk-sidecar.exe` を起動し、Play を止めても動かし続ける。Editor の終了か menu の「kukuri/Sidecar を止める」で止まる。Player の build は Sidecar を起動せず、既定は FFI。
 - Unity の project を深い path に置くと Windows の path の長さの上限に当たる。`test.ps1` は `%TEMP%\kgs-test` に作る。
+- ゲームの開始は Minimal sample の形にする。同意の後、起動ごとに `get_game_player`（ゲームの application ID）を呼び、null なら開始の画面（主の操作は「はじめる」）を出して、「はじめる」で `start_game_player` を呼ぶ。保存済みなら `start_game_player` で同じ game player とアカウントで再開する。ゲームのセーブは `game_player_id` で参照する。「はじめる」の前は SNS・ロビーを開かない。暗号化 export の取り込み（`import_account_key`）は「復旧」の上級の操作で、開始の画面には出さない（ADR 0070 §4.1）。
 - ロビーは `Runtime/Lobby/KukuriLobby.prefab`（uGUI）を scene に置き、`runner` に `KukuriRunner` を、`applicationId` と `topic` にゲームの値を設定する。scene に `EventSystem` が無ければ Unity の menu の UI から足す。
 - NGO を使うときは、`NetworkManager` の Transport に `KukuriNetcodeTransport`（`runner` に `KukuriRunner`）を置き、ロビーの `RoomCreated` で `RoomId` を設定して `StartHost`、`Joined` で `SessionId` を設定して `StartClient` を呼ぶ。Package Manager の Samples から「Netcode Sync」を入れると、その組み方の sample が入る。
 - スキンは `KukuriSkinLoader`（glTFast が要る）を GameObject に置き、`runner` と topic・信頼する発行者の公開鍵・application ID・asset ID を設定する。新しい版は自動で取得・差し替えされる。アセットの発行は開発用の Sidecar（設定 asset の mode を Sidecar にする）か CLI の `publish_game_asset` で行う。

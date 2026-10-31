@@ -1,7 +1,9 @@
 ﻿# 空の Unity project に Game SDK の package（と Minimal sample）を入れ、EditMode の試験（lifecycle を含む）を流し、
 # NGO などの Gameplay の package を入れないまま Windows x64 の Player を build して、次を確かめる（#1977 AC-1・AC-2）。
 # - Player で Minimal sample が FFI で起動の状態を読める（daemon は不要）
-# - 同じ profile で Player を 2 回起動・終了でき、同意したアカウントの公開鍵が同じで、終了 code が 0、Sidecar の process が無い
+# - 同じ profile で Player を 3 回起動・終了でき、終了 code が 0、Sidecar の process が無い。開始の画面の sample で、同意の後
+#   「はじめる」の前に閉じても同じアカウントのまま開始の画面に戻り、「はじめる」で game player を作り、次の起動では同じ
+#   game player と公開鍵で自動で再開する（#1996 AC-2）
 # 先に build-native.ps1 で native を置く。Unity の project は短い path に作る（深い path は MAX_PATH に当たる）。
 param(
     [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
@@ -48,35 +50,53 @@ if (-not $SkipEditMode) {
 $lock = Get-Content (Join-Path $ProjectDir "Packages\packages-lock.json") -Raw
 if ($lock -match "com\.unity\.netcode") { throw "the test project unexpectedly depends on Netcode" }
 
-# 再起動の確認用の probe。`-kgs-restart` のときだけ、同意して公開鍵を log に書き、終わる。
+# 開始の画面の確認用の probe。`-kgs-close`・`-kgs-begin`・`-kgs-resume` のときだけ sample を操作し、画面・公開鍵・
+# game player ID を log に書き、画面を %TEMP%\kgs-start-*.png に撮って終わる。
 @"
 using System.Linq;
+using System.Threading.Tasks;
 using Kukuri.GameSdk;
-using Newtonsoft.Json.Linq;
 using UnityEngine;
-public sealed class KgsRestartProbe : MonoBehaviour
+public sealed class KgsStartProbe : MonoBehaviour
 {
     [SerializeField] KukuriRunner runner;
+    [SerializeField] MinimalSample sample;
+    static string Mode()
+    {
+        var args = System.Environment.GetCommandLineArgs();
+        return new[] { "close", "begin", "resume" }.FirstOrDefault(mode => args.Contains("-kgs-" + mode));
+    }
+    async Task Shot(string name)
+    {
+        for (var i = 0; i < 5; i++) await Task.Yield();
+        await Awaitable.EndOfFrameAsync();
+        ScreenCapture.CaptureScreenshot(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "kgs-start-" + name + ".png"));
+        for (var i = 0; i < 5; i++) await Awaitable.NextFrameAsync();
+    }
+    async Task<string> Key()
+    {
+        var sync = await runner.Client.SendAsync("get_sync_status");
+        return sync.Ok ? (string)sync.Data["local_author_pubkey"] : "error:" + sync.ErrorCode;
+    }
     async void Start()
     {
-        if (!System.Environment.GetCommandLineArgs().Contains("-kgs-restart")) return;
-        while (runner.Client == null) await System.Threading.Tasks.Task.Yield();
-        var client = runner.Client;
-        var startup = await client.SendAsync("get_desktop_startup_status");
-        if ((string)startup.Data["status"] == "consent_required")
+        var mode = Mode();
+        if (mode == null) return;
+        while (sample.Screen == "loading") await Task.Yield();
+        if (sample.Screen == "consent") await sample.Accept();
+        while (sample.Screen == "loading") await Task.Yield();
+        Debug.Log("KGS_SCREEN " + sample.Screen + " " + await Key());
+        await Shot(mode + "-1");
+        if (mode == "begin" && sample.Screen == "start")
         {
-            var consent = await client.SendAsync("get_app_consent_status");
-            var documents = new JArray();
-            foreach (var document in (JArray)consent.Data["documents"])
-                documents.Add(new JObject { ["slug"] = document["slug"], ["version"] = document["currentVersion"] });
-            await client.SendAsync("accept_app_consents", new JObject { ["documents"] = documents, ["language"] = "ja", ["age_attested"] = true });
+            await sample.Begin();
+            await Shot(mode + "-2");
         }
-        var sync = await client.SendAsync("get_sync_status");
-        Debug.Log("KGS_PUBKEY " + (sync.Ok ? (string)sync.Data["local_author_pubkey"] : "error:" + sync.ErrorCode));
+        Debug.Log("KGS_PLAYER " + sample.Screen + " " + (sample.GamePlayerId == "" ? "none" : sample.GamePlayerId) + " " + await Key());
         Application.Quit(0);
     }
 }
-"@ | Set-Content (Join-Path $ProjectDir "Assets\KgsRestartProbe.cs") -Encoding utf8
+"@ | Set-Content (Join-Path $ProjectDir "Assets\KgsStartProbe.cs") -Encoding utf8
 
 $builder = Join-Path $ProjectDir "Assets\Editor"
 New-Item -ItemType Directory -Force $builder | Out-Null
@@ -95,15 +115,18 @@ public static class KgsBuild
 
     public static void Build()
     {
-        // KukuriRunner（FFI）と Minimal sample と再起動の probe だけの scene。
+        // KukuriRunner（FFI）と Minimal sample と開始の画面の probe だけの scene。
         var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
         var settings = KukuriSettings.Create(KukuriMode.Ffi, "sample", "");
         AssetDatabase.CreateAsset(settings, "Assets/KukuriSettings.asset");
         var host = new GameObject("kukuri");
         var runner = host.AddComponent<KukuriRunner>();
         runner.Settings = settings;
-        Link(host.AddComponent<MinimalSample>(), "runner", runner);
-        Link(host.AddComponent<KgsRestartProbe>(), "runner", runner);
+        var sample = host.AddComponent<MinimalSample>();
+        Link(sample, "runner", runner);
+        var probe = host.AddComponent<KgsStartProbe>();
+        Link(probe, "runner", runner);
+        Link(probe, "sample", sample);
         EditorSceneManager.SaveScene(scene, "Assets/Sample.unity");
         PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, ScriptingImplementation.$Backend);
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
@@ -145,18 +168,27 @@ Stop-Process -Id $player.Process.Id -Force -ErrorAction SilentlyContinue
 $player.Process.WaitForExit()
 Write-Output "Player sample (FFI): status_read=$sampleOk"
 
-# 同じ profile で 2 回起動・終了する。2 回目も同じ公開鍵で、どちらも終了 code 0、Sidecar の process は動かない。
-$keys = @()
+# 同じ profile で 3 回起動・終了する。1 回目は同意して開始の画面で閉じ、2 回目は同じアカウントの開始の画面から「はじめる」、
+# 3 回目は同じ game player と公開鍵で自動で再開する。どれも終了 code 0 で、Sidecar の process は動かない。
+$screens = @()
+$players = @()
 $exits = @()
 $sidecars = 0
-foreach ($round in 1, 2) {
-    $run = Start-Player "restart$round" "-kgs-restart"
+foreach ($mode in "close", "begin", "resume") {
+    $run = Start-Player "start-$mode" "-kgs-$mode"
     if (-not $run.Process.WaitForExit(120000)) { Stop-Process -Id $run.Process.Id -Force; $exits += "timeout" } else { $exits += $run.Process.ExitCode }
     $sidecars += @(Get-Process -Name "kukuri-sdk-sidecar" -ErrorAction SilentlyContinue).Count
-    $line = Select-String -Path $run.Log -Pattern "KGS_PUBKEY (\S+)" | Select-Object -First 1
-    $keys += if ($line) { $line.Matches[0].Groups[1].Value } else { "missing" }
+    $screen = Select-String -Path $run.Log -Pattern "KGS_SCREEN (\S+) (\S+)" | Select-Object -First 1
+    $screens += if ($screen) { $screen.Matches[0].Groups[1].Value + " " + $screen.Matches[0].Groups[2].Value } else { "missing" }
+    $player = Select-String -Path $run.Log -Pattern "KGS_PLAYER (\S+) (\S+) (\S+)" | Select-Object -First 1
+    $players += if ($player) { ($player.Matches[0].Groups[1..3] | ForEach-Object Value) -join " " } else { "missing" }
 }
-$restartOk = ($keys[0] -match "^[0-9a-f]{64}$") -and ($keys[0] -eq $keys[1]) -and ($exits[0] -eq 0) -and ($exits[1] -eq 0) -and ($sidecars -eq 0)
-Write-Output "Player restart ($Backend): keys=$($keys -join ',') exits=$($exits -join ',') sidecar_processes=$sidecars ok=$restartOk"
+$key = ($screens[0] -split " ")[1]
+$id = ($players[1] -split " ")[1]
+$startOk = ($key -match "^[0-9a-f]{64}$") -and ($screens[0] -eq "start $key") -and ($players[0] -eq "start none $key") -and
+    ($screens[1] -eq "start $key") -and ($id -match "^[0-9a-f-]{36}$") -and ($players[1] -eq "playing $id $key") -and
+    ($screens[2] -eq "playing $key") -and ($players[2] -eq "playing $id $key") -and
+    (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0) -and ($sidecars -eq 0)
+Write-Output "Player start screen ($Backend): screens=$($screens -join ' | ') players=$($players -join ' | ') exits=$($exits -join ',') sidecar_processes=$sidecars ok=$startOk"
 
-if ($failed -or -not $sampleOk -or -not $restartOk) { exit 1 }
+if ($failed -or -not $sampleOk -or -not $startOk) { exit 1 }

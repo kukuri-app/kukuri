@@ -7,6 +7,7 @@ mod content_views;
 mod direct_messages;
 mod dome_connection_views;
 mod errors;
+mod game_player;
 mod game_views;
 mod lifecycle;
 mod lifecycle_schema;
