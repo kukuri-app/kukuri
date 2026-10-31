@@ -516,6 +516,22 @@ fn author(handle: *mut KukuriHandle, object_id: &Value) -> Value {
     }
 }
 
+/// 持ち主から見た、private channel の今の epoch の参加者の数（持ち主を含む）。
+fn participants(owner: *mut KukuriHandle, channel: &str) -> u64 {
+    call(
+        owner,
+        &id("joined"),
+        "list_joined_private_channels",
+        json!({"topic": TOPIC}),
+    )["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["channel_id"] == channel)
+        .and_then(|item| item["participant_count"].as_u64())
+        .unwrap_or(0)
+}
+
 fn merge(handle: *mut KukuriHandle, payload: Value) -> Value {
     let request_id = id("merge");
     assert_eq!(
@@ -674,6 +690,13 @@ fn the_game_account_is_merged_into_an_existing_account_and_its_relations_follow(
     let channels = joined(game);
     assert!(!channels.contains(&others), "{channels:?}");
     assert!(channels.contains(&owned), "{channels:?}");
+    // A の参加資格は残る（持ち主から見て、持ち主と A の 2 人のまま）。新しい招待を出すと epoch が変わり、以後は
+    // その epoch に入った人を数える。
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while participants(other, &others) != 2 {
+        assert!(Instant::now() < deadline, "A is no longer a participant");
+        std::thread::sleep(Duration::from_millis(100));
+    }
     let again = secret_output(
         other,
         &id("invite"),

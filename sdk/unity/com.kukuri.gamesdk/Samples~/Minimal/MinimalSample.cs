@@ -191,8 +191,9 @@ public sealed class MinimalSample : MonoBehaviour
         var merged = await runner.Client.SendAsync("merge_game_player", request);
         if (!merged.Ok)
         {
-            // 失敗の応答でも、結び付きを書き換えた後なら確定は済んでいる。今の結び付きを読み直して表示を合わせる。
-            var current = await runner.Client.SendAsync("get_game_player", ThisGame);
+            // 失敗の応答でも、結び付きを書き換えた後なら確定は済んでいる。開始し直すと、結び付いたアカウントへ切り替え、
+            // 付け直しを続ける（確定の前なら今のアカウントのまま同じものを返す）。
+            var current = await runner.Client.SendAsync("start_game_player", ThisGame);
             if (current.Ok && current.Data is JObject player && (string)player["public_key"] != PublicKey)
             {
                 message = "まとめました。以後はまとめた先のアカウントで投稿・参加します";

@@ -88,9 +88,10 @@ impl DesktopRuntime {
     }
 
     /// `after` の次の 1 page を付け直し、最後に読んだ相手を返す（読む相手が無ければ `None`）。相手が自分、解除済み、
-    /// 公開鍵の形が不正、または `since_ms`（まとめの確定）より前に自分が同じ相手へ付けた記録がある行は飛ばす。フォロー・
-    /// ブロックは解除済みの記録も数え、ミュートは解除で行が消えるので今ミュートしているときだけ数える。確定の後の記録は、
-    /// 止まる前に途中まで書いた付け直しなので書き直す。付け直しの失敗はそのまま返す。
+    /// 公開鍵の形が不正、または自分が同じ相手へ付けた記録が `since_ms`（まとめの確定）より前にあるか、確定の後でも
+    /// 有効でない（解除した）行は飛ばす。ミュートは解除で行が消えるので、今ミュートしているときだけ数える。確定の後の
+    /// 有効な記録は、止まる前に途中まで書いた付け直しかもしれないので書き直す（同じ状態の記録が増えるだけ）。付け直しの
+    /// 失敗はそのまま返す。
     pub async fn copy_social_page(
         &self,
         source: &SocialCopySource,
@@ -106,9 +107,9 @@ impl DesktopRuntime {
                 || !valid
                 || *target == me
                 || self
-                    .recorded_at(kind, &me, target)
+                    .recorded(kind, &me, target)
                     .await?
-                    .is_some_and(|at| at < since_ms)
+                    .is_some_and(|(at, active)| at < since_ms || !active)
             {
                 continue;
             }
@@ -124,29 +125,29 @@ impl DesktopRuntime {
         Ok(rows.into_iter().last().map(|(target, _)| target))
     }
 
-    /// 自分が同じ相手へ付けた記録の時刻（ミリ秒）。
-    async fn recorded_at(
+    /// 自分が同じ相手へ付けた記録の時刻（ミリ秒）と、有効か。
+    async fn recorded(
         &self,
         kind: SocialCopyKind,
         me: &str,
         target: &str,
-    ) -> Result<Option<i64>> {
+    ) -> Result<Option<(i64, bool)>> {
         Ok(match kind {
             SocialCopyKind::Follows => self
                 .store
                 .get_follow_edge(me, target)
                 .await?
-                .map(|edge| edge.updated_at),
+                .map(|edge| (edge.updated_at, edge.status == FollowEdgeStatus::Active)),
             SocialCopyKind::Blocks => self
                 .store
                 .get_block_edge(me, target)
                 .await?
-                .map(|edge| edge.updated_at),
+                .map(|edge| (edge.updated_at, edge.status == BlockEdgeStatus::Active)),
             SocialCopyKind::Mutes => self
                 .store
                 .get_muted_author(target)
                 .await?
-                .map(|row| row.muted_at),
+                .map(|row| (row.muted_at, true)),
         })
     }
 }
