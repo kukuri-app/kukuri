@@ -135,10 +135,10 @@ public sealed class MinimalSample : MonoBehaviour
             _ = WatchCopy();
     }
 
-    /// 付け直しが終わるまで読み直す。
+    /// 付け直しが終わるまで読み直す（他の画面を開いている間も）。
     async Task WatchCopy()
     {
-        while (Copying && Screen == "playing")
+        while (Copying)
         {
             await Task.Delay(2000);
             var read = await runner.Client.SendAsync("get_game_player", ThisGame);
@@ -167,6 +167,15 @@ public sealed class MinimalSample : MonoBehaviour
         Screen = "merge-confirm";
     }
 
+    /// 選んだアカウントの表示名（label が無ければ公開鍵の先頭）。
+    string MergeTargetName()
+    {
+        foreach (var account in mergeCandidates)
+            if ((string)account["id"] == mergeTarget)
+                return (string)account["label"] ?? ((string)account["pubkey"]).Substring(0, 12);
+        return mergeTarget.Substring(0, Math.Min(12, mergeTarget.Length));
+    }
+
     /// 確定。今の進行（この game player）を残して、選んだアカウントへまとめる。
     public async Task Merge()
     {
@@ -175,6 +184,14 @@ public sealed class MinimalSample : MonoBehaviour
         var merged = await runner.Client.SendAsync("merge_game_player", request);
         if (!merged.Ok)
         {
+            // 失敗の応答でも、結び付きを書き換えた後なら確定は済んでいる。今の結び付きを読み直して表示を合わせる。
+            var current = await runner.Client.SendAsync("get_game_player", ThisGame);
+            if (current.Ok && current.Data is JObject player && (string)player["public_key"] != PublicKey)
+            {
+                message = "まとめました。以後はまとめた先のアカウントで投稿・参加します";
+                Play(player);
+                return;
+            }
             message = (string)merged.Raw?["error"]?["details"]?["reason"] == "merge_in_progress"
                 ? "前のまとめの付け直しが終わってから、やり直してください"
                 : $"まとめられません: {merged.ErrorCode}";
@@ -456,6 +473,7 @@ public sealed class MinimalSample : MonoBehaviour
                     Screen = "playing";
                 break;
             case "merge-confirm":
+                GUILayout.Label($"まとめる先: {MergeTargetName()}");
                 GUILayout.Label("残す進行: このゲームの今の進行（まとめた先のアカウントで続けます）");
                 if (GUILayout.Button("まとめる", GUILayout.Height(40)))
                     _ = Merge();

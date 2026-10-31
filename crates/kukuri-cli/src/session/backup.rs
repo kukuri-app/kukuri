@@ -38,6 +38,7 @@ impl ClientSession {
         self.startup.set_status(ClientStartupStatus::Initializing);
         // #1221 R5-G: backup は保護所有先だけを含めるため、旧 `iroh-data` からの移行の残りを写してから止める。
         let migrated = runtime.finish_protected_migration().await;
+        self.game_copy.abort();
         runtime.shutdown().await;
         if migrated.is_err() {
             self.rebuild(&host, db).await?;
@@ -101,6 +102,7 @@ impl ClientSession {
         let db = runtime.db_path().to_path_buf();
         self.operation.begin_cancellable_device_backup();
         self.startup.set_status(ClientStartupStatus::Initializing);
+        self.game_copy.abort();
         runtime.shutdown().await;
         let dir = self.app_data_dir.clone();
         let cancellation = self.operation.device_backup_cancellation();

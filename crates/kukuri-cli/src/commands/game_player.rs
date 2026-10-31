@@ -57,13 +57,14 @@ struct Origin {
     account_id: String,
 }
 
-/// 付け直しの途中。A と B の account ID と、進んだ位置（種類と、最後に読んだ相手）。
+/// 付け直しの途中。A と B の account ID、確定の時刻（ミリ秒）と、進んだ位置（種類と、最後に読んだ相手）。
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Merge {
     version: u32,
     from_account_id: String,
     to_account_id: String,
+    merged_at: i64,
     kind: SocialCopyKind,
     after: Option<String>,
 }
@@ -447,6 +448,12 @@ pub(super) async fn merge(
         version: VERSION,
         from_account_id: binding.account_id,
         to_account_id: target.id.clone(),
+        merged_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| crate::session::failed())?
+            .as_millis()
+            .try_into()
+            .map_err(|_| crate::session::failed())?,
         kind: SocialCopyKind::Follows,
         after: None,
     };
@@ -495,7 +502,7 @@ async fn copy_social(dir: &Path, host: &ClientHost) -> Result<(), ProtocolError>
         .map_err(lost)?;
     loop {
         match runtime
-            .copy_social_page(&source, merge.kind, merge.after.as_deref())
+            .copy_social_page(&source, merge.kind, merge.after.as_deref(), merge.merged_at)
             .await
             .map_err(lost)?
         {

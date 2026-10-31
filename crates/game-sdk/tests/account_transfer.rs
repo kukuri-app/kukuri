@@ -610,7 +610,9 @@ fn the_game_account_is_merged_into_an_existing_account_and_its_relations_follow(
         "block_author",
         json!({"pubkey": blocked}),
     );
-    call(game, &id("mute"), "mute_author", json!({"pubkey": muted}));
+    for target in [&muted, &existing] {
+        call(game, &id("mute"), "mute_author", json!({"pubkey": target}));
+    }
     let (others, invite) = channel_with_invite(other);
     join(game, &invite);
 
@@ -640,7 +642,21 @@ fn the_game_account_is_merged_into_an_existing_account_and_its_relations_follow(
     assert_eq!(social(game, &unfollowed)["following"], false);
     assert_eq!(social(game, &blocked)["blocking"], true);
     assert_eq!(social(game, &muted)["muted"], true);
-    assert_eq!(social(game, &existing)["following"], false);
+    let following = call(
+        game,
+        &id("following"),
+        "list_social_connections",
+        json!({"kind": "following"}),
+    );
+    assert!(
+        !following
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|view| view["author_pubkey"] == existing.as_str()),
+        "{following}"
+    );
+    assert_eq!(social(game, &existing)["muted"], false);
 
     // 他の人からは、A の投稿は A の著者のまま読め、以後の投稿は B が書いたものとして届く。
     subscribe(game, TOPIC);
@@ -707,6 +723,11 @@ fn a_merge_keeps_the_given_progress_resumes_after_restart_and_is_refused_while_c
         json!({"application_id": GAME, "account_id": received, "game_player_id": progress}),
     );
     assert_eq!(merged["data"]["game_player_id"], progress, "{merged}");
+    assert_eq!(
+        merged["data"]["public_key"],
+        source.runtime.local_author_pubkey()
+    );
+    assert_eq!(accounts(game)["active_account_id"], received);
     // まとめた先の鍵は Steam Cloud に置かない（ADR 0070 §4.3）。
     assert_eq!(cloud(None), "off");
     copied(game);
@@ -723,7 +744,7 @@ fn a_merge_keeps_the_given_progress_resumes_after_restart_and_is_refused_while_c
     std::fs::write(
         dir.path().join("game").join("game-player-merge.json"),
         serde_json::to_vec(&json!({"version": 1, "from_account_id": game_account,
-            "to_account_id": received, "kind": "mutes", "after": null}))
+            "to_account_id": received, "merged_at": 0, "kind": "mutes", "after": null}))
         .unwrap(),
     )
     .unwrap();
