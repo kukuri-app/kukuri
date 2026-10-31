@@ -80,7 +80,7 @@ pub fn install_platform_storage(storage: &'static dyn ClientStorage) {
 #[cfg(test)]
 pub(crate) use native::NativeStorage;
 #[cfg(not(target_family = "wasm"))]
-pub(crate) use native::write_private_file_atomically;
+pub use native::write_private_file_atomically;
 
 #[cfg(not(target_family = "wasm"))]
 mod native {
@@ -172,7 +172,7 @@ mod native {
 
     // 途中クラッシュで既存内容が破損しないよう、同一ディレクトリの temp ファイルへ
     // write → fsync → rename で置換する(issue #574)。失敗は fail-loud で伝播させる。
-    pub(crate) fn write_private_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+    pub fn write_private_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
         let file_name = path
             .file_name()
             .and_then(|name| name.to_str())

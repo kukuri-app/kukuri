@@ -154,6 +154,8 @@ pub use requests::WebAttachmentRef;
 pub use stack::{NodeSource, StackStore};
 #[cfg(target_family = "wasm")]
 pub use storage::install_platform_storage;
+#[cfg(not(target_family = "wasm"))]
+pub use storage::write_private_file_atomically;
 pub use storage::{ClientStorage, KeyringUnavailable};
 // 起動エラーの typed 分類(WP-Q2)。src-tauri は downcast で DatabaseOpen/Migration を判定する。
 #[cfg(not(target_family = "wasm"))]
