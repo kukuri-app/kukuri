@@ -387,12 +387,17 @@ namespace Kukuri.GameSdk.Social
             // 外す要求より先に購読の要求が処理されないよう、外し終えるのを待つ。
             await hiding;
             Require(await Display(current, target, true));
-            showAdult = (bool?)Require(await current.SendAsync("get_content_display_settings"))["adult_content_enabled"] ?? false;
-            // 待つ間に閉じたら、購読を取り消して戻る。
-            if (opened != generation)
+            // 続きが失敗するか、待つ間に閉じたら、購読を取り消して戻る。
+            try
+            {
+                showAdult = (bool?)Require(await current.SendAsync("get_content_display_settings"))["adult_content_enabled"] ?? false;
+                if (opened != generation)
+                    throw new ClosedException();
+            }
+            catch
             {
                 await HideAsync(current, target);
-                throw new ClosedException();
+                throw;
             }
             subscribedTarget = target;
             if (subscribed == null)
