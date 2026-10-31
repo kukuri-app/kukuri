@@ -1,5 +1,6 @@
-//! Steam Cloud へのゲームのアカウントの保存（ADR 0070 §4.3。#1997 AC-2）。SDK は Steam を扱わず、ゲームで作ったアカウントの
-//! 鍵と game player を profile の `game-account.json` に書く・消すだけなので、その file と状態の値を確かめる。
+//! Steam Cloud へのゲームのアカウントの保存（ADR 0070 §4.3。#1997 AC-2）と、新しい端末での再開（AC-3）。SDK は Steam を
+//! 扱わず、ゲームで作ったアカウントの鍵と game player を profile の `game-account.json` に書く・消すだけなので、その file と
+//! 状態の値を確かめる。Steam の同期は、その file だけを一度も開いていない directory へ写して模す（実際の Steam は未確認）。
 #![allow(clippy::unwrap_used)]
 
 mod support;
@@ -146,5 +147,108 @@ fn a_file_saved_elsewhere_or_unreadable_is_left_alone() {
     }
     assert_eq!(std::fs::read(&path).unwrap(), b"{not json");
     assert_eq!(start(handle), player);
+    finish(handle);
+}
+
+fn public_key(handle: *mut KukuriHandle) -> Value {
+    call(handle, &id("key"), "get_sync_status", json!({}))["local_author_pubkey"].clone()
+}
+
+/// Steam の Auto-Cloud が新しい端末へ戻すのと同じく、`game-account.json` だけを新しい directory へ写す。
+fn synced(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    std::fs::copy(from.join(CLOUD_FILE), to.join(CLOUD_FILE)).unwrap();
+}
+
+#[test]
+fn the_saved_account_comes_back_on_a_new_device_until_saving_is_turned_off() {
+    isolated_environment();
+    let dir = tempfile::tempdir().unwrap();
+    let (first, second, third) = (
+        dir.path().join("first"),
+        dir.path().join("second"),
+        dir.path().join("third"),
+    );
+    let handle = opened(&first);
+    consent(handle);
+    let player = start(handle);
+    assert_eq!(set(handle, true), "on");
+    finish(handle);
+
+    // 鍵も token も無い、一度も開いていない directory に file だけがある。
+    synced(&first, &second);
+    let handle = opened(&second);
+    consent(handle);
+    assert_eq!(state(handle), "restorable");
+    assert_eq!(start(handle), player);
+    assert_eq!(public_key(handle), player["public_key"]);
+    assert_eq!(state(handle), "on");
+    // 戻したアカウントもゲームで作ったアカウントなので、やめて有効にし直せる。
+    assert_eq!(set(handle, false), "off");
+    assert_eq!(set(handle, true), "on");
+    finish(handle);
+    let handle = opened(&second);
+    assert_eq!(start(handle), player);
+    // 解除すると file が消え、写す file が無い新しい端末では新しいアカウントで始まる。
+    assert_eq!(set(handle, false), "off");
+    finish(handle);
+    assert!(!second.join(CLOUD_FILE).exists());
+    let handle = opened(&third);
+    consent(handle);
+    assert_eq!(state(handle), "off");
+    assert_ne!(start(handle)["public_key"], player["public_key"]);
+    finish(handle);
+
+    // 元の端末のアカウントと進行は残る。
+    let handle = opened(&first);
+    assert_eq!(start(handle), player);
+    finish(handle);
+}
+
+#[test]
+fn a_chosen_account_or_an_unreadable_file_starts_without_restoring() {
+    isolated_environment();
+    let dir = tempfile::tempdir().unwrap();
+    let (saved, chosen, broken) = (
+        dir.path().join("saved"),
+        dir.path().join("chosen"),
+        dir.path().join("broken"),
+    );
+    let handle = opened(&saved);
+    consent(handle);
+    let player = start(handle);
+    set(handle, true);
+    finish(handle);
+
+    // 利用者が別のアカウント（ここでは後から足したもの）を選んで始めると、file から戻さず、file にも触れない。
+    synced(&saved, &chosen);
+    let handle = opened(&chosen);
+    consent(handle);
+    let made = call(handle, "accounts", "list_accounts", json!({}))["active_account_id"].clone();
+    call(
+        handle,
+        "create",
+        "create_account",
+        json!({"account_id": made, "operation_id": "00000000-0000-4000-8000-000000000004"}),
+    );
+    assert_ne!(start(handle)["public_key"], player["public_key"]);
+    assert_eq!(state(handle), "other_account");
+    assert_eq!(
+        std::fs::read(chosen.join(CLOUD_FILE)).unwrap(),
+        std::fs::read(saved.join(CLOUD_FILE)).unwrap()
+    );
+    finish(handle);
+
+    // 読めない file では、通常の開始に戻り、file に触れない。
+    std::fs::create_dir_all(&broken).unwrap();
+    std::fs::write(broken.join(CLOUD_FILE), b"{not json").unwrap();
+    let handle = opened(&broken);
+    consent(handle);
+    assert_eq!(state(handle), "unreadable");
+    assert_ne!(start(handle)["public_key"], player["public_key"]);
+    assert_eq!(
+        std::fs::read(broken.join(CLOUD_FILE)).unwrap(),
+        b"{not json"
+    );
     finish(handle);
 }

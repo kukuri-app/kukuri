@@ -263,7 +263,8 @@ impl ClientHost {
     }
 
     /// #1211: 移行の保存を確定したアカウントを登録簿へ足す。同じ公開鍵が登録済みなら、そのまま返す（二重に登録しない）。
-    pub(crate) async fn register_transferred_account(
+    /// #1997: Steam Cloud の file から戻した鍵も、ここで足す（必須 bundle の無い、空の DB のアカウント）。
+    pub async fn register_transferred_account(
         &self,
         keys: &kukuri_core::KukuriKeys,
     ) -> anyhow::Result<AccountRecord> {

@@ -297,7 +297,11 @@ fn validate_or_create_marker(profile: &ClientProfile) -> Result<(), ProfileError
         })?
         .filter_map(Result::ok)
         .any(|entry| {
-            entry.file_name() != PROFILE_LOCK_FILE && entry.file_name() != PROFILE_MARKER_TEMP_FILE
+            // #1997: 新しい端末では、Steam の Auto-Cloud が起動の前に game の file だけを戻す（ADR 0070 §4.3）。
+            entry.file_name() != PROFILE_LOCK_FILE
+                && entry.file_name() != PROFILE_MARKER_TEMP_FILE
+                && !(profile.kind == ClientProfileKind::GameSdk
+                    && entry.file_name() == "game-account.json")
         });
     if has_existing_state && profile.kind != ClientProfileKind::Gui {
         return Err(ProfileError::new(
