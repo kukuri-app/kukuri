@@ -149,20 +149,27 @@ public sealed class MinimalSample : MonoBehaviour
     /// 「既存のアカウントへまとめる」。説明と、まとめる先の選択を出す。
     public async Task EnterMerge()
     {
+        await ListCandidates();
+        message = "";
+        Screen = "merge";
+    }
+
+    async Task ListCandidates()
+    {
         var listed = await runner.Client.SendAsync("list_accounts");
         mergeCandidates = new JArray();
         foreach (var account in listed.Data?["accounts"] as JArray ?? new JArray())
             if ((string)account["pubkey"] != PublicKey)
                 mergeCandidates.Add(account);
-        message = "";
-        Screen = "merge";
     }
 
     /// 「kukuri app から受けてまとめる」。まとめる先を移行で受ける（受けた後に残す進行を選ぶ）。
     public void ReceiveForMerge() => EnterTransfer(false, true);
 
-    void ChooseMerge(string accountId)
+    async Task ChooseMerge(string accountId)
     {
+        // 移行で受けたばかりのアカウントも名前を示せるよう、候補を読み直す。
+        await ListCandidates();
         mergeTarget = accountId;
         Screen = "merge-confirm";
     }
@@ -292,7 +299,7 @@ public sealed class MinimalSample : MonoBehaviour
                 // 受けたアカウントは profile に加わるだけなので、まとめる先として選ぶ。
                 var received = (string)Transfer["account_id"];
                 Transfer = null;
-                ChooseMerge(received);
+                await ChooseMerge(received);
                 return;
             }
             if (state == "completed")
@@ -466,7 +473,7 @@ public sealed class MinimalSample : MonoBehaviour
                     GUILayout.Label("・Steam Cloud への保存はやめます（まとめた先の鍵は Steam に置きません）。");
                 foreach (var account in mergeCandidates)
                     if (GUILayout.Button($"{(string)account["label"] ?? ((string)account["pubkey"]).Substring(0, 12)} へまとめる"))
-                        ChooseMerge((string)account["id"]);
+                        _ = ChooseMerge((string)account["id"]);
                 if (GUILayout.Button("kukuri app から受けてまとめる"))
                     ReceiveForMerge();
                 if (GUILayout.Button("戻る"))
