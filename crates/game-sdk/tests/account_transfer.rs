@@ -685,6 +685,40 @@ fn the_game_account_is_merged_into_an_existing_account_and_its_relations_follow(
     );
     assert_eq!(author(other, &after), existing);
     assert_eq!(author(other, &post), player["public_key"]);
+    // まとめた後も、A の投稿の thread へ B が返信でき、他の人の thread で A の投稿（A の著者・公開範囲のまま）と並ぶ
+    // （#1981 AC-2。掲示板の thread と同じ `list_thread`）。A の投稿は A の手元にあるので、B の手元へ届くのを待つ。
+    assert_eq!(author(game, &post), player["public_key"]);
+    let reply = call(
+        game,
+        "reply",
+        "create_post",
+        json!({"topic": TOPIC, "content": "test: reply after the merge", "reply_to": post,
+            "channel_ref": {"kind": "public"}}),
+    );
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let thread = loop {
+        let thread = call(
+            other,
+            &id("thread"),
+            "list_thread",
+            json!({"topic": TOPIC, "thread_id": post, "limit": 20}),
+        );
+        if thread["items"].as_array().unwrap().len() == 2 {
+            break thread;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the reply did not reach the thread: {thread}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let items = thread["items"].as_array().unwrap();
+    assert_eq!(items[0]["object_id"], post);
+    assert_eq!(items[0]["author_pubkey"], player["public_key"]);
+    assert_eq!(items[1]["object_id"], reply);
+    assert_eq!(items[1]["author_pubkey"], existing);
+    assert_eq!(items[1]["root_id"], post);
+    assert_eq!(items[0]["audience_label"], items[1]["audience_label"]);
 
     // A が参加していた private channel は写さず、招待されれば B が入れる。B の private channel はそのまま。
     let channels = joined(game);
