@@ -214,6 +214,12 @@ $startOk = ($key -match "^[0-9a-f]{64}$") -and ($screens[0] -eq "start $key") -a
     (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0) -and ($sidecars -eq 0)
 Write-Output "Player start screen ($Backend): screens=$($screens -join ' | ') players=$($players -join ' | ') exits=$($exits -join ',') sidecar_processes=$sidecars ok=$startOk"
 
+# log の最初の一致の 1 つ目の group（無ければ "missing"）。
+function Find-Value([string]$path, [string]$pattern) {
+    $found = Select-String -Path $path -Pattern $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found) { $found.Matches[0].Groups[1].Value } else { "missing" }
+}
+
 $transferOk = $true
 if ($DesktopApp) {
     # 新しい profile で、desktop の既存のアカウントを移行で受けてから始め、次の起動で再開する。
@@ -232,13 +238,13 @@ if ($DesktopApp) {
         $player = Select-String -Path $run.Log -Pattern "KGS_PLAYER (\S+) (\S+) (\S+)" | Select-Object -First 1
         $received += if ($player) { ($player.Matches[0].Groups[1..3] | ForEach-Object Value) -join " " } else { "missing" }
         if ($mode -eq "transfer") {
-            $code = (Select-String -Path $run.Log -Pattern "KGS_CODE (\S+)" | Select-Object -First 1).Matches[0].Groups[1].Value
-            $screen = (Select-String -Path $run.Log -Pattern "KGS_RECEIVED (\S+ \S+)" | Select-Object -First 1).Matches[0].Groups[1].Value
+            $code = Find-Value $run.Log "KGS_CODE (\S+)"
+            $screen = Find-Value $run.Log "KGS_RECEIVED (\S+ \S+)"
         }
     }
     if (-not $source.WaitForExit(60000)) { Stop-Process -Id $source.Id -Force }
     $desktopKey = Get-Content (Join-Path $env:KGS_TRANSFER_DIR "copied") -ErrorAction SilentlyContinue
-    $sourceCode = (Select-String -Path $sourceLog -Pattern "confirming (\d{6})" | Select-Object -First 1).Matches[0].Groups[1].Value
+    $sourceCode = Find-Value $sourceLog "confirming (\d{6})"
     $id = ($received[0] -split " ")[1]
     $transferOk = ($desktopKey -match "^[0-9a-f]{64}$") -and ($code -eq $sourceCode) -and ($screen -eq "start $desktopKey") -and
         ($id -match "^[0-9a-f-]{36}$") -and ($received[0] -eq "playing $id $desktopKey") -and ($received[1] -eq "playing $id $desktopKey") -and

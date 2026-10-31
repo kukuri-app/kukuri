@@ -31,6 +31,8 @@ public sealed class MinimalSample : MonoBehaviour
 
     string message = "";
     JArray documents;
+    /// 移行の画面に入るたびに増やす（「戻る」の後に入り直したとき、前の読み直しを止める）。
+    int transferRun;
 
     JObject ThisGame => new JObject { ["application_id"] = applicationId };
 
@@ -110,6 +112,8 @@ public sealed class MinimalSample : MonoBehaviour
     public void UseKukuriAccount()
     {
         message = "";
+        Transfer = null;
+        transferRun++;
         Screen = "transfer";
     }
 
@@ -125,16 +129,16 @@ public sealed class MinimalSample : MonoBehaviour
         var opened = await runner.Client.SendAsync("open_account_transfer", new JObject(), Encoding.UTF8.GetBytes(link));
         message = opened.Ok ? "" : "リンクを読めません。kukuri app でもう一度リンクをコピーしてください";
         if (opened.Ok)
-            await Follow();
+            await Follow(transferRun);
     }
 
     /// 承認（一致する）・拒否（一致しない）。結果は `Follow` が読む。
     public Task Decide(bool accept) =>
         runner.Client.SendAsync("decide_account_transfer", new JObject { ["accept"] = accept });
 
-    async Task Follow()
+    async Task Follow(int run)
     {
-        while (Screen == "transfer")
+        while (Screen == "transfer" && run == transferRun)
         {
             var status = await runner.Client.SendAsync("get_account_transfer_status");
             Transfer = status.Data as JObject;
@@ -171,6 +175,7 @@ public sealed class MinimalSample : MonoBehaviour
     {
         Screen = "start";
         Transfer = null;
+        transferRun++;
         await runner.Client.SendAsync("cancel_account_transfer");
     }
 
