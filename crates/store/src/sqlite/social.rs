@@ -49,6 +49,22 @@ pub(crate) const RESTALE_PARTICIPANT: &str = concat!(
 );
 
 impl SqliteStore {
+    /// ミュートした相手を、公開鍵の順に `after` より後から `limit` 件（#1998 AC-3）。
+    pub async fn list_muted_authors_after(
+        &self,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT author_pubkey FROM muted_authors WHERE author_pubkey > ?1
+             ORDER BY author_pubkey LIMIT ?2",
+        )
+        .bind(after.unwrap_or_default())
+        .bind(i64::try_from(limit)?)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
     pub(super) async fn store_upsert_profile_impl(&self, profile: Profile) -> Result<()> {
         let existing = self.get_profile(profile.pubkey.as_str()).await?;
         if let Some(existing) = existing

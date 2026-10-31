@@ -61,7 +61,9 @@ if ($lock -match "com\.unity\.netcode") { throw "the test project unexpectedly d
 # 開始の画面の確認用の probe。`-kgs-close`・`-kgs-begin`・`-kgs-resume`・`-kgs-transfer`・`-kgs-handoff` のときだけ sample
 # を操作し、画面・公開鍵・game player ID を log に書き、画面を %TEMP%\kgs-start-*.png に撮って終わる。`-kgs-transfer` は、
 # desktop がリンクをコピーした印（%KGS_TRANSFER_DIR%\copied）を待ってから貼り付ける。`-kgs-handoff` は試験の topic に投稿し、
-# 「kukuriで続ける」でリンクをコピーしてから desktop と %KGS_TRANSFER_DIR% の file でやり取りする。
+# 「kukuriで続ける」でリンクをコピーしてから desktop と %KGS_TRANSFER_DIR% の file でやり取りする。`-kgs-merge` は、始めてから
+# 「既存のアカウントへまとめる」→「kukuri app から受けてまとめる」で desktop のリンクを貼り付けて承認し、今の進行を残して
+# まとめた後、試験の topic に投稿して desktop が読むのを待つ。
 @"
 using System.IO;
 using System.Linq;
@@ -76,7 +78,7 @@ public sealed class KgsStartProbe : MonoBehaviour
     static string Mode()
     {
         var args = System.Environment.GetCommandLineArgs();
-        return new[] { "close", "begin", "resume", "transfer", "handoff", "cloud-save", "cloud-restore" }.FirstOrDefault(mode => args.Contains("-kgs-" + mode));
+        return new[] { "close", "begin", "resume", "transfer", "handoff", "merge", "cloud-save", "cloud-restore" }.FirstOrDefault(mode => args.Contains("-kgs-" + mode));
     }
     async Task Shot(string name)
     {
@@ -157,6 +159,39 @@ public sealed class KgsStartProbe : MonoBehaviour
             Debug.Log("KGS_REPLY " + (reply ?? "none none"));
             await Shot(mode + "-4");
             File.WriteAllText(Path.Combine(dir, "received"), reply ?? "none");
+        }
+        if (mode == "merge" && sample.Screen == "start")
+        {
+            var dir = System.Environment.GetEnvironmentVariable("KGS_TRANSFER_DIR");
+            const string topic = "kukuri:topic:test";
+            await sample.Begin();
+            Debug.Log("KGS_BEFORE " + sample.GamePlayerId + " " + await Key());
+            await sample.EnterMerge();
+            await Shot(mode + "-2");
+            sample.ReceiveForMerge();
+            while (!File.Exists(Path.Combine(dir, "copied"))) await Task.Delay(200);
+            var pasting = sample.Paste();
+            while ((string)sample.Transfer?["state"] != "confirming" && !pasting.IsCompleted) await Task.Yield();
+            Debug.Log("KGS_CODE " + (sample.Transfer?["code"] ?? "none"));
+            await sample.Decide(true);
+            await pasting;
+            await Shot(mode + "-3");
+            Debug.Log("KGS_CONFIRM " + sample.Screen);
+            await sample.Merge();
+            await Shot(mode + "-4");
+            await runner.Client.SendAsync("set_topic_gossip_enabled", new JObject { ["topic"] = topic, ["enabled"] = true });
+            var posted = await runner.Client.SendAsync("create_post", new JObject
+            {
+                ["topic"] = topic, ["content"] = "test: after the merge", ["channel_ref"] = new JObject { ["kind"] = "public" },
+            });
+            File.WriteAllText(Path.Combine(dir, "game-post"), (string)posted.Data);
+            var ticket = await runner.Client.SendAsync("get_local_peer_ticket");
+            File.WriteAllText(Path.Combine(dir, "game-ticket"), (string)ticket.Data);
+            var desktopTicket = Path.Combine(dir, "desktop-ticket");
+            while (!File.Exists(desktopTicket)) await Task.Delay(200);
+            await runner.Client.SendAsync("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(desktopTicket).Trim() });
+            var received = Path.Combine(dir, "received");
+            for (var waited = 0; !File.Exists(received) && waited < 1800; waited++) await Task.Delay(100);
         }
         if (mode == "cloud-save" && sample.Screen == "start")
         {
@@ -322,6 +357,7 @@ function Start-Desktop([string]$mode) {
 
 $transferOk = $true
 $handoffOk = $true
+$mergeOk = $true
 if ($DesktopApp) {
     # 新しい profile で、desktop の既存のアカウントを移行で受けてから始め、次の起動で再開する（#1996 AC-3）。
     $source = Start-Desktop "source"
@@ -372,6 +408,33 @@ if ($DesktopApp) {
         ($id -match "^[0-9a-f-]{36}$") -and ($handed[0] -eq "playing $id $gameKey") -and ($handed[1] -eq "playing $id $gameKey") -and
         (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0)
     Write-Output "Player handoff ($Backend): game=$gameKey codes=$code/$targetCode reply=$reply players=$($handed -join ' | ') exits=$($exits -join ',') ok=$handoffOk"
+
+    # 新しい profile で始め、「既存のアカウントへまとめる」で desktop のアカウントを受けてまとめる。まとめた後の投稿を desktop
+    # が自分のアカウントの投稿として読み、次の起動でも同じ game player とまとめた先のアカウントで再開する（#1998 AC-3）。
+    $desktop = Start-Desktop "merge"
+    $merged = @()
+    $exits = @()
+    foreach ($mode in "merge", "resume") {
+        $run = Start-Player "start-$mode-merge" "-kgs-$mode"
+        if (-not $run.Process.WaitForExit(300000)) { Stop-Process -Id $run.Process.Id -Force; $exits += "timeout" } else { $exits += $run.Process.ExitCode }
+        $player = Select-String -Path $run.Log -Pattern "KGS_PLAYER (\S+) (\S+) (\S+)" | Select-Object -First 1
+        $merged += if ($player) { ($player.Matches[0].Groups[1..3] | ForEach-Object Value) -join " " } else { "missing" }
+        if ($mode -eq "merge") {
+            $before = Find-Value $run.Log "KGS_BEFORE (\S+ \S+)"
+            $code = Find-Value $run.Log "KGS_CODE (\S+)"
+            $confirm = Find-Value $run.Log "KGS_CONFIRM (\S+)"
+        }
+    }
+    if (-not $desktop.Process.WaitForExit(120000)) { Stop-Process -Id $desktop.Process.Id -Force; $exits += "desktop-timeout" } else { $exits += $desktop.Process.ExitCode }
+    $desktopKey = Get-Content (Join-Path $env:KGS_TRANSFER_DIR "copied") -ErrorAction SilentlyContinue
+    $desktopCode = Find-Value $desktop.Log "confirming (\d{6})"
+    $post = Get-Content (Join-Path $env:KGS_TRANSFER_DIR "game-post") -ErrorAction SilentlyContinue
+    $id, $gameKey = $before -split " "
+    $mergeOk = ($desktopKey -match "^[0-9a-f]{64}$") -and ($gameKey -match "^[0-9a-f]{64}$") -and ($gameKey -ne $desktopKey) -and
+        ($code -eq $desktopCode) -and ($confirm -eq "merge-confirm") -and ($id -match "^[0-9a-f-]{36}$") -and
+        ($merged[0] -eq "playing $id $desktopKey") -and ($merged[1] -eq "playing $id $desktopKey") -and
+        (Select-String -Path $desktop.Log -Pattern "^shown $post $desktopKey" -Quiet) -and (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0)
+    Write-Output "Player merge ($Backend): before=$before desktop=$desktopKey codes=$code/$desktopCode confirm=$confirm players=$($merged -join ' | ') exits=$($exits -join ',') ok=$mergeOk"
 }
 
-if ($failed -or -not $sampleOk -or -not $startOk -or -not $cloudOk -or -not $transferOk -or -not $handoffOk) { exit 1 }
+if ($failed -or -not $sampleOk -or -not $startOk -or -not $cloudOk -or -not $transferOk -or -not $handoffOk -or -not $mergeOk) { exit 1 }

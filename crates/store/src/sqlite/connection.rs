@@ -63,6 +63,15 @@ impl SqliteStore {
         Ok(Self::from_pool(pool, Some(remote_cache_files)))
     }
 
+    /// 別のアカウントの DB を読むだけの接続（#1998 AC-3）。migration は流さない。
+    pub async fn connect_file_read_only(path: impl AsRef<Path>) -> Result<Self> {
+        let options =
+            SqliteConnectOptions::from_str(&format!("sqlite://{}", path.as_ref().display()))?
+                .read_only(true);
+        let pool = sqlite_pool_options(1, false).connect_with(options).await?;
+        Ok(Self::from_pool(pool, None))
+    }
+
     pub async fn connect_memory() -> Result<Self> {
         Self::connect("sqlite::memory:").await
     }

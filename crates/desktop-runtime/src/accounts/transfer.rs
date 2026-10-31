@@ -64,6 +64,12 @@ async fn clear(db: &Path) -> Result<()> {
     delete_file(&manifest_path(db)).await
 }
 
+/// 保存した必須 bundle の反映が終わったか（置き場が無い）。
+#[cfg(not(target_family = "wasm"))]
+pub(crate) async fn merged(db: &Path) -> Result<bool> {
+    Ok(read_file(&manifest_path(db)).await?.is_none())
+}
+
 /// 保存した必須 bundle を chunk ごとに反映する。消えている chunk は反映済みとして進む。受信途中の置き場は消す。
 pub(crate) async fn merge_staged(db: &Path, app: &AppService) -> Result<()> {
     let Some(mut manifest) = read_manifest(db).await? else {
