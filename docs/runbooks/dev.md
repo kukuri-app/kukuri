@@ -441,7 +441,9 @@ $env:KUKURI_LIBVPX_DIR = "C:\src\libvpx-out"
 powershell -ExecutionPolicy Bypass -File sdk/unity/build-native.ps1
 # 空の Unity project に package を入れて EditMode の試験（Play・Stop と domain reload の lifecycle を含む）を流し、
 # NGO なしで Player を build して、Minimal sample の開始の画面を同じ profile で 3 回起動・終了して確かめる（同意して閉じる →
-# 同じアカウントで「はじめる」→ 同じ game player と公開鍵で自動の再開。画面を %TEMP%\kgs-start-*.png に書く）
+# 同じアカウントで「はじめる」→ 同じ game player と公開鍵で自動の再開。画面を %TEMP%\kgs-start-*.png に書く）。続けて、
+# Steam Cloud への保存を有効にした profile の game-account.json だけを一度も開いていない profile へ写し、同意 →「はじめる」で
+# 同じ game player と公開鍵で再開することを確かめる（Steam の同期を写すことで模す。実際の Steam は確かめない）
 powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1
 # IL2CPP の Player で同じ確認をする（EditMode は Mono の回で済んでいるので省く）
 powershell -ExecutionPolicy Bypass -File sdk/unity/test.ps1 -Backend IL2CPP -SkipEditMode

@@ -9,6 +9,8 @@
 #   再開する（#1996 AC-3）。続けて、Player の「kukuriで続ける」のリンクを desktop の「別の端末から移す」で受けて
 #   desktop をゲームのアカウントに切り替え、desktop がゲームの投稿に返信し、Player がその返信を受けて同じ game player の
 #   まま続く（#1998 AC-2）。desktop は transfer-desktop.mjs が画面から動かす。node が要る
+# - Steam Cloud への保存を模して、保存した profile の game-account.json だけを一度も開いていない profile へ写し、同じ
+#   公開鍵と game player ID で再開する（#1997 AC-3。実際の Steam は未確認）
 # 先に build-native.ps1 で native を置く。Unity の project は短い path に作る（深い path は MAX_PATH に当たる）。
 param(
     [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
@@ -74,7 +76,7 @@ public sealed class KgsStartProbe : MonoBehaviour
     static string Mode()
     {
         var args = System.Environment.GetCommandLineArgs();
-        return new[] { "close", "begin", "resume", "transfer", "handoff" }.FirstOrDefault(mode => args.Contains("-kgs-" + mode));
+        return new[] { "close", "begin", "resume", "transfer", "handoff", "cloud-save", "cloud-restore" }.FirstOrDefault(mode => args.Contains("-kgs-" + mode));
     }
     async Task Shot(string name)
     {
@@ -156,6 +158,21 @@ public sealed class KgsStartProbe : MonoBehaviour
             await Shot(mode + "-4");
             File.WriteAllText(Path.Combine(dir, "received"), reply ?? "none");
         }
+        if (mode == "cloud-save" && sample.Screen == "start")
+        {
+            await sample.Begin();
+            await sample.SetCloud(true);
+            Debug.Log("KGS_CLOUD " + sample.CloudState);
+            await Shot(mode + "-2");
+        }
+        if (mode == "cloud-restore" && sample.Screen == "start")
+        {
+            var before = await runner.Client.SendAsync("get_cloud_account", new JObject { ["application_id"] = "com.example.minimal" });
+            Debug.Log("KGS_CLOUD " + (string)before.Data?["state"]);
+            await sample.Begin();
+            Debug.Log("KGS_CLOUD " + sample.CloudState);
+            await Shot(mode + "-2");
+        }
         Debug.Log("KGS_PLAYER " + sample.Screen + " " + (sample.GamePlayerId == "" ? "none" : sample.GamePlayerId) + " " + await Key());
         Application.Quit(0);
     }
@@ -172,7 +189,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 public static class KgsBuild
 {
-    static void Link(Object component, string field, Object value)
+    static void Link(Object component, string field, object value)
     {
         component.GetType().GetField(field, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).SetValue(component, value);
     }
@@ -188,6 +205,7 @@ public static class KgsBuild
         runner.Settings = settings;
         var sample = host.AddComponent<MinimalSample>();
         Link(sample, "runner", runner);
+        Link(sample, "steamCloud", true);
         var probe = host.AddComponent<KgsStartProbe>();
         Link(probe, "runner", runner);
         Link(probe, "sample", sample);
@@ -256,6 +274,31 @@ $startOk = ($key -match "^[0-9a-f]{64}$") -and ($screens[0] -eq "start $key") -a
     ($screens[2] -eq "playing $key") -and ($players[2] -eq "playing $id $key") -and
     (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0) -and ($sidecars -eq 0)
 Write-Output "Player start screen ($Backend): screens=$($screens -join ' | ') players=$($players -join ' | ') exits=$($exits -join ',') sidecar_processes=$sidecars ok=$startOk"
+
+# Steam Cloud の同期を模す: 保存した profile の game-account.json だけを残して、profile を一度も開いていない状態にする。
+if (Test-Path $profileRoot) { Remove-Item -Recurse -Force $profileRoot }
+$cloud = @()
+$exits = @()
+foreach ($mode in "cloud-save", "cloud-restore") {
+    if ($mode -eq "cloud-restore") {
+        $profileDir = Join-Path $profileRoot "profiles\sample"
+        $saved = Join-Path $env:TEMP "kgs-game-account.json"
+        Copy-Item (Join-Path $profileDir "game-account.json") $saved -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $profileRoot
+        New-Item -ItemType Directory -Force $profileDir | Out-Null
+        Move-Item $saved (Join-Path $profileDir "game-account.json") -ErrorAction SilentlyContinue
+    }
+    $run = Start-Player "start-$mode" "-kgs-$mode"
+    if (-not $run.Process.WaitForExit(120000)) { Stop-Process -Id $run.Process.Id -Force; $exits += "timeout" } else { $exits += $run.Process.ExitCode }
+    $states = @(Select-String -Path $run.Log -Pattern "KGS_CLOUD (\S+)" | ForEach-Object { $_.Matches[0].Groups[1].Value })
+    $player = Select-String -Path $run.Log -Pattern "KGS_PLAYER (\S+) (\S+) (\S+)" | Select-Object -First 1
+    $cloud += ($states -join ",") + " " + $(if ($player) { ($player.Matches[0].Groups[1..3] | ForEach-Object Value) -join " " } else { "missing" })
+}
+$id = ($cloud[0] -split " ")[2]
+$key = ($cloud[0] -split " ")[3]
+$cloudOk = ($cloud[0] -eq "on playing $id $key") -and ($cloud[1] -eq "restorable,on playing $id $key") -and
+    ($id -match "^[0-9a-f-]{36}$") -and ($key -match "^[0-9a-f]{64}$") -and (@($exits | Where-Object { $_ -ne 0 }).Count -eq 0)
+Write-Output "Player cloud ($Backend): runs=$($cloud -join ' | ') exits=$($exits -join ',') ok=$cloudOk"
 
 # log の最初の一致の 1 つ目の group（無ければ "missing"）。
 function Find-Value([string]$path, [string]$pattern) {
@@ -331,4 +374,4 @@ if ($DesktopApp) {
     Write-Output "Player handoff ($Backend): game=$gameKey codes=$code/$targetCode reply=$reply players=$($handed -join ' | ') exits=$($exits -join ',') ok=$handoffOk"
 }
 
-if ($failed -or -not $sampleOk -or -not $startOk -or -not $transferOk -or -not $handoffOk) { exit 1 }
+if ($failed -or -not $sampleOk -or -not $startOk -or -not $cloudOk -or -not $transferOk -or -not $handoffOk) { exit 1 }
