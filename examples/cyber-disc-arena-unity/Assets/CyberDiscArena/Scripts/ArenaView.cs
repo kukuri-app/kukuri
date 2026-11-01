@@ -60,6 +60,15 @@ namespace CyberDiscArena
         void LateUpdate()
         {
             lobbyCanvas.enabled = !session.InMatch;
+            // 対戦中は、隠したロビーの button が Space（Submit）や WASD（選択の移動）で押されないようにする。
+            var events = EventSystem.current;
+            if (events != null)
+            {
+                events.sendNavigationEvents = !session.InMatch;
+                var selected = events.currentSelectedGameObject;
+                if (session.InMatch && selected != null && selected.transform.IsChildOf(lobbyCanvas.transform))
+                    events.SetSelectedGameObject(null);
+            }
             var shown = new Vector3[2];
             for (var index = 0; index < 2; index++)
             {
@@ -113,6 +122,11 @@ namespace CyberDiscArena
             GUI.Label(new Rect(20, 52, 900, 36), path, label);
             GUI.Label(new Rect(20, Screen.height - 50, Screen.width - 40, 40),
                 "WASD 移動 / Space ジャンプ / Ctrl しゃがむ・スライド / E 投げる・受け止める", label);
+            if (session.Ending)
+            {
+                GUI.Label(new Rect(0, Screen.height / 2 - 120, Screen.width, 80), session.Notice, big);
+                return;
+            }
             if (GUI.Button(new Rect(Screen.width - 140, 16, 120, 40), "退出"))
                 session.Leave();
             var headline = session.Phase switch

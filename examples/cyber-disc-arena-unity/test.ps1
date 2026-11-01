@@ -68,6 +68,8 @@ public sealed class ArenaProbe : MonoBehaviour
     int throws;
     float heldSince = -1;
     bool catching;
+    bool dodging;
+    int dodges;
 
     static string Arg(string name)
     {
@@ -83,7 +85,16 @@ public sealed class ArenaProbe : MonoBehaviour
         runner.Settings = KukuriSettings.Create(KukuriMode.Ffi, role, Arg("-arena-profile-dir"));
         runner.enabled = true;
         session.InputSource = Bot;
-        session.Confirmed += @event => Debug.Log($"KGS_EVENT {@event.Sequence} {@event.Kind} {@event.Phase} {@event.Player} {@event.Target} {@event.Score0} {@event.Score1}");
+        session.Confirmed += @event =>
+        {
+            Debug.Log($"KGS_EVENT {@event.Sequence} {@event.Kind} {@event.Phase} {@event.Player} {@event.Target} {@event.Score0} {@event.Score1}");
+            // しゃがんでかわした投げが、当たらずに終わった。
+            if (dodging && @event.Kind != ArenaEventKind.Throw)
+            {
+                if (@event.Kind != ArenaEventKind.Hit) dodges++;
+                dodging = false;
+            }
+        };
     }
 
     async void Start()
@@ -101,7 +112,8 @@ public sealed class ArenaProbe : MonoBehaviour
         }
     }
 
-    /// 相手へ向き、左右に動きながら、持てば少し待って投げる。ディスクが向かってくれば、1 回おきに受け止める。
+    /// 相手へ向き、左右に動きながら、持てば少し待って投げる。ディスクが向かってくれば、3 回に 1 回は受け止め、1 回は
+    /// しゃがんでかわし、1 回は当たる。
     ArenaInput Bot(int local)
     {
         var t = Time.time;
@@ -124,12 +136,15 @@ public sealed class ArenaProbe : MonoBehaviour
         var disc = session.Disc;
         var coming = disc.Mode == DiscMode.Flying && Vector3.Dot(disc.Velocity, me - disc.Position) > 0;
         var distance = Vector2.Distance(new Vector2(me.x, me.z), new Vector2(disc.Position.x, disc.Position.z));
+        var choice = (throws + local) % 3;
         if (coming && distance < 3 && !catching)
         {
             catching = true;
-            if ((throws + local) % 2 == 0) session.Act();
+            if (choice == 0) session.Act();
+            if (choice == 1) dodging = true;
         }
         if (!coming) catching = false;
+        input.Crouch = dodging && coming && distance < 5;
         return input;
     }
 
@@ -188,6 +203,7 @@ public sealed class ArenaProbe : MonoBehaviour
     void Final()
     {
         var players = session.Players;
+        Debug.Log("KGS_DODGES " + dodges);
         Debug.Log($"KGS_FINAL {session.Phase} {session.Winner} {session.Scores[0]} {session.Scores[1]} {session.LastEvent} {session.EventGaps} " +
             string.Join(" ", players.Select(player => $"{player.Position.x:F3},{player.Position.y:F3},{player.Position.z:F3}")));
     }
@@ -195,9 +211,13 @@ public sealed class ArenaProbe : MonoBehaviour
     async Task Host()
     {
         await Prepare();
+        // 対戦中は隠したロビーの button が Space で押されない（選択と navigation を外す）。
+        lobby.GetComponentsInChildren<UnityEngine.UI.Button>(true).First(button => button.name.StartsWith("Create")).Select();
         await lobby.CreateRoomAsync("test arena 1");
         await Until(() => session.Phase == ArenaPhase.Playing, 120, "the match did not start");
         await Pause(4);
+        var events = UnityEngine.EventSystems.EventSystem.current;
+        Debug.Log($"KGS_UI_LOCKED {!events.sendNavigationEvents && events.currentSelectedGameObject == null}");
         await Shot("1-playing");
         await Until(() => session.Phase == ArenaPhase.Result, 240, "the match did not end");
         await Pause(1.5f);
@@ -213,6 +233,9 @@ public sealed class ArenaProbe : MonoBehaviour
         // 2 試合目: client が途中で退出する。
         await lobby.CreateRoomAsync("test arena 2");
         await Until(() => session.Phase == ArenaPhase.Playing, 120, "the second match did not start");
+        // 2 試合目でも client の入力を使う（前の試合の通し番号で捨てない）。
+        await Pause(1.5f);
+        Debug.Log("KGS_SECOND_INPUT " + session.Players[1].LastInput);
         await Until(() => session.Phase == ArenaPhase.Left, 120, "the host did not see the client leave");
         Debug.Log($"KGS_HOST_SAW_LEAVE {session.Phase}");
         await Shot("3-opponent-left");
@@ -345,15 +368,18 @@ if ($sameResult) {
         for ($axis = 0; $axis -lt 3; $axis++) { if ([math]::Abs($a[$axis] - $b[$axis]) -gt 0.05) { $positionsMatch = $false } }
     }
 }
+$dodges = (@(Lines "host" "KGS_DODGES (\d+)") + @(Lines "client" "KGS_DODGES (\d+)") | Measure-Object -Sum).Sum
+$uiLocked = (Lines "host" "KGS_UI_LOCKED (\S+)") | Select-Object -First 1
+$secondInput = [int]((Lines "host" "KGS_SECOND_INPUT (\d+)") | Select-Object -First 1)
 $hostLeft = (Lines "host" "KGS_HOST_LEFT (.*)") | Select-Object -First 1
 $clientClosed = (Lines "client" "KGS_CLIENT_CLOSED (.*)") | Select-Object -First 1
 $hostSawLeave = (Lines "host" "KGS_HOST_SAW_LEAVE (.*)") | Select-Object -First 1
 $clientLeft = (Lines "client" "KGS_CLIENT_LEFT (.*)") | Select-Object -First 1
 $failure = Select-String -Path $players["host"].Log, $players["client"].Log -Pattern "KGS_FAILED.*" | Select-Object -First 1
-$ok = $sameEvents -and $sameResult -and $positionsMatch -and ("Throw" -in $kinds) -and ("Catch" -in $kinds) -and ("Hit" -in $kinds) -and
+$ok = $sameEvents -and $sameResult -and $positionsMatch -and ($dodges -ge 1) -and ($uiLocked -eq "True") -and ($secondInput -ge 20) -and ("Throw" -in $kinds) -and ("Catch" -in $kinds) -and ("Hit" -in $kinds) -and
     ($hostLeft -eq "listening=False in_match=False") -and ($clientClosed -eq "listening=False joined=none notice=ホストが部屋を閉じました") -and
     ($hostSawLeave -eq "Left") -and ($clientLeft -eq "listening=False joined=none") -and ($exits["host"] -eq 0) -and ($exits["client"] -eq 0)
-Write-Output "Player match ($Backend, delay=${DelayMs}ms loss=$LossPercent%): events=$($hostFirst.Count) same=$sameEvents kinds=$($kinds -join ',') host=[$hostFinal] client=[$clientFinal] positions=$positionsMatch"
-Write-Output "Player leave ($Backend): host_left=[$hostLeft] client_closed=[$clientClosed] host_saw_leave=[$hostSawLeave] client_left=[$clientLeft] exits=$($exits['host']),$($exits['client']) ok=$ok"
+Write-Output "Player match ($Backend, delay=${DelayMs}ms loss=$LossPercent%): events=$($hostFirst.Count) same=$sameEvents kinds=$($kinds -join ',') dodges=$dodges ui_locked=$uiLocked host=[$hostFinal] client=[$clientFinal] positions=$positionsMatch"
+Write-Output "Player leave ($Backend): second_match_inputs=$secondInput host_left=[$hostLeft] client_closed=[$clientClosed] host_saw_leave=[$hostSawLeave] client_left=[$clientLeft] exits=$($exits['host']),$($exits['client']) ok=$ok"
 if ($failure) { Write-Output "  $($failure.Line)" }
 if ($failed -or -not $ok) { exit 1 }

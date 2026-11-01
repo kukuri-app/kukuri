@@ -122,7 +122,41 @@ namespace CyberDiscArena.Tests
         }
 
         [Test]
-        public void WhenTimeRunsOutTheLeaderWinsAndATieGoesToTheNextPoint()
+        public void WhenTimeRunsOutTheLeaderWins()
+        {
+            var rules = Playing();
+            rules.Scores[0] = 1;
+            Run(rules, ArenaRules.MatchSeconds + 1);
+            Assert.AreEqual(ArenaPhase.Result, rules.Phase);
+            Assert.AreEqual(0, rules.Winner);
+        }
+
+        [Test]
+        public void AHitThatOnlyEvensTheScoreAsTimeRunsOutGoesToOvertime()
+        {
+            // 投げてから当たるまでの tick 数を測り、残り時間が尽きる tick に当たるよう投げる。
+            var measure = Playing();
+            measure.Throw(0, Toward(measure, 0));
+            var ticks = 0;
+            while (measure.Scores[0] == 0)
+            {
+                measure.Step(Still, ArenaRules.TickSeconds);
+                ticks++;
+            }
+            var rules = Playing();
+            rules.Scores[1] = 1;
+            while (rules.TimeLeft > ticks * ArenaRules.TickSeconds)
+                rules.Step(Still, ArenaRules.TickSeconds);
+            rules.Throw(0, Toward(rules, 0));
+            for (var tick = 0; tick < ticks; tick++)
+                rules.Step(Still, ArenaRules.TickSeconds);
+            Assert.AreEqual(0, rules.TimeLeft);
+            CollectionAssert.AreEqual(new byte[] { 1, 1 }, rules.Scores);
+            Assert.AreEqual(ArenaPhase.Playing, rules.Phase);
+        }
+
+        [Test]
+        public void ATieWhenTimeRunsOutGoesToTheNextPoint()
         {
             var rules = Playing();
             Run(rules, ArenaRules.MatchSeconds + 1);

@@ -243,11 +243,11 @@ namespace CyberDiscArena
                 var thrower = Disc.Thrower;
                 Scores[thrower]++;
                 Give(target, ArenaEventKind.Hit, thrower);
-                if (Scores[thrower] >= WinningScore || TimeLeft <= 0)
+                if (Scores[thrower] >= WinningScore)
                     End(thrower);
                 return;
             }
-            if (Disc.Bounces > MaxBounces || Disc.FlightTime > MaxFlightSeconds)
+            if (Disc.Bounces >= MaxBounces || Disc.FlightTime > MaxFlightSeconds)
             {
                 var nearest = (Disc.Position - Players[0].Position).sqrMagnitude <=
                     (Disc.Position - Players[1].Position).sqrMagnitude ? 0 : 1;

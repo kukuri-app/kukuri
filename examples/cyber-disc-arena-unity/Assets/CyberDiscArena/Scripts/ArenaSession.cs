@@ -54,6 +54,8 @@ namespace CyberDiscArena
         public int Local { get; private set; } = -1;
         public bool IsHost => rules != null;
         public bool InMatch => Local >= 0;
+        /// 自分で対戦をやめている途中（host は相手の session が閉じるのを待つ）。
+        public bool Ending => ending;
         /// 確定した状態（client は受けた出来事から）。
         public ArenaPhase Phase { get; private set; }
         public int Holder { get; private set; } = -1;
@@ -123,7 +125,7 @@ namespace CyberDiscArena
                 Handle(name, reader);
             }
             correction = Vector3.Lerp(correction, Vector3.zero, 1 - Mathf.Exp(-12 * Time.deltaTime));
-            if (!IsHost && Disc.Mode == DiscMode.Flying)
+            if (!IsHost && Holder < 0 && received.Mode == DiscMode.Flying && Phase == ArenaPhase.Playing)
             {
                 var disc = received;
                 disc.Position += received.Velocity * (Time.unscaledTime - stateAt);
@@ -170,6 +172,7 @@ namespace CyberDiscArena
         {
             Local = local;
             ending = false;
+            inputs[0] = inputs[1] = default;
             Phase = ArenaPhase.Waiting;
             Holder = Winner = -1;
             Scores[0] = Scores[1] = 0;
@@ -456,7 +459,8 @@ namespace CyberDiscArena
             if (host)
             {
                 Stop();
-                Notice = "";
+                if (Notice == "部屋を閉じています")
+                    Notice = "";
             }
         }
 
