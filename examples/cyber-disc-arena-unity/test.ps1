@@ -8,6 +8,9 @@
 # - スキン: 作者（開発用の Sidecar）が対戦の前にスキンを発行すると、host のロッカーに出て、選ぶと host の体に貼られる。
 #   client も別のスキンを着る。対戦が始まると互いの体に相手のスキンを P2P で取って貼る。対戦中に作者が新しい版を発行すると、
 #   両方の体が再起動せずに新しい版へ変わる。
+# - 配信と応援: host は「配信する」を選んで部屋を作り、試合の開始で公開の Live を始める。ロビーにいる観戦の Player（3 人目）
+#   はモニターでその配信を受けて映し、R の応援（🔥）を送る。`-DesktopApp` を渡すと、ゲームを入れていない desktop も配信に
+#   参加して映像を受け、👏 で応援する。host の ring の上に応援の演出が出て、試合が終わると配信を止める。
 # - 状態の継続（1 つの Player を同じ profile で起動し直す）: 「はじめる」で選んだスキンと game player ID が再起動の後も
 #   続く。Steam Cloud に保存した file（game-account.json とゲームのセーブ）だけを写した新しい profile でも、同じ ID・公開鍵・
 #   スキンで再開する。profile に足したアカウント B に、この端末で遊んだ別の進行があれば、まとめる確定の画面で B の進行を
@@ -18,6 +21,7 @@ param(
     [string]$ProjectDir = (Join-Path $env:TEMP "kcda-test"),
     [ValidateSet("Mono2x", "IL2CPP")] [string]$Backend = "Mono2x",
     [switch]$SkipEditMode,
+    [string]$DesktopApp,
     [int]$DelayMs = 25,
     [double]$LossPercent = 1
 )
@@ -74,6 +78,10 @@ public sealed class ArenaProbe : MonoBehaviour
     [SerializeField] KukuriAccountScreen account;
     [SerializeField] ArenaProfile profile;
     [SerializeField] ArenaSkins skins;
+    [SerializeField] ArenaBroadcast broadcast;
+    [SerializeField] ArenaCheer cheer;
+    readonly System.Collections.Generic.HashSet<string> cheers = new System.Collections.Generic.HashSet<string>();
+    int cheersSeen;
     KukuriClient publisher;
 
     string role;
@@ -95,6 +103,8 @@ public sealed class ArenaProbe : MonoBehaviour
         role = Arg("-arena-role");
         if (role == null) return;
         runner.Settings = KukuriSettings.Create(KukuriMode.Ffi, role, Arg("-arena-profile-dir"));
+        // 試験では音を出さない（ゲームの音。Live の音は視聴で音量を 0 にする）。
+        AudioListener.volume = 0;
         runner.enabled = true;
         session.InputSource = Bot;
         session.Confirmed += @event =>
@@ -114,7 +124,7 @@ public sealed class ArenaProbe : MonoBehaviour
         if (role == null) return;
         try
         {
-            await (role == "host" ? Host() : role == "client" ? Client() : State());
+            await (role == "host" ? Host() : role == "client" ? Client() : role == "spectator" ? Spectator() : State());
             Application.Quit(0);
         }
         catch (Exception error)
@@ -210,6 +220,18 @@ public sealed class ArenaProbe : MonoBehaviour
         var path = Path.Combine(exchange, other + ".ticket");
         await Until(() => File.Exists(path), 60, "no ticket from the " + other);
         await Call("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(path) });
+        // host は観戦の Player と desktop の ticket も取り込む（desktop にはゲームの ticket を渡す）。
+        if (role == "host")
+        {
+            if (Arg("-arena-desktop") != null)
+                File.WriteAllText(Path.Combine(exchange, "game-ticket"), File.ReadAllText(mine));
+            foreach (var peer in new[] { Arg("-arena-spectator") != null ? "spectator.ticket" : null, Arg("-arena-desktop") != null ? "desktop-ticket" : null })
+            {
+                if (peer == null) continue;
+                await Until(() => File.Exists(Path.Combine(exchange, peer)), 120, "no ticket from " + peer);
+                await Call("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(Path.Combine(exchange, peer)) });
+            }
+        }
         // 作者（開発用の Sidecar）は host が開いて、互いの ticket を取り込む。client は host が書いた ticket と公開鍵を読む。
         if (role == "host")
         {
@@ -304,6 +326,7 @@ public sealed class ArenaProbe : MonoBehaviour
         await Until(() => skins.Loader(0).AppliedRevision >= 1, 60, "the skin was not worn");
         Debug.Log("KGS_SKIN_WORN " + profile.Skin + " " + skins.Loader(0).AppliedRevision);
         await Shot("0-locker");
+        broadcast.BroadcastNext = true;
         // 対戦中は隠したロビーの button が Space で押されない（選択と navigation を外す）。
         lobby.GetComponentsInChildren<UnityEngine.UI.Button>(true).First(button => button.name.StartsWith("Create")).Select();
         await lobby.CreateRoomAsync("test arena 1");
@@ -320,9 +343,20 @@ public sealed class ArenaProbe : MonoBehaviour
         var revision = await PublishSkin(new Color(0.2f, 0.4f, 1f));
         await Until(() => skins.Loader(0).AppliedRevision >= revision, 60, "the new revision was not worn");
         Debug.Log("KGS_SKIN_UPDATED " + skins.Loader(0).AppliedRevision);
+        // 試合は公開の Live で配信され、観戦の Player と desktop の応援が ring の上に出る。
+        await Until(() => broadcast.LiveSession != null && broadcast.LivePost != null, 60, "the live did not start");
+        Debug.Log("KGS_LIVE_STARTED " + broadcast.LiveSession);
+        File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "live.tmp"), $"{Arg("-arena-topic")}\n{broadcast.LiveSession}\n{broadcast.LivePost}");
+        File.Move(Path.Combine(Arg("-arena-exchange"), "live.tmp"), Path.Combine(Arg("-arena-exchange"), "live"));
+        var expected = Arg("-arena-desktop") != null ? new[] { "FIRE!", "CLAP!" } : new[] { "FIRE!" };
+        await Until(() => expected.All(cheers.Contains), 180, "the cheers did not arrive");
+        await Shot("1c-cheer");
+        Debug.Log("KGS_CHEERS " + string.Join(",", cheers.OrderBy(label => label)));
         await Until(() => session.Phase == ArenaPhase.Result, 480, "the match did not end");
         await Pause(1.5f);
         Final();
+        await Until(() => broadcast.LiveSession == null, 30, "the live did not stop");
+        Debug.Log("KGS_LIVE_ENDED True");
         await Shot("2-result");
         File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "host-result"), "done");
         await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "client-result")), 60, "the client did not see the result");
@@ -440,8 +474,26 @@ public sealed class ArenaProbe : MonoBehaviour
         }
     }
 
+    /// 観戦の Player: ロビーのモニターで配信中の試合を受けて映し、R の応援（🔥）を送る。
+    async Task Spectator()
+    {
+        await Prepare();
+        await Until(() => broadcast.Viewer.SessionId != null && broadcast.Viewer.FramesShown > 10, 180, "the monitors did not show the live");
+        await Call("set_live_volume", new JObject { ["session_id"] = broadcast.Viewer.SessionId, ["volume"] = 0.0 });
+        Debug.Log("KGS_SPECTATED " + broadcast.Viewer.FramesShown);
+        await Shot("spectator-monitors");
+        await broadcast.React("🔥");
+        Debug.Log("KGS_REACTED 🔥");
+        await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "host-done")), 600, "the host did not finish");
+    }
+
     void Update()
     {
+        if (cheer != null && cheer.Count != cheersSeen)
+        {
+            cheersSeen = cheer.Count;
+            cheers.Add(cheer.Last);
+        }
         publisher?.Pump();
         // 部屋の一覧は、待っている部屋が来るまで短い間隔で読み直す。
         if (role == "client" && runner.Client != null && !session.InMatch && Time.frameCount % 30 == 0)
@@ -480,6 +532,8 @@ public static class ArenaProbeBuild
         Link(probe, "account", Object.FindAnyObjectByType<KukuriAccountScreen>());
         Link(probe, "profile", Object.FindAnyObjectByType<ArenaProfile>());
         Link(probe, "skins", Object.FindAnyObjectByType<ArenaSkins>());
+        Link(probe, "broadcast", Object.FindAnyObjectByType<ArenaBroadcast>());
+        Link(probe, "cheer", Object.FindAnyObjectByType<ArenaCheer>());
         EditorSceneManager.SaveScene(scene, "Assets/ArenaProbe/ArenaTest.unity");
         PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, ScriptingImplementation.__BACKEND__);
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
@@ -507,14 +561,23 @@ $publisherDir = Join-Path $work "publisher"
 $sidecar = Start-Process -FilePath $sidecarExe -ArgumentList "run --profile publisher --profile-dir `"$publisherDir`"" -PassThru -RedirectStandardError (Join-Path $work "sidecar.err")
 for ($i = 0; $i -lt 120 -and -not (Select-String -Path (Join-Path $work "sidecar.err") -Pattern "^ready" -Quiet -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
 $players = @{}
-foreach ($role in "host", "client") {
+$desktop = $null
+if ($DesktopApp) {
+    $driver = Join-Path $PSScriptRoot "..\..\sdk\unity\transfer-desktop.mjs"
+    $desktopLog = Join-Path $work "desktop.log"
+    $desktop = Start-Process -FilePath "node" -ArgumentList "`"$driver`" `"$DesktopApp`" `"$work`" live" `
+        -RedirectStandardOutput $desktopLog -RedirectStandardError (Join-Path $work "desktop.err") -NoNewWindow -PassThru
+    $null = $desktop.Handle
+}
+$watchers = "-arena-spectator 1" + $(if ($DesktopApp) { " -arena-desktop 1" } else { "" })
+foreach ($role in "host", "client", "spectator") {
     $log = Join-Path $work "$role.log"
     $arguments = "-screen-fullscreen 0 -screen-width 1280 -screen-height 720 -arena-role $role -arena-profile-dir `"$(Join-Path $work $role)`" " +
-        "-arena-topic $topic -arena-exchange `"$work`" -arena-publisher-dir `"$publisherDir`" -arena-delay $DelayMs -arena-loss $LossPercent -logFile `"$log`""
+        "-arena-topic $topic -arena-exchange `"$work`" -arena-publisher-dir `"$publisherDir`" $watchers -arena-delay $DelayMs -arena-loss $LossPercent -logFile `"$log`""
     $players[$role] = @{ Process = (Start-Process -FilePath $exe -ArgumentList $arguments -PassThru); Log = $log }
 }
 $exits = @{}
-foreach ($role in "host", "client") {
+foreach ($role in "host", "client", "spectator") {
     $process = $players[$role].Process
     if (-not $process.WaitForExit(600000)) { Stop-Process -Id $process.Id -Force; $exits[$role] = "timeout" } else { $exits[$role] = $process.ExitCode }
 }
@@ -553,6 +616,19 @@ $secondInput = [int]((Lines "host" "KGS_SECOND_INPUT (\d+)") | Select-Object -Fi
 $skinWorn = (Lines "host" "KGS_SKIN_WORN (.*)") | Select-Object -First 1
 $skinRemote = (Lines "client" "KGS_SKIN_REMOTE (.*)") | Select-Object -First 1
 $skinUpdated = "$((Lines "host" "KGS_SKIN_UPDATED (\d+)") | Select-Object -First 1),$((Lines "client" "KGS_SKIN_UPDATED (\d+)") | Select-Object -First 1)"
+$liveStarted = (Lines "host" "KGS_LIVE_STARTED (\S+)") | Select-Object -First 1
+$liveEnded = (Lines "host" "KGS_LIVE_ENDED (\S+)") | Select-Object -First 1
+$cheersShown = (Lines "host" "KGS_CHEERS (\S+)") | Select-Object -First 1
+$spectated = (Lines "spectator" "KGS_SPECTATED (\d+)") | Select-Object -First 1
+$desktopOk = $true
+if ($desktop) {
+    if (-not $desktop.WaitForExit(120000)) { Stop-Process -Id $desktop.Id -Force }
+    $desktopOk = (Select-String -Path $desktopLog -Pattern "^watched" -Quiet) -and (Select-String -Path $desktopLog -Pattern "^reacted" -Quiet)
+}
+$expectedCheers = if ($DesktopApp) { "CLAP!,FIRE!" } else { "FIRE!" }
+$liveOk = ($liveStarted -match "\S") -and ($liveEnded -eq "True") -and ($cheersShown -eq $expectedCheers) -and ([int]$spectated -gt 10) -and
+    $desktopOk -and ($exits["spectator"] -eq 0)
+Write-Output "Player live ($Backend): started=$liveStarted spectator_frames=$spectated cheers=$cheersShown desktop=$(if ($desktop) { $desktopOk } else { 'skipped' }) ended=$liveEnded exits_spectator=$($exits['spectator']) ok=$liveOk"
 $skinStandard = (Lines "host" "KGS_SKIN_STANDARD (\S+)") | Select-Object -First 1
 $skinFromClient = (Lines "host" "KGS_SKIN_FROM_CLIENT (.*)") | Select-Object -First 1
 $skinOk = ($skinWorn -eq "neon-red 1") -and ($skinStandard -eq "True") -and ($skinFromClient -eq "gold 1") -and ($skinRemote -eq "neon-red 1") -and ($skinUpdated -eq "2,2")
@@ -561,7 +637,7 @@ $clientClosed = (Lines "client" "KGS_CLIENT_CLOSED (.*)") | Select-Object -First
 $hostSawLeave = (Lines "host" "KGS_HOST_SAW_LEAVE (.*)") | Select-Object -First 1
 $clientLeft = (Lines "client" "KGS_CLIENT_LEFT (.*)") | Select-Object -First 1
 $failure = Select-String -Path $players["host"].Log, $players["client"].Log -Pattern "KGS_FAILED.*" | Select-Object -First 1
-$ok = $skinOk -and $sameEvents -and $sameResult -and $positionsMatch -and $dodged -and ($uiLocked -eq "True") -and ($secondInput -ge 20) -and ($secondInput -le 600) -and ("Throw" -in $kinds) -and ("Catch" -in $kinds) -and ("Hit" -in $kinds) -and
+$ok = $liveOk -and $skinOk -and $sameEvents -and $sameResult -and $positionsMatch -and $dodged -and ($uiLocked -eq "True") -and ($secondInput -ge 20) -and ($secondInput -le 600) -and ("Throw" -in $kinds) -and ("Catch" -in $kinds) -and ("Hit" -in $kinds) -and
     ($hostLeft -eq "listening=False in_match=False") -and ($clientClosed -eq "listening=False joined=none notice=ホストが部屋を閉じました") -and
     ($hostSawLeave -eq "Left") -and ($clientLeft -eq "listening=False joined=none") -and ($exits["host"] -eq 0) -and ($exits["client"] -eq 0)
 Write-Output "Player match ($Backend, delay=${DelayMs}ms loss=$LossPercent%): events=$($hostFirst.Count) same=$sameEvents kinds=$($kinds -join ',') dodges=$dodges ui_locked=$uiLocked host=[$hostFinal] client=[$clientFinal] positions=$positionsMatch"
