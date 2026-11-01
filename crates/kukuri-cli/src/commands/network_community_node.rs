@@ -6,8 +6,9 @@ use crate::{
 use async_trait::async_trait;
 use kukuri_desktop_runtime::{
     ConnectivityPeersRequest, DesiredSubscription, DesiredSubscriptionScope,
-    ImportPeerTicketRequest, SetChannelGossipEnabledRequest, SetDiscoverySeedsRequest,
-    SetPublicBlobDiscoveryRequest, SetTopicGossipEnabledRequest, UnsubscribeTopicRequest,
+    ImportPeerTicketRequest, ScopeDisplayRequest, SetChannelGossipEnabledRequest,
+    SetDiscoverySeedsRequest, SetPublicBlobDiscoveryRequest, SetTopicGossipEnabledRequest,
+    UnsubscribeTopicRequest,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -110,6 +111,13 @@ impl CommandHandler for Handler {
                 .map_err(|error| command_error(error.into()))?;
                 encode(())
             }
+            // #1981: ゲームの掲示板が開いている間だけの購読（GUI の列と同じ。保存せず、閉じれば消える）。
+            "set_scope_display" => encode(
+                runtime
+                    .set_scope_display(decode::<ScopeDisplayRequest>(payload)?)
+                    .await
+                    .map_err(command_error)?,
+            ),
             "set_channel_gossip_enabled" => encode(
                 runtime
                     .set_channel_gossip_enabled(decode::<SetChannelGossipEnabledRequest>(payload)?)
@@ -159,6 +167,7 @@ pub(super) fn registrations() -> Vec<CommandRegistration> {
         ("set_topic_gossip_enabled", Write),
         ("set_channel_gossip_enabled", Write),
         ("set_public_channel_subscription", Write),
+        ("set_scope_display", Write),
     ]
     .into_iter()
     .map(|(name, effect)| {

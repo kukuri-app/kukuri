@@ -1,7 +1,7 @@
 {
     "name": "Kukuri.GameSdk.Tests",
     "rootNamespace": "Kukuri.GameSdk.Tests",
-    "references": ["Kukuri.GameSdk", "Kukuri.GameSdk.Editor", "Kukuri.GameSdk.Lobby", "UnityEngine.UI", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
+    "references": ["Kukuri.GameSdk", "Kukuri.GameSdk.Editor", "Kukuri.GameSdk.Lobby", "Kukuri.GameSdk.Social", "UnityEngine.UI", "UnityEngine.TestRunner", "UnityEditor.TestRunner"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
