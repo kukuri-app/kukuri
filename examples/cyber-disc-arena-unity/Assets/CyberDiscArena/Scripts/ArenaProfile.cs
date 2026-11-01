@@ -58,7 +58,17 @@ namespace CyberDiscArena
             if (account.Screen != "playing" || (loaded == GamePlayerId && Current?.Pubkey == account.PublicKey))
                 return;
             if (loaded == null && File.Exists(FilePath))
-                players = JsonConvert.DeserializeObject<Dictionary<string, Entry>>(File.ReadAllText(FilePath)) ?? players;
+            {
+                try
+                {
+                    players = JsonConvert.DeserializeObject<Dictionary<string, Entry>>(File.ReadAllText(FilePath)) ?? players;
+                }
+                catch (JsonException error)
+                {
+                    // 読めないセーブは捨てて、空から始める（毎 frame 読み直さない）。
+                    Debug.LogWarning($"cyber disc arena: the save could not be read ({error.Message}); starting over");
+                }
+            }
             loaded = GamePlayerId;
             if (!players.TryGetValue(GamePlayerId, out var entry))
                 players[GamePlayerId] = entry = new Entry();
@@ -79,8 +89,11 @@ namespace CyberDiscArena
         {
             var temporary = FilePath + ".tmp";
             File.WriteAllText(temporary, JsonConvert.SerializeObject(players, Formatting.Indented));
-            File.Copy(temporary, FilePath, true);
-            File.Delete(temporary);
+            // 置き換えは途中で止まっても前のセーブか新しいセーブのどちらかが残る形にする。
+            if (File.Exists(FilePath))
+                File.Replace(temporary, FilePath, null);
+            else
+                File.Move(temporary, FilePath);
         }
     }
 }

@@ -178,13 +178,18 @@ public sealed class ArenaProbe : MonoBehaviour
         if (runner.Client == null) throw new Exception("the SDK did not open: " + runner.OpenError?.Code);
         if (!resume)
         {
-            await Until(() => account.Screen == "consent", 60, "the consent screen did not open");
-            Debug.Log("KGS_LOBBY_BEFORE_START " + lobby.gameObject.activeInHierarchy);
-            await account.Accept();
-            await Until(() => account.Screen == "start", 60, "the start screen did not open");
+            await Consent();
             await account.Begin();
         }
         await Until(() => account.Screen == "playing" && profile.Ready && lobby.gameObject.activeInHierarchy, 60, "the game did not start");
+    }
+
+    async Task Consent()
+    {
+        await Until(() => account.Screen == "consent", 60, "the consent screen did not open");
+        Debug.Log("KGS_LOBBY_BEFORE_START " + lobby.gameObject.activeInHierarchy);
+        await account.Accept();
+        await Until(() => account.Screen == "start", 60, "the start screen did not open");
     }
 
     async Task Prepare()
@@ -287,12 +292,28 @@ public sealed class ArenaProbe : MonoBehaviour
         await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "host-done")), 60, "the host did not finish");
     }
 
-    /// 状態の継続。`-arena-step` の 1: 始めてスキンを選び、Steam Cloud に保存し、アカウント B を足す。2: 再開し、B の進行を
-    /// 残してまとめる。3: Steam Cloud の file だけを写した新しい profile で再開する。
+    /// 状態の継続。`-arena-step` の 0: 同意だけして閉じる。1: 開始の画面で起動し直し、ロビーが動いていないのを確かめてから
+    /// 始め、スキンを選び、Steam Cloud に保存し、アカウント B を足す。2: 再開し、B の進行がある確定の画面を取り消してから、
+    /// B の進行を残してまとめる。3: Steam Cloud の file だけを写した新しい profile で再開する。
     async Task State()
     {
         var step = Arg("-arena-step");
-        await StartGame(step == "2");
+        if (step == "0")
+        {
+            await Consent();
+            return;
+        }
+        if (step == "1")
+        {
+            await Until(() => account.Screen == "start", 60, "the start screen did not open");
+            await Pause(3);
+            var sync = await Call("get_sync_status");
+            var idle = !lobby.gameObject.activeInHierarchy &&
+                !((JArray)sync["subscribed_topics"]).Any(name => (string)name == "kukuri:topic:cyber-disc-arena");
+            Debug.Log("KGS_LOBBY_IDLE " + idle);
+            await account.Begin();
+        }
+        await StartGame(step != "3");
         Debug.Log($"KGS_STATE{step} {profile.GamePlayerId} {profile.Skin} {account.PublicKey}");
         if (step == "1")
         {
@@ -306,15 +327,24 @@ public sealed class ArenaProbe : MonoBehaviour
         }
         if (step == "2")
         {
+            // 確定の画面で取り消すと何も変わらない。
+            var before = $"{profile.GamePlayerId} {profile.Skin} {account.PublicKey}";
             await account.EnterMerge();
             await account.ChooseMerge(Arg("-arena-merge-to"));
             var other = account.OtherProgress(Arg("-arena-merge-pubkey"));
+            account.Keep(other?.id);
+            await Shot("5-merge-confirm");
+            account.CancelMerge();
+            await Pause(1);
+            Debug.Log($"KGS_STATE_CANCELLED {account.Screen} {before == $"{profile.GamePlayerId} {profile.Skin} {account.PublicKey}"}");
+            await account.EnterMerge();
+            await account.ChooseMerge(Arg("-arena-merge-to"));
             Debug.Log($"KGS_STATE_OFFERED {account.Screen} {other?.id ?? "none"} {other?.label ?? "none"}");
             account.Keep(other?.id);
             await account.Merge();
             await Until(() => account.Screen == "playing" && account.GamePlayerId == other?.id && profile.Ready, 60, "the merge did not keep the other progress");
             Debug.Log($"KGS_STATE_MERGED {profile.GamePlayerId} {profile.Skin} {account.PublicKey}");
-            await Shot("5-merged");
+            await Shot("6-merged");
         }
     }
 
@@ -446,6 +476,7 @@ function Value($run, [string]$pattern) {
 }
 $stateDir = Join-Path $work "state"
 $restoreDir = Join-Path $work "restore"
+$consented = Start-State "0" $stateDir
 $first = Start-State "1" $stateDir
 $started = Value $first "KGS_STATE1 (\S+ \S+ \S+)"
 $saved = (Value $first "KGS_STATE_SAVED (.*)") -split " "
@@ -463,15 +494,17 @@ $save | Add-Member -NotePropertyName $otherId -NotePropertyValue ([pscustomobjec
 $second = Start-State "2" $stateDir "-arena-merge-to $($saved[2]) -arena-merge-pubkey $($saved[3])"
 $resumed = Value $second "KGS_STATE2 (\S+ \S+ \S+)"
 $offered = Value $second "KGS_STATE_OFFERED (\S+ \S+)"
+$cancelled = Value $second "KGS_STATE_CANCELLED (\S+ \S+)"
+$idle = Value $first "KGS_LOBBY_IDLE (\S+)"
 $merged = Value $second "KGS_STATE_MERGED (\S+ \S+ \S+)"
 $kept = (Get-Content $savePath -Raw | ConvertFrom-Json).$id.Skin
 $third = Start-State "3" $restoreDir
 $restored = Value $third "KGS_STATE3 (\S+ \S+ \S+)"
-$lobbyClosed = (Select-String -Path $players["host"].Log, $first.Log -Pattern "KGS_LOBBY_BEFORE_START False").Count -eq 2
+$lobbyClosed = (Select-String -Path $players["host"].Log, $consented.Log -Pattern "KGS_LOBBY_BEFORE_START False").Count -eq 2
 $stateOk = ($skin -eq "standard") -and ($saved[0] -eq "neon-red") -and ($saved[1] -eq "on") -and ($resumed -eq "$id neon-red $key") -and
-    ($offered -eq "merge-confirm $otherId") -and ($merged -eq "$otherId gold $($saved[3])") -and ($kept -eq "neon-red") -and
+    ($offered -eq "merge-confirm $otherId") -and ($cancelled -eq "playing True") -and ($idle -eq "True") -and ($consented.Exit -eq 0) -and ($merged -eq "$otherId gold $($saved[3])") -and ($kept -eq "neon-red") -and
     ($restored -eq "$id neon-red $key") -and $lobbyClosed -and ($first.Exit -eq 0) -and ($second.Exit -eq 0) -and ($third.Exit -eq 0)
-Write-Output "Player state ($Backend): started=[$started] saved=[$($saved[0..1] -join ' ')] resumed=[$resumed] offered=[$offered] merged=[$merged] kept=$kept restored=[$restored] lobby_closed_before_start=$lobbyClosed exits=$($first.Exit),$($second.Exit),$($third.Exit) ok=$stateOk"
+Write-Output "Player state ($Backend): started=[$started] saved=[$($saved[0..1] -join ' ')] resumed=[$resumed] idle_before_start=$idle cancelled=[$cancelled] offered=[$offered] merged=[$merged] kept=$kept restored=[$restored] lobby_closed_before_start=$lobbyClosed exits=$($first.Exit),$($second.Exit),$($third.Exit) ok=$stateOk"
 $failure = Select-String -Path $first.Log, $second.Log, $third.Log -Pattern "KGS_FAILED.*" | Select-Object -First 1
 if ($failure) { Write-Output "  $($failure.Line)" }
 if ($failed -or -not $ok -or -not $stateOk) { exit 1 }

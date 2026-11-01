@@ -53,6 +53,9 @@ namespace CyberDiscArena
         GUIStyle label;
         GUIStyle big;
 
+        // ロビーは読込みの時点から止めておく（「はじめる」の前に部屋の一覧を読んだり topic を購読したりしない）。
+        void Awake() => lobbyCanvas.gameObject.SetActive(false);
+
         void Update()
         {
             if (session.InMatch && session.InputSource == null && Input.GetKeyDown(KeyCode.E) && !ArenaControls.Typing())

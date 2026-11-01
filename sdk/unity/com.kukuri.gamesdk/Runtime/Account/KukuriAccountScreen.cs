@@ -198,6 +198,13 @@ namespace Kukuri.GameSdk
             return (mergeTarget.Substring(0, Math.Min(12, mergeTarget.Length)), null);
         }
 
+        /// 確定の画面の「やめる」。何も変えずにプレイ中の画面へ戻る。
+        public void CancelMerge()
+        {
+            keep = null;
+            Screen = "playing";
+        }
+
         /// 確定で残す進行を選ぶ（null は今の進行、それ以外は `OtherProgress` が返した ID）。
         public void Keep(string gamePlayerId) => keep = gamePlayerId;
 
@@ -519,7 +526,7 @@ namespace Kukuri.GameSdk
                     if (GUILayout.Button("まとめる", GUILayout.Height(40)))
                         _ = Merge();
                     if (GUILayout.Button("やめる"))
-                        Screen = "playing";
+                        CancelMerge();
                     break;
             }
             if (message.Length > 0)
