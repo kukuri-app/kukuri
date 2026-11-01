@@ -13,6 +13,9 @@
 // - board（#1981 AC-2 の掲示板）: 移行は使わない。試験の topic を開き、Player と互いの ticket を取り込み、ゲームの掲示板の
 //   投稿（<作業 dir>/game-post）が届いたら <作業 dir>/seen を書く。Player が終わった印（<作業 dir>/game-exited）の後に
 //   返信して <作業 dir>/replied に返信の ID を書き、再起動した Player が読んだ印（<作業 dir>/done）まで投稿を保持して終わる。
+// - live（#1983 AC-2c のゲーム外からの観戦と応援）: ゲームを入れていない desktop が、Player と互いの ticket を取り込み、
+//   Player が書いた配信（<作業 dir>/live の topic・session・開始 post）に参加して映像を受け（音量は 0）、開始 post へ 👏 で
+//   応援する。`watched`・`reacted` を log に書き、host が終えた印（<作業 dir>/host-done）まで待って終わる。
 // board 以外は確認コードの画面を <作業 dir>/desktop-confirming.png に撮る。target・merge・board は最後の timeline も
 // <作業 dir>/desktop-timeline.png に撮る。
 import { execFileSync } from 'node:child_process';
@@ -60,10 +63,34 @@ const board = async () => {
   await shoot('desktop-timeline.png');
 };
 
+// #1983 AC-2c: ゲームを入れていない desktop から、ゲームの試合の配信を観戦して応援する。
+const live = async () => {
+  writeFileSync(join(root, 'desktop-ticket'), await desktop.invoke('get_local_peer_ticket'));
+  await desktop.invoke('import_peer_ticket', { request: { ticket: await marker('game-ticket') } });
+  const [topic, session, post] = (await marker('live')).split('\n');
+  const request = { topic, session_id: session };
+  await desktop.invoke('join_live_session', { request });
+  await desktop.invoke('watch_live_media', { request });
+  await desktop.invoke('set_live_volume', { request: { session_id: session, volume: 0 } });
+  const frame = JSON.stringify({ request });
+  await eventually('a live frame on desktop', () =>
+    desktop.evaluate(`window.__TAURI_INTERNALS__.invoke('next_live_video', ${frame}).then((data) => (data.byteLength ?? data.length ?? 0) > 64)`),
+    120_000
+  );
+  console.log('watched');
+  await desktop.invoke('toggle_reaction', {
+    request: { target_topic_id: topic, target_object_id: post, reaction_key: { kind: 'emoji', emoji: '👏' }, channel_ref: { kind: 'public' } },
+  });
+  console.log('reacted');
+  await marker('host-done');
+};
+
 const desktop = await launch({ app, root, name: 'desktop', port: 9700 });
 try {
   await accept(desktop);
-  if (mode === 'board') {
+  if (mode === 'live') {
+    await live();
+  } else if (mode === 'board') {
     await board();
   } else {
     await click(desktop, text('shell', 'accountMenu.open'));

@@ -64,6 +64,8 @@ namespace Kukuri.GameSdk
         public async Task<bool> StartWatching(string sessionId)
         {
             var started = ++generation;
+            // 前の視聴の状態（`ended` など）を新しい視聴へ持ち越さない。
+            State = null;
             var target = client;
             var session = new JObject { ["topic"] = Topic, ["session_id"] = sessionId };
             var joined = await target.SendAsync("join_live_session", session);
@@ -86,6 +88,7 @@ namespace Kukuri.GameSdk
         public async Task StopWatching()
         {
             generation++;
+            State = null;
             if (SessionId == null)
                 return;
             var target = client;
