@@ -1,7 +1,6 @@
 using System.Linq;
 using System.Threading.Tasks;
 using Kukuri.GameSdk;
-using Kukuri.GameSdk.Lobby;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
@@ -21,23 +20,31 @@ namespace CyberDiscArena
 
         [SerializeField] KukuriRunner runner;
         [SerializeField] KukuriAccountScreen account;
-        [SerializeField] KukuriLobby lobby;
         [SerializeField] ArenaSession session;
         [SerializeField] ArenaCheer cheer;
         [SerializeField] KukuriLiveBroadcaster broadcaster;
         [SerializeField] KukuriLiveViewer viewer;
         [SerializeField] Camera feed;
         [SerializeField] Renderer[] monitors = new Renderer[4];
+        [SerializeField] string topic = "kukuri:topic:cyber-disc-arena";
 
         MaterialPropertyBlock block;
         RenderTexture local;
         KukuriClient subscribed;
         bool busy;
         bool quitting;
+        /// 観戦の配信を探すために購読している topic（画面の列と同じ、保存しない購読）。
+        string watchedTopic;
+        KukuriClient watchedClient;
         float nextTry;
 
         /// この端末で作って、まだ終えていない配信の ID（profile の隣の file。強制終了で閉じ損ねたら次の起動で終える）。
         string Unfinished => runner.Settings.ProfileDirectory + ".cyber-disc-arena-live";
+
+        /// 配信と観戦の topic（ゲームのロビーと同じ topic にする）。
+        public string Topic { get => topic; set => topic = value ?? ""; }
+        /// 対戦中か（対戦の Prefab が無い scene では常に false で、観戦だけをする）。
+        bool InMatch => session != null && session.InMatch;
 
         /// 次に作る部屋の試合を配信するか（部屋を作る前に選ぶ）。
         public bool BroadcastNext { get; set; }
@@ -79,27 +86,27 @@ namespace CyberDiscArena
                 if (client != null)
                     client.EventReceived += OnEvent;
             }
-            var playing = session.InMatch && (session.Phase == ArenaPhase.Countdown || session.Phase == ArenaPhase.Playing);
+            var playing = InMatch && (session.Phase == ArenaPhase.Countdown || session.Phase == ArenaPhase.Playing);
             if (!busy && !quitting && client != null && Time.unscaledTime >= nextTry)
             {
                 if (System.IO.File.Exists(Unfinished) && LiveSession == null)
                     _ = Step(() => EndUnfinished(client));
-                else if (session.IsHost && BroadcastNext && LiveSession == null && playing)
+                else if (session != null && session.IsHost && BroadcastNext && LiveSession == null && playing)
                     _ = Step(() => StartLive(client));
                 else if (LiveSession != null && !playing)
                     _ = Step(() => StopLive(client));
-                else if (viewer.SessionId != null && (session.InMatch || viewer.State == "ended"))
+                else if (viewer.SessionId != null && (InMatch || viewer.State == "ended"))
                     _ = Step(viewer.StopWatching);
                 else if (viewer.SessionId != null && viewer.State != null && viewer.State != "watching")
                     _ = Step(() => LeaveFinished(client));
-                else if (!session.InMatch && account.Screen == "playing" && viewer.SessionId == null)
+                else if (!InMatch && account.Screen == "playing" && viewer.SessionId == null)
                     _ = Step(() => WatchOther(client));
             }
             // 対戦中は ring を見下ろす camera を映す（配信していなければ手元の texture へ）。
-            feed.enabled = session.InMatch;
-            if (session.InMatch && !broadcaster.Broadcasting)
+            feed.enabled = InMatch;
+            if (InMatch && !broadcaster.Broadcasting)
                 feed.targetTexture = local ??= new RenderTexture(640, 360, 24);
-            Texture shown = broadcaster.Broadcasting ? broadcaster.Target : session.InMatch ? local : viewer.Output;
+            Texture shown = broadcaster.Broadcasting ? broadcaster.Target : InMatch ? local : viewer.Output;
             block ??= new MaterialPropertyBlock();
             block.SetTexture("_BaseMap", shown != null ? shown : Texture2D.blackTexture);
             foreach (var monitor in monitors)
@@ -109,7 +116,7 @@ namespace CyberDiscArena
         // ロビーで観戦している間は、北のモニターを正面から見る（ArenaView の camera の後に動かす）。
         void LateUpdate()
         {
-            if (!session.InMatch && viewer.SessionId != null && Camera.main != null)
+            if (!InMatch && viewer.SessionId != null && Camera.main != null)
                 Camera.main.transform.SetPositionAndRotation(new Vector3(0, 4.5f, 2f), Quaternion.identity);
         }
 
@@ -138,7 +145,7 @@ namespace CyberDiscArena
         {
             var id = (string)Require(await client.SendAsync("create_live_session", new JObject
             {
-                ["topic"] = lobby.Topic,
+                ["topic"] = topic,
                 ["channel_ref"] = new JObject { ["kind"] = "public" },
                 ["title"] = "Cyber Disc Arena の試合",
                 ["description"] = "",
@@ -146,10 +153,10 @@ namespace CyberDiscArena
             System.IO.File.WriteAllText(Unfinished, id);
             try
             {
-                var live = Require(await client.SendAsync("get_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = id }));
+                var live = Require(await client.SendAsync("get_live_session", new JObject { ["topic"] = topic, ["session_id"] = id }));
                 var post = (string)live["start_post_id"];
                 broadcaster.Client = client;
-                broadcaster.Topic = lobby.Topic;
+                broadcaster.Topic = topic;
                 if (!await broadcaster.StartBroadcast(id))
                     throw new KukuriException("broadcast_failed", "the broadcast did not start");
                 (LiveSession, LivePost) = (id, post);
@@ -165,7 +172,7 @@ namespace CyberDiscArena
 
         async Task End(KukuriClient client, string id)
         {
-            Require(await client.SendAsync("end_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = id }));
+            Require(await client.SendAsync("end_live_session", new JObject { ["topic"] = topic, ["session_id"] = id }));
             System.IO.File.Delete(Unfinished);
         }
 
@@ -184,7 +191,7 @@ namespace CyberDiscArena
         async Task LeaveFinished(KukuriClient client)
         {
             nextTry = Time.unscaledTime + 10;
-            var live = await client.SendAsync("get_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = viewer.SessionId });
+            var live = await client.SendAsync("get_live_session", new JObject { ["topic"] = topic, ["session_id"] = viewer.SessionId });
             if (!live.Ok || !(live.Data is JObject view) || (string)view["status"] != "Live")
             {
                 await viewer.StopWatching();
@@ -196,13 +203,41 @@ namespace CyberDiscArena
         async Task WatchOther(KukuriClient client)
         {
             nextTry = Time.unscaledTime + 10;
-            var lives = Require(await client.SendAsync("list_live_sessions", new JObject { ["topic"] = lobby.Topic })) as JArray ?? new JArray();
+            if (watchedTopic != topic || watchedClient != client)
+            {
+                // 同じ名義の購読は topic を変えると置き換わる（前の topic は残らない）。
+                Require(await client.SendAsync("set_scope_display", Display(topic, true)));
+                (watchedTopic, watchedClient) = (topic, client);
+            }
+            var lives = Require(await client.SendAsync("list_live_sessions", new JObject { ["topic"] = topic })) as JArray ?? new JArray();
             var other = lives.FirstOrDefault(live => (string)live["status"] == "Live" && (string)live["host_pubkey"] != account.PublicKey);
-            if (other == null || session.InMatch)
+            if (other == null || InMatch)
                 return;
             viewer.Client = client;
-            viewer.Topic = lobby.Topic;
+            viewer.Topic = topic;
             await viewer.StartWatching((string)other["session_id"]);
+        }
+
+        JObject Display(string target, bool visible) => new JObject
+        {
+            ["observer"] = "cyber-disc-arena-monitors",
+            ["target"] = new JObject { ["kind"] = "timeline", ["topic"] = target, ["scope"] = new JObject { ["kind"] = "public" } },
+            ["visible"] = visible,
+        };
+
+        void OnDisable()
+        {
+            // 閉じた client の購読は client とともに消える。
+            try
+            {
+                if (watchedClient != null)
+                    _ = watchedClient.SendAsync("set_scope_display", Display(watchedTopic, false));
+            }
+            catch (KukuriException)
+            {
+            }
+            watchedClient = null;
+            watchedTopic = null;
         }
 
         /// 応援する（R 長押しの menu）。自分の配信か、観戦中の配信の開始 post へリアクションを付ける。
@@ -213,7 +248,7 @@ namespace CyberDiscArena
                 return;
             await runner.Client.SendAsync("toggle_reaction", new JObject
             {
-                ["target_topic_id"] = lobby.Topic,
+                ["target_topic_id"] = topic,
                 ["target_object_id"] = target,
                 ["reaction_key"] = new JObject { ["kind"] = "emoji", ["emoji"] = emoji },
                 ["channel_ref"] = new JObject { ["kind"] = "public" },
@@ -235,11 +270,13 @@ namespace CyberDiscArena
 
         void OnGUI()
         {
-            if (account.Screen == "playing" && !session.InMatch)
+            if (ArenaBoard.Open)
+                return;
+            if (account.Screen == "playing" && !InMatch)
                 BroadcastNext = GUI.Toggle(new Rect(1000, 330, 260, 30), BroadcastNext, " 作る部屋の試合を配信する");
-            if (session.InMatch && LiveSession != null)
+            if (InMatch && LiveSession != null)
                 GUI.Label(new Rect(20, 88, 400, 30), "● 配信中（公開）");
-            if (!session.InMatch && viewer.SessionId != null)
+            if (!InMatch && viewer.SessionId != null)
                 GUI.Label(new Rect(1000, 360, 260, 30), "モニター: 配信中の試合を観戦中");
             // R を押している間、応援の menu を出す。
             var target = LivePost ?? viewer.StartPostId;

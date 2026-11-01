@@ -160,6 +160,26 @@ pub extern "C" fn kukuri_sdk_abi_version() -> u32 {
     ABI_VERSION
 }
 
+/// `data` の BLAKE3 を小文字の hex（64 bytes）で `out` に書く。ゲームが書いた file を投稿に添付するとき、`create_post` の
+/// 添付の `hash` に使う（#1983）。handle は要らず、待たない。
+///
+/// # Safety
+/// `data` は `len` bytes 読め、`out` は 64 bytes 書ける pointer であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kukuri_sdk_blake3_hex(data: *const u8, len: usize, out: *mut u8) -> i32 {
+    guard(|| {
+        let Some(data) = (unsafe { bytes(data, len) }) else {
+            return Status::InvalidArgument;
+        };
+        if out.is_null() {
+            return Status::InvalidArgument;
+        }
+        let hex = blake3::hash(data).to_hex();
+        unsafe { std::ptr::copy_nonoverlapping(hex.as_bytes().as_ptr(), out, hex.len()) };
+        Status::Ok
+    })
+}
+
 /// `config` は `{"profile": 名前, "profile_dir": 絶対 path}` の UTF-8 JSON。runtime の起動は背景で進み、
 /// 完了を `startup_status_changed` の event で知らせる。
 ///

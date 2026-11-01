@@ -11,6 +11,12 @@
 # - 配信と応援: host は「配信する」を選んで部屋を作り、試合の開始で公開の Live を始める。ロビーにいる観戦の Player（3 人目）
 #   はモニターでその配信を受けて映し、R の応援（🔥）を送る。`-DesktopApp` を渡すと、ゲームを入れていない desktop も配信に
 #   参加して映像を受け、👏 で応援する。host の ring の上に応援の演出が出て、試合が終わると配信を止める。
+# - 掲示板と結果: host は試合の後に「結果を投稿」で得点の文と画面の画像を投稿する。`-DesktopApp` なら、desktop はその投稿を
+#   timeline で読み（画像の添付つき）、ゲームが終わった後に返信する。再起動した host が掲示板（Enter）でその thread を開くと、
+#   同じ投稿 ID の下に desktop の返信が並ぶ。
+# - 4 つの Prefab の最小の scene（土台と、その Prefab だけ）: 観戦の Player は ArenaStreamViewer の scene で観戦する。
+#   LiveSkinLoader の scene は作者が発行したスキンを選んで見本の体に着せ、InGameBoardUI の scene は掲示板に投稿して読み、
+#   DiscNetworkSync の scene の 2 つの Player は部屋を作って参加し、試合を始めて host の終了を受ける。
 # - 状態の継続（1 つの Player を同じ profile で起動し直す）: 「はじめる」で選んだスキンと game player ID が再起動の後も
 #   続く。Steam Cloud に保存した file（game-account.json とゲームのセーブ）だけを写した新しい profile でも、同じ ID・公開鍵・
 #   スキンで再開する。profile に足したアカウント B に、この端末で遊んだ別の進行があれば、まとめる確定の画面で B の進行を
@@ -80,6 +86,8 @@ public sealed class ArenaProbe : MonoBehaviour
     [SerializeField] ArenaSkins skins;
     [SerializeField] ArenaBroadcast broadcast;
     [SerializeField] ArenaCheer cheer;
+    [SerializeField] ArenaView view;
+    [SerializeField] ArenaBoard arenaBoard;
     readonly System.Collections.Generic.HashSet<string> cheers = new System.Collections.Generic.HashSet<string>();
     string mutedSession;
     KukuriClient publisher;
@@ -98,15 +106,25 @@ public sealed class ArenaProbe : MonoBehaviour
         return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
     }
 
+    /// 最初の空の scene（Boot）から、役の scene（`-arena-scene`、無ければ Arena）へ移る。Arena を経由すると、NGO の
+    /// NetworkManager が DontDestroyOnLoad で対戦の Prefab ごと次の scene へ残るので、空の scene から移る。
+    static bool Elsewhere() => UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "Boot";
+
     void Awake()
     {
+        if (Elsewhere())
+        {
+            UnityEngine.SceneManagement.SceneManager.LoadScene(Arg("-arena-scene") ?? "ArenaTest");
+            return;
+        }
         role = Arg("-arena-role");
         if (role == null) return;
         runner.Settings = KukuriSettings.Create(KukuriMode.Ffi, role, Arg("-arena-profile-dir"));
         // 試験では音を出さない（ゲームの音。Live の音は視聴を始めたらすぐ音量を 0 にする）。
         AudioListener.volume = 0;
-        cheer.Spawned += label => cheers.Add(label);
+        if (cheer != null) cheer.Spawned += label => cheers.Add(label);
         runner.enabled = true;
+        if (session == null) return;
         session.InputSource = Bot;
         session.Confirmed += @event =>
         {
@@ -122,10 +140,11 @@ public sealed class ArenaProbe : MonoBehaviour
 
     async void Start()
     {
-        if (role == null) return;
+        if (role == null || Elsewhere()) return;
         try
         {
-            await (role == "host" ? Host() : role == "client" ? Client() : role == "spectator" ? Spectator() : State());
+            await (role == "host" ? Host() : role == "client" ? Client() : role == "spectator" ? Spectator() : role == "resume" ? Resume() :
+                role == "mini-skin" ? MiniSkin() : role == "mini-board" ? MiniBoard() : role.StartsWith("mini-") ? MiniDisc() : State());
             Application.Quit(0);
         }
         catch (Exception error)
@@ -197,13 +216,14 @@ public sealed class ArenaProbe : MonoBehaviour
             await Consent();
             await account.Begin();
         }
-        await Until(() => account.Screen == "playing" && profile.Ready && lobby.gameObject.activeInHierarchy, 60, "the game did not start");
+        await Until(() => account.Screen == "playing" && (profile == null || profile.Ready) && (lobby == null || lobby.gameObject.activeInHierarchy),
+            60, "the game did not start");
     }
 
     async Task Consent()
     {
         await Until(() => account.Screen == "consent", 60, "the consent screen did not open");
-        Debug.Log("KGS_LOBBY_BEFORE_START " + lobby.gameObject.activeInHierarchy);
+        Debug.Log("KGS_LOBBY_BEFORE_START " + (lobby != null && lobby.gameObject.activeInHierarchy));
         await account.Accept();
         await Until(() => account.Screen == "start", 60, "the start screen did not open");
     }
@@ -213,6 +233,8 @@ public sealed class ArenaProbe : MonoBehaviour
         await StartGame(false);
         lobby.Topic = Arg("-arena-topic");
         skins.Topic = Arg("-arena-topic");
+        arenaBoard.Board.Topic = Arg("-arena-topic");
+        broadcast.Topic = Arg("-arena-topic");
         var exchange = Arg("-arena-exchange");
         var other = role == "host" ? "client" : "host";
         var mine = Path.Combine(exchange, role + ".ticket");
@@ -353,12 +375,31 @@ public sealed class ArenaProbe : MonoBehaviour
         await Until(() => expected.All(cheers.Contains), 180, "the cheers did not arrive");
         await Shot("1c-cheer");
         Debug.Log("KGS_CHEERS " + string.Join(",", cheers.OrderBy(label => label)));
+        // 対戦中に掲示板を開いて入力欄を選ぶと、対戦の操作に使わない（arena の他の IMGUI は出さない）。
+        var boardObject = arenaBoard.Board.gameObject;
+        boardObject.SetActive(true);
+        await Pause(1);
+        UnityEngine.EventSystems.EventSystem.current.SetSelectedGameObject(
+            boardObject.GetComponentsInChildren<UnityEngine.UI.InputField>(true).First(field => field.name == "PostInput").gameObject);
+        await Pause(0.5f);
+        Debug.Log($"KGS_BOARD_TYPING {ArenaControls.Typing()} {ArenaBoard.Open}");
+        await Shot("1d-board");
+        UnityEngine.EventSystems.EventSystem.current.SetSelectedGameObject(null);
+        boardObject.SetActive(false);
         await Until(() => session.Phase == ArenaPhase.Result, 480, "the match did not end");
         await Pause(1.5f);
         Final();
         await Until(() => broadcast.LiveSession == null, 30, "the live did not stop");
         Debug.Log("KGS_LIVE_ENDED True");
         await Shot("2-result");
+        // 結果を投稿する（得点の文と画面の画像）。
+        var resultPost = await view.PostResult();
+        Debug.Log("KGS_RESULT_POST " + (resultPost ?? "none") + " " + arenaBoard.Notice);
+        if (resultPost != null)
+        {
+            File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "result-post.tmp"), resultPost);
+            File.Move(Path.Combine(Arg("-arena-exchange"), "result-post.tmp"), Path.Combine(Arg("-arena-exchange"), "result-post"));
+        }
         File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "host-result"), "done");
         await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "client-result")), 60, "the client did not see the result");
         // 「ロビーへ戻る」: host は room を終える。
@@ -478,10 +519,109 @@ public sealed class ArenaProbe : MonoBehaviour
         }
     }
 
+    /// ゲームを終えた後に再起動した host: 掲示板（Enter）で結果の投稿の thread を開き、desktop の返信を読む。
+    async Task Resume()
+    {
+        await StartGame(true);
+        var exchange = Arg("-arena-exchange");
+        await Call("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(Path.Combine(exchange, "desktop-ticket")) });
+        var board = arenaBoard.Board;
+        board.Topic = Arg("-arena-topic");
+        board.gameObject.SetActive(true);
+        var post = File.ReadAllText(Path.Combine(exchange, "result-post")).Trim();
+        var reply = File.ReadAllText(Path.Combine(exchange, "replied")).Trim();
+        await Until(() => board.Posts.Any(item => item.ObjectId == post), 120, "the result was not on the board");
+        await board.OpenThreadAsync(post);
+        await Until(() => board.Posts.Any(item => item.ObjectId == reply), 120, "the reply did not arrive");
+        var root = board.Posts[0];
+        var answer = board.Posts.First(item => item.ObjectId == reply);
+        Debug.Log($"KGS_RESULT_THREAD {root.ObjectId} {answer.ObjectId} {answer.ThreadId} {root.AuthorPubkey != answer.AuthorPubkey}");
+        await Shot("resume-thread");
+        File.WriteAllText(Path.Combine(exchange, "done"), "done");
+    }
+
     /// 観戦の Player: ロビーのモニターで配信中の試合を受けて映し、R の応援（🔥）を送る。
+    /// 最小の scene の役: 始めて、ticket を書き、相手（host など）の ticket を取り込む。
+    async Task Join(params string[] peers)
+    {
+        await StartGame(false);
+        var exchange = Arg("-arena-exchange");
+        var mine = Path.Combine(exchange, role + ".ticket");
+        File.WriteAllText(mine + ".tmp", (string)await Call("get_local_peer_ticket"));
+        File.Move(mine + ".tmp", mine);
+        foreach (var peer in peers)
+        {
+            var path = Path.Combine(exchange, peer + ".ticket");
+            await Until(() => File.Exists(path), 120, "no ticket from " + peer);
+            await Call("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(path) });
+        }
+    }
+
+    /// LiveSkinLoader の最小の scene: 作者が発行したスキンをロッカーで選び、見本の体に着せる。
+    async Task MiniSkin()
+    {
+        await Join("host");
+        var published = Path.Combine(Arg("-arena-exchange"), "publisher.info");
+        await Until(() => File.Exists(published), 120, "the publisher did not start");
+        var lines = File.ReadAllLines(published);
+        await Call("import_peer_ticket", new JObject { ["ticket"] = lines[0] });
+        skins.PublisherPubkey = lines[1];
+        skins.Topic = Arg("-arena-topic");
+        await Until(() => skins.Published.Contains("neon-red"), 120, "the minimal locker did not show the skin");
+        skins.Select("neon-red");
+        await Until(() => skins.Loader(0).AppliedRevision >= 1, 60, "the mannequin did not wear the skin");
+        Debug.Log("KGS_MINI_SKIN " + profile.Skin + " " + (skins.Loader(0).AppliedRevision >= 1));
+        await Shot("skin");
+    }
+
+    /// InGameBoardUI の最小の scene: 掲示板を開いて投稿し、一覧で読む。
+    async Task MiniBoard()
+    {
+        await StartGame(false);
+        var board = arenaBoard.Board;
+        board.Topic = Arg("-arena-topic") + "-mini";
+        board.gameObject.SetActive(true);
+        var post = await board.PostAsync("test: from the minimal board");
+        await Until(() => board.Posts.Any(item => item.ObjectId == post), 60, "the minimal board did not show the post");
+        Debug.Log("KGS_MINI_BOARD " + (post != null));
+        await Shot("board");
+    }
+
+    /// DiscNetworkSync の最小の scene: 部屋を作って参加し、試合を始める。host が部屋を閉じると client に知らせが出る。
+    async Task MiniDisc()
+    {
+        var host = role == "mini-host";
+        await Join(host ? "mini-client" : "mini-host");
+        lobby.Topic = Arg("-arena-topic") + "-disc";
+        var threw = false;
+        session.Confirmed += @event => threw |= @event.Kind == ArenaEventKind.Throw;
+        if (host)
+            await lobby.CreateRoomAsync("mini arena");
+        else
+        {
+            await Until(() => lobby.Rooms.Any(room => room.Title == "mini arena"), 120, "the minimal room did not arrive");
+            await lobby.JoinRoomAsync(lobby.Rooms.First(room => room.Title == "mini arena").RoomId);
+        }
+        await Until(() => session.Phase == ArenaPhase.Playing && threw, 120, "the minimal match did not start");
+        await Shot("disc");
+        if (host)
+        {
+            await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "mini-played")), 60, "the client did not play");
+            session.Leave();
+            await Until(() => !network.IsListening, 30, "the minimal host did not stop");
+            Debug.Log("KGS_MINI_DISC host");
+            return;
+        }
+        File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "mini-played"), "done");
+        await Until(() => !session.InMatch, 60, "the minimal client did not return");
+        Debug.Log("KGS_MINI_DISC " + session.Notice);
+    }
+
     async Task Spectator()
     {
-        await Prepare();
+        // ArenaStreamViewer の最小の scene で観戦する（対戦の Prefab は無い）。
+        await Join("host");
+        broadcast.Topic = Arg("-arena-topic");
         await Until(() => broadcast.Viewer.SessionId != null && broadcast.Viewer.FramesShown > 10, 180, "the monitors did not show the live");
         var first = broadcast.Viewer.SessionId;
         Debug.Log("KGS_SPECTATED " + broadcast.Viewer.FramesShown);
@@ -509,7 +649,7 @@ public sealed class ArenaProbe : MonoBehaviour
         }
         publisher?.Pump();
         // 部屋の一覧は、待っている部屋が来るまで短い間隔で読み直す。
-        if (role == "client" && runner.Client != null && !session.InMatch && Time.frameCount % 30 == 0)
+        if ((role == "client" || role == "mini-client") && runner.Client != null && !session.InMatch && Time.frameCount % 30 == 0)
             _ = lobby.RefreshAsync();
     }
 }
@@ -547,11 +687,38 @@ public static class ArenaProbeBuild
         Link(probe, "skins", Object.FindAnyObjectByType<ArenaSkins>());
         Link(probe, "broadcast", Object.FindAnyObjectByType<ArenaBroadcast>());
         Link(probe, "cheer", Object.FindAnyObjectByType<ArenaCheer>());
+        Link(probe, "view", Object.FindAnyObjectByType<ArenaView>());
+        Link(probe, "arenaBoard", Object.FindAnyObjectByType<ArenaBoard>());
         EditorSceneManager.SaveScene(scene, "Assets/ArenaProbe/ArenaTest.unity");
+        // Prefab ごとの最小の scene にも同じ probe を置く（`-arena-scene` で移る）。
+        var boot = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        new GameObject("probe").AddComponent<ArenaProbe>();
+        EditorSceneManager.SaveScene(boot, "Assets/ArenaProbe/Boot.unity");
+        var scenes = new System.Collections.Generic.List<string> { "Assets/ArenaProbe/Boot.unity", "Assets/ArenaProbe/ArenaTest.unity" };
+        foreach (var name in new[] { "DiscNetworkSync", "LiveSkinLoader", "ArenaStreamViewer", "InGameBoardUI" })
+        {
+            var minimal = EditorSceneManager.OpenScene($"Assets/CyberDiscArena/Scenes/Minimal/{name}.unity");
+            var minimalRunner = Object.FindAnyObjectByType<KukuriRunner>();
+            minimalRunner.enabled = false;
+            var minimalProbe = new GameObject("probe").AddComponent<ArenaProbe>();
+            Link(minimalProbe, "runner", minimalRunner);
+            Link(minimalProbe, "lobby", Object.FindAnyObjectByType<KukuriLobby>());
+            Link(minimalProbe, "session", Object.FindAnyObjectByType<ArenaSession>());
+            Link(minimalProbe, "network", Object.FindAnyObjectByType<NetworkManager>());
+            Link(minimalProbe, "account", Object.FindAnyObjectByType<KukuriAccountScreen>());
+            Link(minimalProbe, "profile", Object.FindAnyObjectByType<ArenaProfile>());
+            Link(minimalProbe, "skins", Object.FindAnyObjectByType<ArenaSkins>());
+            Link(minimalProbe, "broadcast", Object.FindAnyObjectByType<ArenaBroadcast>());
+            Link(minimalProbe, "cheer", Object.FindAnyObjectByType<ArenaCheer>());
+            Link(minimalProbe, "view", Object.FindAnyObjectByType<ArenaView>());
+            Link(minimalProbe, "arenaBoard", Object.FindAnyObjectByType<ArenaBoard>());
+            EditorSceneManager.SaveScene(minimal, $"Assets/ArenaProbe/{name}.unity");
+            scenes.Add($"Assets/ArenaProbe/{name}.unity");
+        }
         PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, ScriptingImplementation.__BACKEND__);
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
         {
-            scenes = new[] { "Assets/ArenaProbe/ArenaTest.unity" },
+            scenes = scenes.ToArray(),
             locationPathName = "Builds/__BACKEND__/CyberDiscArena.exe",
             target = BuildTarget.StandaloneWindows64,
         });
@@ -583,14 +750,17 @@ if ($DesktopApp) {
     $null = $desktop.Handle
 }
 $watchers = "-arena-spectator 1" + $(if ($DesktopApp) { " -arena-desktop 1" } else { "" })
-foreach ($role in "host", "client", "spectator") {
+$roles = [ordered]@{ "host" = ""; "client" = ""; "spectator" = "ArenaStreamViewer"; "mini-skin" = "LiveSkinLoader";
+    "mini-board" = "InGameBoardUI"; "mini-host" = "DiscNetworkSync"; "mini-client" = "DiscNetworkSync" }
+foreach ($role in $roles.Keys) {
     $log = Join-Path $work "$role.log"
-    $arguments = "-screen-fullscreen 0 -screen-width 1280 -screen-height 720 -arena-role $role -arena-profile-dir `"$(Join-Path $work $role)`" " +
+    $scene = if ($roles[$role]) { "-arena-scene $($roles[$role]) " } else { "" }
+    $arguments = "-screen-fullscreen 0 -screen-width 1280 -screen-height 720 -arena-role $role $scene-arena-profile-dir `"$(Join-Path $work $role)`" " +
         "-arena-topic $topic -arena-exchange `"$work`" -arena-publisher-dir `"$publisherDir`" $watchers -arena-delay $DelayMs -arena-loss $LossPercent -logFile `"$log`""
     $players[$role] = @{ Process = (Start-Process -FilePath $exe -ArgumentList $arguments -PassThru); Log = $log }
 }
 $exits = @{}
-foreach ($role in "host", "client", "spectator") {
+foreach ($role in $roles.Keys) {
     $process = $players[$role].Process
     if (-not $process.WaitForExit(600000)) { Stop-Process -Id $process.Id -Force; $exits[$role] = "timeout" } else { $exits[$role] = $process.ExitCode }
 }
@@ -629,6 +799,19 @@ $secondInput = [int]((Lines "host" "KGS_SECOND_INPUT (\d+)") | Select-Object -Fi
 $skinWorn = (Lines "host" "KGS_SKIN_WORN (.*)") | Select-Object -First 1
 $skinRemote = (Lines "client" "KGS_SKIN_REMOTE (.*)") | Select-Object -First 1
 $skinUpdated = "$((Lines "host" "KGS_SKIN_UPDATED (\d+)") | Select-Object -First 1),$((Lines "client" "KGS_SKIN_UPDATED (\d+)") | Select-Object -First 1)"
+# ゲームを終えた後に desktop が結果へ返信し、再起動した host が掲示板の thread で読む。
+$resultPost = (Lines "host" "KGS_RESULT_POST (\S+)") | Select-Object -First 1
+$thread = "skipped"
+if ($desktop) {
+    Set-Content (Join-Path $work "game-exited") "exited"
+    $resumeLog = Join-Path $work "resume.log"
+    for ($i = 0; $i -lt 240 -and -not (Test-Path (Join-Path $work "replied")); $i++) { Start-Sleep -Milliseconds 500 }
+    $arguments = "-screen-fullscreen 0 -screen-width 1280 -screen-height 720 -arena-role resume -arena-profile-dir `"$(Join-Path $work "host")`" " +
+        "-arena-topic $topic -arena-exchange `"$work`" -logFile `"$resumeLog`""
+    $resume = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
+    $exits["resume"] = if ($resume.WaitForExit(300000)) { $resume.ExitCode } else { Stop-Process -Id $resume.Id -Force; "timeout" }
+    $thread = (Select-String -Path $resumeLog -Pattern "KGS_RESULT_THREAD (.*)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value })
+}
 $liveStarted = (Lines "host" "KGS_LIVE_STARTED (\S+)") | Select-Object -First 1
 $liveEnded = (Lines "host" "KGS_LIVE_ENDED (\S+)") | Select-Object -First 1
 $cheersShown = (Lines "host" "KGS_CHEERS (\S+)") | Select-Object -First 1
@@ -638,7 +821,12 @@ $desktopOk = $true
 if ($desktop) {
     if (-not $desktop.WaitForExit(120000)) { Stop-Process -Id $desktop.Id -Force }
     $desktopOk = (Select-String -Path $desktopLog -Pattern "^watched" -Quiet) -and (Select-String -Path $desktopLog -Pattern "^reacted" -Quiet)
+    $resultSeen = (Select-String -Path $desktopLog -Pattern "^result-seen (\d+)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value })
+    $replied = (Select-String -Path $desktopLog -Pattern "^replied (\S+)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value })
 }
+$typing = (Lines "host" "KGS_BOARD_TYPING (.*)") | Select-Object -First 1
+$boardOk = ($typing -eq "True True") -and ($resultPost -match "^[0-9a-f]{64}$") -and ((-not $desktop) -or (([int]$resultSeen -ge 1) -and ($thread -eq "$resultPost $replied $resultPost True") -and ($exits["resume"] -eq 0)))
+Write-Output "Player board ($Backend): typing_blocks_match=[$typing] result=$resultPost desktop_seen_attachments=$resultSeen reply=$replied thread=[$thread] ok=$boardOk"
 $expectedCheers = if ($DesktopApp) { "CLAP!,FIRE!" } else { "FIRE!" }
 $liveOk = ($liveStarted -match "\S") -and ($liveEnded -eq "True") -and ($cheersShown -eq $expectedCheers) -and ([int]$spectated -gt 10) -and ($rewatched -eq "True,True") -and
     $desktopOk -and ($exits["spectator"] -eq 0)
@@ -651,7 +839,13 @@ $clientClosed = (Lines "client" "KGS_CLIENT_CLOSED (.*)") | Select-Object -First
 $hostSawLeave = (Lines "host" "KGS_HOST_SAW_LEAVE (.*)") | Select-Object -First 1
 $clientLeft = (Lines "client" "KGS_CLIENT_LEFT (.*)") | Select-Object -First 1
 $failure = Select-String -Path $players["host"].Log, $players["client"].Log -Pattern "KGS_FAILED.*" | Select-Object -First 1
-$ok = $liveOk -and $skinOk -and $sameEvents -and $sameResult -and $positionsMatch -and $dodged -and ($uiLocked -eq "True") -and ($secondInput -ge 20) -and ($secondInput -le 600) -and ("Throw" -in $kinds) -and ("Catch" -in $kinds) -and ("Hit" -in $kinds) -and
+$miniSkin = (Lines "mini-skin" "KGS_MINI_SKIN (.*)") | Select-Object -First 1
+$miniBoard = (Lines "mini-board" "KGS_MINI_BOARD (\S+)") | Select-Object -First 1
+$miniDisc = "$((Lines "mini-host" "KGS_MINI_DISC (.*)") | Select-Object -First 1),$((Lines "mini-client" "KGS_MINI_DISC (.*)") | Select-Object -First 1)"
+$miniOk = ($miniSkin -eq "neon-red True") -and ($miniBoard -eq "True") -and ($miniDisc -eq "host,ホストが部屋を閉じました") -and
+    (@("mini-skin", "mini-board", "mini-host", "mini-client" | Where-Object { $exits[$_] -ne 0 }).Count -eq 0)
+Write-Output "Player prefabs ($Backend): stream_viewer=spectator skin=[$miniSkin] board=$miniBoard disc=[$miniDisc] exits=$(("mini-skin", "mini-board", "mini-host", "mini-client" | ForEach-Object { $exits[$_] }) -join ',') ok=$miniOk"
+$ok = $miniOk -and $boardOk -and $liveOk -and $skinOk -and $sameEvents -and $sameResult -and $positionsMatch -and $dodged -and ($uiLocked -eq "True") -and ($secondInput -ge 20) -and ($secondInput -le 600) -and ("Throw" -in $kinds) -and ("Catch" -in $kinds) -and ("Hit" -in $kinds) -and
     ($hostLeft -eq "listening=False in_match=False") -and ($clientClosed -eq "listening=False joined=none notice=ホストが部屋を閉じました") -and
     ($hostSawLeave -eq "Left") -and ($clientLeft -eq "listening=False joined=none") -and ($exits["host"] -eq 0) -and ($exits["client"] -eq 0)
 Write-Output "Player match ($Backend, delay=${DelayMs}ms loss=$LossPercent%): events=$($hostFirst.Count) same=$sameEvents kinds=$($kinds -join ',') dodges=$dodges ui_locked=$uiLocked host=[$hostFinal] client=[$clientFinal] positions=$positionsMatch"

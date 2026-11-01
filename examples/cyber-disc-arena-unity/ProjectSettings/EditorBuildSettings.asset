@@ -8,6 +8,18 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/CyberDiscArena/Scenes/Arena.unity
     guid: f1c9f30b93edaf94d9d394019b230bc9
+  - enabled: 1
+    path: Assets/CyberDiscArena/Scenes/Minimal/DiscNetworkSync.unity
+    guid: 12ab44d3c7f4f9c439e796670e297a66
+  - enabled: 1
+    path: Assets/CyberDiscArena/Scenes/Minimal/LiveSkinLoader.unity
+    guid: c537479dbf8cc774cbf0506e326b9f4a
+  - enabled: 1
+    path: Assets/CyberDiscArena/Scenes/Minimal/ArenaStreamViewer.unity
+    guid: 6f34410314621e54f8893ab1f0ae26e1
+  - enabled: 1
+    path: Assets/CyberDiscArena/Scenes/Minimal/InGameBoardUI.unity
+    guid: 000a272db36ec7245be07f85fe8b9710
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0
