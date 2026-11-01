@@ -22,7 +22,7 @@ namespace CyberDiscArena
         [SerializeField] string publisherPubkey = "";
         [SerializeField] string applicationId = "com.kukuri.cyber-disc-arena";
         [SerializeField] string topic = "kukuri:topic:cyber-disc-arena";
-        /// 発行するスキンの ID（作者が Editor の発行で登録する。32 件まで）。
+        /// 発行するスキンの ID（作者が Editor の発行で登録する）。
         [SerializeField] string[] skins = { "neon-red", "gold", "holo" };
         [SerializeField] Rect area = new Rect(1000, 16, 260, 300);
 
@@ -31,6 +31,7 @@ namespace CyberDiscArena
         bool listing;
         bool stale = true;
         float listedAt;
+        float retryAt = float.MaxValue;
 
         /// player の体に貼る loader（試験・演出用）。
         public KukuriSkinLoader Loader(int player) => loaders[player];
@@ -47,7 +48,25 @@ namespace CyberDiscArena
                 profile.Skin = skin;
         }
 
-        void Awake() => session.LocalSkin = () => profile.Skin;
+        void Awake()
+        {
+            session.LocalSkin = () => profile.Skin;
+            foreach (var loader in loaders)
+            {
+                // スキンを着ている間だけ、体を白くしてスキンの色そのものを光らせる（照明の暗い ring でも見える）。loader が
+                // 複製した material を変えるので、スキンを外すと元の体の色に戻る。
+                var body = loader.GetComponent<Renderer>();
+                loader.Applied += _ =>
+                {
+                    var material = body.sharedMaterial;
+                    material.SetColor("_BaseColor", Color.white);
+                    material.SetTexture("_EmissionMap", material.mainTexture);
+                    material.SetColor("_EmissionColor", Color.white);
+                };
+                // 取れなかった（相手のスキンがまだ届いていない等）ときは、少しおいて取り直す。
+                loader.Failed += _ => retryAt = Time.unscaledTime + 5;
+            }
+        }
 
         void Update()
         {
@@ -68,8 +87,13 @@ namespace CyberDiscArena
                 loader.PublisherPubkey = publisherPubkey;
                 loader.ApplicationId = applicationId;
                 var skin = index == local ? profile.Skin : session.InMatch ? session.RemoteSkin : ArenaProfile.StandardSkin;
-                loader.AssetId = skin == ArenaProfile.StandardSkin ? "" : skin;
+                // 相手から受けた ID は、登録したスキンだけを読む。
+                loader.AssetId = skins.Contains(skin) ? skin : "";
+                if (Time.unscaledTime >= retryAt && loader.AssetId.Length > 0 && loader.AppliedRevision == 0)
+                    _ = loader.LoadLatestAsync();
             }
+            if (Time.unscaledTime >= retryAt)
+                retryAt = float.MaxValue;
             // 新しく発行されたスキンの知らせが来ないこともあるので、ロビーにいる間は 10 秒ごとにも読み直す。
             if (!session.InMatch && Time.unscaledTime - listedAt > 10)
                 stale = true;
@@ -84,25 +108,39 @@ namespace CyberDiscArena
                 stale = true;
         }
 
-        /// 登録した ID のうち発行済みのもの（1 回の読込みは登録した件数まで）。
+        /// 登録した ID のうち発行済みのもの（1 回の要求は 32 件までなので分けて読む。読めなければ前の結果を保つ）。
         async System.Threading.Tasks.Task List(KukuriClient client)
         {
             listing = true;
             stale = false;
             listedAt = Time.unscaledTime;
-            var response = await client.SendAsync("list_game_assets", new JObject
+            try
             {
-                ["topic"] = topic,
-                ["publisher_pubkey"] = publisherPubkey,
-                ["application_id"] = applicationId,
-                ["asset_ids"] = new JArray(skins.Take(32)),
-            });
-            listing = false;
-            if (!response.Ok)
-                return;
-            published.Clear();
-            foreach (var release in response.Data as JArray ?? new JArray())
-                published.Add((string)release["asset_id"]);
+                var found = new HashSet<string>();
+                for (var start = 0; start < skins.Length; start += 32)
+                {
+                    var response = await client.SendAsync("list_game_assets", new JObject
+                    {
+                        ["topic"] = topic,
+                        ["publisher_pubkey"] = publisherPubkey,
+                        ["application_id"] = applicationId,
+                        ["asset_ids"] = new JArray(skins.Skip(start).Take(32)),
+                    });
+                    if (!response.Ok)
+                        return;
+                    foreach (var release in response.Data as JArray ?? new JArray())
+                        found.Add((string)release["asset_id"]);
+                }
+                published.Clear();
+                published.UnionWith(found);
+            }
+            catch (KukuriException)
+            {
+            }
+            finally
+            {
+                listing = false;
+            }
         }
 
         void OnGUI()

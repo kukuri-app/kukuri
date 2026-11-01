@@ -6,8 +6,8 @@
 #   NGO が止まり、session から抜ける。続く 2 試合目で client が途中で退出すると、host に「相手が退出しました」が出る。
 #   どちらも開始の画面（KukuriAccountScreen）で同意して「はじめる」までロビーを開かない。
 # - スキン: 作者（開発用の Sidecar）が対戦の前にスキンを発行すると、host のロッカーに出て、選ぶと host の体に貼られる。
-#   対戦が始まると client は host の体にそのスキンを P2P で取って貼る。対戦中に作者が新しい版を発行すると、両方の体が
-#   再起動せずに新しい版へ変わる。
+#   client も別のスキンを着る。対戦が始まると互いの体に相手のスキンを P2P で取って貼る。対戦中に作者が新しい版を発行すると、
+#   両方の体が再起動せずに新しい版へ変わる。
 # - 状態の継続（1 つの Player を同じ profile で起動し直す）: 「はじめる」で選んだスキンと game player ID が再起動の後も
 #   続く。Steam Cloud に保存した file（game-account.json とゲームのセーブ）だけを写した新しい profile でも、同じ ID・公開鍵・
 #   スキンで再開する。profile に足したアカウント B に、この端末で遊んだ別の進行があれば、まとめる確定の画面で B の進行を
@@ -244,7 +244,7 @@ public sealed class ArenaProbe : MonoBehaviour
     }
 
     /// 単色の PNG をスキンとして発行する（作者の操作）。
-    async Task<long> PublishSkin(Color color)
+    async Task<long> PublishSkin(Color color, string asset = "neon-red")
     {
         var texture = new Texture2D(64, 64);
         texture.SetPixels(Enumerable.Repeat(color, 64 * 64).ToArray());
@@ -255,7 +255,7 @@ public sealed class ArenaProbe : MonoBehaviour
         {
             ["topic"] = Arg("-arena-topic"),
             ["application_id"] = "com.kukuri.cyber-disc-arena",
-            ["asset_id"] = "neon-red",
+            ["asset_id"] = asset,
             ["format"] = new JObject { ["kind"] = "png" },
             ["path"] = file,
         });
@@ -288,7 +288,16 @@ public sealed class ArenaProbe : MonoBehaviour
         await Prepare();
         // 作者がスキンを発行すると、ロッカーに出る。選ぶと自分の体に貼られる。
         await PublishSkin(new Color(1f, 0.15f, 0.2f));
+        await PublishSkin(new Color(1f, 0.8f, 0.1f), "gold");
+        File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "skins-published"), "done");
         await Until(() => skins.Published.Contains("neon-red"), 60, "the locker did not show the published skin");
+        // 着ているスキンから別のスキン、standard へ着替えてから、neon-red を着る。
+        await Until(() => skins.Published.Contains("gold"), 60, "the locker did not show the second skin");
+        skins.Select("gold");
+        await Until(() => skins.Loader(0).AssetId == "gold" && skins.Loader(0).AppliedRevision >= 1, 60, "gold was not worn");
+        skins.Select(ArenaProfile.StandardSkin);
+        Debug.Log("KGS_SKIN_STANDARD " + (skins.Loader(0).AssetId == "" && skins.Loader(0).AppliedRevision == 0 &&
+            skins.Loader(0).GetComponent<Renderer>().sharedMaterial.name == "PlayerA"));
         skins.Select("neon-red");
         await Until(() => skins.Loader(0).AppliedRevision >= 1, 60, "the skin was not worn");
         Debug.Log("KGS_SKIN_WORN " + profile.Skin + " " + skins.Loader(0).AppliedRevision);
@@ -297,6 +306,9 @@ public sealed class ArenaProbe : MonoBehaviour
         lobby.GetComponentsInChildren<UnityEngine.UI.Button>(true).First(button => button.name.StartsWith("Create")).Select();
         await lobby.CreateRoomAsync("test arena 1");
         await Until(() => session.Phase == ArenaPhase.Playing, 120, "the match did not start");
+        // client が着たスキンを、client の体に P2P で取って貼る。
+        await Until(() => session.RemoteSkin == "gold" && skins.Loader(1).AppliedRevision >= 1, 60, "the client's skin did not arrive");
+        Debug.Log("KGS_SKIN_FROM_CLIENT " + session.RemoteSkin + " " + skins.Loader(1).AppliedRevision);
         await Pause(4);
         var events = UnityEngine.EventSystems.EventSystem.current;
         Debug.Log($"KGS_UI_LOCKED {!events.sendNavigationEvents && events.currentSelectedGameObject == null}");
@@ -334,6 +346,9 @@ public sealed class ArenaProbe : MonoBehaviour
     async Task Client()
     {
         await Prepare();
+        await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "skins-published")), 120, "the skins were not published");
+        await Until(() => skins.Published.Contains("gold"), 60, "the client's locker did not show gold");
+        skins.Select("gold");
         await Until(() => lobby.Rooms.Any(room => room.Title == "test arena 1"), 120, "the room did not arrive");
         await lobby.JoinRoomAsync(lobby.Rooms.First(room => room.Title == "test arena 1").RoomId);
         await Until(() => session.Phase == ArenaPhase.Playing, 120, "the match did not start");
@@ -536,7 +551,9 @@ $secondInput = [int]((Lines "host" "KGS_SECOND_INPUT (\d+)") | Select-Object -Fi
 $skinWorn = (Lines "host" "KGS_SKIN_WORN (.*)") | Select-Object -First 1
 $skinRemote = (Lines "client" "KGS_SKIN_REMOTE (.*)") | Select-Object -First 1
 $skinUpdated = "$((Lines "host" "KGS_SKIN_UPDATED (\d+)") | Select-Object -First 1),$((Lines "client" "KGS_SKIN_UPDATED (\d+)") | Select-Object -First 1)"
-$skinOk = ($skinWorn -eq "neon-red 1") -and ($skinRemote -eq "neon-red 1") -and ($skinUpdated -eq "2,2")
+$skinStandard = (Lines "host" "KGS_SKIN_STANDARD (\S+)") | Select-Object -First 1
+$skinFromClient = (Lines "host" "KGS_SKIN_FROM_CLIENT (.*)") | Select-Object -First 1
+$skinOk = ($skinWorn -eq "neon-red 1") -and ($skinStandard -eq "True") -and ($skinFromClient -eq "gold 1") -and ($skinRemote -eq "neon-red 1") -and ($skinUpdated -eq "2,2")
 $hostLeft = (Lines "host" "KGS_HOST_LEFT (.*)") | Select-Object -First 1
 $clientClosed = (Lines "client" "KGS_CLIENT_CLOSED (.*)") | Select-Object -First 1
 $hostSawLeave = (Lines "host" "KGS_HOST_SAW_LEAVE (.*)") | Select-Object -First 1
@@ -546,7 +563,7 @@ $ok = $skinOk -and $sameEvents -and $sameResult -and $positionsMatch -and $dodge
     ($hostLeft -eq "listening=False in_match=False") -and ($clientClosed -eq "listening=False joined=none notice=ホストが部屋を閉じました") -and
     ($hostSawLeave -eq "Left") -and ($clientLeft -eq "listening=False joined=none") -and ($exits["host"] -eq 0) -and ($exits["client"] -eq 0)
 Write-Output "Player match ($Backend, delay=${DelayMs}ms loss=$LossPercent%): events=$($hostFirst.Count) same=$sameEvents kinds=$($kinds -join ',') dodges=$dodges ui_locked=$uiLocked host=[$hostFinal] client=[$clientFinal] positions=$positionsMatch"
-Write-Output "Player skin ($Backend): worn=[$skinWorn] remote=[$skinRemote] updated=$skinUpdated ok=$skinOk"
+Write-Output "Player skin ($Backend): worn=[$skinWorn] standard_restored=$skinStandard from_client=[$skinFromClient] remote=[$skinRemote] updated=$skinUpdated ok=$skinOk"
 Write-Output "Player leave ($Backend): second_match_inputs=$secondInput host_left=[$hostLeft] client_closed=[$clientClosed] host_saw_leave=[$hostSawLeave] client_left=[$clientLeft] exits=$($exits['host']),$($exits['client']) ok=$ok"
 if ($failure) { Write-Output "  $($failure.Line)" }
 

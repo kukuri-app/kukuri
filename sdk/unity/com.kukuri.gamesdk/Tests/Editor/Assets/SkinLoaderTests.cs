@@ -265,6 +265,7 @@ namespace Kukuri.GameSdk.Assets.Tests
             banner.PublisherPubkey = publisherKey;
             banner.ApplicationId = Application;
             banner.AssetId = "banner";
+            var plain = quad.GetComponent<Renderer>().sharedMaterial;
             yield return Publish(topic, Png(Color.red), value => revision = value, "banner", "png");
             banner.Client = player;
             yield return Frames(() => banner.AppliedRevision == revision, "the first banner was not applied");
@@ -288,6 +289,23 @@ namespace Kukuri.GameSdk.Assets.Tests
             Assert.LessOrEqual(UnityEngine.Resources.FindObjectsOfTypeAll<Texture2D>().Length, textures,
                 "repeated banners release the previous textures");
             Capture("4-banner");
+
+            // AssetId を変えると、今のスキンを外して別のアセットを読む。読む間に変えたら、変えた後のアセットだけを貼る。
+            // 空にすると元の material に戻る（着せ替えに 1 つの loader を使う）。
+            long other = 0;
+            yield return Publish(topic, Png(Color.magenta), value => other = value, "banner-b", "png");
+            banner.AssetId = "banner-b";
+            yield return Frames(() => banner.AppliedRevision == other && Shown(quad.GetComponent<Renderer>()) == Color.magenta,
+                "the other banner was not worn");
+            banner.AssetId = "banner";
+            banner.AssetId = "banner-b";
+            yield return Frames(() => banner.AppliedRevision == other, "the banner switched back was not worn");
+            for (var frame = 0; frame < 30; frame++)
+                yield return null;
+            Assert.AreEqual(Color.magenta, Shown(quad.GetComponent<Renderer>()), "only the asset chosen last is worn");
+            banner.AssetId = "";
+            Assert.AreSame(plain, quad.GetComponent<Renderer>().sharedMaterial, "no skin restores the original material");
+            Assert.AreEqual(0, banner.AppliedRevision);
 
             // AssetBundle: 同じ bundle 名で作り直した新しい版にも差し替わる。build の対象が合わない版は読まない。
             var bundleObject = new GameObject("bundle");
