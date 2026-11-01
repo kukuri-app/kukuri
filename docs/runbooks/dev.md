@@ -461,6 +461,10 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test-netcode.ps1
 # 発行（開発用の Sidecar）→ 更新の知らせ → P2P の取得 → 再起動なしの差し替えを確かめる（描画を %TEMP%\kgs-skin-*.png に書く）。
 # ゲーム（FFI）と desktop（Sidecar）の Live の配信・視聴を確かめる（画面を %TEMP%\kgs-live-*.png に書く）
 powershell -ExecutionPolicy Bypass -File sdk/unity/test-graphics.ps1
+# Cyber Disc Arena の対戦 ring（%TEMP%\kcda-test に写して作る）。EditMode の裁定の規則の試験の後、host と client の Player を
+# 受信の片道 25 ms の遅れと datagram の 1% の欠落の下で bot が 1 試合戦い、同じ出来事・勝敗・位置になること、host の終了と
+# client の途中の退出の表示と回収を確かめる（画面を %TEMP%\kcda-test\runs\*.png に書く）
+powershell -ExecutionPolicy Bypass -File examples/cyber-disc-arena-unity/test.ps1
 ```
 
 - 自分の project へ入れるときは、`Packages/manifest.json` の `dependencies` に `"com.kukuri.gamesdk": "file:<repo>/sdk/unity/com.kukuri.gamesdk"` を足す。
@@ -478,6 +482,7 @@ powershell -ExecutionPolicy Bypass -File sdk/unity/test-graphics.ps1
 - NGO を使うときは、`NetworkManager` の Transport に `KukuriNetcodeTransport`（`runner` に `KukuriRunner`）を置き、ロビーの `RoomCreated` で `RoomId` を設定して `StartHost`、`Joined` で `SessionId` を設定して `StartClient` を呼ぶ。Package Manager の Samples から「Netcode Sync」を入れると、その組み方の sample が入る。
 - スキンは `KukuriSkinLoader`（glTFast が要る）を GameObject に置き、`runner` と topic・信頼する発行者の公開鍵・application ID・asset ID を設定する。新しい版は自動で取得・差し替えされる。アセットの発行は開発用の Sidecar（設定 asset の mode を Sidecar にする）か CLI の `publish_game_asset` で行う。
 - Live は、ゲームが `create_live_session` で作った session を `KukuriLiveBroadcaster`（配信する camera を `SourceCamera` に、`Client` と topic を設定。`AudioListener` の音を送り、`Microphone` が on なら mic の音を混ぜる）の `StartBroadcast` で配信する。視聴は `KukuriLiveViewer` の `StartWatching` で、映像は `Output` の RenderTexture、音は OS の出力に出る。`Hops` が 2 以上なら視聴者の転送で受けている。開始 post への返信・リアクションは `ReplyReceived`・`ReactionReceived` で届く（公開スレッドの live なら、先に `set_public_channel_subscription` でスレッドを購読する）。
+- 公式 sample Cyber Disc Arena は `examples/cyber-disc-arena-unity`（URP の Unity project。開くと SDK は repo の `sdk/unity/com.kukuri.gamesdk` を使う）。scene は `Assets/CyberDiscArena/Scenes/Arena.unity`。ロビーで部屋を作ると host、部屋に参加すると相手として 1 対 1 で対戦する（操作は WASD 移動・Space ジャンプ・Ctrl しゃがむ／走りながらなら slide・E 投げる／受け止める）。起動引数 `-arena-delay <ms>`・`-arena-loss <%>` で受信を遅らせ datagram を落とせる。repo の path が深いと Unity の path の長さの上限に当たるので、そのときは短い path へ写して開く。
 - Live の SDK の Rust 試験は `KUKURI_LIBVPX_DIR` を指定して `cargo test -p kukuri-game-sdk --features vp8 --test live`（2 つの profile で向きを入れ替えて配信・視聴し、遅延を測る）。
 - `test.ps1` は CLI の process 試験と同じく `KUKURI_DISABLE_KEYRING=1` と loopback の接続設定で動かす。Player の再起動の確認は、鍵を keyring に置かない構成での確認になる。
 
