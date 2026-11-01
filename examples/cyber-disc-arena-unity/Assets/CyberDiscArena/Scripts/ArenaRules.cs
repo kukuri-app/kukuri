@@ -28,7 +28,8 @@ namespace CyberDiscArena
 
         public float Height => Crouching ? ArenaRules.CrouchHeight : ArenaRules.StandHeight;
         public Vector3 Forward => Quaternion.Euler(0, Yaw, 0) * Vector3.forward;
-        public Vector3 Hand => Position + Vector3.up * ArenaRules.DiscHeight + Forward * 0.6f;
+        /// ディスクを持つ右手の位置（後ろの camera から体に隠れない）。
+        public Vector3 Hand => Position + Vector3.up * ArenaRules.DiscHeight + Quaternion.Euler(0, Yaw, 0) * new Vector3(0.5f, 0, 0.5f);
     }
 
     public enum DiscMode : byte { Held, Flying }

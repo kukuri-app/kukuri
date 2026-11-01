@@ -77,7 +77,7 @@ namespace CyberDiscArena
             }
             var held = session.Holder;
             disc.position = held >= 0
-                ? shown[held] + Vector3.up * ArenaRules.DiscHeight + players[held].forward * 0.6f
+                ? shown[held] + session.Players[held].Hand - session.Players[held].Position
                 : session.Disc.Position;
             disc.Rotate(0, 720 * Time.deltaTime, 0, Space.Self);
             if (!session.InMatch)
@@ -87,8 +87,11 @@ namespace CyberDiscArena
             }
             var me = shown[session.Local];
             var facing = Quaternion.Euler(0, session.Players[session.Local].Yaw, 0);
-            view.position = me + facing * new Vector3(0, 3.2f, -6.5f);
-            view.LookAt(me + Vector3.up * 1.2f + facing * Vector3.forward * 3);
+            // 後ろの高い位置から見下ろす。ring の端でもガラスの外から覗かないよう、camera を ring の内側に留める。
+            var back = me + facing * new Vector3(0, 5f, -5f);
+            var flat = Vector2.ClampMagnitude(new Vector2(back.x, back.z), ArenaRules.RingRadius - 0.6f);
+            view.position = new Vector3(flat.x, back.y, flat.y);
+            view.LookAt(me + Vector3.up + facing * Vector3.forward * 4);
         }
 
         void OnGUI()
@@ -98,7 +101,7 @@ namespace CyberDiscArena
             if (!session.InMatch)
             {
                 if (session.Notice.Length > 0)
-                    GUI.Label(new Rect(20, Screen.height - 50, Screen.width - 40, 40), session.Notice, label);
+                    GUI.Label(new Rect(480, 20, Screen.width - 500, 40), session.Notice, label);
                 return;
             }
             var me = session.Local;

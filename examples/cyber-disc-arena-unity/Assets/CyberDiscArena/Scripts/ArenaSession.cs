@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Kukuri.GameSdk;
 using Kukuri.GameSdk.Lobby;
 using Kukuri.GameSdk.Netcode;
@@ -46,6 +47,8 @@ namespace CyberDiscArena
         float stateAt;
         DiscState received;
         Vector3 correction;
+        /// 自分で対戦をやめている途中。
+        bool ending;
 
         /// 自分の player の番号（host は 0、client は 1。対戦していなければ -1）。
         public int Local { get; private set; } = -1;
@@ -166,6 +169,7 @@ namespace CyberDiscArena
         void Reset(int local)
         {
             Local = local;
+            ending = false;
             Phase = ArenaPhase.Waiting;
             Holder = Winner = -1;
             Scores[0] = Scores[1] = 0;
@@ -406,7 +410,7 @@ namespace CyberDiscArena
                 if (clientId != opponent)
                     return;
                 opponent = ulong.MaxValue;
-                if (rules.Phase != ArenaPhase.Result)
+                if (!ending && rules.Phase != ArenaPhase.Result)
                     rules.Leave();
                 return;
             }
@@ -425,13 +429,16 @@ namespace CyberDiscArena
             Stop();
         }
 
-        /// 対戦をやめてロビーへ戻る。host は room を終え、client は退出する。
+        /// 対戦をやめてロビーへ戻る。client は退出する。host は room を終え、相手の session が「部屋が終了した」で閉じるのを
+        /// 待ってから止める（SDK は session を 5 秒ごとに確かめる。先に止めると相手には接続が切れたように見える）。
         public async void Leave()
         {
             var host = IsHost;
             var room = roomId;
-            Stop();
-            Notice = "";
+            Notice = host ? "部屋を閉じています" : "";
+            ending = true;
+            if (!host)
+                Stop();
             try
             {
                 if (host)
@@ -442,6 +449,14 @@ namespace CyberDiscArena
             catch (KukuriException error)
             {
                 Notice = $"ロビーへの戻りで失敗しました（{error.Code}）";
+            }
+            var deadline = Time.realtimeSinceStartup + 6;
+            while (host && opponent != ulong.MaxValue && Time.realtimeSinceStartup < deadline)
+                await Task.Yield();
+            if (host)
+            {
+                Stop();
+                Notice = "";
             }
         }
 
