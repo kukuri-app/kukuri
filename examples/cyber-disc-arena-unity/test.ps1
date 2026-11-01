@@ -11,6 +11,9 @@
 # - 配信と応援: host は「配信する」を選んで部屋を作り、試合の開始で公開の Live を始める。ロビーにいる観戦の Player（3 人目）
 #   はモニターでその配信を受けて映し、R の応援（🔥）を送る。`-DesktopApp` を渡すと、ゲームを入れていない desktop も配信に
 #   参加して映像を受け、👏 で応援する。host の ring の上に応援の演出が出て、試合が終わると配信を止める。
+# - 掲示板と結果: host は試合の後に「結果を投稿」で得点の文と画面の画像を投稿する。`-DesktopApp` なら、desktop はその投稿を
+#   timeline で読み（画像の添付つき）、ゲームが終わった後に返信する。再起動した host が掲示板（Enter）でその thread を開くと、
+#   同じ投稿 ID の下に desktop の返信が並ぶ。
 # - 状態の継続（1 つの Player を同じ profile で起動し直す）: 「はじめる」で選んだスキンと game player ID が再起動の後も
 #   続く。Steam Cloud に保存した file（game-account.json とゲームのセーブ）だけを写した新しい profile でも、同じ ID・公開鍵・
 #   スキンで再開する。profile に足したアカウント B に、この端末で遊んだ別の進行があれば、まとめる確定の画面で B の進行を
@@ -80,6 +83,8 @@ public sealed class ArenaProbe : MonoBehaviour
     [SerializeField] ArenaSkins skins;
     [SerializeField] ArenaBroadcast broadcast;
     [SerializeField] ArenaCheer cheer;
+    [SerializeField] ArenaView view;
+    [SerializeField] ArenaBoard arenaBoard;
     readonly System.Collections.Generic.HashSet<string> cheers = new System.Collections.Generic.HashSet<string>();
     string mutedSession;
     KukuriClient publisher;
@@ -125,7 +130,7 @@ public sealed class ArenaProbe : MonoBehaviour
         if (role == null) return;
         try
         {
-            await (role == "host" ? Host() : role == "client" ? Client() : role == "spectator" ? Spectator() : State());
+            await (role == "host" ? Host() : role == "client" ? Client() : role == "spectator" ? Spectator() : role == "resume" ? Resume() : State());
             Application.Quit(0);
         }
         catch (Exception error)
@@ -213,6 +218,7 @@ public sealed class ArenaProbe : MonoBehaviour
         await StartGame(false);
         lobby.Topic = Arg("-arena-topic");
         skins.Topic = Arg("-arena-topic");
+        arenaBoard.Board.Topic = Arg("-arena-topic");
         var exchange = Arg("-arena-exchange");
         var other = role == "host" ? "client" : "host";
         var mine = Path.Combine(exchange, role + ".ticket");
@@ -359,6 +365,14 @@ public sealed class ArenaProbe : MonoBehaviour
         await Until(() => broadcast.LiveSession == null, 30, "the live did not stop");
         Debug.Log("KGS_LIVE_ENDED True");
         await Shot("2-result");
+        // 結果を投稿する（得点の文と画面の画像）。
+        var resultPost = await view.PostResult();
+        Debug.Log("KGS_RESULT_POST " + (resultPost ?? "none") + " " + arenaBoard.Notice);
+        if (resultPost != null)
+        {
+            File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "result-post.tmp"), resultPost);
+            File.Move(Path.Combine(Arg("-arena-exchange"), "result-post.tmp"), Path.Combine(Arg("-arena-exchange"), "result-post"));
+        }
         File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "host-result"), "done");
         await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "client-result")), 60, "the client did not see the result");
         // 「ロビーへ戻る」: host は room を終える。
@@ -478,6 +492,27 @@ public sealed class ArenaProbe : MonoBehaviour
         }
     }
 
+    /// ゲームを終えた後に再起動した host: 掲示板（Enter）で結果の投稿の thread を開き、desktop の返信を読む。
+    async Task Resume()
+    {
+        await StartGame(true);
+        var exchange = Arg("-arena-exchange");
+        await Call("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(Path.Combine(exchange, "desktop-ticket")) });
+        var board = arenaBoard.Board;
+        board.Topic = Arg("-arena-topic");
+        board.gameObject.SetActive(true);
+        var post = File.ReadAllText(Path.Combine(exchange, "result-post")).Trim();
+        var reply = File.ReadAllText(Path.Combine(exchange, "replied")).Trim();
+        await Until(() => board.Posts.Any(item => item.ObjectId == post), 120, "the result was not on the board");
+        await board.OpenThreadAsync(post);
+        await Until(() => board.Posts.Any(item => item.ObjectId == reply), 120, "the reply did not arrive");
+        var root = board.Posts[0];
+        var answer = board.Posts.First(item => item.ObjectId == reply);
+        Debug.Log($"KGS_RESULT_THREAD {root.ObjectId} {answer.ObjectId} {answer.ThreadId} {root.AuthorPubkey != answer.AuthorPubkey}");
+        await Shot("resume-thread");
+        File.WriteAllText(Path.Combine(exchange, "done"), "done");
+    }
+
     /// 観戦の Player: ロビーのモニターで配信中の試合を受けて映し、R の応援（🔥）を送る。
     async Task Spectator()
     {
@@ -547,6 +582,8 @@ public static class ArenaProbeBuild
         Link(probe, "skins", Object.FindAnyObjectByType<ArenaSkins>());
         Link(probe, "broadcast", Object.FindAnyObjectByType<ArenaBroadcast>());
         Link(probe, "cheer", Object.FindAnyObjectByType<ArenaCheer>());
+        Link(probe, "view", Object.FindAnyObjectByType<ArenaView>());
+        Link(probe, "arenaBoard", Object.FindAnyObjectByType<ArenaBoard>());
         EditorSceneManager.SaveScene(scene, "Assets/ArenaProbe/ArenaTest.unity");
         PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, ScriptingImplementation.__BACKEND__);
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
@@ -629,6 +666,19 @@ $secondInput = [int]((Lines "host" "KGS_SECOND_INPUT (\d+)") | Select-Object -Fi
 $skinWorn = (Lines "host" "KGS_SKIN_WORN (.*)") | Select-Object -First 1
 $skinRemote = (Lines "client" "KGS_SKIN_REMOTE (.*)") | Select-Object -First 1
 $skinUpdated = "$((Lines "host" "KGS_SKIN_UPDATED (\d+)") | Select-Object -First 1),$((Lines "client" "KGS_SKIN_UPDATED (\d+)") | Select-Object -First 1)"
+# ゲームを終えた後に desktop が結果へ返信し、再起動した host が掲示板の thread で読む。
+$resultPost = (Lines "host" "KGS_RESULT_POST (\S+)") | Select-Object -First 1
+$thread = "skipped"
+if ($desktop) {
+    Set-Content (Join-Path $work "game-exited") "exited"
+    $resumeLog = Join-Path $work "resume.log"
+    for ($i = 0; $i -lt 240 -and -not (Test-Path (Join-Path $work "replied")); $i++) { Start-Sleep -Milliseconds 500 }
+    $arguments = "-screen-fullscreen 0 -screen-width 1280 -screen-height 720 -arena-role resume -arena-profile-dir `"$(Join-Path $work "host")`" " +
+        "-arena-topic $topic -arena-exchange `"$work`" -logFile `"$resumeLog`""
+    $resume = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
+    $exits["resume"] = if ($resume.WaitForExit(300000)) { $resume.ExitCode } else { Stop-Process -Id $resume.Id -Force; "timeout" }
+    $thread = (Select-String -Path $resumeLog -Pattern "KGS_RESULT_THREAD (.*)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value })
+}
 $liveStarted = (Lines "host" "KGS_LIVE_STARTED (\S+)") | Select-Object -First 1
 $liveEnded = (Lines "host" "KGS_LIVE_ENDED (\S+)") | Select-Object -First 1
 $cheersShown = (Lines "host" "KGS_CHEERS (\S+)") | Select-Object -First 1
@@ -638,7 +688,11 @@ $desktopOk = $true
 if ($desktop) {
     if (-not $desktop.WaitForExit(120000)) { Stop-Process -Id $desktop.Id -Force }
     $desktopOk = (Select-String -Path $desktopLog -Pattern "^watched" -Quiet) -and (Select-String -Path $desktopLog -Pattern "^reacted" -Quiet)
+    $resultSeen = (Select-String -Path $desktopLog -Pattern "^result-seen (\d+)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value })
+    $replied = (Select-String -Path $desktopLog -Pattern "^replied (\S+)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value })
 }
+$boardOk = ($resultPost -match "^[0-9a-f]{64}$") -and ((-not $desktop) -or (([int]$resultSeen -ge 1) -and ($thread -eq "$resultPost $replied $resultPost True") -and ($exits["resume"] -eq 0)))
+Write-Output "Player board ($Backend): result=$resultPost desktop_seen_attachments=$resultSeen reply=$replied thread=[$thread] ok=$boardOk"
 $expectedCheers = if ($DesktopApp) { "CLAP!,FIRE!" } else { "FIRE!" }
 $liveOk = ($liveStarted -match "\S") -and ($liveEnded -eq "True") -and ($cheersShown -eq $expectedCheers) -and ([int]$spectated -gt 10) -and ($rewatched -eq "True,True") -and
     $desktopOk -and ($exits["spectator"] -eq 0)
@@ -651,7 +705,7 @@ $clientClosed = (Lines "client" "KGS_CLIENT_CLOSED (.*)") | Select-Object -First
 $hostSawLeave = (Lines "host" "KGS_HOST_SAW_LEAVE (.*)") | Select-Object -First 1
 $clientLeft = (Lines "client" "KGS_CLIENT_LEFT (.*)") | Select-Object -First 1
 $failure = Select-String -Path $players["host"].Log, $players["client"].Log -Pattern "KGS_FAILED.*" | Select-Object -First 1
-$ok = $liveOk -and $skinOk -and $sameEvents -and $sameResult -and $positionsMatch -and $dodged -and ($uiLocked -eq "True") -and ($secondInput -ge 20) -and ($secondInput -le 600) -and ("Throw" -in $kinds) -and ("Catch" -in $kinds) -and ("Hit" -in $kinds) -and
+$ok = $boardOk -and $liveOk -and $skinOk -and $sameEvents -and $sameResult -and $positionsMatch -and $dodged -and ($uiLocked -eq "True") -and ($secondInput -ge 20) -and ($secondInput -le 600) -and ("Throw" -in $kinds) -and ("Catch" -in $kinds) -and ("Hit" -in $kinds) -and
     ($hostLeft -eq "listening=False in_match=False") -and ($clientClosed -eq "listening=False joined=none notice=ホストが部屋を閉じました") -and
     ($hostSawLeave -eq "Left") -and ($clientLeft -eq "listening=False joined=none") -and ($exits["host"] -eq 0) -and ($exits["client"] -eq 0)
 Write-Output "Player match ($Backend, delay=${DelayMs}ms loss=$LossPercent%): events=$($hostFirst.Count) same=$sameEvents kinds=$($kinds -join ',') dodges=$dodges ui_locked=$uiLocked host=[$hostFinal] client=[$clientFinal] positions=$positionsMatch"

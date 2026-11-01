@@ -15,7 +15,9 @@
 //   返信して <作業 dir>/replied に返信の ID を書き、再起動した Player が読んだ印（<作業 dir>/done）まで投稿を保持して終わる。
 // - live（#1983 AC-2c のゲーム外からの観戦と応援）: ゲームを入れていない desktop が、Player と互いの ticket を取り込み、
 //   Player が書いた配信（<作業 dir>/live の topic・session・開始 post）に参加して映像を受け（音量は 0）、開始 post へ 👏 で
-//   応援する。`watched`・`reacted` を log に書き、host が終えた印（<作業 dir>/host-done）まで待って終わる。
+//   応援する。`watched`・`reacted` を log に書く。続けて、host が試合の後に投稿した結果（<作業 dir>/result-post）を timeline
+//   で読み（`result-seen <添付の数>`）、ゲームが終わった印（<作業 dir>/game-exited）の後に返信して <作業 dir>/replied に書き、
+//   再起動したゲームが掲示板で読んだ印（<作業 dir>/done）まで待って終わる。
 // board 以外は確認コードの画面を <作業 dir>/desktop-confirming.png に撮る。target・merge・board は最後の timeline も
 // <作業 dir>/desktop-timeline.png に撮る。
 import { execFileSync } from 'node:child_process';
@@ -82,7 +84,20 @@ const live = async () => {
     request: { target_topic_id: topic, target_object_id: post, reaction_key: { kind: 'emoji', emoji: '👏' }, channel_ref: { kind: 'public' } },
   });
   console.log('reacted');
-  await marker('host-done');
+  const result = await marker('result-post');
+  const timeline = { request: { topic, scope: { kind: 'public' }, cursor: null, limit: 20 } };
+  const item = await eventually('the game result on desktop', () =>
+    desktop.invoke('list_timeline', timeline).then((view) => view.items.find((entry) => entry.object_id === result)),
+    120_000
+  );
+  console.log(`result-seen ${(item.attachments ?? []).length}`);
+  await marker('game-exited');
+  const reply = await desktop.invoke('create_post', {
+    request: { topic, channel_ref: { kind: 'public' }, content: 'test: GG from the SNS', reply_to: result },
+  });
+  console.log(`replied ${reply}`);
+  writeFileSync(join(root, 'replied'), reply);
+  await marker('done');
 };
 
 const desktop = await launch({ app, root, name: 'desktop', port: 9700 });

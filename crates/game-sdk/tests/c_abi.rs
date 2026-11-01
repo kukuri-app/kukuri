@@ -19,11 +19,32 @@ use kukuri_cli::{
 };
 use kukuri_game_sdk::{
     ABI_VERSION, KukuriBatch, KukuriHandle, MAX_PENDING, SdkClient, Started, Status,
-    kukuri_sdk_batch_release, kukuri_sdk_cancel, kukuri_sdk_close, kukuri_sdk_free,
-    kukuri_sdk_open, kukuri_sdk_poll,
+    kukuri_sdk_batch_release, kukuri_sdk_blake3_hex, kukuri_sdk_cancel, kukuri_sdk_close,
+    kukuri_sdk_free, kukuri_sdk_open, kukuri_sdk_poll,
 };
 use serde_json::{Value, json};
 use support::{PROFILE, error_code, finish, open_real, poll_once, request, response_for, send};
+
+/// 添付の file の hash（`create_post` の `hash`）を、handle なしで BLAKE3 の小文字の hex で返す（#1983）。
+#[test]
+fn blake3_hex_is_the_attachment_hash() {
+    let data = b"cyber disc arena";
+    let mut out = [0u8; 64];
+    let status = unsafe { kukuri_sdk_blake3_hex(data.as_ptr(), data.len(), out.as_mut_ptr()) };
+    assert_eq!(status, Status::Ok as i32);
+    assert_eq!(
+        std::str::from_utf8(&out).unwrap(),
+        blake3::hash(data).to_hex().as_str()
+    );
+    let empty = unsafe { kukuri_sdk_blake3_hex(std::ptr::null(), 0, out.as_mut_ptr()) };
+    assert_eq!(empty, Status::Ok as i32);
+    assert_eq!(
+        std::str::from_utf8(&out).unwrap(),
+        blake3::hash(b"").to_hex().as_str()
+    );
+    let missing = unsafe { kukuri_sdk_blake3_hex(data.as_ptr(), data.len(), std::ptr::null_mut()) };
+    assert_eq!(missing, Status::InvalidArgument as i32);
+}
 
 struct Sleep;
 

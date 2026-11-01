@@ -100,6 +100,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | `kukuri_sdk_poll(handle, max_items, max_bytes, out_batch)` | 届いている応答・秘密の出力・event・bytes を上限まで batch に入れて返す。1 件だけで `max_bytes` を超えるものは、その poll の最初の 1 件なら単独で返す。届いていなければ batch を返さない（`out_batch` は null） | なし |
 | `kukuri_sdk_batch_release(handle, batch)` | poll で受けた batch（中の JSON と bytes を含む）を解放する | なし |
 | `kukuri_sdk_close(handle)` | 新しい要求を断り、未完了の要求を下の表の結果で終え、購読・task・DB lock を解放する。close の後も poll と batch の解放はでき、未完了だった要求の結果を受け取れる | 停止の完了まで（上限 5 秒） |
+| `kukuri_sdk_blake3_hex(data, len, out)` | bytes の BLAKE3 を小文字の hex（64 bytes）で書く。ゲームが書いた file を投稿に添付するとき、`create_post` の添付の `hash` に使う。handle は要らない（#1983 AC-2d で足した。版は変えない） | なし |
 | `kukuri_sdk_free(handle)` | handle と未解放の batch の memory を解放する（close していなければ close する）。以後 handle は使えない | close と同じ |
 
 - ABI の関数は同期的な状態 code を返す: `OK`、`INVALID_ARGUMENT`、`BACKPRESSURE`、`CLOSED`、`FAULTED`、`ABI_MISMATCH`。要求の成否は poll で受ける応答で返す。

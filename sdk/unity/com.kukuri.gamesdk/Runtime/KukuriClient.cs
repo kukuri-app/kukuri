@@ -492,6 +492,20 @@ namespace Kukuri.GameSdk
             }
         }
 
+        /// bytes の BLAKE3（小文字の hex）。ゲームが書いた file を投稿に添付するとき、`create_post` の添付の `hash` に使う。
+        public static string Blake3Hex(byte[] data)
+        {
+            var output = new byte[64];
+            fixed (byte* source = data)
+            fixed (byte* target = output)
+            {
+                var status = Native.kukuri_sdk_blake3_hex(source, (UIntPtr)data.Length, target);
+                if (status != 0)
+                    throw new KukuriException(StatusCode(status), "the hash could not be computed");
+            }
+            return System.Text.Encoding.ASCII.GetString(output);
+        }
+
         static string StatusCode(int status)
         {
             switch (status)

@@ -5395,6 +5395,7 @@ GameObject:
   - component: {fileID: 699745951}
   - component: {fileID: 699745950}
   - component: {fileID: 699745949}
+  - component: {fileID: 699745952}
   m_Layer: 0
   m_Name: Arena
   m_TagString: Untagged
@@ -5416,6 +5417,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: CyberDiscArena::CyberDiscArena.ArenaView
   session: {fileID: 699745945}
   account: {fileID: 1598420042}
+  board: {fileID: 699745952}
   lobbyCanvas: {fileID: 967358134}
   players:
   - {fileID: 1643257624}
@@ -5550,6 +5552,21 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Kukuri.GameSdk::Kukuri.GameSdk.KukuriLiveViewer
   screen: {fileID: 0}
+--- !u!114 &699745952
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 699745943}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 742ff13f1acc0144499afa515287fa13, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: CyberDiscArena::CyberDiscArena.ArenaBoard
+  runner: {fileID: 1598420038}
+  account: {fileID: 1598420042}
+  board: {fileID: 1706719846}
 --- !u!1 &707103271
 GameObject:
   m_ObjectHideFlags: 0
@@ -13429,6 +13446,122 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1699075598}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!1001 &1706719845
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_Pivot.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_Pivot.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_AnchorMax.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_AnchorMax.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_AnchorMin.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_AnchorMin.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_SizeDelta.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_SizeDelta.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_AnchoredPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 558880054260838421, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3668687553765189439, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: m_Name
+      value: KukuriBoard
+      objectReference: {fileID: 0}
+    - target: {fileID: 5751540325225461399, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: topic
+      value: kukuri:topic:cyber-disc-arena
+      objectReference: {fileID: 0}
+    - target: {fileID: 5751540325225461399, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+      propertyPath: runner
+      value: 
+      objectReference: {fileID: 1598420038}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+--- !u!114 &1706719846 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 5751540325225461399, guid: a1e48eabfbf6ba649a3a42f1677ee2e1, type: 3}
+  m_PrefabInstance: {fileID: 1706719845}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 90d7053be4baac64e994355017a65dd9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Kukuri.GameSdk.Social::Kukuri.GameSdk.Social.KukuriBoard
 --- !u!1 &1716375045
 GameObject:
   m_ObjectHideFlags: 0
@@ -15606,3 +15739,4 @@ SceneRoots:
   - {fileID: 699745946}
   - {fileID: 596243849}
   - {fileID: 628937174}
+  - {fileID: 1706719845}

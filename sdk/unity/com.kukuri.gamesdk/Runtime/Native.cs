@@ -64,6 +64,9 @@ namespace Kukuri.GameSdk
         internal static extern int kukuri_sdk_close(IntPtr handle);
 
         [DllImport(Library)]
+        internal static extern int kukuri_sdk_blake3_hex(byte* data, UIntPtr length, byte* output);
+
+        [DllImport(Library)]
         internal static extern void kukuri_sdk_free(IntPtr handle);
     }
 }
