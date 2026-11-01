@@ -162,10 +162,10 @@ namespace CyberDiscArena
                 GUI.Button(new Rect(Screen.width / 2 - 110, Screen.height / 2, 220, 56), "ロビーへ戻る"))
                 session.Leave();
             // 結果を投稿する（押したときだけ、得点の文と画面の画像を掲示板の topic へ公開で）。
-            if (session.Phase == ArenaPhase.Result && posted != session.LastEvent &&
+            if (board != null && session.Phase == ArenaPhase.Result && posted != session.LastEvent &&
                 GUI.Button(new Rect(Screen.width / 2 - 110, Screen.height / 2 + 66, 220, 48), "結果を投稿"))
                 PostResult();
-            if (board.Notice.Length > 0)
+            if (board != null && board.Notice.Length > 0)
                 GUI.Label(new Rect(Screen.width / 2 - 200, Screen.height / 2 + 124, 400, 36), board.Notice, label);
         }
     }

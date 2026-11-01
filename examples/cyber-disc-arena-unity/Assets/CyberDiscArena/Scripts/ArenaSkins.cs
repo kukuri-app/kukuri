@@ -33,6 +33,9 @@ namespace CyberDiscArena
         float listedAt;
         float retryAt = float.MaxValue;
 
+        /// 対戦中か（対戦の Prefab が無い scene では常に false）。
+        bool InMatch => session != null && session.InMatch;
+
         /// player の体に貼る loader（試験・演出用）。
         public KukuriSkinLoader Loader(int player) => loaders[player];
 
@@ -50,7 +53,8 @@ namespace CyberDiscArena
 
         void Awake()
         {
-            session.LocalSkin = () => profile.Skin;
+            if (session != null)
+                session.LocalSkin = () => profile.Skin;
             foreach (var loader in loaders)
             {
                 // スキンを着ている間だけ、体を白くしてスキンの色そのものを光らせる（照明の暗い ring でも見える）。loader が
@@ -82,14 +86,14 @@ namespace CyberDiscArena
                 if (client != null)
                     client.EventReceived += OnEvent;
             }
-            var local = session.InMatch ? session.Local : 0;
+            var local = InMatch ? session.Local : 0;
             for (var index = 0; index < loaders.Length; index++)
             {
                 var loader = loaders[index];
                 loader.Topic = topic;
                 loader.PublisherPubkey = publisherPubkey;
                 loader.ApplicationId = applicationId;
-                var skin = index == local ? profile.Skin : session.InMatch ? session.RemoteSkin : ArenaProfile.StandardSkin;
+                var skin = index == local ? profile.Skin : InMatch ? session.RemoteSkin : ArenaProfile.StandardSkin;
                 // 相手から受けた ID は、登録したスキンだけを読む。
                 loader.AssetId = skins.Contains(skin) ? skin : "";
                 if (Time.unscaledTime >= retryAt && loader.AssetId.Length > 0 && loader.AppliedRevision == 0)
@@ -98,7 +102,7 @@ namespace CyberDiscArena
             if (Time.unscaledTime >= retryAt)
                 retryAt = float.MaxValue;
             // 新しく発行されたスキンの知らせが来ないこともあるので、ロビーにいる間は 10 秒ごとにも読み直す。
-            if (!session.InMatch && Time.unscaledTime - listedAt > 10)
+            if (!InMatch && Time.unscaledTime - listedAt > 10)
                 stale = true;
             if (stale && !listing && client != null && account.Screen == "playing" && publisherPubkey.Length > 0)
                 _ = List(client);
@@ -148,7 +152,7 @@ namespace CyberDiscArena
 
         void OnGUI()
         {
-            if (account.Screen != "playing" || session.InMatch)
+            if (account.Screen != "playing" || InMatch)
                 return;
             GUILayout.BeginArea(area, GUI.skin.box);
             GUILayout.Label("ロッカー（スキン）");

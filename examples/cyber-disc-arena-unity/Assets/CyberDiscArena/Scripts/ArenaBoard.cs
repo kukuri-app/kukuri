@@ -10,6 +10,7 @@ namespace CyberDiscArena
     /// ゲーム内の掲示板（SDK の `KukuriBoard`）。Enter で開け閉めし、文字を入力している間は対戦の操作に使わない（ArenaControls）。
     /// 試合の結果は「結果を投稿」で、得点の文と画面の画像を掲示板の topic へ公開で投稿する（2026-11-01 のユーザー判断。
     /// 押したときだけ）。投稿はゲームを終えた後も SNS（desktop・Web）から返信でき、次に掲示板でその thread を開くと読める。
+    [DefaultExecutionOrder(200)]
     public sealed class ArenaBoard : MonoBehaviour
     {
         [SerializeField] KukuriRunner runner;
@@ -21,7 +22,24 @@ namespace CyberDiscArena
         public string ResultPost { get; private set; }
         public string Notice { get; private set; } = "";
 
+        bool hidAccount;
+
         void Awake() => board.gameObject.SetActive(false);
+
+        // 掲示板を開いている間は、開始の画面（IMGUI は uGUI の上に描かれる）を隠す（ArenaView の後に動く）。
+        void LateUpdate()
+        {
+            if (board.gameObject.activeSelf)
+            {
+                account.Visible = false;
+                hidAccount = true;
+            }
+            else if (hidAccount)
+            {
+                account.Visible = true;
+                hidAccount = false;
+            }
+        }
 
         void Update()
         {
