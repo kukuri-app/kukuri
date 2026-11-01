@@ -298,7 +298,8 @@ public sealed class ArenaProbe : MonoBehaviour
         {
             profile.Skin = "neon-red";
             await account.SetCloud(true);
-            var b = await Call("create_account", new JObject { ["account_id"] = "arena-b", ["operation_id"] = Guid.NewGuid().ToString() });
+            var current = (string)(await Call("list_accounts"))["active_account_id"];
+            var b = await Call("create_account", new JObject { ["account_id"] = current, ["operation_id"] = Guid.NewGuid().ToString() });
             var accounts = await Call("list_accounts");
             var pubkey = (string)((JArray)accounts["accounts"]).First(item => (string)item["id"] == (string)b["id"])["pubkey"];
             Debug.Log($"KGS_STATE_SAVED {profile.Skin} {account.CloudState} {(string)b["id"]} {pubkey}");
@@ -451,10 +452,11 @@ $saved = (Value $first "KGS_STATE_SAVED (.*)") -split " "
 $id, $skin, $key = $started -split " "
 # Steam Cloud の同期を模す: ゲームの開始の file とゲームのセーブだけを、一度も開いていない profile へ写す。
 New-Item -ItemType Directory -Force $restoreDir | Out-Null
-foreach ($file in "game-account.json", "cyber-disc-arena.json") { Copy-Item (Join-Path $stateDir $file) $restoreDir -ErrorAction SilentlyContinue }
+Copy-Item (Join-Path $stateDir "game-account.json") $restoreDir -ErrorAction SilentlyContinue
+Copy-Item "$stateDir.cyber-disc-arena.json" "$restoreDir.cyber-disc-arena.json" -ErrorAction SilentlyContinue
 # B がこの端末で遊んだ別の進行（ゲームのセーブにある）を足す。
 $otherId = [guid]::NewGuid().ToString()
-$savePath = Join-Path $stateDir "cyber-disc-arena.json"
+$savePath = "$stateDir.cyber-disc-arena.json"
 $save = Get-Content $savePath -Raw | ConvertFrom-Json
 $save | Add-Member -NotePropertyName $otherId -NotePropertyValue ([pscustomobject]@{ Pubkey = $saved[3]; Skin = "gold" })
 [IO.File]::WriteAllText($savePath, ($save | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding $false))

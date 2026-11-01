@@ -6,8 +6,9 @@ using UnityEngine;
 
 namespace CyberDiscArena
 {
-    /// game player ごとのゲームの状態（選択中のスキン）。kukuri の profile の directory の `cyber-disc-arena.json` に、
-    /// game player ID をキーにして置く（SDK はセーブを持たない。ADR 0070 §4.2）。同じ鍵で引き継いでも、今の進行を残して
+    /// game player ごとのゲームの状態（選択中のスキン）。kukuri の profile の directory の隣の
+    /// `<profile>.cyber-disc-arena.json` に、game player ID をキーにして置く（SDK はセーブを持たない。ADR 0070 §4.2。profile の
+    /// 中に置くと、Steam Cloud から写した新しい profile を SDK が知らない profile と見なす）。同じ鍵で引き継いでも、今の進行を残して
     /// まとめても game player ID は変わらないので、状態はそのまま続く。まとめる先のアカウントにこの端末で遊んだ進行があれば、
     /// 確定の画面で残す進行として選べる（選ばなかった進行もここに残る）。Steam で配るときは、この file も Steam Auto-Cloud の
     /// 対象にする。
@@ -48,7 +49,7 @@ namespace CyberDiscArena
 
         Entry Current => GamePlayerId.Length > 0 && players.TryGetValue(GamePlayerId, out var entry) ? entry : null;
 
-        string FilePath => Path.Combine(runner.Settings.ProfileDirectory, "cyber-disc-arena.json");
+        string FilePath => runner.Settings.ProfileDirectory + ".cyber-disc-arena.json";
 
         void OnEnable() => account.OtherProgress = OtherProgress;
 
