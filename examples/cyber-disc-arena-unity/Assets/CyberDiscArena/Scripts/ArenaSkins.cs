@@ -58,6 +58,9 @@ namespace CyberDiscArena
                 var body = loader.GetComponent<Renderer>();
                 loader.Applied += _ =>
                 {
+                    // .glb・AssetBundle は体の material を複製しないので触らない（共有の material を書き換えない）。
+                    if (loader.Instance != null)
+                        return;
                     var material = body.sharedMaterial;
                     material.SetColor("_BaseColor", Color.white);
                     material.SetTexture("_EmissionMap", material.mainTexture);

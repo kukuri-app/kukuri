@@ -287,6 +287,7 @@ public sealed class ArenaProbe : MonoBehaviour
     {
         await Prepare();
         // 作者がスキンを発行すると、ロッカーに出る。選ぶと自分の体に貼られる。
+        var plain = skins.Loader(0).GetComponent<Renderer>().sharedMaterial;
         await PublishSkin(new Color(1f, 0.15f, 0.2f));
         await PublishSkin(new Color(1f, 0.8f, 0.1f), "gold");
         File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "skins-published"), "done");
@@ -298,7 +299,7 @@ public sealed class ArenaProbe : MonoBehaviour
         skins.Select(ArenaProfile.StandardSkin);
         await Until(() => skins.Loader(0).AssetId == "", 10, "standard was not worn");
         Debug.Log("KGS_SKIN_STANDARD " + (skins.Loader(0).AssetId == "" && skins.Loader(0).AppliedRevision == 0 &&
-            skins.Loader(0).GetComponent<Renderer>().sharedMaterial.name == "PlayerA"));
+            skins.Loader(0).GetComponent<Renderer>().sharedMaterial == plain));
         skins.Select("neon-red");
         await Until(() => skins.Loader(0).AppliedRevision >= 1, 60, "the skin was not worn");
         Debug.Log("KGS_SKIN_WORN " + profile.Skin + " " + skins.Loader(0).AppliedRevision);
