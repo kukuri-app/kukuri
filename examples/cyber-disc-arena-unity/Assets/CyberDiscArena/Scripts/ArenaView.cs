@@ -51,8 +51,9 @@ namespace CyberDiscArena
         [SerializeField] Transform view;
 
         Vector3 remote;
-        /// 結果を投稿した試合（最後の出来事の番号）。
+        /// 結果を投稿した試合（最後の出来事の番号。試合ごとに 0 へ戻す）。
         uint posted;
+        bool inMatch;
         GUIStyle label;
         GUIStyle big;
 
@@ -72,6 +73,14 @@ namespace CyberDiscArena
                 lobbyCanvas.gameObject.SetActive(started);
             lobbyCanvas.enabled = !session.InMatch;
             account.Visible = !session.InMatch;
+            // 試合が始まったら、前の試合の結果の投稿の状態を消す。
+            if (session.InMatch && !inMatch)
+            {
+                posted = 0;
+                if (board != null)
+                    board.Notice = "";
+            }
+            inMatch = session.InMatch;
             // 対戦中は、隠したロビーの button が Space（Submit）や WASD（選択の移動）で押されないようにする。
             var events = EventSystem.current;
             if (events != null)
@@ -116,12 +125,16 @@ namespace CyberDiscArena
         }
 
         /// 結果を投稿する（試験からも呼ぶ）。
-        public System.Threading.Tasks.Task<string> PostResult()
+        public async System.Threading.Tasks.Task<string> PostResult()
         {
             posted = session.LastEvent;
             var me = session.Local;
             var outcome = session.Winner == me ? "勝ち" : "負け";
-            return board.PostResult($"Cyber Disc Arena の試合: {session.Scores[me]} - {session.Scores[1 - me]} で{outcome}");
+            var post = await board.PostResult($"Cyber Disc Arena の試合: {session.Scores[me]} - {session.Scores[1 - me]} で{outcome}");
+            // 失敗したら、もう一度押せるようにする。
+            if (post == null)
+                posted = 0;
+            return post;
         }
 
         void OnGUI()
@@ -148,7 +161,7 @@ namespace CyberDiscArena
                 GUI.Label(new Rect(0, Screen.height / 2 - 120, Screen.width, 80), session.Notice, big);
                 return;
             }
-            if (GUI.Button(new Rect(Screen.width - 140, 16, 120, 40), "退出"))
+            if (!ArenaBoard.Open && GUI.Button(new Rect(Screen.width - 140, 16, 120, 40), "退出"))
                 session.Leave();
             var headline = session.Phase switch
             {
@@ -158,6 +171,8 @@ namespace CyberDiscArena
             };
             if (headline.Length > 0)
                 GUI.Label(new Rect(0, Screen.height / 2 - 120, Screen.width, 80), headline, big);
+            if (ArenaBoard.Open)
+                return;
             if ((session.Phase == ArenaPhase.Result || session.Phase == ArenaPhase.Left) &&
                 GUI.Button(new Rect(Screen.width / 2 - 110, Screen.height / 2, 220, 56), "ロビーへ戻る"))
                 session.Leave();
@@ -165,7 +180,7 @@ namespace CyberDiscArena
             if (board != null && session.Phase == ArenaPhase.Result && posted != session.LastEvent &&
                 GUI.Button(new Rect(Screen.width / 2 - 110, Screen.height / 2 + 66, 220, 48), "結果を投稿"))
                 PostResult();
-            if (board != null && board.Notice.Length > 0)
+            if (board != null && session.Phase == ArenaPhase.Result && board.Notice.Length > 0)
                 GUI.Label(new Rect(Screen.width / 2 - 200, Screen.height / 2 + 124, 400, 36), board.Notice, label);
         }
     }

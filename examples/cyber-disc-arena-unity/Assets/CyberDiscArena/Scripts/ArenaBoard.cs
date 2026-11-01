@@ -18,49 +18,49 @@ namespace CyberDiscArena
         [SerializeField] KukuriBoard board;
 
         public KukuriBoard Board => board;
-        /// 最後に投稿した結果（投稿 ID と、画面に出す知らせ）。
-        public string ResultPost { get; private set; }
-        public string Notice { get; private set; } = "";
+        /// 結果の投稿の知らせ（次の試合で消す）。
+        public string Notice { get; set; } = "";
 
-        bool hidAccount;
+        /// 掲示板を開いているか。開いている間は、arena の他の IMGUI（開始の画面・ロッカー・配信の切替・退出・応援の menu）を
+        /// 出さない（IMGUI は uGUI の上に描かれ、押すと両方が反応する。2026-11-01 のユーザー判断）。
+        public static bool Open { get; private set; }
 
         void Awake() => board.gameObject.SetActive(false);
 
-        // 掲示板を開いている間は、開始の画面（IMGUI は uGUI の上に描かれる）を隠す（ArenaView の後に動く）。
+        void OnDisable() => Open = false;
+
+        // 開いている間は開始の画面を隠す（ArenaView の後に動く）。
         void LateUpdate()
         {
-            if (board.gameObject.activeSelf)
-            {
+            if (Open)
                 account.Visible = false;
-                hidAccount = true;
-            }
-            else if (hidAccount)
-            {
-                account.Visible = true;
-                hidAccount = false;
-            }
         }
 
         void Update()
         {
-            if (account.Screen != "playing" || ArenaControls.Typing())
-                return;
-            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+            if (account.Screen == "playing" && !ArenaControls.Typing() &&
+                (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)))
+            {
                 board.gameObject.SetActive(!board.gameObject.activeSelf);
+                // 閉じたら開始の画面を戻す（対戦中は ArenaView が同じ frame でまた隠す）。
+                if (!board.gameObject.activeSelf)
+                    account.Visible = true;
+            }
+            Open = board.gameObject.activeSelf;
         }
 
         /// 結果の文と、今の画面の画像を投稿する（画像は一時 file に書き、BLAKE3 の hash で添付する）。
         public async Task<string> PostResult(string content)
         {
-            Notice = "結果を投稿しています";
             await Awaitable.EndOfFrameAsync();
             var shot = ScreenCapture.CaptureScreenshotAsTexture();
             var png = shot.EncodeToPNG();
             Destroy(shot);
+            Notice = "結果を投稿しています";
             var path = Path.Combine(Application.temporaryCachePath, $"cyber-disc-arena-result-{System.Guid.NewGuid():N}.png");
-            File.WriteAllBytes(path, png);
             try
             {
+                File.WriteAllBytes(path, png);
                 var response = await runner.Client.SendAsync("create_post", new JObject
                 {
                     ["topic"] = board.Topic,
@@ -76,7 +76,12 @@ namespace CyberDiscArena
                     }),
                 });
                 Notice = response.Ok ? "結果を投稿しました（掲示板は Enter）" : $"投稿できませんでした（{response.ErrorCode}）";
-                return ResultPost = response.Ok ? (string)response.Data : null;
+                return response.Ok ? (string)response.Data : null;
+            }
+            catch (System.Exception error) when (error is KukuriException || error is IOException)
+            {
+                Notice = "投稿できませんでした";
+                return null;
             }
             finally
             {

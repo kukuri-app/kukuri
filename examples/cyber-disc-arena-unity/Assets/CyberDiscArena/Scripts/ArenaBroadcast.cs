@@ -205,6 +205,7 @@ namespace CyberDiscArena
             nextTry = Time.unscaledTime + 10;
             if (watchedTopic != topic || watchedClient != client)
             {
+                // 同じ名義の購読は topic を変えると置き換わる（前の topic は残らない）。
                 Require(await client.SendAsync("set_scope_display", Display(topic, true)));
                 (watchedTopic, watchedClient) = (topic, client);
             }
@@ -226,8 +227,15 @@ namespace CyberDiscArena
 
         void OnDisable()
         {
-            if (watchedClient != null)
-                _ = watchedClient.SendAsync("set_scope_display", Display(watchedTopic, false));
+            // 閉じた client の購読は client とともに消える。
+            try
+            {
+                if (watchedClient != null)
+                    _ = watchedClient.SendAsync("set_scope_display", Display(watchedTopic, false));
+            }
+            catch (KukuriException)
+            {
+            }
             watchedClient = null;
             watchedTopic = null;
         }
@@ -262,6 +270,8 @@ namespace CyberDiscArena
 
         void OnGUI()
         {
+            if (ArenaBoard.Open)
+                return;
             if (account.Screen == "playing" && !InMatch)
                 BroadcastNext = GUI.Toggle(new Rect(1000, 330, 260, 30), BroadcastNext, " 作る部屋の試合を配信する");
             if (InMatch && LiveSession != null)

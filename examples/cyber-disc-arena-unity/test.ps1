@@ -375,6 +375,17 @@ public sealed class ArenaProbe : MonoBehaviour
         await Until(() => expected.All(cheers.Contains), 180, "the cheers did not arrive");
         await Shot("1c-cheer");
         Debug.Log("KGS_CHEERS " + string.Join(",", cheers.OrderBy(label => label)));
+        // 対戦中に掲示板を開いて入力欄を選ぶと、対戦の操作に使わない（arena の他の IMGUI は出さない）。
+        var boardObject = arenaBoard.Board.gameObject;
+        boardObject.SetActive(true);
+        await Pause(1);
+        UnityEngine.EventSystems.EventSystem.current.SetSelectedGameObject(
+            boardObject.GetComponentsInChildren<UnityEngine.UI.InputField>(true).First(field => field.name == "PostInput").gameObject);
+        await Pause(0.5f);
+        Debug.Log($"KGS_BOARD_TYPING {ArenaControls.Typing()} {ArenaBoard.Open}");
+        await Shot("1d-board");
+        UnityEngine.EventSystems.EventSystem.current.SetSelectedGameObject(null);
+        boardObject.SetActive(false);
         await Until(() => session.Phase == ArenaPhase.Result, 480, "the match did not end");
         await Pause(1.5f);
         Final();
@@ -813,8 +824,9 @@ if ($desktop) {
     $resultSeen = (Select-String -Path $desktopLog -Pattern "^result-seen (\d+)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value })
     $replied = (Select-String -Path $desktopLog -Pattern "^replied (\S+)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value })
 }
-$boardOk = ($resultPost -match "^[0-9a-f]{64}$") -and ((-not $desktop) -or (([int]$resultSeen -ge 1) -and ($thread -eq "$resultPost $replied $resultPost True") -and ($exits["resume"] -eq 0)))
-Write-Output "Player board ($Backend): result=$resultPost desktop_seen_attachments=$resultSeen reply=$replied thread=[$thread] ok=$boardOk"
+$typing = (Lines "host" "KGS_BOARD_TYPING (.*)") | Select-Object -First 1
+$boardOk = ($typing -eq "True True") -and ($resultPost -match "^[0-9a-f]{64}$") -and ((-not $desktop) -or (([int]$resultSeen -ge 1) -and ($thread -eq "$resultPost $replied $resultPost True") -and ($exits["resume"] -eq 0)))
+Write-Output "Player board ($Backend): typing_blocks_match=[$typing] result=$resultPost desktop_seen_attachments=$resultSeen reply=$replied thread=[$thread] ok=$boardOk"
 $expectedCheers = if ($DesktopApp) { "CLAP!,FIRE!" } else { "FIRE!" }
 $liveOk = ($liveStarted -match "\S") -and ($liveEnded -eq "True") -and ($cheersShown -eq $expectedCheers) -and ([int]$spectated -gt 10) -and ($rewatched -eq "True,True") -and
     $desktopOk -and ($exits["spectator"] -eq 0)

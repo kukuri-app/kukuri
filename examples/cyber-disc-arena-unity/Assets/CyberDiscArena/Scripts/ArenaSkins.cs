@@ -152,7 +152,7 @@ namespace CyberDiscArena
 
         void OnGUI()
         {
-            if (account.Screen != "playing" || InMatch)
+            if (account.Screen != "playing" || InMatch || ArenaBoard.Open)
                 return;
             GUILayout.BeginArea(area, GUI.skin.box);
             GUILayout.Label("ロッカー（スキン）");
