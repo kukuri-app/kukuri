@@ -254,8 +254,8 @@ pub(crate) async fn bind_endpoint_with_options(
         relay_urls,
     )?;
     builder = builder.hooks(connection_paths.clone());
-    if let Some(secret_key) = secret_key {
-        builder = builder.secret_key(secret_key);
+    if let Some(secret_key) = &secret_key {
+        builder = builder.secret_key(secret_key.clone());
     }
     #[cfg(test)]
     {
@@ -264,7 +264,7 @@ pub(crate) async fn bind_endpoint_with_options(
     // ブラウザには UDP の socket が無い（ADR 0056 §8）。
     #[cfg(not(target_family = "wasm"))]
     {
-        builder = apply_bind(builder, bind_addr)?;
+        builder = bind_transports(builder, bind_addr, secret_key.as_ref())?;
     }
     #[cfg(target_family = "wasm")]
     let _ = bind_addr;
@@ -301,8 +301,19 @@ async fn bind_endpoint_relay_only(
     Ok((endpoint, discovery, connection_paths))
 }
 
+/// IP の transport を `bind_addr` に bind する。計測用の proxy が指定されていれば、代わりに proxy の transport を
+/// 置く（`proxy_transport`）。
 #[cfg(not(target_family = "wasm"))]
-fn apply_bind(builder: EndpointBuilder, bind_addr: SocketAddr) -> Result<EndpointBuilder> {
+pub fn bind_transports(
+    builder: EndpointBuilder,
+    bind_addr: SocketAddr,
+    secret_key: Option<&SecretKey>,
+) -> Result<EndpointBuilder> {
+    if let Some(proxy) = super::proxy_transport::proxy_from_env()? {
+        return Ok(super::proxy_transport::with_proxy(
+            builder, proxy, secret_key,
+        ));
+    }
     match bind_addr {
         SocketAddr::V4(addr) => builder
             .bind_addr(addr)

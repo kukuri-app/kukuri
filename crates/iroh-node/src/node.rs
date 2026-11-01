@@ -492,8 +492,8 @@ impl IrohDocsNode {
         {
             endpoint_builder = endpoint_builder.ca_tls_config(CaTlsConfig::insecure_skip_verify());
         }
-        if let Some(secret_key) = secret_key {
-            endpoint_builder = endpoint_builder.secret_key(secret_key);
+        if let Some(secret_key) = &secret_key {
+            endpoint_builder = endpoint_builder.secret_key(secret_key.clone());
         }
         if let Some(transport) = &webrtc {
             endpoint_builder = endpoint_builder.add_custom_transport(transport.clone());
@@ -504,10 +504,11 @@ impl IrohDocsNode {
         // ブラウザには UDP の socket が無い（ADR 0056 §8）。
         #[cfg(not(target_family = "wasm"))]
         {
-            endpoint_builder = match network_config.bind_addr {
-                std::net::SocketAddr::V4(addr) => endpoint_builder.bind_addr(addr)?,
-                std::net::SocketAddr::V6(addr) => endpoint_builder.bind_addr(addr)?,
-            };
+            endpoint_builder = kukuri_transport::bind_transports(
+                endpoint_builder,
+                network_config.bind_addr,
+                secret_key.as_ref(),
+            )?;
         }
         #[cfg(all(test, not(target_family = "wasm")))]
         if browser_like {

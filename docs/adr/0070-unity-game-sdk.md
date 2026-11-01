@@ -668,6 +668,12 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 
 閾値は 5 回すべてで満たすこと。frame time・入力の確定・asset の反映は対戦者 2 人とも、映像遅延は視聴者 5 人全員、memory は 7 つの Player すべてで判定する。送信量は 3 分間の平均で判定する。
 
+計測の部品（#1984 AC-1）:
+
+- proxy は `kukuri-sdk-net-proxy`（`crates/game-sdk`）。環境変数 `KUKURI_TEST_UDP_PROXY` に proxy の address を渡した process の endpoint は、IP の socket を持たず、proxy へ送る custom transport だけで送受信する（`kukuri-transport` の `bind_transports`）。同じ PC の process どうしは loopback で直接届くので、IP の socket を残すと iroh の NAT traversal が直接の経路を作り、proxy を通らない packet ができるためである。宛先は EndpointId で表し、どの EndpointId にも proxy の transport の address を返す lookup を置く。ticket の address は使われないが、ticket を作るために `KUKURI_ADVERTISE_PORT` を渡す。
+- proxy は送り手と宛先の組ごとの bytes を数え（送信量）、標準入力の `blackout <ms>` でその間の全 packet を落とす（切断からの復帰）。時刻は QueryPerformanceCounter の値で、C# の `Stopwatch.GetTimestamp()` と比べられる。
+- SDK の memory は、SDK の DLL の global allocator が数えた bytes を `kukuri_sdk_allocated_bytes` で読む（libvpx などの C の確保は含まない）。
+
 | 項目 | 測り方 | 閾値 |
 | --- | --- | --- |
 | frame time | 対戦者の `Update` の間隔 | p95 ≤ 16.7 ms、p99 ≤ 25 ms |

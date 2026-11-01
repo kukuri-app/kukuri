@@ -28,6 +28,10 @@ ts-rs = { workspace = true, optional = true }
 n0-mainline.workspace = true
 iroh-mainline-address-lookup.workspace = true
 iroh-mainline-endpoint-discovery.workspace = true
+# 計測用の UDP proxy を通す custom transport（#1984）。
+iroh-base = "1.4.1"
+n0-watcher = "1.0.1"
+noq-udp = { version = "1.4.0", default-features = false }
 
 [features]
 # IPC 型の TypeScript 生成専用(codegen 時のみ有効)。

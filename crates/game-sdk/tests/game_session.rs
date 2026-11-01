@@ -18,8 +18,8 @@ use kukuri_game_sdk::{
 };
 use serde_json::{Value, json};
 use support::{
-    Polled, call, consent, finish, introduce, isolated_environment, open_real, poll_hold,
-    poll_once, request, response_for, send, send_binary, subscribe, wait_for,
+    Polled, call, finish, isolated_environment, join, open_real, poll_hold, poll_once, request,
+    send, send_binary, wait_for,
 };
 
 const OK: i32 = Status::Ok as i32;
@@ -53,49 +53,6 @@ fn packets(items: &[Polled]) -> Vec<(String, String, Vec<u8>)> {
             )
         })
         .collect()
-}
-
-/// 同意済みの 2 つの profile をつなぎ、host の room に guest を参加させて session ID を返す。
-fn join(host: *mut KukuriHandle, guest: *mut KukuriHandle, topic: &str) -> String {
-    for handle in [host, guest] {
-        consent(handle);
-        subscribe(handle, topic);
-    }
-    introduce(host, guest);
-    let room = call(
-        host,
-        &id(),
-        "create_game_room",
-        json!({
-            "topic": topic,
-            "channel_ref": {"kind": "public"},
-            "title": "sdk",
-            "description": "",
-            "participants": [],
-            "action": {"application_id": "com.kukuri.test.sdk", "max_players": 4},
-        }),
-    );
-    // room が guest の手元に届くまでは断られる。
-    let deadline = Instant::now() + Duration::from_secs(120);
-    let session = loop {
-        let request_id = id();
-        let payload = json!({"topic": topic, "scope": {"kind": "public"}, "room_id": room});
-        assert_eq!(
-            send(guest, &request(&request_id, "join_game_session", payload)),
-            OK
-        );
-        let response = response_for(guest, &request_id, Duration::from_secs(60));
-        if response["ok"] == true {
-            break response["data"]["session_id"].as_str().unwrap().to_owned();
-        }
-        assert!(Instant::now() < deadline, "join: {}", response["error"]);
-        std::thread::sleep(Duration::from_millis(500));
-    };
-    wait_for(host, "the host opens the session", |json, _| {
-        (json["type"] == "game_session_opened" && json["session_id"] == session.as_str())
-            .then_some(())
-    });
-    session
 }
 
 /// 受け手が batch を解放しないまま 64 MiB に達すると packet を受け取らなくなり（応答は届く）、解放すると stream の

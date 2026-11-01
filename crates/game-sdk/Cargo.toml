@@ -11,6 +11,11 @@ crate-type = ["cdylib", "rlib"]
 name = "kukuri-sdk-sidecar"
 path = "src/bin/sidecar.rs"
 
+# 性能の計測（ADR 0070 §8.4）で全 process の packet を通す UDP proxy（#1984）。
+[[bin]]
+name = "kukuri-sdk-net-proxy"
+path = "src/bin/net_proxy.rs"
+
 [features]
 # libvpx による VP8 の圧縮・復号と、視聴の音声の再生（Live の配信・視聴。#1982）。`KUKURI_LIBVPX_DIR` が要る。
 vp8 = ["kukuri-desktop-runtime/audio-devices"]
@@ -24,6 +29,7 @@ blake3.workspace = true
 futures-util.workspace = true
 kukuri-cli = { path = "../kukuri-cli" }
 kukuri-desktop-runtime = { path = "../desktop-runtime" }
+kukuri-transport = { path = "../transport" }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
@@ -34,6 +40,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
+    "Win32_System_Performance",
     "Win32_System_Threading",
 ] }
 
