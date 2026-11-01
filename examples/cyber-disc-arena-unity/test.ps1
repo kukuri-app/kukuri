@@ -296,6 +296,7 @@ public sealed class ArenaProbe : MonoBehaviour
         skins.Select("gold");
         await Until(() => skins.Loader(0).AssetId == "gold" && skins.Loader(0).AppliedRevision >= 1, 60, "gold was not worn");
         skins.Select(ArenaProfile.StandardSkin);
+        await Until(() => skins.Loader(0).AssetId == "", 10, "standard was not worn");
         Debug.Log("KGS_SKIN_STANDARD " + (skins.Loader(0).AssetId == "" && skins.Loader(0).AppliedRevision == 0 &&
             skins.Loader(0).GetComponent<Renderer>().sharedMaterial.name == "PlayerA"));
         skins.Select("neon-red");
