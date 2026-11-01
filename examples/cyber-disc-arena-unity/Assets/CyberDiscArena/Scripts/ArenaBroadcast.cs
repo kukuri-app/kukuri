@@ -33,7 +33,11 @@ namespace CyberDiscArena
         RenderTexture local;
         KukuriClient subscribed;
         bool busy;
+        bool quitting;
         float nextTry;
+
+        /// この端末で作って、まだ終えていない配信の ID（profile の隣の file。強制終了で閉じ損ねたら次の起動で終える）。
+        string Unfinished => runner.Settings.ProfileDirectory + ".cyber-disc-arena-live";
 
         /// 次に作る部屋の試合を配信するか（部屋を作る前に選ぶ）。
         public bool BroadcastNext { get; set; }
@@ -50,6 +54,7 @@ namespace CyberDiscArena
             {
                 if (LiveSession == null || runner.Client == null)
                     return true;
+                quitting = true;
                 _ = QuitAfterStop(runner.Client);
                 return false;
             };
@@ -75,9 +80,11 @@ namespace CyberDiscArena
                     client.EventReceived += OnEvent;
             }
             var playing = session.InMatch && (session.Phase == ArenaPhase.Countdown || session.Phase == ArenaPhase.Playing);
-            if (!busy && client != null && Time.unscaledTime >= nextTry)
+            if (!busy && !quitting && client != null && Time.unscaledTime >= nextTry)
             {
-                if (session.IsHost && BroadcastNext && LiveSession == null && playing)
+                if (System.IO.File.Exists(Unfinished) && LiveSession == null)
+                    _ = Step(() => EndUnfinished(client));
+                else if (session.IsHost && BroadcastNext && LiveSession == null && playing)
                     _ = Step(() => StartLive(client));
                 else if (LiveSession != null && !playing)
                     _ = Step(() => StopLive(client));
@@ -136,28 +143,40 @@ namespace CyberDiscArena
                 ["title"] = "Cyber Disc Arena の試合",
                 ["description"] = "",
             }));
+            System.IO.File.WriteAllText(Unfinished, id);
             try
             {
                 var live = Require(await client.SendAsync("get_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = id }));
+                var post = (string)live["start_post_id"];
                 broadcaster.Client = client;
                 broadcaster.Topic = lobby.Topic;
                 if (!await broadcaster.StartBroadcast(id))
                     throw new KukuriException("broadcast_failed", "the broadcast did not start");
-                (LiveSession, LivePost) = (id, (string)live["start_post_id"]);
+                (LiveSession, LivePost) = (id, post);
             }
             catch
             {
-                // 作った配信を「配信中」のまま残さない。
-                await client.SendAsync("end_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = id });
+                // 作った配信を「配信中」のまま残さない（終えられなければ file に残り、次にやり直す）。
+                await broadcaster.StopBroadcast();
+                await End(client, id);
                 throw;
             }
         }
+
+        async Task End(KukuriClient client, string id)
+        {
+            Require(await client.SendAsync("end_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = id }));
+            System.IO.File.Delete(Unfinished);
+        }
+
+        /// 前の起動で閉じ損ねた、この端末の配信を終える。
+        Task EndUnfinished(KukuriClient client) => End(client, System.IO.File.ReadAllText(Unfinished).Trim());
 
         /// 配信を止めて終える。終えられなければ ID を残し、次にやり直す。
         async Task StopLive(KukuriClient client)
         {
             await broadcaster.StopBroadcast();
-            Require(await client.SendAsync("end_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = LiveSession }));
+            await End(client, LiveSession);
             (LiveSession, LivePost) = (null, null);
         }
 
@@ -178,10 +197,6 @@ namespace CyberDiscArena
         {
             nextTry = Time.unscaledTime + 10;
             var lives = Require(await client.SendAsync("list_live_sessions", new JObject { ["topic"] = lobby.Topic })) as JArray ?? new JArray();
-            // 前に閉じ損ねた（強制終了などで）自分の配信は、ここで終える（読んだ 1 頁の中だけ）。
-            foreach (var mine in lives.Where(live => (string)live["status"] == "Live" && (string)live["host_pubkey"] == account.PublicKey &&
-                         (string)live["session_id"] != LiveSession))
-                await client.SendAsync("end_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = mine["session_id"] });
             var other = lives.FirstOrDefault(live => (string)live["status"] == "Live" && (string)live["host_pubkey"] != account.PublicKey);
             if (other == null || session.InMatch)
                 return;
