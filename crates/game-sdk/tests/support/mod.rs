@@ -266,6 +266,85 @@ pub fn wait_for<T>(
     }
 }
 
+/// 同意済みの 2 つの profile をつなぎ、host の room に guest を参加させて session ID を返す。
+pub fn join(host: *mut KukuriHandle, guest: *mut KukuriHandle, topic: &str) -> String {
+    for handle in [host, guest] {
+        consent(handle);
+        subscribe(handle, topic);
+    }
+    introduce(host, guest);
+    // room の hint は近隣がつながる前に送ると届かない（遅延のある経路で先に作ると、guest は知らないままになる）。
+    for handle in [host, guest] {
+        wait_for_neighbor(handle, topic);
+    }
+    let room = call(
+        host,
+        &id(),
+        "create_game_room",
+        json!({
+            "topic": topic,
+            "channel_ref": {"kind": "public"},
+            "title": "sdk",
+            "description": "",
+            "participants": [],
+            "action": {"application_id": "com.kukuri.test.sdk", "max_players": 4},
+        }),
+    );
+    // room が guest の手元に届くまでは断られる。
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let session = loop {
+        let request_id = id();
+        let payload = json!({"topic": topic, "scope": {"kind": "public"}, "room_id": room});
+        assert_eq!(
+            send(guest, &request(&request_id, "join_game_session", payload)),
+            Status::Ok as i32
+        );
+        let response = response_for(guest, &request_id, Duration::from_secs(60));
+        if response["ok"] == true {
+            break response["data"]["session_id"].as_str().unwrap().to_owned();
+        }
+        assert!(Instant::now() < deadline, "join: {}", response["error"]);
+        std::thread::sleep(Duration::from_millis(500));
+    };
+    wait_for(host, "the host opens the session", |json, _| {
+        (json["type"] == "game_session_opened" && json["session_id"] == session.as_str())
+            .then_some(())
+    });
+    session
+}
+
+/// `topic` の gossip の近隣が 1 人以上つながるまで待つ。
+pub fn wait_for_neighbor(handle: *mut KukuriHandle, topic: &str) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let status = call(handle, &id(), "get_sync_status", json!({}));
+        let joined = status["topic_diagnostics"]
+            .as_array()
+            .is_some_and(|topics| {
+                topics.iter().any(|entry| {
+                    entry["topic"]
+                        .as_str()
+                        .is_some_and(|name| name.ends_with(topic))
+                        && entry["peer_count"].as_u64().unwrap_or(0) > 0
+                })
+            });
+        if joined {
+            return;
+        }
+        assert!(Instant::now() < deadline, "no neighbor on {topic}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// 試験の中で重ならない request ID。
+pub fn id() -> String {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    format!(
+        "r{}",
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
+
 /// topic の gossip を購読する。
 pub fn subscribe(handle: *mut KukuriHandle, topic: &str) {
     call(

@@ -180,6 +180,8 @@ mod discovery;
 mod endpoint;
 mod offer;
 mod peer_state;
+#[cfg(not(target_family = "wasm"))]
+mod proxy_transport;
 mod receive_destination;
 mod relay;
 #[cfg(test)]
@@ -191,6 +193,10 @@ mod topics;
 pub use connection_paths::GossipConnectionPaths;
 #[cfg(test)]
 pub(crate) use endpoint::bind_endpoint_with_options;
+#[cfg(not(target_family = "wasm"))]
+pub use endpoint::bind_transports;
+#[cfg(not(target_family = "wasm"))]
+pub use proxy_transport::{UDP_PROXY_ENV, UDP_PROXY_HEADER_LEN, UDP_PROXY_SOCKET_BUFFER};
 pub use relay::{build_endpoint_builder, sync_endpoint_relay_config};
 pub use topic_introductions::{TOPIC_PEERS_ALPN, TopicPeerIntroductions};
 #[cfg(test)]

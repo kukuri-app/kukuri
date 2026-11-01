@@ -10,9 +10,13 @@ pub mod sidecar;
 pub mod vp8;
 
 use std::{
+    alloc::{GlobalAlloc, Layout, System},
     collections::HashMap,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{Mutex, Once},
+    sync::{
+        Mutex, Once,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 pub use client::{
@@ -158,6 +162,52 @@ unsafe fn bytes<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
 #[unsafe(no_mangle)]
 pub extern "C" fn kukuri_sdk_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// SDK の DLL の Rust 側が確保している bytes を数える allocator（ADR 0070 §8.4 の SDK の memory。#1984）。
+struct CountingAllocator;
+
+static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
+
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ptr = unsafe { System.alloc(layout) };
+        if !ptr.is_null() {
+            ALLOCATED.fetch_add(layout.size(), Ordering::Relaxed);
+        }
+        ptr
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        let ptr = unsafe { System.alloc_zeroed(layout) };
+        if !ptr.is_null() {
+            ALLOCATED.fetch_add(layout.size(), Ordering::Relaxed);
+        }
+        ptr
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) };
+        ALLOCATED.fetch_sub(layout.size(), Ordering::Relaxed);
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let moved = unsafe { System.realloc(ptr, layout, new_size) };
+        if !moved.is_null() {
+            ALLOCATED.fetch_add(new_size, Ordering::Relaxed);
+            ALLOCATED.fetch_sub(layout.size(), Ordering::Relaxed);
+        }
+        moved
+    }
+}
+
+#[global_allocator]
+static GLOBAL: CountingAllocator = CountingAllocator;
+
+/// SDK の DLL の Rust 側が今確保している bytes（libvpx などの C の確保は含まない）。handle は要らず、待たない。
+#[unsafe(no_mangle)]
+pub extern "C" fn kukuri_sdk_allocated_bytes() -> u64 {
+    ALLOCATED.load(Ordering::Relaxed) as u64
 }
 
 /// `data` の BLAKE3 を小文字の hex（64 bytes）で `out` に書く。ゲームが書いた file を投稿に添付するとき、`create_post` の

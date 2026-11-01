@@ -101,6 +101,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | `kukuri_sdk_batch_release(handle, batch)` | poll で受けた batch（中の JSON と bytes を含む）を解放する | なし |
 | `kukuri_sdk_close(handle)` | 新しい要求を断り、未完了の要求を下の表の結果で終え、購読・task・DB lock を解放する。close の後も poll と batch の解放はでき、未完了だった要求の結果を受け取れる | 停止の完了まで（上限 5 秒） |
 | `kukuri_sdk_blake3_hex(data, len, out)` | bytes の BLAKE3 を小文字の hex（64 bytes）で書く。ゲームが書いた file を投稿に添付するとき、`create_post` の添付の `hash` に使う。handle は要らない（#1983 AC-2d で足した。版は変えない） | なし |
+| `kukuri_sdk_allocated_bytes()` | SDK の DLL の Rust 側が今確保している bytes を返す（global allocator が数える。libvpx などの C の確保は含まない）。§8.4 の memory の計測に使う。handle は要らない（#1984 AC-1 で足した。版は変えない） | なし |
 | `kukuri_sdk_free(handle)` | handle と未解放の batch の memory を解放する（close していなければ close する）。以後 handle は使えない | close と同じ |
 
 - ABI の関数は同期的な状態 code を返す: `OK`、`INVALID_ARGUMENT`、`BACKPRESSURE`、`CLOSED`、`FAULTED`、`ABI_MISMATCH`。要求の成否は poll で受ける応答で返す。
@@ -667,6 +668,12 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 | 時計 | 同じ PC の `Stopwatch`（QueryPerformanceCounter）で、process をまたいで時刻を比べる |
 
 閾値は 5 回すべてで満たすこと。frame time・入力の確定・asset の反映は対戦者 2 人とも、映像遅延は視聴者 5 人全員、memory は 7 つの Player すべてで判定する。送信量は 3 分間の平均で判定する。
+
+計測の部品（#1984 AC-1）:
+
+- proxy は `kukuri-sdk-net-proxy`（`crates/game-sdk`）。環境変数 `KUKURI_TEST_UDP_PROXY` に proxy の address を渡した process の endpoint は、IP の socket を持たず、proxy へ送る custom transport だけで送受信する（`kukuri-transport` の `bind_transports`）。同じ PC の process どうしは loopback で直接届くので、IP の socket を残すと iroh の NAT traversal が直接の経路を作り、proxy を通らない packet ができるためである。宛先は EndpointId で表し、どの EndpointId にも proxy の transport の address を返す lookup を置く。ticket の address は使われないが、ticket を作るために `KUKURI_ADVERTISE_PORT` を渡す。relay の transport は外さないので、計測の profile は relay を設定しない（static_peer で Community Node につながない）。proxy の socket と各 process の proxy の transport の socket の送受信の buffer は、iroh の IP の socket と同じ 7 MiB にする（OS が buffer の溢れで捨てた packet は proxy の損失に数えられない）。
+- proxy は送り手と宛先の組ごとの bytes を数え（送信量）、標準入力の `blackout <ms>` でその間の全 packet を落とす（切断からの復帰）。遅延は受けた時点で決め、時刻の来た packet を 200 µs ごとに渡すので、片道は決めた遅延より 1 ms ほど長くなりうる（判定が厳しい側へずれる）。時刻は QueryPerformanceCounter の値で、C# の `Stopwatch.GetTimestamp()` と比べられる。
+- SDK の memory は、SDK の DLL の global allocator が数えた bytes を `kukuri_sdk_allocated_bytes` で読む（libvpx などの C の確保は含まない）。
 
 | 項目 | 測り方 | 閾値 |
 | --- | --- | --- |

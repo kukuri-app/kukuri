@@ -19,11 +19,23 @@ use kukuri_cli::{
 };
 use kukuri_game_sdk::{
     ABI_VERSION, KukuriBatch, KukuriHandle, MAX_PENDING, SdkClient, Started, Status,
-    kukuri_sdk_batch_release, kukuri_sdk_blake3_hex, kukuri_sdk_cancel, kukuri_sdk_close,
-    kukuri_sdk_free, kukuri_sdk_open, kukuri_sdk_poll,
+    kukuri_sdk_allocated_bytes, kukuri_sdk_batch_release, kukuri_sdk_blake3_hex, kukuri_sdk_cancel,
+    kukuri_sdk_close, kukuri_sdk_free, kukuri_sdk_open, kukuri_sdk_poll,
 };
 use serde_json::{Value, json};
 use support::{PROFILE, error_code, finish, open_real, poll_once, request, response_for, send};
+
+/// SDK の Rust 側が確保している bytes を、handle なしで返す（ADR 0070 §8.4 の memory の計測。#1984）。並行する試験の
+/// 確保と解放が混ざるので、それより十分に大きい量で確かめる。
+#[test]
+fn allocated_bytes_follow_the_rust_allocations() {
+    let before = kukuri_sdk_allocated_bytes();
+    let block = vec![1u8; 256 << 20];
+    let during = kukuri_sdk_allocated_bytes();
+    assert!(during >= before + (192 << 20), "{before} -> {during}");
+    drop(std::hint::black_box(block));
+    assert!(kukuri_sdk_allocated_bytes() + (192 << 20) <= during);
+}
 
 /// 添付の file の hash（`create_post` の `hash`）を、handle なしで BLAKE3 の小文字の hex で返す（#1983）。
 #[test]
