@@ -368,7 +368,8 @@ if ($sameResult) {
         for ($axis = 0; $axis -lt 3; $axis++) { if ([math]::Abs($a[$axis] - $b[$axis]) -gt 0.05) { $positionsMatch = $false } }
     }
 }
-$dodges = (@(Lines "host" "KGS_DODGES (\d+)") + @(Lines "client" "KGS_DODGES (\d+)") | Measure-Object -Sum).Sum
+$dodges = "$((Lines "host" "KGS_DODGES (\d+)") | Select-Object -First 1),$((Lines "client" "KGS_DODGES (\d+)") | Select-Object -First 1)"
+$dodged = @($dodges -split "," | Where-Object { $_ -match "^\d+$" -and [int]$_ -ge 1 }).Count -eq 2
 $uiLocked = (Lines "host" "KGS_UI_LOCKED (\S+)") | Select-Object -First 1
 $secondInput = [int]((Lines "host" "KGS_SECOND_INPUT (\d+)") | Select-Object -First 1)
 $hostLeft = (Lines "host" "KGS_HOST_LEFT (.*)") | Select-Object -First 1
@@ -376,7 +377,7 @@ $clientClosed = (Lines "client" "KGS_CLIENT_CLOSED (.*)") | Select-Object -First
 $hostSawLeave = (Lines "host" "KGS_HOST_SAW_LEAVE (.*)") | Select-Object -First 1
 $clientLeft = (Lines "client" "KGS_CLIENT_LEFT (.*)") | Select-Object -First 1
 $failure = Select-String -Path $players["host"].Log, $players["client"].Log -Pattern "KGS_FAILED.*" | Select-Object -First 1
-$ok = $sameEvents -and $sameResult -and $positionsMatch -and ($dodges -ge 1) -and ($uiLocked -eq "True") -and ($secondInput -ge 20) -and ("Throw" -in $kinds) -and ("Catch" -in $kinds) -and ("Hit" -in $kinds) -and
+$ok = $sameEvents -and $sameResult -and $positionsMatch -and $dodged -and ($uiLocked -eq "True") -and ($secondInput -ge 20) -and ($secondInput -le 600) -and ("Throw" -in $kinds) -and ("Catch" -in $kinds) -and ("Hit" -in $kinds) -and
     ($hostLeft -eq "listening=False in_match=False") -and ($clientClosed -eq "listening=False joined=none notice=ホストが部屋を閉じました") -and
     ($hostSawLeave -eq "Left") -and ($clientLeft -eq "listening=False joined=none") -and ($exits["host"] -eq 0) -and ($exits["client"] -eq 0)
 Write-Output "Player match ($Backend, delay=${DelayMs}ms loss=$LossPercent%): events=$($hostFirst.Count) same=$sameEvents kinds=$($kinds -join ',') dodges=$dodges ui_locked=$uiLocked host=[$hostFinal] client=[$clientFinal] positions=$positionsMatch"

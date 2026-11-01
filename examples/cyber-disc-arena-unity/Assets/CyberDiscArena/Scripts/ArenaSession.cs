@@ -361,12 +361,14 @@ namespace CyberDiscArena
                 if (@event.Kind == ArenaEventKind.Phase && @event.Phase == ArenaPhase.Countdown)
                     Players[1] = new PlayerState { Position = ArenaRules.Spawn(1), Yaw = ArenaRules.SpawnYaw(1), LastInput = sequence };
             }
-            Notice = @event.Phase switch
-            {
-                ArenaPhase.Countdown => "まもなく開始",
-                ArenaPhase.Left => "相手が退出しました",
-                _ => "",
-            };
+            // 自分で対戦をやめている途中は「部屋を閉じています」を出したままにする。
+            if (!ending)
+                Notice = @event.Phase switch
+                {
+                    ArenaPhase.Countdown => "まもなく開始",
+                    ArenaPhase.Left => "相手が退出しました",
+                    _ => "",
+                };
             Confirmed?.Invoke(@event);
         }
 
