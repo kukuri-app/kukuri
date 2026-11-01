@@ -19,6 +19,8 @@ namespace CyberDiscArena
         /// 出した応援の数と、最後の文字（試験・確認用）。
         public int Count { get; private set; }
         public string Last { get; private set; } = "";
+        /// 応援を出した（文字）。
+        public event System.Action<string> Spawned;
 
         public void Spawn(string label)
         {
@@ -51,6 +53,7 @@ namespace CyberDiscArena
             shown.Add((root, Time.time));
             Count++;
             Last = label;
+            Spawned?.Invoke(label);
         }
 
         void Update()

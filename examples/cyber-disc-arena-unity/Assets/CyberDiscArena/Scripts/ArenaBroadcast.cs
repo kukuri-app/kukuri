@@ -42,7 +42,26 @@ namespace CyberDiscArena
         public string LivePost { get; private set; }
         public KukuriLiveViewer Viewer => viewer;
 
-        void Awake() => viewer.ReactionReceived += reaction => cheer.Spawn(Label(reaction));
+        void Awake()
+        {
+            viewer.ReactionReceived += reaction => cheer.Spawn(Label(reaction));
+            // 配信中にゲームを閉じても、配信を「配信中」のまま残さない（止めて終えてから閉じる）。
+            Application.wantsToQuit += () =>
+            {
+                if (LiveSession == null || runner.Client == null)
+                    return true;
+                _ = QuitAfterStop(runner.Client);
+                return false;
+            };
+        }
+
+        async Task QuitAfterStop(KukuriClient client)
+        {
+            var stopping = StopLive(client);
+            await Task.WhenAny(stopping, Task.Delay(3000));
+            LiveSession = null;
+            Application.Quit();
+        }
 
         void Update()
         {
@@ -64,6 +83,8 @@ namespace CyberDiscArena
                     _ = Step(() => StopLive(client));
                 else if (viewer.SessionId != null && (session.InMatch || viewer.State == "ended"))
                     _ = Step(viewer.StopWatching);
+                else if (viewer.SessionId != null && viewer.State != null && viewer.State != "watching")
+                    _ = Step(() => LeaveFinished(client));
                 else if (!session.InMatch && account.Screen == "playing" && viewer.SessionId == null)
                     _ = Step(() => WatchOther(client));
             }
@@ -93,7 +114,7 @@ namespace CyberDiscArena
             {
                 await operation();
             }
-            catch (KukuriException)
+            catch (System.Exception)
             {
                 nextTry = Time.unscaledTime + 5;
             }
@@ -115,31 +136,53 @@ namespace CyberDiscArena
                 ["title"] = "Cyber Disc Arena の試合",
                 ["description"] = "",
             }));
-            var live = Require(await client.SendAsync("get_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = id }));
-            broadcaster.Client = client;
-            broadcaster.Topic = lobby.Topic;
-            if (!await broadcaster.StartBroadcast(id))
+            try
             {
-                await client.SendAsync("end_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = id });
-                throw new KukuriException("broadcast_failed", "the broadcast did not start");
+                var live = Require(await client.SendAsync("get_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = id }));
+                broadcaster.Client = client;
+                broadcaster.Topic = lobby.Topic;
+                if (!await broadcaster.StartBroadcast(id))
+                    throw new KukuriException("broadcast_failed", "the broadcast did not start");
+                (LiveSession, LivePost) = (id, (string)live["start_post_id"]);
             }
-            (LiveSession, LivePost) = (id, (string)live["start_post_id"]);
+            catch
+            {
+                // 作った配信を「配信中」のまま残さない。
+                await client.SendAsync("end_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = id });
+                throw;
+            }
         }
 
+        /// 配信を止めて終える。終えられなければ ID を残し、次にやり直す。
         async Task StopLive(KukuriClient client)
         {
-            var id = LiveSession;
-            (LiveSession, LivePost) = (null, null);
             await broadcaster.StopBroadcast();
-            await client.SendAsync("end_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = id });
+            Require(await client.SendAsync("end_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = LiveSession }));
+            (LiveSession, LivePost) = (null, null);
+        }
+
+        /// 見ている配信が映像を送らなくなった（終わった・満員など）。もう配信中でなければ離れ、別の配信を探す。
+        async Task LeaveFinished(KukuriClient client)
+        {
+            nextTry = Time.unscaledTime + 10;
+            var live = await client.SendAsync("get_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = viewer.SessionId });
+            if (!live.Ok || !(live.Data is JObject view) || (string)view["status"] != "Live")
+            {
+                await viewer.StopWatching();
+                nextTry = 0;
+            }
         }
 
         /// ロビーにいる間、配信中の他の試合を 1 つ選んで見る（10 秒ごとに探す）。
         async Task WatchOther(KukuriClient client)
         {
             nextTry = Time.unscaledTime + 10;
-            var lives = Require(await client.SendAsync("list_live_sessions", new JObject { ["topic"] = lobby.Topic })) as JArray;
-            var other = lives?.FirstOrDefault(live => (string)live["status"] == "Live" && (string)live["host_pubkey"] != account.PublicKey);
+            var lives = Require(await client.SendAsync("list_live_sessions", new JObject { ["topic"] = lobby.Topic })) as JArray ?? new JArray();
+            // 前に閉じ損ねた（強制終了などで）自分の配信は、ここで終える（読んだ 1 頁の中だけ）。
+            foreach (var mine in lives.Where(live => (string)live["status"] == "Live" && (string)live["host_pubkey"] == account.PublicKey &&
+                         (string)live["session_id"] != LiveSession))
+                await client.SendAsync("end_live_session", new JObject { ["topic"] = lobby.Topic, ["session_id"] = mine["session_id"] });
+            var other = lives.FirstOrDefault(live => (string)live["status"] == "Live" && (string)live["host_pubkey"] != account.PublicKey);
             if (other == null || session.InMatch)
                 return;
             viewer.Client = client;

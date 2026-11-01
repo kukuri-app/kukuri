@@ -81,7 +81,7 @@ public sealed class ArenaProbe : MonoBehaviour
     [SerializeField] ArenaBroadcast broadcast;
     [SerializeField] ArenaCheer cheer;
     readonly System.Collections.Generic.HashSet<string> cheers = new System.Collections.Generic.HashSet<string>();
-    int cheersSeen;
+    string mutedSession;
     KukuriClient publisher;
 
     string role;
@@ -103,8 +103,9 @@ public sealed class ArenaProbe : MonoBehaviour
         role = Arg("-arena-role");
         if (role == null) return;
         runner.Settings = KukuriSettings.Create(KukuriMode.Ffi, role, Arg("-arena-profile-dir"));
-        // 試験では音を出さない（ゲームの音。Live の音は視聴で音量を 0 にする）。
+        // 試験では音を出さない（ゲームの音。Live の音は視聴を始めたらすぐ音量を 0 にする）。
         AudioListener.volume = 0;
+        cheer.Spawned += label => cheers.Add(label);
         runner.enabled = true;
         session.InputSource = Bot;
         session.Confirmed += @event =>
@@ -411,6 +412,9 @@ public sealed class ArenaProbe : MonoBehaviour
         await lobby.JoinRoomAsync(lobby.Rooms.First(room => room.Title == "test arena 2" && room.Status != "Ended").RoomId);
         await Until(() => session.Phase == ArenaPhase.Playing, 120, "the second match did not start");
         await Pause(2);
+        // 観戦の Player が 2 試合目の配信を受け直すまで続ける。
+        if (Arg("-arena-spectator") != null)
+            await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "rewatched")), 180, "the spectator did not watch the second live");
         session.Leave();
         await Until(() => !network.IsListening, 30, "the client NGO did not stop");
         await Pause(1);
@@ -479,20 +483,29 @@ public sealed class ArenaProbe : MonoBehaviour
     {
         await Prepare();
         await Until(() => broadcast.Viewer.SessionId != null && broadcast.Viewer.FramesShown > 10, 180, "the monitors did not show the live");
-        await Call("set_live_volume", new JObject { ["session_id"] = broadcast.Viewer.SessionId, ["volume"] = 0.0 });
+        var first = broadcast.Viewer.SessionId;
         Debug.Log("KGS_SPECTATED " + broadcast.Viewer.FramesShown);
         await Shot("spectator-monitors");
         await broadcast.React("🔥");
         Debug.Log("KGS_REACTED 🔥");
+        // 試合が終わって配信が止まると、モニターはその配信から離れ、次の試合の配信を受け直す。
+        await Until(() => broadcast.Viewer.SessionId == null, 600, "the monitors did not leave the finished live");
+        Debug.Log("KGS_LEFT_FINISHED True");
+        var frames = broadcast.Viewer.FramesShown;
+        await Until(() => broadcast.Viewer.SessionId != null && broadcast.Viewer.SessionId != first && broadcast.Viewer.FramesShown > frames + 10,
+            180, "the monitors did not show the next live");
+        Debug.Log("KGS_REWATCHED True");
+        File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "rewatched"), "done");
         await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "host-done")), 600, "the host did not finish");
     }
 
     void Update()
     {
-        if (cheer != null && cheer.Count != cheersSeen)
+        var watching = broadcast != null ? broadcast.Viewer.SessionId : null;
+        if (watching != null && watching != mutedSession && runner.Client != null)
         {
-            cheersSeen = cheer.Count;
-            cheers.Add(cheer.Last);
+            mutedSession = watching;
+            _ = runner.Client.SendAsync("set_live_volume", new JObject { ["session_id"] = watching, ["volume"] = 0.0 });
         }
         publisher?.Pump();
         // 部屋の一覧は、待っている部屋が来るまで短い間隔で読み直す。
@@ -620,15 +633,16 @@ $liveStarted = (Lines "host" "KGS_LIVE_STARTED (\S+)") | Select-Object -First 1
 $liveEnded = (Lines "host" "KGS_LIVE_ENDED (\S+)") | Select-Object -First 1
 $cheersShown = (Lines "host" "KGS_CHEERS (\S+)") | Select-Object -First 1
 $spectated = (Lines "spectator" "KGS_SPECTATED (\d+)") | Select-Object -First 1
+$rewatched = ((Lines "spectator" "KGS_LEFT_FINISHED (\S+)") | Select-Object -First 1) + "," + ((Lines "spectator" "KGS_REWATCHED (\S+)") | Select-Object -First 1)
 $desktopOk = $true
 if ($desktop) {
     if (-not $desktop.WaitForExit(120000)) { Stop-Process -Id $desktop.Id -Force }
     $desktopOk = (Select-String -Path $desktopLog -Pattern "^watched" -Quiet) -and (Select-String -Path $desktopLog -Pattern "^reacted" -Quiet)
 }
 $expectedCheers = if ($DesktopApp) { "CLAP!,FIRE!" } else { "FIRE!" }
-$liveOk = ($liveStarted -match "\S") -and ($liveEnded -eq "True") -and ($cheersShown -eq $expectedCheers) -and ([int]$spectated -gt 10) -and
+$liveOk = ($liveStarted -match "\S") -and ($liveEnded -eq "True") -and ($cheersShown -eq $expectedCheers) -and ([int]$spectated -gt 10) -and ($rewatched -eq "True,True") -and
     $desktopOk -and ($exits["spectator"] -eq 0)
-Write-Output "Player live ($Backend): started=$liveStarted spectator_frames=$spectated cheers=$cheersShown desktop=$(if ($desktop) { $desktopOk } else { 'skipped' }) ended=$liveEnded exits_spectator=$($exits['spectator']) ok=$liveOk"
+Write-Output "Player live ($Backend): started=$liveStarted spectator_frames=$spectated left_and_rewatched=$rewatched cheers=$cheersShown desktop=$(if ($desktop) { $desktopOk } else { 'skipped' }) ended=$liveEnded exits_spectator=$($exits['spectator']) ok=$liveOk"
 $skinStandard = (Lines "host" "KGS_SKIN_STANDARD (\S+)") | Select-Object -First 1
 $skinFromClient = (Lines "host" "KGS_SKIN_FROM_CLIENT (.*)") | Select-Object -First 1
 $skinOk = ($skinWorn -eq "neon-red 1") -and ($skinStandard -eq "True") -and ($skinFromClient -eq "gold 1") -and ($skinRemote -eq "neon-red 1") -and ($skinUpdated -eq "2,2")
