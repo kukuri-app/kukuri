@@ -1,10 +1,13 @@
-﻿# Cyber Disc Arena の対戦 ring とアカウントを確かめる（#1983 AC-1・AC-2a）。
+﻿# Cyber Disc Arena の対戦 ring とアカウントとスキンを確かめる（#1983 AC-1・AC-2a・AC-2b）。
 # - EditMode: host の裁定の規則（当てる・受け止める・跳ねて止まる・5 点・時間切れと延長・自分の側）
 # - 独立した 2 つの Windows Player（host と client）が、受信を片道 25 ms 遅らせ datagram を 1% 落とした状態で、入力を
 #   流す bot で 1 試合を終える。両方が同じ出来事の列（通し番号・持ち主・得点）と勝敗を確定し、client の番号に飛びが無く、
 #   試合の後の 2 人の位置が host と一致する。host が「ロビーへ戻る」と client に「ホストが部屋を閉じました」が出て、両方の
 #   NGO が止まり、session から抜ける。続く 2 試合目で client が途中で退出すると、host に「相手が退出しました」が出る。
 #   どちらも開始の画面（KukuriAccountScreen）で同意して「はじめる」までロビーを開かない。
+# - スキン: 作者（開発用の Sidecar）が対戦の前にスキンを発行すると、host のロッカーに出て、選ぶと host の体に貼られる。
+#   対戦が始まると client は host の体にそのスキンを P2P で取って貼る。対戦中に作者が新しい版を発行すると、両方の体が
+#   再起動せずに新しい版へ変わる。
 # - 状態の継続（1 つの Player を同じ profile で起動し直す）: 「はじめる」で選んだスキンと game player ID が再起動の後も
 #   続く。Steam Cloud に保存した file（game-account.json とゲームのセーブ）だけを写した新しい profile でも、同じ ID・公開鍵・
 #   スキンで再開する。profile に足したアカウント B に、この端末で遊んだ別の進行があれば、まとめる確定の画面で B の進行を
@@ -70,6 +73,8 @@ public sealed class ArenaProbe : MonoBehaviour
     [SerializeField] NetworkManager network;
     [SerializeField] KukuriAccountScreen account;
     [SerializeField] ArenaProfile profile;
+    [SerializeField] ArenaSkins skins;
+    KukuriClient publisher;
 
     string role;
     int throws;
@@ -196,6 +201,7 @@ public sealed class ArenaProbe : MonoBehaviour
     {
         await StartGame(false);
         lobby.Topic = Arg("-arena-topic");
+        skins.Topic = Arg("-arena-topic");
         var exchange = Arg("-arena-exchange");
         var other = role == "host" ? "client" : "host";
         var mine = Path.Combine(exchange, role + ".ticket");
@@ -204,6 +210,56 @@ public sealed class ArenaProbe : MonoBehaviour
         var path = Path.Combine(exchange, other + ".ticket");
         await Until(() => File.Exists(path), 60, "no ticket from the " + other);
         await Call("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(path) });
+        // 作者（開発用の Sidecar）は host が開いて、互いの ticket を取り込む。client は host が書いた ticket と公開鍵を読む。
+        if (role == "host")
+        {
+            publisher = KukuriClient.Open(KukuriMode.Sidecar, "publisher", Arg("-arena-publisher-dir"));
+            await Send(publisher, "accept_app_consents", new JObject
+            {
+                ["documents"] = new JArray(((JArray)(await Send(publisher, "get_app_consent_status"))["documents"]).Select(document =>
+                    new JObject { ["slug"] = document["slug"], ["version"] = document["currentVersion"] })),
+                ["language"] = "ja",
+                ["age_attested"] = true,
+            });
+            foreach (var peer in new[] { mine, path })
+                await Send(publisher, "import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(peer) });
+            var ticket = (string)await Send(publisher, "get_local_peer_ticket");
+            await Call("import_peer_ticket", new JObject { ["ticket"] = ticket });
+            File.WriteAllText(Path.Combine(exchange, "publisher.tmp"), ticket + "\n" + (string)(await Send(publisher, "get_sync_status"))["local_author_pubkey"]);
+            File.Move(Path.Combine(exchange, "publisher.tmp"), Path.Combine(exchange, "publisher.info"));
+        }
+        var published = Path.Combine(exchange, "publisher.info");
+        await Until(() => File.Exists(published), 60, "the publisher did not start");
+        var lines = File.ReadAllLines(published);
+        if (role == "client")
+            await Call("import_peer_ticket", new JObject { ["ticket"] = lines[0] });
+        skins.PublisherPubkey = lines[1];
+    }
+
+    static async Task<JToken> Send(KukuriClient client, string command, JObject payload = null)
+    {
+        var response = await client.SendAsync(command, payload);
+        if (!response.Ok) throw new Exception(command + ": " + response.ErrorCode);
+        return response.Data;
+    }
+
+    /// 単色の PNG をスキンとして発行する（作者の操作）。
+    async Task<long> PublishSkin(Color color)
+    {
+        var texture = new Texture2D(64, 64);
+        texture.SetPixels(Enumerable.Repeat(color, 64 * 64).ToArray());
+        var file = Path.Combine(Arg("-arena-exchange"), $"skin-{Guid.NewGuid():N}.png");
+        File.WriteAllBytes(file, texture.EncodeToPNG());
+        Destroy(texture);
+        var release = await Send(publisher, "publish_game_asset", new JObject
+        {
+            ["topic"] = Arg("-arena-topic"),
+            ["application_id"] = "com.kukuri.cyber-disc-arena",
+            ["asset_id"] = "neon-red",
+            ["format"] = new JObject { ["kind"] = "png" },
+            ["path"] = file,
+        });
+        return (long)release["revision"];
     }
 
     async Task Pause(float seconds)
@@ -230,6 +286,13 @@ public sealed class ArenaProbe : MonoBehaviour
     async Task Host()
     {
         await Prepare();
+        // 作者がスキンを発行すると、ロッカーに出る。選ぶと自分の体に貼られる。
+        await PublishSkin(new Color(1f, 0.15f, 0.2f));
+        await Until(() => skins.Published.Contains("neon-red"), 60, "the locker did not show the published skin");
+        skins.Select("neon-red");
+        await Until(() => skins.Loader(0).AppliedRevision >= 1, 60, "the skin was not worn");
+        Debug.Log("KGS_SKIN_WORN " + profile.Skin + " " + skins.Loader(0).AppliedRevision);
+        await Shot("0-locker");
         // 対戦中は隠したロビーの button が Space で押されない（選択と navigation を外す）。
         lobby.GetComponentsInChildren<UnityEngine.UI.Button>(true).First(button => button.name.StartsWith("Create")).Select();
         await lobby.CreateRoomAsync("test arena 1");
@@ -238,7 +301,12 @@ public sealed class ArenaProbe : MonoBehaviour
         var events = UnityEngine.EventSystems.EventSystem.current;
         Debug.Log($"KGS_UI_LOCKED {!events.sendNavigationEvents && events.currentSelectedGameObject == null}");
         await Shot("1-playing");
-        await Until(() => session.Phase == ArenaPhase.Result, 240, "the match did not end");
+        // client が host のスキンを貼ったら、対戦中に新しい版を発行する。両方の体が新しい版に変わる。
+        await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "client-skin")), 60, "the client did not wear the host's skin");
+        var revision = await PublishSkin(new Color(0.2f, 0.4f, 1f));
+        await Until(() => skins.Loader(0).AppliedRevision >= revision, 60, "the new revision was not worn");
+        Debug.Log("KGS_SKIN_UPDATED " + skins.Loader(0).AppliedRevision);
+        await Until(() => session.Phase == ArenaPhase.Result, 480, "the match did not end");
         await Pause(1.5f);
         Final();
         await Shot("2-result");
@@ -269,9 +337,16 @@ public sealed class ArenaProbe : MonoBehaviour
         await Until(() => lobby.Rooms.Any(room => room.Title == "test arena 1"), 120, "the room did not arrive");
         await lobby.JoinRoomAsync(lobby.Rooms.First(room => room.Title == "test arena 1").RoomId);
         await Until(() => session.Phase == ArenaPhase.Playing, 120, "the match did not start");
+        // host の体に、host が選んだスキンを P2P で取って貼る。
+        await Until(() => session.RemoteSkin == "neon-red" && skins.Loader(0).AppliedRevision >= 1, 60, "the host's skin did not arrive");
+        Debug.Log("KGS_SKIN_REMOTE " + session.RemoteSkin + " " + skins.Loader(0).AppliedRevision);
         await Pause(4);
         await Shot("1-playing");
-        await Until(() => session.Phase == ArenaPhase.Result, 240, "the match did not end");
+        File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "client-skin"), "seen");
+        await Until(() => skins.Loader(0).AppliedRevision >= 2, 90, "the new revision did not arrive");
+        Debug.Log("KGS_SKIN_UPDATED " + skins.Loader(0).AppliedRevision);
+        await Shot("1b-updated");
+        await Until(() => session.Phase == ArenaPhase.Result, 480, "the match did not end");
         await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "host-result")), 60, "the host did not see the result");
         Final();
         await Shot("2-result");
@@ -350,6 +425,7 @@ public sealed class ArenaProbe : MonoBehaviour
 
     void Update()
     {
+        publisher?.Pump();
         // 部屋の一覧は、待っている部屋が来るまで短い間隔で読み直す。
         if (role == "client" && runner.Client != null && !session.InMatch && Time.frameCount % 30 == 0)
             _ = lobby.RefreshAsync();
@@ -386,6 +462,7 @@ public static class ArenaProbeBuild
         Link(probe, "network", Object.FindAnyObjectByType<NetworkManager>());
         Link(probe, "account", Object.FindAnyObjectByType<KukuriAccountScreen>());
         Link(probe, "profile", Object.FindAnyObjectByType<ArenaProfile>());
+        Link(probe, "skins", Object.FindAnyObjectByType<ArenaSkins>());
         EditorSceneManager.SaveScene(scene, "Assets/ArenaProbe/ArenaTest.unity");
         PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, ScriptingImplementation.__BACKEND__);
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
@@ -407,11 +484,16 @@ Write-Output "Player (arena, $Backend): built=True"
 $work = Join-Path $ProjectDir "runs"
 New-Item -ItemType Directory -Force $work | Out-Null
 $topic = "kukuri:topic:test-arena-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+# スキンの作者は開発用の Sidecar（発行は Sidecar・CLI だけ）。
+$sidecarExe = Join-Path $package "Editor\Sidecar~\kukuri-sdk-sidecar.exe"
+$publisherDir = Join-Path $work "publisher"
+$sidecar = Start-Process -FilePath $sidecarExe -ArgumentList "run --profile publisher --profile-dir `"$publisherDir`"" -PassThru -RedirectStandardError (Join-Path $work "sidecar.err")
+for ($i = 0; $i -lt 120 -and -not (Select-String -Path (Join-Path $work "sidecar.err") -Pattern "^ready" -Quiet -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
 $players = @{}
 foreach ($role in "host", "client") {
     $log = Join-Path $work "$role.log"
     $arguments = "-screen-fullscreen 0 -screen-width 1280 -screen-height 720 -arena-role $role -arena-profile-dir `"$(Join-Path $work $role)`" " +
-        "-arena-topic $topic -arena-exchange `"$work`" -arena-delay $DelayMs -arena-loss $LossPercent -logFile `"$log`""
+        "-arena-topic $topic -arena-exchange `"$work`" -arena-publisher-dir `"$publisherDir`" -arena-delay $DelayMs -arena-loss $LossPercent -logFile `"$log`""
     $players[$role] = @{ Process = (Start-Process -FilePath $exe -ArgumentList $arguments -PassThru); Log = $log }
 }
 $exits = @{}
@@ -420,6 +502,8 @@ foreach ($role in "host", "client") {
     if (-not $process.WaitForExit(600000)) { Stop-Process -Id $process.Id -Force; $exits[$role] = "timeout" } else { $exits[$role] = $process.ExitCode }
 }
 
+Start-Process -FilePath $sidecarExe -ArgumentList "stop --profile publisher --profile-dir `"$publisherDir`"" -Wait | Out-Null
+if (-not $sidecar.WaitForExit(15000)) { Stop-Process -Id $sidecar.Id -Force }
 function Lines([string]$role, [string]$pattern) {
     @(Select-String -Path $players[$role].Log -Pattern $pattern | ForEach-Object { $_.Matches[0].Groups[1].Value })
 }
@@ -449,15 +533,20 @@ $dodges = "$((Lines "host" "KGS_DODGES (\d+)") | Select-Object -First 1),$((Line
 $dodged = @($dodges -split "," | Where-Object { $_ -match "^\d+$" -and [int]$_ -ge 1 }).Count -eq 2
 $uiLocked = (Lines "host" "KGS_UI_LOCKED (\S+)") | Select-Object -First 1
 $secondInput = [int]((Lines "host" "KGS_SECOND_INPUT (\d+)") | Select-Object -First 1)
+$skinWorn = (Lines "host" "KGS_SKIN_WORN (.*)") | Select-Object -First 1
+$skinRemote = (Lines "client" "KGS_SKIN_REMOTE (.*)") | Select-Object -First 1
+$skinUpdated = "$((Lines "host" "KGS_SKIN_UPDATED (\d+)") | Select-Object -First 1),$((Lines "client" "KGS_SKIN_UPDATED (\d+)") | Select-Object -First 1)"
+$skinOk = ($skinWorn -eq "neon-red 1") -and ($skinRemote -eq "neon-red 1") -and ($skinUpdated -eq "2,2")
 $hostLeft = (Lines "host" "KGS_HOST_LEFT (.*)") | Select-Object -First 1
 $clientClosed = (Lines "client" "KGS_CLIENT_CLOSED (.*)") | Select-Object -First 1
 $hostSawLeave = (Lines "host" "KGS_HOST_SAW_LEAVE (.*)") | Select-Object -First 1
 $clientLeft = (Lines "client" "KGS_CLIENT_LEFT (.*)") | Select-Object -First 1
 $failure = Select-String -Path $players["host"].Log, $players["client"].Log -Pattern "KGS_FAILED.*" | Select-Object -First 1
-$ok = $sameEvents -and $sameResult -and $positionsMatch -and $dodged -and ($uiLocked -eq "True") -and ($secondInput -ge 20) -and ($secondInput -le 600) -and ("Throw" -in $kinds) -and ("Catch" -in $kinds) -and ("Hit" -in $kinds) -and
+$ok = $skinOk -and $sameEvents -and $sameResult -and $positionsMatch -and $dodged -and ($uiLocked -eq "True") -and ($secondInput -ge 20) -and ($secondInput -le 600) -and ("Throw" -in $kinds) -and ("Catch" -in $kinds) -and ("Hit" -in $kinds) -and
     ($hostLeft -eq "listening=False in_match=False") -and ($clientClosed -eq "listening=False joined=none notice=ホストが部屋を閉じました") -and
     ($hostSawLeave -eq "Left") -and ($clientLeft -eq "listening=False joined=none") -and ($exits["host"] -eq 0) -and ($exits["client"] -eq 0)
 Write-Output "Player match ($Backend, delay=${DelayMs}ms loss=$LossPercent%): events=$($hostFirst.Count) same=$sameEvents kinds=$($kinds -join ',') dodges=$dodges ui_locked=$uiLocked host=[$hostFinal] client=[$clientFinal] positions=$positionsMatch"
+Write-Output "Player skin ($Backend): worn=[$skinWorn] remote=[$skinRemote] updated=$skinUpdated ok=$skinOk"
 Write-Output "Player leave ($Backend): second_match_inputs=$secondInput host_left=[$hostLeft] client_closed=[$clientClosed] host_saw_leave=[$hostSawLeave] client_left=[$clientLeft] exits=$($exits['host']),$($exits['client']) ok=$ok"
 if ($failure) { Write-Output "  $($failure.Line)" }
 

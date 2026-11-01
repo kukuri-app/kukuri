@@ -310,6 +310,8 @@ GameObject:
   - component: {fileID: 30440762}
   - component: {fileID: 30440764}
   - component: {fileID: 30440763}
+  - component: {fileID: 30440766}
+  - component: {fileID: 30440765}
   m_Layer: 0
   m_Name: PlayerB
   m_TagString: Untagged
@@ -390,6 +392,38 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 30440761}
   m_Mesh: {fileID: 10208, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!114 &30440765
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 30440761}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 374ec89dcd7776d4887c782a495074fa, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Kukuri.GameSdk.Assets::Kukuri.GameSdk.Assets.KukuriSkinLoader
+  runner: {fileID: 1598420038}
+  topic: 
+  publisherPubkey: 
+  applicationId: 
+  assetId: 
+  parent: {fileID: 30440762}
+  textureTarget: {fileID: 30440763}
+--- !u!114 &30440766
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 30440761}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9b4deaa7b0bcd4e209aa26ae2d364689, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: glTFast::GLTFast.TimeBudgetPerFrameDeferAgent
+  frameBudget: 0.5
 --- !u!1 &47477301
 GameObject:
   m_ObjectHideFlags: 0
@@ -5128,6 +5162,7 @@ GameObject:
   - component: {fileID: 699745945}
   - component: {fileID: 699745944}
   - component: {fileID: 699745947}
+  - component: {fileID: 699745948}
   m_Layer: 0
   m_Name: Arena
   m_TagString: Untagged
@@ -5200,6 +5235,38 @@ MonoBehaviour:
   m_EditorClassIdentifier: CyberDiscArena::CyberDiscArena.ArenaProfile
   runner: {fileID: 1598420038}
   account: {fileID: 1598420042}
+--- !u!114 &699745948
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 699745943}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d5b8a8aceb3aa244a81863ecdbb921ba, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: CyberDiscArena::CyberDiscArena.ArenaSkins
+  runner: {fileID: 1598420038}
+  account: {fileID: 1598420042}
+  profile: {fileID: 699745947}
+  session: {fileID: 699745945}
+  loaders:
+  - {fileID: 1643257627}
+  - {fileID: 30440765}
+  publisherPubkey: 
+  applicationId: com.kukuri.cyber-disc-arena
+  topic: kukuri:topic:cyber-disc-arena
+  skins:
+  - neon-red
+  - gold
+  - holo
+  area:
+    serializedVersion: 2
+    x: 1000
+    y: 16
+    width: 260
+    height: 300
 --- !u!1 &707103271
 GameObject:
   m_ObjectHideFlags: 0
@@ -7117,8 +7184,8 @@ Light:
   m_Enabled: 1
   serializedVersion: 12
   m_Type: 1
-  m_Color: {r: 0.6, g: 0.7, b: 1, a: 1}
-  m_Intensity: 0.4
+  m_Color: {r: 0.95, g: 0.95, b: 1, a: 1}
+  m_Intensity: 1.1
   m_Range: 10
   m_SpotAngle: 30
   m_InnerSpotAngle: 21.80208
@@ -11838,6 +11905,8 @@ GameObject:
   - component: {fileID: 1643257624}
   - component: {fileID: 1643257626}
   - component: {fileID: 1643257625}
+  - component: {fileID: 1643257628}
+  - component: {fileID: 1643257627}
   m_Layer: 0
   m_Name: PlayerA
   m_TagString: Untagged
@@ -11918,6 +11987,38 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1643257623}
   m_Mesh: {fileID: 10208, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!114 &1643257627
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1643257623}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 374ec89dcd7776d4887c782a495074fa, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Kukuri.GameSdk.Assets::Kukuri.GameSdk.Assets.KukuriSkinLoader
+  runner: {fileID: 1598420038}
+  topic: 
+  publisherPubkey: 
+  applicationId: 
+  assetId: 
+  parent: {fileID: 1643257624}
+  textureTarget: {fileID: 1643257625}
+--- !u!114 &1643257628
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1643257623}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9b4deaa7b0bcd4e209aa26ae2d364689, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: glTFast::GLTFast.TimeBudgetPerFrameDeferAgent
+  frameBudget: 0.5
 --- !u!1 &1666021816
 GameObject:
   m_ObjectHideFlags: 0

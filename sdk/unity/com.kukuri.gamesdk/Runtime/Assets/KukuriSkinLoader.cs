@@ -32,8 +32,9 @@ namespace Kukuri.GameSdk.Assets
 
         KukuriClient client;
         KukuriClient subscribed;
-        /// PNG・JPEG を貼るために複製した material（loader が持ち、破棄する）。
+        /// PNG・JPEG を貼るために複製した material（loader が持ち、破棄する）と、複製する前の material。
         Material ownMaterial;
+        Material originalMaterial;
         bool loading;
         bool again;
         GltfImport currentImport;
@@ -66,7 +67,35 @@ namespace Kukuri.GameSdk.Assets
         public string Topic { get => topic; set => topic = value ?? ""; }
         public string PublisherPubkey { get => publisherPubkey; set => publisherPubkey = value ?? ""; }
         public string ApplicationId { get => applicationId; set => applicationId = value ?? ""; }
-        public string AssetId { get => assetId; set => assetId = value ?? ""; }
+        /// 変えると、今のスキンを外し（PNG・JPEG なら元の material に戻す）、新しいアセットの最新の版を読む。空なら何も
+        /// 読まない（スキンなし）。
+        public string AssetId
+        {
+            get => assetId;
+            set
+            {
+                value ??= "";
+                if (value == assetId)
+                    return;
+                assetId = value;
+                Clear();
+                if (subscribed != null)
+                    _ = LoadLatestAsync();
+            }
+        }
+
+        void Clear()
+        {
+            Release(Instance, currentImport, currentTexture, currentBundle);
+            (Instance, currentImport, currentTexture, currentBundle) = (null, null, null, null);
+            if (ownMaterial != null)
+            {
+                textureTarget.sharedMaterial = originalMaterial;
+                DestroyNow(ownMaterial);
+                ownMaterial = null;
+            }
+            AppliedRevision = 0;
+        }
 
         void Update() => Subscribe();
 
@@ -125,6 +154,9 @@ namespace Kukuri.GameSdk.Assets
 
         async Task LoadOnceAsync()
         {
+            var requested = assetId;
+            if (requested.Length == 0)
+                return;
             var payload = new JObject
             {
                 ["topic"] = topic,
@@ -134,7 +166,8 @@ namespace Kukuri.GameSdk.Assets
             };
             // 大きなアセットの取得は長くかかりうる（上限 5 分）。
             var response = await Client.SendAsync("fetch_game_asset", payload, timeoutMilliseconds: 300_000);
-            if (this == null)
+            // 読む間にアセットを変えたら、この結果は使わない（変えた後の読み直しが続く）。
+            if (this == null || requested != assetId)
                 return;
             if (!response.Ok)
             {
@@ -159,6 +192,11 @@ namespace Kukuri.GameSdk.Assets
             }
             if (this == null)
                 return;
+            if (requested != assetId)
+            {
+                Clear();
+                return;
+            }
             if (reason != null)
             {
                 Failed?.Invoke(reason);
@@ -215,7 +253,8 @@ namespace Kukuri.GameSdk.Assets
                     if (ownMaterial == null)
                     {
                         // 共有の material を書き換えないよう、1 度だけ複製して renderer に持たせる。
-                        ownMaterial = new Material(textureTarget.sharedMaterial);
+                        originalMaterial = textureTarget.sharedMaterial;
+                        ownMaterial = new Material(originalMaterial);
                         textureTarget.sharedMaterial = ownMaterial;
                     }
                     ownMaterial.mainTexture = texture;

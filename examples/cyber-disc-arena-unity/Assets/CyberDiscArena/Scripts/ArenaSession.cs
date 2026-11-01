@@ -25,6 +25,7 @@ namespace CyberDiscArena
         const string ActionMessage = "arena.action";
         const string StateMessage = "arena.state";
         const string EventMessage = "arena.event";
+        const string SkinMessage = "arena.skin";
         const int InputRedundancy = 4;
         const int History = 64;
 
@@ -73,6 +74,10 @@ namespace CyberDiscArena
         /// 接続の経路と RTT（`game_session_path`）。
         public string Path { get; private set; } = "";
         public long RttMs { get; private set; } = -1;
+        /// 相手が着ているスキン（対戦の開始で互いに送る）。
+        public string RemoteSkin { get; private set; } = ArenaProfile.StandardSkin;
+        /// 自分が着ているスキン（相手へ送る）。
+        public Func<string> LocalSkin { get; set; } = () => ArenaProfile.StandardSkin;
         /// 退出・終了の理由など、画面に出す知らせ。
         public string Notice { get; private set; } = "";
 
@@ -156,6 +161,7 @@ namespace CyberDiscArena
         {
             Reset(1);
             transport.SessionId = sessionId;
+            network.OnClientConnectedCallback += OnClientConnected;
             network.OnClientDisconnectCallback += OnClientDisconnected;
             if (!network.StartClient())
             {
@@ -187,6 +193,7 @@ namespace CyberDiscArena
             Disc = default;
             Path = "";
             RttMs = -1;
+            RemoteSkin = ArenaProfile.StandardSkin;
             if (runner.Client != null)
                 runner.Client.EventReceived += OnSdkEvent;
         }
@@ -194,7 +201,7 @@ namespace CyberDiscArena
         void Register()
         {
             var messages = network.CustomMessagingManager;
-            foreach (var name in new[] { InputMessage, ActionMessage, StateMessage, EventMessage })
+            foreach (var name in new[] { InputMessage, ActionMessage, StateMessage, EventMessage, SkinMessage })
                 messages.RegisterNamedMessageHandler(name, (sender, reader) => Receive(name, reader));
             network.NetworkTickSystem.Tick += OnTick;
         }
@@ -236,6 +243,10 @@ namespace CyberDiscArena
                     break;
                 case EventMessage when !IsHost:
                     Apply(ReadEvent(reader));
+                    break;
+                case SkinMessage:
+                    reader.ReadValueSafe(out string skin);
+                    RemoteSkin = skin;
                     break;
             }
         }
@@ -396,6 +407,13 @@ namespace CyberDiscArena
 
         void OnClientConnected(ulong clientId)
         {
+            // 着ているスキンを相手へ送る（client はつながったとき host へ、host は相手が来たとき相手へ）。
+            if (!IsHost)
+            {
+                if (clientId == network.LocalClientId)
+                    SendSkin(NetworkManager.ServerClientId);
+                return;
+            }
             if (clientId == NetworkManager.ServerClientId)
                 return;
             // 1 対 1。3 人目は切る。
@@ -405,6 +423,7 @@ namespace CyberDiscArena
                 return;
             }
             opponent = clientId;
+            SendSkin(clientId);
             rules.Begin();
         }
 
@@ -473,7 +492,7 @@ namespace CyberDiscArena
             network.OnClientConnectedCallback -= OnClientConnected;
             network.OnClientDisconnectCallback -= OnClientDisconnected;
             if (network.CustomMessagingManager != null)
-                foreach (var name in new[] { InputMessage, ActionMessage, StateMessage, EventMessage })
+                foreach (var name in new[] { InputMessage, ActionMessage, StateMessage, EventMessage, SkinMessage })
                     network.CustomMessagingManager.UnregisterNamedMessageHandler(name);
             if (network.IsListening)
                 network.Shutdown();
@@ -485,6 +504,13 @@ namespace CyberDiscArena
             Local = -1;
             pending.Clear();
             inbox.Clear();
+        }
+
+        void SendSkin(ulong target)
+        {
+            using var writer = new FastBufferWriter(256, Allocator.Temp);
+            writer.WriteValueSafe(LocalSkin());
+            network.CustomMessagingManager.SendNamedMessage(SkinMessage, target, writer, NetworkDelivery.ReliableSequenced);
         }
 
         void OnSdkEvent(JObject @event)
