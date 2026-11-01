@@ -1,9 +1,14 @@
-﻿# Cyber Disc Arena の対戦 ring を確かめる（#1983 AC-1）。
+﻿# Cyber Disc Arena の対戦 ring とアカウントを確かめる（#1983 AC-1・AC-2a）。
 # - EditMode: host の裁定の規則（当てる・受け止める・跳ねて止まる・5 点・時間切れと延長・自分の側）
 # - 独立した 2 つの Windows Player（host と client）が、受信を片道 25 ms 遅らせ datagram を 1% 落とした状態で、入力を
 #   流す bot で 1 試合を終える。両方が同じ出来事の列（通し番号・持ち主・得点）と勝敗を確定し、client の番号に飛びが無く、
 #   試合の後の 2 人の位置が host と一致する。host が「ロビーへ戻る」と client に「ホストが部屋を閉じました」が出て、両方の
 #   NGO が止まり、session から抜ける。続く 2 試合目で client が途中で退出すると、host に「相手が退出しました」が出る。
+#   どちらも開始の画面（KukuriAccountScreen）で同意して「はじめる」までロビーを開かない。
+# - 状態の継続（1 つの Player を同じ profile で起動し直す）: 「はじめる」で選んだスキンと game player ID が再起動の後も
+#   続く。Steam Cloud に保存した file（game-account.json とゲームのセーブ）だけを写した新しい profile でも、同じ ID・公開鍵・
+#   スキンで再開する。profile に足したアカウント B に、この端末で遊んだ別の進行があれば、まとめる確定の画面で B の進行を
+#   残すことを選べ、まとめた後は B の公開鍵・B の進行の ID とスキンで続き、選ばなかった進行もセーブに残る。
 # 先に sdk/unity/build-native.ps1 で native を置く。Unity の project は短い path へ写して使う（深い path は MAX_PATH に当たる）。
 param(
     [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
@@ -63,6 +68,8 @@ public sealed class ArenaProbe : MonoBehaviour
     [SerializeField] KukuriLobby lobby;
     [SerializeField] ArenaSession session;
     [SerializeField] NetworkManager network;
+    [SerializeField] KukuriAccountScreen account;
+    [SerializeField] ArenaProfile profile;
 
     string role;
     int throws;
@@ -102,7 +109,7 @@ public sealed class ArenaProbe : MonoBehaviour
         if (role == null) return;
         try
         {
-            await (role == "host" ? Host() : Client());
+            await (role == "host" ? Host() : role == "client" ? Client() : State());
             Application.Quit(0);
         }
         catch (Exception error)
@@ -165,17 +172,24 @@ public sealed class ArenaProbe : MonoBehaviour
         return response.Data;
     }
 
-    async Task Prepare()
+    /// 開始の画面で同意して「はじめる」（保存済みなら再開を待つ）。ロビーは開始の後に開く。
+    async Task StartGame(bool resume)
     {
         if (runner.Client == null) throw new Exception("the SDK did not open: " + runner.OpenError?.Code);
-        var startup = await Call("get_desktop_startup_status");
-        if ((string)startup["status"] == "consent_required")
+        if (!resume)
         {
-            var consent = await Call("get_app_consent_status");
-            var documents = new JArray(((JArray)consent["documents"]).Select(document =>
-                new JObject { ["slug"] = document["slug"], ["version"] = document["currentVersion"] }));
-            await Call("accept_app_consents", new JObject { ["documents"] = documents, ["language"] = "ja", ["age_attested"] = true });
+            await Until(() => account.Screen == "consent", 60, "the consent screen did not open");
+            Debug.Log("KGS_LOBBY_BEFORE_START " + lobby.gameObject.activeInHierarchy);
+            await account.Accept();
+            await Until(() => account.Screen == "start", 60, "the start screen did not open");
+            await account.Begin();
         }
+        await Until(() => account.Screen == "playing" && profile.Ready && lobby.gameObject.activeInHierarchy, 60, "the game did not start");
+    }
+
+    async Task Prepare()
+    {
+        await StartGame(false);
         lobby.Topic = Arg("-arena-topic");
         var exchange = Arg("-arena-exchange");
         var other = role == "host" ? "client" : "host";
@@ -273,6 +287,36 @@ public sealed class ArenaProbe : MonoBehaviour
         await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "host-done")), 60, "the host did not finish");
     }
 
+    /// 状態の継続。`-arena-step` の 1: 始めてスキンを選び、Steam Cloud に保存し、アカウント B を足す。2: 再開し、B の進行を
+    /// 残してまとめる。3: Steam Cloud の file だけを写した新しい profile で再開する。
+    async Task State()
+    {
+        var step = Arg("-arena-step");
+        await StartGame(step == "2");
+        Debug.Log($"KGS_STATE{step} {profile.GamePlayerId} {profile.Skin} {account.PublicKey}");
+        if (step == "1")
+        {
+            profile.Skin = "neon-red";
+            await account.SetCloud(true);
+            var b = await Call("create_account", new JObject { ["account_id"] = "arena-b", ["operation_id"] = Guid.NewGuid().ToString() });
+            var accounts = await Call("list_accounts");
+            var pubkey = (string)((JArray)accounts["accounts"]).First(item => (string)item["id"] == (string)b["id"])["pubkey"];
+            Debug.Log($"KGS_STATE_SAVED {profile.Skin} {account.CloudState} {(string)b["id"]} {pubkey}");
+        }
+        if (step == "2")
+        {
+            await account.EnterMerge();
+            await account.ChooseMerge(Arg("-arena-merge-to"));
+            var other = account.OtherProgress(Arg("-arena-merge-pubkey"));
+            Debug.Log($"KGS_STATE_OFFERED {account.Screen} {other?.id ?? "none"} {other?.label ?? "none"}");
+            account.Keep(other?.id);
+            await account.Merge();
+            await Until(() => account.Screen == "playing" && account.GamePlayerId == other?.id && profile.Ready, 60, "the merge did not keep the other progress");
+            Debug.Log($"KGS_STATE_MERGED {profile.GamePlayerId} {profile.Skin} {account.PublicKey}");
+            await Shot("5-merged");
+        }
+    }
+
     void Update()
     {
         // 部屋の一覧は、待っている部屋が来るまで短い間隔で読み直す。
@@ -309,6 +353,8 @@ public static class ArenaProbeBuild
         Link(probe, "lobby", Object.FindAnyObjectByType<KukuriLobby>());
         Link(probe, "session", Object.FindAnyObjectByType<ArenaSession>());
         Link(probe, "network", Object.FindAnyObjectByType<NetworkManager>());
+        Link(probe, "account", Object.FindAnyObjectByType<KukuriAccountScreen>());
+        Link(probe, "profile", Object.FindAnyObjectByType<ArenaProfile>());
         EditorSceneManager.SaveScene(scene, "Assets/ArenaProbe/ArenaTest.unity");
         PlayerSettings.SetScriptingBackend(NamedBuildTarget.Standalone, ScriptingImplementation.__BACKEND__);
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
@@ -383,4 +429,47 @@ $ok = $sameEvents -and $sameResult -and $positionsMatch -and $dodged -and ($uiLo
 Write-Output "Player match ($Backend, delay=${DelayMs}ms loss=$LossPercent%): events=$($hostFirst.Count) same=$sameEvents kinds=$($kinds -join ',') dodges=$dodges ui_locked=$uiLocked host=[$hostFinal] client=[$clientFinal] positions=$positionsMatch"
 Write-Output "Player leave ($Backend): second_match_inputs=$secondInput host_left=[$hostLeft] client_closed=[$clientClosed] host_saw_leave=[$hostSawLeave] client_left=[$clientLeft] exits=$($exits['host']),$($exits['client']) ok=$ok"
 if ($failure) { Write-Output "  $($failure.Line)" }
-if ($failed -or -not $ok) { exit 1 }
+
+# 状態の継続: 同じ profile で起動し直し、Steam Cloud の file だけを写した新しい profile でも再開する。
+function Start-State([string]$step, [string]$dir, [string]$extra = "") {
+    $log = Join-Path $work "state$step.log"
+    $arguments = "-screen-fullscreen 0 -screen-width 1280 -screen-height 720 -arena-role state -arena-step $step " +
+        "-arena-profile-dir `"$dir`" -arena-exchange `"$work`" $extra -logFile `"$log`""
+    $process = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
+    $code = if ($process.WaitForExit(180000)) { $process.ExitCode } else { Stop-Process -Id $process.Id -Force; "timeout" }
+    return @{ Log = $log; Exit = $code }
+}
+function Value($run, [string]$pattern) {
+    $match = Select-String -Path $run.Log -Pattern $pattern | Select-Object -First 1
+    if ($match) { $match.Matches[0].Groups[1].Value } else { "" }
+}
+$stateDir = Join-Path $work "state"
+$restoreDir = Join-Path $work "restore"
+$first = Start-State "1" $stateDir
+$started = Value $first "KGS_STATE1 (\S+ \S+ \S+)"
+$saved = (Value $first "KGS_STATE_SAVED (.*)") -split " "
+$id, $skin, $key = $started -split " "
+# Steam Cloud の同期を模す: ゲームの開始の file とゲームのセーブだけを、一度も開いていない profile へ写す。
+New-Item -ItemType Directory -Force $restoreDir | Out-Null
+foreach ($file in "game-account.json", "cyber-disc-arena.json") { Copy-Item (Join-Path $stateDir $file) $restoreDir -ErrorAction SilentlyContinue }
+# B がこの端末で遊んだ別の進行（ゲームのセーブにある）を足す。
+$otherId = [guid]::NewGuid().ToString()
+$savePath = Join-Path $stateDir "cyber-disc-arena.json"
+$save = Get-Content $savePath -Raw | ConvertFrom-Json
+$save | Add-Member -NotePropertyName $otherId -NotePropertyValue ([pscustomobject]@{ Pubkey = $saved[3]; Skin = "gold" })
+[IO.File]::WriteAllText($savePath, ($save | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding $false))
+$second = Start-State "2" $stateDir "-arena-merge-to $($saved[2]) -arena-merge-pubkey $($saved[3])"
+$resumed = Value $second "KGS_STATE2 (\S+ \S+ \S+)"
+$offered = Value $second "KGS_STATE_OFFERED (\S+ \S+)"
+$merged = Value $second "KGS_STATE_MERGED (\S+ \S+ \S+)"
+$kept = (Get-Content $savePath -Raw | ConvertFrom-Json).$id.Skin
+$third = Start-State "3" $restoreDir
+$restored = Value $third "KGS_STATE3 (\S+ \S+ \S+)"
+$lobbyClosed = (Select-String -Path $players["host"].Log, $first.Log -Pattern "KGS_LOBBY_BEFORE_START False").Count -eq 2
+$stateOk = ($skin -eq "standard") -and ($saved[0] -eq "neon-red") -and ($saved[1] -eq "on") -and ($resumed -eq "$id neon-red $key") -and
+    ($offered -eq "merge-confirm $otherId") -and ($merged -eq "$otherId gold $($saved[3])") -and ($kept -eq "neon-red") -and
+    ($restored -eq "$id neon-red $key") -and $lobbyClosed -and ($first.Exit -eq 0) -and ($second.Exit -eq 0) -and ($third.Exit -eq 0)
+Write-Output "Player state ($Backend): started=[$started] saved=[$($saved[0..1] -join ' ')] resumed=[$resumed] offered=[$offered] merged=[$merged] kept=$kept restored=[$restored] lobby_closed_before_start=$lobbyClosed exits=$($first.Exit),$($second.Exit),$($third.Exit) ok=$stateOk"
+$failure = Select-String -Path $first.Log, $second.Log, $third.Log -Pattern "KGS_FAILED.*" | Select-Object -First 1
+if ($failure) { Write-Output "  $($failure.Line)" }
+if ($failed -or -not $ok -or -not $stateOk) { exit 1 }

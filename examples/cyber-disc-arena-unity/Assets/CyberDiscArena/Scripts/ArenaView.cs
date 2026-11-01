@@ -1,3 +1,4 @@
+using Kukuri.GameSdk;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -37,11 +38,12 @@ namespace CyberDiscArena
         }
     }
 
-    /// 対戦の表示。2 人とディスクを置き、camera を自分の後ろに付け、得点・残り時間・経路・RTT・知らせを出す。対戦して
-    /// いない間はロビーを出す。
+    /// 対戦の表示。2 人とディスクを置き、camera を自分の後ろに付け、得点・残り時間・経路・RTT・知らせを出す。開始の画面で
+    /// 「はじめる」まではロビーを開かず、対戦していない間はロビーと開始の画面（プレイ中の操作）を出す。
     public sealed class ArenaView : MonoBehaviour
     {
         [SerializeField] ArenaSession session;
+        [SerializeField] KukuriAccountScreen account;
         [SerializeField] Canvas lobbyCanvas;
         [SerializeField] Transform[] players = new Transform[2];
         [SerializeField] Transform disc;
@@ -59,7 +61,11 @@ namespace CyberDiscArena
 
         void LateUpdate()
         {
+            var started = account.Screen == "playing";
+            if (lobbyCanvas.gameObject.activeSelf != started)
+                lobbyCanvas.gameObject.SetActive(started);
             lobbyCanvas.enabled = !session.InMatch;
+            account.Visible = !session.InMatch;
             // 対戦中は、隠したロビーの button が Space（Submit）や WASD（選択の移動）で押されないようにする。
             var events = EventSystem.current;
             if (events != null)

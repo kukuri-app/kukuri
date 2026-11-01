@@ -5127,6 +5127,7 @@ GameObject:
   - component: {fileID: 699745946}
   - component: {fileID: 699745945}
   - component: {fileID: 699745944}
+  - component: {fileID: 699745947}
   m_Layer: 0
   m_Name: Arena
   m_TagString: Untagged
@@ -5147,6 +5148,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: CyberDiscArena::CyberDiscArena.ArenaView
   session: {fileID: 699745945}
+  account: {fileID: 1598420042}
   lobbyCanvas: {fileID: 967358134}
   players:
   - {fileID: 1643257624}
@@ -5184,6 +5186,20 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &699745947
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 699745943}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bc62264a29ac4694a8497bd459e6ab6c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: CyberDiscArena::CyberDiscArena.ArenaProfile
+  runner: {fileID: 1598420038}
+  account: {fileID: 1598420042}
 --- !u!1 &707103271
 GameObject:
   m_ObjectHideFlags: 0
@@ -11520,6 +11536,7 @@ GameObject:
   - component: {fileID: 1598420038}
   - component: {fileID: 1598420040}
   - component: {fileID: 1598420039}
+  - component: {fileID: 1598420042}
   m_Layer: 0
   m_Name: kukuri
   m_TagString: Untagged
@@ -11609,6 +11626,27 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1598420042
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1598420037}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fd60577415ef4a9688a42d773646f673, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Kukuri.GameSdk::Kukuri.GameSdk.KukuriAccountScreen
+  runner: {fileID: 1598420038}
+  area:
+    serializedVersion: 2
+    x: 470
+    y: 16
+    width: 520
+    height: 600
+  applicationId: com.kukuri.cyber-disc-arena
+  steamCloud: 0
 --- !u!1 &1623365526
 GameObject:
   m_ObjectHideFlags: 0

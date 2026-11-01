@@ -1,6 +1,6 @@
-﻿# 空の Unity project に Game SDK の package（と Minimal sample）を入れ、EditMode の試験（lifecycle を含む）を流し、
+﻿# 空の Unity project に Game SDK の package を入れ、EditMode の試験（lifecycle を含む）を流し、
 # NGO などの Gameplay の package を入れないまま Windows x64 の Player を build して、次を確かめる（#1977 AC-1・AC-2）。
-# - Player で Minimal sample が FFI で起動の状態を読める（daemon は不要）
+# - Player で開始の画面（KukuriAccountScreen）が FFI で起動の状態を読める（daemon は不要）
 # - 同じ profile で Player を 3 回起動・終了でき、終了 code が 0、Sidecar の process が無い。開始の画面の sample で、同意の後
 #   「はじめる」の前に閉じても同じアカウントのまま開始の画面に戻り、「はじめる」で game player を作り、次の起動では同じ
 #   game player と公開鍵で自動で再開する（#1996 AC-2）
@@ -31,11 +31,6 @@ $manifest.dependencies | Add-Member -NotePropertyName "com.unity.test-framework"
 $manifest | Add-Member -NotePropertyName "testables" -NotePropertyValue @("com.kukuri.gamesdk") -Force
 # Unity の Package Manager は BOM のある JSON を読めないので、BOM なしの UTF-8 で書く。
 [IO.File]::WriteAllText((Join-Path $ProjectDir "Packages\manifest.json"), ($manifest | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding $false))
-# sample は package の Samples~ から写す（Package Manager の Import と同じ）。
-$sample = Join-Path $ProjectDir "Assets\Samples\Minimal"
-New-Item -ItemType Directory -Force $sample | Out-Null
-Copy-Item (Join-Path $package "Samples~\Minimal\*.cs") $sample
-
 # runtime を組み立てる試験は keyring を使わず loopback だけで動かす（CLI の process 試験と同じ）。
 $env:KUKURI_DISABLE_KEYRING = "1"
 $env:KUKURI_DISCOVERY_MODE = "static_peer"
@@ -76,7 +71,7 @@ using UnityEngine.UI;
 public sealed class KgsStartProbe : MonoBehaviour
 {
     [SerializeField] KukuriRunner runner;
-    [SerializeField] MinimalSample sample;
+    [SerializeField] KukuriAccountScreen sample;
     [SerializeField] Kukuri.GameSdk.Social.KukuriBoard board;
     static string Mode()
     {
@@ -317,14 +312,14 @@ public static class KgsBuild
 
     public static void Build()
     {
-        // KukuriRunner（FFI）と Minimal sample と開始の画面の probe だけの scene。
+        // KukuriRunner（FFI）と開始の画面と、その probe だけの scene。
         var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
         var settings = KukuriSettings.Create(KukuriMode.Ffi, "sample", "");
         AssetDatabase.CreateAsset(settings, "Assets/KukuriSettings.asset");
         var host = new GameObject("kukuri");
         var runner = host.AddComponent<KukuriRunner>();
         runner.Settings = settings;
-        var sample = host.AddComponent<MinimalSample>();
+        var sample = host.AddComponent<KukuriAccountScreen>();
         Link(sample, "runner", runner);
         Link(sample, "steamCloud", true);
         var probe = host.AddComponent<KgsStartProbe>();
@@ -375,7 +370,7 @@ $player = Start-Player "player" ""
 $sampleOk = $false
 for ($i = 0; $i -lt 60 -and -not $sampleOk; $i++) {
     Start-Sleep -Milliseconds 500
-    if (Test-Path $player.Log) { $sampleOk = (Select-String -Path $player.Log -Pattern "kukuri sample: status=consent_required" -Quiet) }
+    if (Test-Path $player.Log) { $sampleOk = (Select-String -Path $player.Log -Pattern "kukuri account: status=consent_required" -Quiet) }
 }
 Stop-Process -Id $player.Process.Id -Force -ErrorAction SilentlyContinue
 $player.Process.WaitForExit()
