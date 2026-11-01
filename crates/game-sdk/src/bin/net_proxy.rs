@@ -18,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use kukuri_transport::{UDP_PROXY_ENV, UDP_PROXY_HEADER_LEN as HEADER};
+use kukuri_transport::{UDP_PROXY_ENV, UDP_PROXY_HEADER_LEN as HEADER, UDP_PROXY_SOCKET_BUFFER};
 
 type Id = [u8; 32];
 
@@ -87,7 +87,17 @@ fn main() {
     );
     let loss = number("--loss", 1, 0.01);
     let shared = Arc::new(Shared {
-        socket: UdpSocket::bind(listen).expect("bind the proxy"),
+        socket: {
+            let socket = UdpSocket::bind(listen).expect("bind the proxy");
+            let options = socket2::SockRef::from(&socket);
+            options
+                .set_send_buffer_size(UDP_PROXY_SOCKET_BUFFER)
+                .expect("send buffer");
+            options
+                .set_recv_buffer_size(UDP_PROXY_SOCKET_BUFFER)
+                .expect("receive buffer");
+            socket
+        },
         routes: Mutex::default(),
         counters: Mutex::default(),
         blackout_until: Mutex::default(),

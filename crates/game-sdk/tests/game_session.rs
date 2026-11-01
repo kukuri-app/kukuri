@@ -7,7 +7,7 @@ mod support;
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -18,7 +18,7 @@ use kukuri_game_sdk::{
 };
 use serde_json::{Value, json};
 use support::{
-    Polled, call, finish, isolated_environment, join, open_real, poll_hold, poll_once, request,
+    Polled, call, finish, id, isolated_environment, join, open_real, poll_hold, poll_once, request,
     send, send_binary, wait_for,
 };
 
@@ -26,12 +26,6 @@ const OK: i32 = Status::Ok as i32;
 const INVALID: i32 = Status::InvalidArgument as i32;
 const BACKPRESSURE: i32 = Status::Backpressure as i32;
 const CLOSED: i32 = Status::Closed as i32;
-
-static NEXT: AtomicUsize = AtomicUsize::new(0);
-
-fn id() -> String {
-    format!("r{}", NEXT.fetch_add(1, Ordering::Relaxed))
-}
 
 fn numbered(index: usize, len: usize) -> Vec<u8> {
     let mut bytes = (index as u32).to_be_bytes().to_vec();

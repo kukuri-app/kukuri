@@ -196,7 +196,7 @@ pub(crate) use endpoint::bind_endpoint_with_options;
 #[cfg(not(target_family = "wasm"))]
 pub use endpoint::bind_transports;
 #[cfg(not(target_family = "wasm"))]
-pub use proxy_transport::{UDP_PROXY_ENV, UDP_PROXY_HEADER_LEN};
+pub use proxy_transport::{UDP_PROXY_ENV, UDP_PROXY_HEADER_LEN, UDP_PROXY_SOCKET_BUFFER};
 pub use relay::{build_endpoint_builder, sync_endpoint_relay_config};
 pub use topic_introductions::{TOPIC_PEERS_ALPN, TopicPeerIntroductions};
 #[cfg(test)]

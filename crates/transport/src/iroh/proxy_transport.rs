@@ -32,6 +32,8 @@ pub const UDP_PROXY_ENV: &str = "KUKURI_TEST_UDP_PROXY";
 /// proxy の packet の先頭（送り手と宛先の EndpointId）の長さ。
 pub const UDP_PROXY_HEADER_LEN: usize = 64;
 const TRANSPORT_ID: u64 = 0x6b6b_7570;
+/// socket の送受信の buffer（iroh の IP の socket と同じ大きさ。溢れて捨てた packet は proxy が数えられない）。
+pub const UDP_PROXY_SOCKET_BUFFER: usize = 7 << 20;
 
 pub(super) fn proxy_from_env() -> Result<Option<SocketAddr>> {
     std::env::var(UDP_PROXY_ENV)
@@ -78,6 +80,9 @@ struct ProxyTransport {
 impl CustomTransport for ProxyTransport {
     fn bind(&self) -> io::Result<Box<dyn CustomEndpoint>> {
         let socket = std::net::UdpSocket::bind(SocketAddr::new(self.proxy.ip(), 0))?;
+        let options = socket2::SockRef::from(&socket);
+        options.set_send_buffer_size(UDP_PROXY_SOCKET_BUFFER)?;
+        options.set_recv_buffer_size(UDP_PROXY_SOCKET_BUFFER)?;
         socket.set_nonblocking(true)?;
         let socket = Arc::new(UdpSocket::from_std(socket)?);
         let mut register = self.id.as_bytes().to_vec();

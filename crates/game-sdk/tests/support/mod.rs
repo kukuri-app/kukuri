@@ -279,7 +279,7 @@ pub fn join(host: *mut KukuriHandle, guest: *mut KukuriHandle, topic: &str) -> S
     }
     let room = call(
         host,
-        &next_id(),
+        &id(),
         "create_game_room",
         json!({
             "topic": topic,
@@ -293,7 +293,7 @@ pub fn join(host: *mut KukuriHandle, guest: *mut KukuriHandle, topic: &str) -> S
     // room が guest の手元に届くまでは断られる。
     let deadline = Instant::now() + Duration::from_secs(120);
     let session = loop {
-        let request_id = next_id();
+        let request_id = id();
         let payload = json!({"topic": topic, "scope": {"kind": "public"}, "room_id": room});
         assert_eq!(
             send(guest, &request(&request_id, "join_game_session", payload)),
@@ -317,7 +317,7 @@ pub fn join(host: *mut KukuriHandle, guest: *mut KukuriHandle, topic: &str) -> S
 pub fn wait_for_neighbor(handle: *mut KukuriHandle, topic: &str) {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        let status = call(handle, &next_id(), "get_sync_status", json!({}));
+        let status = call(handle, &id(), "get_sync_status", json!({}));
         let joined = status["topic_diagnostics"]
             .as_array()
             .is_some_and(|topics| {
@@ -336,10 +336,11 @@ pub fn wait_for_neighbor(handle: *mut KukuriHandle, topic: &str) {
     }
 }
 
-fn next_id() -> String {
+/// 試験の中で重ならない request ID。
+pub fn id() -> String {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     format!(
-        "join{}",
+        "r{}",
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     )
 }
