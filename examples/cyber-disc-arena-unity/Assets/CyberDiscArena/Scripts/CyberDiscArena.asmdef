@@ -1,7 +1,7 @@
 {
     "name": "CyberDiscArena",
     "rootNamespace": "CyberDiscArena",
-    "references": ["Kukuri.GameSdk", "Kukuri.GameSdk.Lobby", "Kukuri.GameSdk.Netcode", "Unity.Netcode.Runtime", "Unity.Collections", "UnityEngine.UI"],
+    "references": ["Kukuri.GameSdk", "Kukuri.GameSdk.Lobby", "Kukuri.GameSdk.Assets", "Kukuri.GameSdk.Netcode", "Unity.Netcode.Runtime", "Unity.Collections", "UnityEngine.UI"],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
