@@ -675,6 +675,10 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 - proxy は送り手と宛先の組ごとの bytes を数え（送信量）、標準入力の `blackout <ms>` でその間の全 packet を落とす（切断からの復帰）。遅延は受けた時点で決め、時刻の来た packet を 200 µs ごとに渡すので、片道は決めた遅延より 1 ms ほど長くなりうる（判定が厳しい側へずれる）。時刻は QueryPerformanceCounter の値で、C# の `Stopwatch.GetTimestamp()` と比べられる。
 - SDK の memory は、SDK の DLL の global allocator が数えた bytes を `kukuri_sdk_allocated_bytes` で読む（libvpx などの C の確保は含まない）。
 
+計測で決めたこと（#1984 AC-1）:
+
+- kukuri の全体（desktop・Web・CLI・SDK）の QUIC の輻輳制御を、既定の Cubic から BBR3 にする（2026-11-02 のユーザー判断）。Cubic は損失で送る速さを落とすので、この表の条件（往復 50 ms・損失 1%）で 5 MiB の取得に約 16 秒かかり、asset の反映の閾値（10 秒）を満たせなかった。同じ条件の BBR3 は 2〜4 秒だった。送る側だけの設定で、通信の形式は変わらない（`kukuri-transport` の `build_endpoint_builder`）。
+
 | 項目 | 測り方 | 閾値 |
 | --- | --- | --- |
 | frame time | 対戦者の `Update` の間隔 | p95 ≤ 16.7 ms、p99 ≤ 25 ms |

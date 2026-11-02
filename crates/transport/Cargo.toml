@@ -14,6 +14,8 @@ chrono.workspace = true
 futures-util.workspace = true
 iroh.workspace = true
 iroh-gossip.workspace = true
+# 輻輳制御の BBR3（iroh は noq の型を re-export しない）。
+noq-proto = "1.4.0"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

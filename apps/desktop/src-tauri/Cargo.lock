@@ -4403,6 +4403,7 @@ dependencies = [
  "n0-future",
  "n0-mainline",
  "n0-watcher",
+ "noq-proto",
  "noq-udp",
  "serde",
  "serde_json",
