@@ -64,6 +64,7 @@ pub(super) async fn integrity_fixture(name: &str) -> IntegrityFixture {
                     sent_at: None,
                 }],
             },
+            None,
         )
         .await;
     assert!(

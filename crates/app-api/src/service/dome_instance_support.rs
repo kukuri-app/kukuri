@@ -448,7 +448,7 @@ impl AppService {
             (None, SpatialContextV1::Topic { .. }) => {
                 let author = author_replica_id(owner.as_str());
                 let key = dome_instance_state_key(instance_id);
-                self.read_author_object(owner.as_str(), Some(topic), |docs, policy| {
+                self.read_author_object(owner.as_str(), Some(topic), None, |docs, policy| {
                     let (author, key) = (&author, &key);
                     async move {
                         self.read_dome_instance(docs.as_ref(), author, key, owner, policy, false)
@@ -545,6 +545,7 @@ impl AppService {
                 .read_author_object(
                     owner.as_str(),
                     Some(context.topic_id().as_str()),
+                    None,
                     |docs, policy| read(docs, author.clone(), policy),
                 )
                 .await;

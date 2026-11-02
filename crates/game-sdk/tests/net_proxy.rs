@@ -1,6 +1,7 @@
 //! #1984 AC-1: 性能の計測に使う UDP proxy（ADR 0070 §8.4）。`KUKURI_TEST_UDP_PROXY` を指定した 2 つの profile は、
 //! proxy を通してだけ届き、片道の遅延・損失・blackout がかかり、proxy は送り手と宛先の組ごとに bytes を数える。§8.4 の
-//! 条件（片道 22.5〜27.5 ms・損失 1%）でも、5 MiB を 10 秒以内に送れる（輻輳制御が BBR3。Cubic では 16 秒ほどかかる）。
+//! 条件（片道 22.5〜27.5 ms・損失 1%）でも、5 MiB を 3 秒以内に送れる（輻輳制御が BBR3 で、順序の入れ替わりを損失と
+//! みなさない。Cubic では 16 秒ほど、後の 3 packet で損失とみなす既定では 4〜7 秒かかる）。
 #![allow(clippy::unwrap_used)]
 
 mod support;
@@ -112,7 +113,7 @@ fn two_profiles_reach_each_other_only_through_the_measurement_proxy() {
         std::thread::sleep(Duration::from_millis(1));
     }
     let elapsed = started.elapsed();
-    assert!(elapsed < Duration::from_secs(10), "5 MiB took {elapsed:?}");
+    assert!(elapsed < Duration::from_secs(3), "5 MiB took {elapsed:?}");
 
     // 送り手と宛先の組ごとに、両方向の bytes と、損失・blackout で落とした packet が数えられる。
     let (host_id, guest_id) = (endpoint_id(host), endpoint_id(guest));

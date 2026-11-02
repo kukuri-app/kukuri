@@ -22,12 +22,13 @@ namespace CyberDiscArena
     public sealed class ArenaSession : MonoBehaviour
     {
         const string InputMessage = "arena.input";
-        const string ActionMessage = "arena.action";
         const string StateMessage = "arena.state";
         const string EventMessage = "arena.event";
         const string SkinMessage = "arena.skin";
         const int InputRedundancy = 4;
         const int History = 64;
+        /// 確定した出来事を状態に重ねて送る期間（出来事の送信が落ちても、次の状態で届く）。
+        const float RecentEventSeconds = 0.5f;
 
         [SerializeField] KukuriRunner runner;
         [SerializeField] NetworkManager network;
@@ -38,11 +39,16 @@ namespace CyberDiscArena
         readonly ArenaInput[] inputs = new ArenaInput[2];
         readonly SortedList<uint, ArenaInput> pending = new SortedList<uint, ArenaInput>();
         readonly List<(float at, string name, byte[] bytes)> inbox = new List<(float, string, byte[])>();
+        readonly List<(float at, ArenaEvent @event)> recentEvents = new List<(float, ArenaEvent)>();
         readonly System.Random random = new System.Random(1983);
         ArenaRules rules;
         ulong opponent = ulong.MaxValue;
         string roomId;
         uint sequence;
+        /// client: 最後の操作（通し番号・投げるか・向き）。入力の送信に毎回重ねる。
+        (uint id, bool throwing, float yaw) action;
+        /// host: 扱った client の操作の通し番号。
+        uint remoteAction;
         float delay;
         float loss;
         float stateAt;
@@ -185,8 +191,11 @@ namespace CyberDiscArena
             LastEvent = 0;
             EventGaps = 0;
             sequence = 0;
+            action = default;
+            remoteAction = 0;
             pending.Clear();
             inbox.Clear();
+            recentEvents.Clear();
             correction = Vector3.zero;
             for (var index = 0; index < 2; index++)
                 Players[index] = new PlayerState { Position = ArenaRules.Spawn(index), Yaw = ArenaRules.SpawnYaw(index) };
@@ -201,7 +210,7 @@ namespace CyberDiscArena
         void Register()
         {
             var messages = network.CustomMessagingManager;
-            foreach (var name in new[] { InputMessage, ActionMessage, StateMessage, EventMessage, SkinMessage })
+            foreach (var name in new[] { InputMessage, StateMessage, EventMessage, SkinMessage })
                 messages.RegisterNamedMessageHandler(name, (sender, reader) => Receive(name, reader));
             network.NetworkTickSystem.Tick += OnTick;
         }
@@ -222,6 +231,22 @@ namespace CyberDiscArena
             switch (name)
             {
                 case InputMessage when IsHost:
+                    reader.ReadValueSafe(out uint id);
+                    reader.ReadValueSafe(out bool throwing);
+                    reader.ReadValueSafe(out float yaw);
+                    // 操作はどの入力の送信にも重なって届くので、新しい通し番号だけを扱う（試合中でなければ番号だけ進める）。
+                    if (id > remoteAction)
+                    {
+                        remoteAction = id;
+                        if (rules.Phase == ArenaPhase.Playing)
+                        {
+                            if (throwing)
+                                rules.Throw(1, yaw);
+                            else
+                                rules.Catch(1);
+                            SendEvents();
+                        }
+                    }
                     reader.ReadValueSafe(out byte count);
                     for (var index = 0; index < count; index++)
                     {
@@ -229,14 +254,6 @@ namespace CyberDiscArena
                         if (input.Sequence > inputs[1].Sequence && !pending.ContainsKey(input.Sequence))
                             pending.Add(input.Sequence, input);
                     }
-                    break;
-                case ActionMessage when IsHost && rules.Phase == ArenaPhase.Playing:
-                    reader.ReadValueSafe(out bool throwing);
-                    reader.ReadValueSafe(out float yaw);
-                    if (throwing)
-                        rules.Throw(1, yaw);
-                    else
-                        rules.Catch(1);
                     break;
                 case StateMessage when !IsHost:
                     ReadState(reader);
@@ -268,11 +285,20 @@ namespace CyberDiscArena
             history[input.Sequence % History] = input;
             if (moving)
                 ArenaRules.Move(ref Players[1], 1, input, ArenaRules.TickSeconds);
-            using var writer = new FastBufferWriter(1 + InputRedundancy * 22, Allocator.Temp);
-            var count = (byte)Math.Min(InputRedundancy, input.Sequence);
+            SendInputs();
+        }
+
+        /// client: 最後の操作と直近の入力を重ねて送る（落ちても次の送信で届く）。
+        void SendInputs()
+        {
+            using var writer = new FastBufferWriter(10 + InputRedundancy * 22, Allocator.Temp);
+            writer.WriteValueSafe(action.id);
+            writer.WriteValueSafe(action.throwing);
+            writer.WriteValueSafe(action.yaw);
+            var count = (byte)Math.Min(InputRedundancy, sequence);
             writer.WriteValueSafe(count);
             for (var back = 0; back < count; back++)
-                WriteInput(writer, history[(input.Sequence - (uint)back) % History]);
+                WriteInput(writer, history[(sequence - (uint)back) % History]);
             network.CustomMessagingManager.SendNamedMessage(InputMessage, NetworkManager.ServerClientId, writer,
                 NetworkDelivery.Unreliable);
         }
@@ -299,28 +325,39 @@ namespace CyberDiscArena
         /// host: 確定した出来事を全員へ送って自分にも適用し、状態を配る。
         void Publish()
         {
-            foreach (var @event in rules.Events)
-            {
-                using var writer = new FastBufferWriter(64, Allocator.Temp);
-                WriteEvent(writer, @event);
-                network.CustomMessagingManager.SendNamedMessageToAll(EventMessage, writer, NetworkDelivery.ReliableSequenced);
-                Apply(@event);
-            }
-            rules.Events.Clear();
+            SendEvents();
+            recentEvents.RemoveAll(recent => recent.at < Time.unscaledTime - RecentEventSeconds);
             for (var index = 0; index < 2; index++)
                 Players[index] = rules.Players[index];
             Disc = rules.Disc;
             TimeLeft = rules.TimeLeft;
             if (opponent == ulong.MaxValue)
                 return;
-            using var state = new FastBufferWriter(128, Allocator.Temp);
+            using var state = new FastBufferWriter(129 + recentEvents.Count * 34, Allocator.Temp);
             state.WriteValueSafe(rules.TimeLeft);
             foreach (var player in rules.Players)
                 WritePlayer(state, player);
             state.WriteValueSafe((byte)rules.Disc.Mode);
             state.WriteValueSafe(rules.Disc.Position);
             state.WriteValueSafe(rules.Disc.Velocity);
+            state.WriteValueSafe((byte)recentEvents.Count);
+            foreach (var (_, @event) in recentEvents)
+                WriteEvent(state, @event);
             network.CustomMessagingManager.SendNamedMessage(StateMessage, opponent, state, NetworkDelivery.UnreliableSequenced);
+        }
+
+        /// host: 確定した出来事を全員へ送って自分にも適用する（client の操作で確定した出来事は tick を待たずに送る）。
+        void SendEvents()
+        {
+            foreach (var @event in rules.Events)
+            {
+                using var writer = new FastBufferWriter(64, Allocator.Temp);
+                WriteEvent(writer, @event);
+                network.CustomMessagingManager.SendNamedMessageToAll(EventMessage, writer, NetworkDelivery.ReliableSequenced);
+                recentEvents.Add((Time.unscaledTime, @event));
+                Apply(@event);
+            }
+            rules.Events.Clear();
         }
 
         /// client: host の状態。相手はそのまま、自分は host が適用した入力より後の入力を当て直す（ずれは表示で埋める）。
@@ -332,6 +369,14 @@ namespace CyberDiscArena
             reader.ReadValueSafe(out byte mode);
             reader.ReadValueSafe(out Vector3 position);
             reader.ReadValueSafe(out Vector3 velocity);
+            // 状態に重なった出来事のうち、次の番号のものから順に適用する（間が欠けたら、確実に届く送信を待つ）。
+            reader.ReadValueSafe(out byte recent);
+            for (var index = 0; index < recent; index++)
+            {
+                var @event = ReadEvent(reader);
+                if (@event.Sequence == LastEvent + 1)
+                    Apply(@event);
+            }
             TimeLeft = timeLeft;
             Players[0] = host;
             var predicted = Players[1].Position;
@@ -398,11 +443,8 @@ namespace CyberDiscArena
                     rules.Catch(0);
                 return;
             }
-            using var writer = new FastBufferWriter(8, Allocator.Temp);
-            writer.WriteValueSafe(throwing);
-            writer.WriteValueSafe(yaw);
-            network.CustomMessagingManager.SendNamedMessage(ActionMessage, NetworkManager.ServerClientId, writer,
-                NetworkDelivery.ReliableSequenced);
+            action = (action.id + 1, throwing, yaw);
+            SendInputs();
         }
 
         void OnClientConnected(ulong clientId)
@@ -492,7 +534,7 @@ namespace CyberDiscArena
             network.OnClientConnectedCallback -= OnClientConnected;
             network.OnClientDisconnectCallback -= OnClientDisconnected;
             if (network.CustomMessagingManager != null)
-                foreach (var name in new[] { InputMessage, ActionMessage, StateMessage, EventMessage, SkinMessage })
+                foreach (var name in new[] { InputMessage, StateMessage, EventMessage, SkinMessage })
                     network.CustomMessagingManager.UnregisterNamedMessageHandler(name);
             if (network.IsListening)
                 network.Shutdown();

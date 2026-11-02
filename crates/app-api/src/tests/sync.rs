@@ -421,6 +421,7 @@ mod bucket_integrity;
 mod bucket_receive_integration;
 mod diagnostics;
 mod docs_author_reads;
+mod game_asset_hint_source;
 mod gossip_toggle;
 mod head_page_provider;
 mod hint_rehydration;

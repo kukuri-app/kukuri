@@ -13,7 +13,7 @@ use moq_net::Timestamp;
 use n0_future::task::AbortOnDropHandle;
 use tokio::sync::Notify;
 
-use super::{LIVE_AUDIO_TRACK, micros, sign_audio};
+use super::{LIVE_AUDIO_TRACK, micros, private_broadcast, sign_audio};
 use crate::media_devices::OPUS_SAMPLE_RATE;
 
 const QUEUE_LIMIT: Duration = Duration::from_millis(200);
@@ -130,7 +130,7 @@ async fn open(
     moq_net::broadcast::Producer,
     AbortOnDropHandle<()>,
 )> {
-    let mut private = moq_net::broadcast::Info::new().produce();
+    let mut private = private_broadcast(broadcast);
     let private_catalog = moq_mux::catalog::Producer::new(
         &mut private,
         moq_mux::catalog::Config::default().with_clock(catalog.clock()),
