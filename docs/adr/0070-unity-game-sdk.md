@@ -677,7 +677,7 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 
 計測で決めたこと（#1984 AC-1）:
 
-- kukuri の全体（desktop・Web・CLI・SDK）の QUIC の輻輳制御を、既定の Cubic から BBR3 にする（2026-11-02 のユーザー判断）。Cubic は損失で送る速さを落とすので、この表の条件（往復 50 ms・損失 1%）で 5 MiB の取得に約 16 秒かかり、asset の反映の閾値（10 秒）を満たせなかった。同じ条件の BBR3 は 2〜4 秒だった。送る側だけの設定で、通信の形式は変わらない（`kukuri-transport` の `build_endpoint_builder`）。
+- kukuri の全体（desktop・Web・CLI・SDK と、同じ `build_endpoint_builder` で endpoint を作る Community Node の indexer）の QUIC の輻輳制御を、既定の Cubic から BBR3 にする（2026-11-02 のユーザー判断）。Cubic は損失で送る速さを落とすので、§8.4 の条件の表（往復 50 ms・損失 1%）で 5 MiB の取得に約 16 秒かかり、asset の反映の閾値（10 秒）を満たせなかった。同じ条件の BBR3 は 2〜4 秒だった。送る側だけの設定で、通信の形式は変わらない（`kukuri-transport` の `build_endpoint_builder`）。
 
 | 項目 | 測り方 | 閾値 |
 | --- | --- | --- |
