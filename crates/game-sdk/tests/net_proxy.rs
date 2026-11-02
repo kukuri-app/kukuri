@@ -1,5 +1,6 @@
 //! #1984 AC-1: 性能の計測に使う UDP proxy（ADR 0070 §8.4）。`KUKURI_TEST_UDP_PROXY` を指定した 2 つの profile は、
-//! proxy を通してだけ届き、片道の遅延と blackout がかかり、proxy は送り手と宛先の組ごとに bytes を数える。
+//! proxy を通してだけ届き、片道の遅延・損失・blackout がかかり、proxy は送り手と宛先の組ごとに bytes を数える。§8.4 の
+//! 条件（片道 22.5〜27.5 ms・損失 1%）でも、5 MiB を 10 秒以内に送れる（輻輳制御が BBR3。Cubic では 16 秒ほどかかる）。
 #![allow(clippy::unwrap_used)]
 
 mod support;
@@ -53,7 +54,7 @@ fn two_profiles_reach_each_other_only_through_the_measurement_proxy() {
     let stats = dir.path().join("stats.txt");
     let mut proxy = Proxy(
         Command::new(env!("CARGO_BIN_EXE_kukuri-sdk-net-proxy"))
-            .args(["--listen", &listen, "--loss", "0", "--stats"])
+            .args(["--listen", &listen, "--stats"])
             .arg(&stats)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -88,7 +89,32 @@ fn two_profiles_reach_each_other_only_through_the_measurement_proxy() {
     // 行を読むまでの間の分だけ、1 秒より短くなりうる。
     assert!(sent.elapsed() >= Duration::from_millis(800));
 
-    // 送り手と宛先の組ごとに、両方向の bytes と blackout で落とした packet が数えられる。
+    // 5 MiB を stream で送る（受け手を poll しながら、送り待ちが溢れたら送り直す）。
+    let chunk = vec![0x5a; 60 * 1024];
+    let total = 5 << 20;
+    let (mut sent, mut received) = (0, 0);
+    let started = Instant::now();
+    while received < total {
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "{received} of {total}"
+        );
+        let len = chunk.len().min(total - sent);
+        if len > 0 && send_binary(guest, BINARY_STREAM, &session, &chunk[..len]) == ok {
+            sent += len;
+        }
+        received += support::poll_once(host, 64)
+            .unwrap()
+            .iter()
+            .filter(|item| item.kind == 4)
+            .map(|item| item.raw.len())
+            .sum::<usize>();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed < Duration::from_secs(10), "5 MiB took {elapsed:?}");
+
+    // 送り手と宛先の組ごとに、両方向の bytes と、損失・blackout で落とした packet が数えられる。
     let (host_id, guest_id) = (endpoint_id(host), endpoint_id(guest));
     std::thread::sleep(Duration::from_millis(1500));
     let text = std::fs::read_to_string(&stats).unwrap();
@@ -112,7 +138,7 @@ fn two_profiles_reach_each_other_only_through_the_measurement_proxy() {
         to_host[3] > 0,
         "the blackout dropped the stream: {to_host:?}"
     );
-    assert_eq!(to_host[2] + to_guest[2], 0, "--loss 0 loses nothing");
+    assert!(to_host[2] > 0, "the proxy loses packets: {to_host:?}");
 
     finish(guest);
     finish(host);
