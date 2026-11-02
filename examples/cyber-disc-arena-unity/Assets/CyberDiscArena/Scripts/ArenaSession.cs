@@ -13,8 +13,8 @@ namespace CyberDiscArena
 {
     /// 対戦の通信と裁定（ADR 0070 §6）。Lobby で room を作った端末が host（player 0）、参加した端末が client（player 1）
     /// として NGO を始める。host だけが `ArenaRules` を進め、ディスクの持ち主・得点・勝敗を確定する。
-    /// - client → host: 入力を毎 tick datagram で（落ちても届くよう直近 4 tick 分を重ねる）、投げる・受け止める要求を stream で。
-    /// - host → 全員: 状態を毎 tick datagram で、確定した出来事を通し番号つきの stream で。
+    /// - client → host: 入力を毎 tick datagram で（落ちても届くよう直近 4 tick 分を重ねる）。投げる・受け止める要求もそこへ重ねる。
+    /// - host → 全員: 状態を毎 tick datagram で、確定した出来事を通し番号つきの stream で（直前の出来事は状態にも重ねる）。
     /// client は自分の動きを予測して表示し、host の状態が届いたら、host が適用した入力より後の入力を当て直して補正する。
     /// ディスクの持ち主と得点は確定した出来事でだけ変える。起動引数 `-arena-delay <ms>`・`-arena-loss <%>` で受信を遅らせ、
     /// datagram を落とす（回線の悪い状態の確認用）。

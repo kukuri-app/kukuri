@@ -1,7 +1,7 @@
 //! #1984 AC-1: 性能の計測に使う UDP proxy（ADR 0070 §8.4）。`KUKURI_TEST_UDP_PROXY` を指定した 2 つの profile は、
 //! proxy を通してだけ届き、片道の遅延・損失・blackout がかかり、proxy は送り手と宛先の組ごとに bytes を数える。§8.4 の
 //! 条件（片道 22.5〜27.5 ms・損失 1%）でも、5 MiB を 3 秒以内に送れる（輻輳制御が BBR3 で、順序の入れ替わりを損失と
-//! みなさない。Cubic では 16 秒ほど、後の 3 packet で損失とみなす既定では 4〜7 秒かかる）。
+//! みなさない。Cubic では 16 秒ほど、後の 3 packet で損失とみなす既定では 2〜7 秒にばらつく）。
 #![allow(clippy::unwrap_used)]
 
 mod support;
