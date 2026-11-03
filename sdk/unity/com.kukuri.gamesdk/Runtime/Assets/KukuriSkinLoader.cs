@@ -53,7 +53,7 @@ namespace Kukuri.GameSdk.Assets
         /// 新しい版を読めなかった（理由）。今のスキンはそのまま。
         public event Action<string> Failed;
 
-        /// 設定すると（`runner` を使うときは runner が開いた後の最初の frame に）購読を始め、最新の版を読む。
+        /// 設定すると（`runner` を使うときは runner が開いた後の最初の frame に）購読を始め、版を読む（適用中の版があればそれ、無ければ最新）。
         public KukuriClient Client
         {
             get => client ?? (runner != null ? runner.Client : null);
@@ -67,7 +67,7 @@ namespace Kukuri.GameSdk.Assets
         public string Topic { get => topic; set => topic = value ?? ""; }
         public string PublisherPubkey { get => publisherPubkey; set => publisherPubkey = value ?? ""; }
         public string ApplicationId { get => applicationId; set => applicationId = value ?? ""; }
-        /// 変えると、今のスキンを外し（PNG・JPEG なら元の material に戻す）、新しいアセットの最新の版を読む。空なら何も
+        /// 変えると、今のスキンを外し（PNG・JPEG なら元の material に戻す）、新しいアセットの版を読む（適用中の版があればそれ、無ければ最新）。空なら何も
         /// 読まない（スキンなし）。
         public string AssetId
         {
@@ -129,7 +129,7 @@ namespace Kukuri.GameSdk.Assets
                 _ = LoadLatestAsync();
         }
 
-        /// 最新の検証済みの版を得て、適用中より新しければ差し替える。読み込み中に呼ばれたら、終わった後にもう一度読む。
+        /// 検証済みの版（適用中の版があればそれ、無ければ最新）を得て、適用中より新しければ差し替える。読み込み中に呼ばれたら、終わった後にもう一度読む。
         public async Task LoadLatestAsync()
         {
             if (loading)

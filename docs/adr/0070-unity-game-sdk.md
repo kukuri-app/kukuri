@@ -68,7 +68,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | command | `list_action_rooms` | #1978 | 1 つの application ID の action session の room を、更新の新しい順に 1 頁 20 件ずつ返す。続きは応答の `next_cursor` で読む（CLI と SDK だけ。desktop・Web は表示しない） |
 | command | `join_game_session` / `leave_game_session` | #1978 | action session の room の host へ参加・退出する。参加の応答に session ID を返す |
 | command | `publish_game_asset` | #1980 | 発行者の profile で manifest に署名して公開する（Sidecar・CLI だけ。§5.3） |
-| command | `list_game_assets` / `fetch_game_asset` | #1980 | 発行者の公開鍵と application ID で、指定した asset ID（1 回 32 件まで）の最新の release を読み、検証済みの file の path を得る |
+| command | `list_game_assets` / `fetch_game_asset` | #1980 | 発行者の公開鍵と application ID で、指定した asset ID（1 回 32 件まで）の最新の release を読み、検証済みの file の path を得る。`fetch_game_asset` は、適用中の版があればそれを待たずに返す（新しい版は背景で確かめる） |
 | command | `set_live_broadcast` / `stop_live_broadcast` / `watch_live_media` / `stop_watching_live_media` / `set_live_volume` | #1982 | desktop-runtime にある Live の配信・視聴の操作を登録簿へ載せる |
 | command | `set_public_channel_subscription` | #1982 | 公開スレッド（公開 channel。ADR 0068）の投稿・リアクションの知らせを購読する・やめる。desired として保存し、topic の購読と同じ上限に数える（CLI と SDK だけ。desktop・Web は開いている列で購読する）。保存は旧版の読まない `public-channel-subscriptions.json` に分け（旧版は `subscriptions.json` の channel を private channel として復元して起動に失敗するため。2026-10-31 のユーザー判断）、backup には含めない |
 | command | `start_game_player` / `get_game_player` | #1996 | profile の game player を作る・読む（1 つの profile に 1 つのゲーム。§4.1） |
@@ -564,6 +564,8 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
   - アセットの数に上限を置かない。asset ID は Unity Editor からの発行のときにゲームの設定 asset へ登録し、Player は登録された ID の record を読む。
   - この端末で適用中の版は cache の掃除で消さず、ほかの端末への提供元にする。新しい版を適用したら、古い版は通常の cache の規則に戻る。
   - 新しい版の取得は自動。更新の知らせを受けたら、適用中のアセットは背景で取得・検証・適用し、`game_asset_updated` で path とともに知らせる。
+- 2026-11-04 のユーザー判断（#1984）: `fetch_game_asset` は、適用中の版があれば新しい版の確認を待たずに返す。確認と取得は背景で行い、新しい版を適用したら `game_asset_updated` で知らせる。ゲームを閉じている間に新しい版が出ていると、起動直後は適用中の版で表示し、取れた時点で差し替わる。適用中の版が無い初回は、従来どおり取得を待つ。
+  - 理由: 確認の読みは、読み先が終了していると 5 秒ずつ時間切れを繰り返す。dispatcher は変更操作を 1 つずつ実行するので（ADR 0049）、その間 SDK の他の command がすべて止まり、30 秒で時間切れになっていた。
 - record の key は発行者の制御領域の `game-assets/<application ID>/<asset ID>` で、値は署名した envelope（kind `game-asset-release`）。日の bucket に置かないので、新しい端末も 1 回の exact な読みで最新版に届く（件数に比例しない）。
   - 読み手は手元 → 発行者本人 → ゲームの公開 topic の参加者の順に読み、受けた record（最大 8 件）をすべて検証して revision が最大のものを採る。別の名義で古い署名済みの record を書かれても、新しい版より優先しない。
   - 適用は revision が大きいときだけ（`applied_game_assets` の行）。取得は `.partial` へ書き、長さを確かめてから使える名前にする（hash は転送で照合する）。
@@ -600,10 +602,10 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
   - stream の送り待ちが上限で受け付けられなかった分は、相手ごとに 1 MiB まで手元に持って順に送り直す。超えたらその相手を切る。
   - host が開いた知らせより先に受けた packet は、session ごとに 64 件まで持ち、開いたら渡す。
   - 切断（host が外す・client が退出する・NGO を止める）は session をすぐ閉じる。その時点の送り待ちの分（NGO の切断の理由の message を含む）は届かないことがある。
-- Assets の module（`Runtime/Assets`、#1980 AC-2）は、glTFast 6.20.0 以上 7.0 未満が入った project だけで compile する。`KukuriSkinLoader` は、信頼する発行者の公開鍵・application ID・asset ID の最新の検証済みの file を `fetch_game_asset` で得て表示する。`game_asset_updated` を受けたら読み直し、再起動せずに差し替える。
+- Assets の module（`Runtime/Assets`、#1980 AC-2）は、glTFast 6.20.0 以上 7.0 未満が入った project だけで compile する。`KukuriSkinLoader` は、信頼する発行者の公開鍵・application ID・asset ID の検証済みの file（適用中の版があればそれ、無ければ最新）を `fetch_game_asset` で得て表示する。`game_asset_updated` を受けたら読み直し、再起動せずに差し替える。
   - .glb は glTFast で読み、`TimeBudgetPerFrameDeferAgent` で 1 frame の処理を予算の中に抑える。PNG・JPEG は renderer の material の texture にする。AssetBundle は自分の Unity の版と build の対象が manifest と合うときだけ読み、最初の GameObject を置く。
   - 新しい版を読み終えてから入れ替え、前の版の GameObject・glTF の資源・texture・AssetBundle を解放する。読めなければ理由を `Failed` で知らせ、今のスキンを保つ。
-  - `AssetId` を変えると、今のスキンを外し（PNG・JPEG は元の material に戻す）、新しいアセットの最新の版を読む。空ならスキンなし。読む間に変えたら、その結果は使わない（#1983 AC-2b。ゲームが着せ替えに 1 つの loader を使う）。
+  - `AssetId` を変えると、今のスキンを外し（PNG・JPEG は元の material に戻す）、新しいアセットの版（適用中の版があればそれ、無ければ最新）を読む。空ならスキンなし。読む間に変えたら、その結果は使わない（#1983 AC-2b。ゲームが着せ替えに 1 つの loader を使う）。
 - ゲームの開始の画面（§4.1〜§4.3 の開始・移行・まとめ・Steam Cloud の操作）は Core の `Runtime/Account` の `KukuriAccountScreen`（IMGUI）。#1996〜#1998 では Minimal sample だったが、Cyber Disc Arena（#1983 AC-2）が同じ画面を写さずに使えるよう、Runtime へ移した。まとめる先のアカウントにゲームが知っている別の進行があれば、ゲームが `OtherProgress` で返し、確定の画面で残す進行を選べる（選ばなかった進行はゲームのセーブに残る）。
 - Cyber Disc Arena の配信・4 面モニター・応援（#1983 AC-2c、2026-11-01 のユーザー判断）: 部屋を作る前に「配信する」を選ぶと（既定は配信しない）、host は試合の開始で ring を見下ろす camera を `create_live_session` と `KukuriLiveBroadcaster` で公開の Live にし、試合が終わると `end_live_session` で止める。配信中にゲームを閉じると止めて終えてから閉じ、強制終了で閉じ損ねた配信は次の起動で終える（この端末で作った配信の ID だけを profile の隣に残して使う。同じアカウントの別の端末や desktop の Live は終えない）。ロビーで観戦中の配信が映像を送らなくなり、配信中でなくなったら離れて別の配信を探す。4 面モニターは、対戦中は自分の試合（配信中は配信の画面）、ロビーにいる間は `list_live_sessions` で見つけた他の人の配信を `KukuriLiveViewer` で受けて映す（10 秒ごとに探す）。配信の開始 post へのリアクション（desktop・Web の SNS から、またはロビーで観戦中の人の R 長押しの応援。`toggle_reaction`）が `reaction_received` で届くと、ring の上に応援の文字と光る粒を出す（3 秒、同時に 16 個まで）。
 - Cyber Disc Arena の掲示板・結果・Prefab（#1983 AC-2d）: Enter で SDK の `KukuriBoard` を開け閉めし、文字の入力中は対戦の操作に使わない。結果画面の「結果を投稿」（押したときだけ。2026-11-01 のユーザー判断）で得点の文と画面の画像を掲示板の topic へ公開で投稿する。画像は一時 file に書き、`create_post` の添付に `kukuri_sdk_blake3_hex`（C# の `KukuriClient.Blake3Hex`）で求めた hash を付ける。投稿はゲームを終えた後も desktop・Web から返信でき、次に掲示板でその thread を開くと読める。arena は 4 つの Prefab（`DiscNetworkSync`: NGO・ロビー・裁定・表示、`LiveSkinLoader`: ロッカーと保存、`ArenaStreamViewer`: 配信・モニター・観戦・応援、`InGameBoardUI`: 掲示板と結果の投稿）で組み、Prefab どうしのつなぎ（ロッカーの対戦・配信の対戦・結果の掲示板）は scene で付ける。どれも無くても動くので、`Scenes/Minimal` の Prefab ごとの最小の scene（照明・camera・KukuriRunner・開始の画面と、その Prefab だけ）でも動く。SDK の公開の API だけを使う（arena の asmdef は SDK の internal を見ない）。観戦の Prefab は、配信を探す topic を自分で購読する（画面の列と同じ保存しない購読）。

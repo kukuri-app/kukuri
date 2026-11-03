@@ -149,6 +149,15 @@ mod native {
         }
     }
 
+    /// 適用中の版の file。
+    fn applied_view(row: &AppliedGameAssetRow, publisher: &str) -> Result<GameAssetFileView> {
+        let release: GameAssetReleaseV1 = serde_json::from_str(&row.release_json)?;
+        Ok(GameAssetFileView {
+            release: view(&release, publisher, Some(row.revision)),
+            path: row.file_path.clone(),
+        })
+    }
+
     /// 読み先が返した record のうち、検証できて revision が最大の release と、その record を書いた docs author。
     async fn newest_release(
         docs: &dyn DocsSync,
@@ -351,8 +360,8 @@ mod native {
             Ok(read.into_iter().flatten().collect())
         }
 
-        /// 最新の release の検証済みの file を返す。適用中の版が最新ならそれを、新しければ取得・検証・適用して返す。
-        /// 古い release では戻さない。release も適用中の版も無い・取得できないときは [`GameAssetUnavailable`]。
+        /// 検証済みの file を返す。適用中の版があればそれを即座に返し、新しい版は背景で確かめて `game_asset_updated` で
+        /// 知らせる。無ければ最新の release を取得・検証・適用して返す。古い release では戻さない。release も適用中の版も無い・取得できないときは [`GameAssetUnavailable`]。
         pub async fn fetch_game_asset(
             &self,
             topic_id: &str,
@@ -362,6 +371,17 @@ mod native {
         ) -> Result<GameAssetFileView> {
             validate_application_id(application_id)?;
             validate_asset_id(asset_id)?;
+            // 適用中の版は、新しい版の確認を待たずに返す。確認と取得は背景で行い、取れたら `game_asset_updated` で知らせる
+            // (読み先が応答しない間、SDK の他の command を止めない。2026-11-04 のユーザー判断、#1984)。
+            if let Some(row) = self
+                .services
+                .projection_store
+                .get_applied_game_asset(publisher, application_id, asset_id)
+                .await?
+            {
+                self.update_game_asset(topic_id, publisher, application_id, asset_id, 0, None);
+                return applied_view(&row, publisher);
+            }
             let _fetching = self
                 .lock_game_asset(publisher, application_id, asset_id)
                 .await;
@@ -394,13 +414,7 @@ mod native {
             let applied = store
                 .get_applied_game_asset(publisher, application_id, asset_id)
                 .await?;
-            let current = |row: &AppliedGameAssetRow| -> Result<GameAssetFileView> {
-                let release: GameAssetReleaseV1 = serde_json::from_str(&row.release_json)?;
-                Ok(GameAssetFileView {
-                    release: view(&release, publisher, Some(row.revision)),
-                    path: row.file_path.clone(),
-                })
-            };
+            let current = |row: &AppliedGameAssetRow| applied_view(row, publisher);
             let read = self
                 .read_game_asset(
                     topic_id,
@@ -533,89 +547,110 @@ mod native {
                 .projection_store
                 .get_applied_game_asset(publisher, application_id, asset_id)
                 .await?;
-            let update = GameAssetUpdate {
-                publisher_pubkey: publisher.into(),
-                application_id: application_id.into(),
-                asset_id: asset_id.into(),
-                revision: release.revision,
-                path: None,
-            };
             match applied {
                 Some(row) if row.revision >= release.revision => return Ok(false),
-                Some(_) => {
-                    let key = format!("{publisher} {application_id} {asset_id}");
-                    let waiting = &self.services.game_asset_running.waiting;
-                    if !waiting
-                        .lock()
-                        .expect("game asset waiting")
-                        .insert(key.clone())
-                    {
-                        return Ok(true);
-                    }
-                    let (app, topic, source) = (
-                        self.account_handle(),
-                        topic_id.to_owned(),
-                        source.map(str::to_owned),
-                    );
-                    n0_future::task::spawn(async move {
-                        let (publisher, application_id, asset_id) = (
-                            &update.publisher_pubkey,
-                            &update.application_id,
-                            &update.asset_id,
-                        );
-                        // 前面の取得か、先に届いた知らせの取得が済ませていれば知らせない。取得の間に届いた次の版の知らせは、
-                        // 待った後に読み直して取る。
-                        let _fetching = app
-                            .lock_game_asset(publisher, application_id, asset_id)
-                            .await;
-                        // 取得を始めたら、次の知らせは新しい task を待たせる。
-                        app.services
-                            .game_asset_running
-                            .waiting
-                            .lock()
-                            .expect("game asset waiting")
-                            .remove(&key);
-                        let before = app
-                            .services
-                            .projection_store
-                            .get_applied_game_asset(publisher, application_id, asset_id)
-                            .await
-                            .ok()
-                            .flatten()
-                            .map_or(0, |row| row.revision);
-                        if before >= update.revision {
-                            return;
-                        }
-                        let fetched = app
-                            .fetch_game_asset_locked(
-                                &topic,
-                                publisher,
-                                application_id,
-                                asset_id,
-                                source.as_deref(),
-                            )
-                            .await;
-                        match fetched {
-                            Ok(file) if file.release.revision > before => {
-                                let _ = app.services.game_asset_updates.send(GameAssetUpdate {
-                                    revision: file.release.revision,
-                                    path: Some(file.path),
-                                    ..update
-                                });
-                            }
-                            Ok(_) => tracing::warn!(
-                                revision = update.revision,
-                                "the newer game asset could not be obtained; keeping the applied one"
-                            ),
-                            Err(error) => tracing::warn!(%error, "failed to update a game asset"),
-                        }
-                    });
-                }
+                Some(_) => self.update_game_asset(
+                    topic_id,
+                    publisher,
+                    application_id,
+                    asset_id,
+                    release.revision,
+                    source,
+                ),
                 None => {
-                    let _ = self.services.game_asset_updates.send(update);
+                    let _ = self.services.game_asset_updates.send(GameAssetUpdate {
+                        publisher_pubkey: publisher.into(),
+                        application_id: application_id.into(),
+                        asset_id: asset_id.into(),
+                        revision: release.revision,
+                        path: None,
+                    });
                 }
             }
             Ok(true)
+        }
+
+        /// 適用中のアセットの新しい版を背景で取得・適用し、取れたら path 付きで `game_asset_updated` を出す。`known` は
+        /// 知らせで読めた版(取得を待つ間に、前面の取得か先の知らせの取得がそこまで済ませていれば取らない。0 は版を知らない
+        /// 確認)。同じアセットの待ちは 1 つにまとめる。
+        fn update_game_asset(
+            &self,
+            topic_id: &str,
+            publisher: &str,
+            application_id: &str,
+            asset_id: &str,
+            known: u64,
+            source: Option<&str>,
+        ) {
+            let key = format!("{publisher} {application_id} {asset_id}");
+            let waiting = &self.services.game_asset_running.waiting;
+            if !waiting
+                .lock()
+                .expect("game asset waiting")
+                .insert(key.clone())
+            {
+                return;
+            }
+            let (app, topic, source) = (
+                self.account_handle(),
+                topic_id.to_owned(),
+                source.map(str::to_owned),
+            );
+            let (publisher, application_id, asset_id) = (
+                publisher.to_owned(),
+                application_id.to_owned(),
+                asset_id.to_owned(),
+            );
+            n0_future::task::spawn(async move {
+                // 取得の間に届いた次の版の知らせは、待った後に読み直して取る。
+                let _fetching = app
+                    .lock_game_asset(&publisher, &application_id, &asset_id)
+                    .await;
+                // 取得を始めたら、次の知らせは新しい task を待たせる。
+                app.services
+                    .game_asset_running
+                    .waiting
+                    .lock()
+                    .expect("game asset waiting")
+                    .remove(&key);
+                let before = app
+                    .services
+                    .projection_store
+                    .get_applied_game_asset(&publisher, &application_id, &asset_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map_or(0, |row| row.revision);
+                if known > 0 && before >= known {
+                    return;
+                }
+                match app
+                    .fetch_game_asset_locked(
+                        &topic,
+                        &publisher,
+                        &application_id,
+                        &asset_id,
+                        source.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(file) if file.release.revision > before => {
+                        let _ = app.services.game_asset_updates.send(GameAssetUpdate {
+                            publisher_pubkey: publisher,
+                            application_id,
+                            asset_id,
+                            revision: file.release.revision,
+                            path: Some(file.path),
+                        });
+                    }
+                    Ok(_) if known > before => tracing::warn!(
+                        revision = known,
+                        "the newer game asset could not be obtained; keeping the applied one"
+                    ),
+                    Ok(_) => {}
+                    Err(error) => tracing::warn!(%error, "failed to update a game asset"),
+                }
+            });
         }
     }
 }
