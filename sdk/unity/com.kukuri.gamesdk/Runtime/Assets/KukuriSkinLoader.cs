@@ -129,7 +129,7 @@ namespace Kukuri.GameSdk.Assets
                 _ = LoadLatestAsync();
         }
 
-        /// 最新の検証済みの版を得て、適用中より新しければ差し替える。読み込み中に呼ばれたら、終わった後にもう一度読む。
+        /// 検証済みの版（適用中の版があればそれ、無ければ最新）を得て、適用中より新しければ差し替える。読み込み中に呼ばれたら、終わった後にもう一度読む。
         public async Task LoadLatestAsync()
         {
             if (loading)

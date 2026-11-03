@@ -360,8 +360,8 @@ mod native {
             Ok(read.into_iter().flatten().collect())
         }
 
-        /// 最新の release の検証済みの file を返す。適用中の版が最新ならそれを、新しければ取得・検証・適用して返す。
-        /// 古い release では戻さない。release も適用中の版も無い・取得できないときは [`GameAssetUnavailable`]。
+        /// 検証済みの file を返す。適用中の版があればそれを即座に返し、新しい版は背景で確かめて `game_asset_updated` で
+        /// 知らせる。無ければ最新の release を取得・検証・適用して返す。古い release では戻さない。release も適用中の版も無い・取得できないときは [`GameAssetUnavailable`]。
         pub async fn fetch_game_asset(
             &self,
             topic_id: &str,
