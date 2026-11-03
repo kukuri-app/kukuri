@@ -546,8 +546,9 @@ public sealed class ArenaProbe : MonoBehaviour
     /// ゲームを終えた後に再起動した host: 掲示板（Enter）で結果の投稿の thread を開き、desktop・Web の返信を読む。
     async Task Resume()
     {
-        await StartGame(true);
         var exchange = Arg("-arena-exchange");
+        skins.PublisherPubkey = File.ReadAllLines(Path.Combine(exchange, "publisher.info"))[1];
+        await StartGame(true);
         if (File.Exists(Path.Combine(exchange, "desktop-ticket")))
             await Call("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(Path.Combine(exchange, "desktop-ticket")) });
         var board = arenaBoard.Board;
@@ -679,10 +680,9 @@ public sealed class ArenaProbe : MonoBehaviour
         var pixel = new Texture2D(1, 1, TextureFormat.RGBA32, false);
         bool Green(RenderTexture output)
         {
-            var active = RenderTexture.active;
             RenderTexture.active = output;
             pixel.ReadPixels(new Rect(output.width / 2, output.height / 2, 1, 1), 0, 0);
-            RenderTexture.active = active;
+            RenderTexture.active = null;
             var color = pixel.GetPixel(0, 0);
             return color.g > color.r && color.g > color.b;
         }
