@@ -688,7 +688,16 @@ public sealed class ArenaProbe : MonoBehaviour
                     File.ReadAllText(Path.Combine(Arg("-arena-exchange"), name + "-live")).Trim() == current);
                 return seen != null && broadcast.Viewer.FramesShown > since + 10;
             }, 300, "the monitors did not show the live of " + string.Join(" or ", external));
-            Debug.Log($"KGS_EXTERNAL_WATCHED {seen} {broadcast.Viewer.FramesShown - since}");
+            // 試験の camera の映像（緑の canvas）が描かれていることを、中央の 1 画素で確かめる。
+            var output = broadcast.Viewer.Output;
+            var active = RenderTexture.active;
+            RenderTexture.active = output;
+            var pixel = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+            pixel.ReadPixels(new Rect(output.width / 2, output.height / 2, 1, 1), 0, 0);
+            RenderTexture.active = active;
+            var color = pixel.GetPixel(0, 0);
+            Destroy(pixel);
+            Debug.Log($"KGS_EXTERNAL_WATCHED {seen} {broadcast.Viewer.FramesShown - since} {color.g > color.r && color.g > color.b}");
             await Shot("spectator-" + seen);
             File.WriteAllText(Path.Combine(Arg("-arena-exchange"), seen + "-live-seen"), "done");
             external.Remove(seen);
@@ -889,7 +898,7 @@ $cheersShown = (Lines "host" "KGS_CHEERS (\S+)") | Select-Object -First 1
 $spectated = (Lines "spectator" "KGS_SPECTATED (\d+)") | Select-Object -First 1
 $rewatched = ((Lines "spectator" "KGS_LEFT_FINISHED (\S+)") | Select-Object -First 1) + "," + ((Lines "spectator" "KGS_REWATCHED (\S+)") | Select-Object -First 1)
 # desktop・Web: 配信を受けて応援し、結果を画像つきで読み、自分の配信が観戦の Player のモニターに映り、返信が再起動した host の
-# 掲示板の thread に並ぶ。topic の経路は Relay Fallback でない（desktop は Direct P2P、Web は Relay Supported P2P）。
+# 掲示板の thread に並ぶ。
 $externalsOk = $true
 foreach ($external in $externals) {
     if (-not $external.Process.WaitForExit(120000)) { Stop-Process -Id $external.Process.Id -Force }
@@ -898,13 +907,17 @@ foreach ($external in $externals) {
     $resultSeen = & $logged "^result-seen (\d+)"
     $replied = & $logged "^replied (\S+)"
     $thread = Select-String -Path $resumeLog -Pattern "KGS_RESULT_THREAD $name (.*)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value }
-    $monitor = (Lines "spectator" "KGS_EXTERNAL_WATCHED $name (\d+)") | Select-Object -First 1
-    $path = & $logged "^path (\S+)"
+    $monitor = (Lines "spectator" "KGS_EXTERNAL_WATCHED $name (\d+ \S+)") | Select-Object -First 1
+    $path = & $logged "^path (.+)"
+    # 観戦の Player が見ている間に、相手が 1 人以上いて relay を通る相手が 0 で、desktop は Direct P2P、Web は Relay Supported P2P。
+    $expectedPath = if ($name -eq "web") { "relay_supported_p2p" } else { "direct_p2p" }
+    $pathParts = "$path" -split " "
     $externalOk = (Select-String -Path $external.Log -Pattern "^watched" -Quiet) -and (Select-String -Path $external.Log -Pattern "^reacted" -Quiet) -and
-        ([int]$resultSeen -ge 1) -and (Select-String -Path $external.Log -Pattern "^broadcast-seen" -Quiet) -and ([int]$monitor -gt 10) -and
-        ($thread -eq "$resultPost $replied $resultPost True") -and ($path -in "direct_p2p", "relay_supported_p2p")
+        ([int]$resultSeen -ge 1) -and (Select-String -Path $external.Log -Pattern "^broadcast-seen" -Quiet) -and
+        ([int]("$monitor" -split " ")[0] -gt 10) -and ("$monitor" -like "* True") -and ($thread -eq "$resultPost $replied $resultPost True") -and
+        ($pathParts.Count -eq 3) -and ($pathParts[0] -eq $expectedPath) -and ([int]$pathParts[1] -ge 1) -and ($pathParts[2] -eq "0")
     $externalsOk = $externalsOk -and $externalOk
-    Write-Output "Player $name ($Backend): watched_and_reacted=$((Select-String -Path $external.Log -Pattern '^reacted' -Quiet)) result_attachments=$resultSeen monitor_frames=$monitor path=$path reply=$replied thread=[$thread] ok=$externalOk"
+    Write-Output "Player $name ($Backend): watched_and_reacted=$((Select-String -Path $external.Log -Pattern '^reacted' -Quiet)) result_attachments=$resultSeen monitor=[$monitor] path=[$path] reply=$replied thread=[$thread] ok=$externalOk"
 }
 $typing = (Lines "host" "KGS_BOARD_TYPING (.*)") | Select-Object -First 1
 $boardOk = ($typing -eq "True True") -and ($resultPost -match "^[0-9a-f]{64}$") -and ((-not $externals) -or ($exits["resume"] -eq 0))

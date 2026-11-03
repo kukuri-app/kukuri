@@ -19,7 +19,7 @@
 //   post へ 👏 で応援する。`watched`・`reacted` を log に書く。続けて、host が試合の後に投稿した結果
 //   （<作業 dir>/result-post）を timeline で読む（`result-seen <添付の数>`）。host が終えたら（<作業 dir>/host-done）自分も
 //   camera で配信し（#1984 AC-1）、session を <作業 dir>/desktop-live に書き、観戦の Player のモニターに映った印
-//   （<作業 dir>/desktop-live-seen）で配信を終える（`broadcast-seen`。続けて topic の経路を `path <経路>` で書く）。ゲームが
+//   （<作業 dir>/desktop-live-seen）で配信を終える（`broadcast-seen`。映った時点の topic の経路と相手の数を `path` で書く）。ゲームが
 //   終わった印（<作業 dir>/game-exited）の後に返信して <作業 dir>/desktop-replied に書き、再起動したゲームが掲示板で読んだ印
 //   （<作業 dir>/done）まで待って終わる。
 // - web（#1984 AC-1）: live と同じことを、試験の Community Node の fixture（harness の `web_e2e_fixture`）が配る Web の
@@ -28,7 +28,7 @@
 // board 以外は確認コードの画面を <作業 dir>/desktop-confirming.png に撮る。target・merge・board は最後の timeline も
 // <作業 dir>/desktop-timeline.png に撮る。
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { connectCdp, launch } from '../../apps/desktop/tests/real-app/driver.mjs';
@@ -39,6 +39,11 @@ import { eventually } from '../../apps/desktop/tests/web-e2e/wait.mjs';
 
 const [target, dir, mode] = process.argv.slice(2, 5);
 const root = resolve(dir);
+// Player が読む file は、一時 file に書いてから名前を変える（書きかけを読ませない。Player の側と同じ）。
+const write = (name, value) => {
+  writeFileSync(join(root, `${name}.tmp`), value);
+  renameSync(join(root, `${name}.tmp`), join(root, name));
+};
 const marker = (name) => eventually(`the ${name} file`, () => existsSync(join(root, name)) && readFileSync(join(root, name), 'utf8').trim(), 300_000);
 const visible = (label) => {
   const name = JSON.stringify(label);
@@ -52,9 +57,9 @@ const status = () => desktop.invoke('get_account_transfer_status');
 
 // #1981 AC-2: ゲームの掲示板の投稿に、ゲームを終えている間に返信し、再起動したゲームが読むまで保持する。
 const board = async () => {
-  writeFileSync(join(root, 'desktop-key'), (await desktop.invoke('get_sync_status')).local_author_pubkey);
+  write('desktop-key', (await desktop.invoke('get_sync_status')).local_author_pubkey);
   await openTopic(desktop, TOPIC, 'timeline');
-  writeFileSync(join(root, 'desktop-ticket'), await desktop.invoke('get_local_peer_ticket'));
+  write('desktop-ticket', await desktop.invoke('get_local_peer_ticket'));
   await desktop.invoke('import_peer_ticket', { request: { ticket: await marker('game-ticket') } });
   const post = await marker('game-post');
   const request = { topic: TOPIC, scope: { kind: 'public' }, cursor: null, limit: 20 };
@@ -62,13 +67,13 @@ const board = async () => {
     desktop.invoke('list_timeline', { request }).then((view) => view.items.some((item) => item.object_id === post)),
     120_000
   );
-  writeFileSync(join(root, 'seen'), post);
+  write('seen', post);
   await marker('game-exited');
   const reply = await desktop.invoke('create_post', {
     request: { topic: TOPIC, channel_ref: { kind: 'public' }, content: 'test: reply while the game is closed', reply_to: post },
   });
   console.log(`replied ${reply}`);
-  writeFileSync(join(root, 'replied'), reply);
+  write('replied', reply);
   await marker('done');
   await shoot('desktop-timeline.png');
 };
@@ -108,21 +113,22 @@ const live = async (emoji, frame) => {
   const route = new URLSearchParams({ topic, sessionId: own, liveTopic: topic });
   await desktop.evaluate(`(location.hash = ${JSON.stringify(`#/live?${route}`)}, true)`);
   await startBroadcast(desktop);
-  writeFileSync(join(root, `${desktop.name}-live`), own);
+  write(`${desktop.name}-live`, own);
   await marker(`${desktop.name}-live-seen`);
+  // 観戦の Player が見ている間の topic の経路と、相手の数・relay を通る相手の数。
+  const sync = await desktop.invoke('get_sync_status');
+  const topicPath = sync.topic_diagnostics.find((each) => each.topic === topic);
+  console.log(`path ${topicPath?.active_path} ${topicPath?.peer_count} ${topicPath?.fallback_peer_count}`);
   // 利用者と同じく配信を止めてから終える（取り込みが続く間は映像が届き、モニターは次の配信へ移らない）。
   await click(desktop, t('media.stopBroadcast'), { within: BAR });
   await desktop.invoke('end_live_session', { request: { topic, session_id: own } });
   console.log('broadcast-seen');
-  // topic の経路（Direct P2P・Relay Supported P2P・Relay Fallback）。
-  const sync = await desktop.invoke('get_sync_status');
-  console.log(`path ${sync.topic_diagnostics.find((each) => each.topic === topic)?.active_path}`);
   await marker('game-exited');
   const reply = await desktop.invoke('create_post', {
     request: { topic, channel_ref: { kind: 'public' }, content: `test: GG from ${desktop.name}`, reply_to: result },
   });
   console.log(`replied ${reply}`);
-  writeFileSync(join(root, `${desktop.name}-replied`), reply);
+  write(`${desktop.name}-replied`, reply);
   await marker('done');
 };
 
@@ -141,7 +147,6 @@ async function openWeb(origin) {
   return {
     name: 'web',
     evaluate: page.evaluate,
-    send: page.send,
     invoke: (command, args = {}) =>
       page.evaluate(`${RUNTIME}.invoke(${JSON.stringify(command)}, ${JSON.stringify(args)})
         .catch((error) => { throw new Error(${JSON.stringify(command)} + ': ' + JSON.stringify(error)); })`),
@@ -162,7 +167,7 @@ try {
     await live('🎉', desktop.frame);
   } else if (mode === 'live') {
     await accept(desktop);
-    writeFileSync(join(root, 'desktop-ticket'), await desktop.invoke('get_local_peer_ticket'));
+    write('desktop-ticket', await desktop.invoke('get_local_peer_ticket'));
     await desktop.invoke('import_peer_ticket', { request: { ticket: await marker('game-ticket') } });
     // host は試合の後に終了するので、試合の後の配信を届ける観戦の Player とも直接つながる。
     await desktop.invoke('import_peer_ticket', { request: { ticket: await marker('spectator.ticket') } });
@@ -181,7 +186,7 @@ try {
       await click(desktop, text('shell', 'accountMenu.transferOut'));
       await click(desktop, text('settings', 'accountTransfer.source.copy'));
       await eventually('the link to be copied', () => visible(text('settings', 'accountTransfer.source.copied')), 10_000);
-      writeFileSync(join(root, 'copied'), key);
+      write('copied', key);
       console.log(`copied the transfer link of ${key}`);
     } else {
       await click(desktop, text('shell', 'accountMenu.transferIn'));
@@ -218,7 +223,7 @@ try {
       await desktop.invoke('set_community_node_config', { request: { nodes: [], trust_node_priority: null } });
       await click(desktop, text('settings', 'communityNode.onboarding.later'), { timeout: 10_000 }).catch(() => undefined);
       await openTopic(desktop, TOPIC, 'timeline');
-      writeFileSync(join(root, 'desktop-ticket'), await desktop.invoke('get_local_peer_ticket'));
+      write('desktop-ticket', await desktop.invoke('get_local_peer_ticket'));
       await desktop.invoke('import_peer_ticket', { request: { ticket: await marker('game-ticket') } });
       const post = await marker('game-post');
       const request = { topic: TOPIC, scope: { kind: 'public' }, cursor: null, limit: 20 };
@@ -241,7 +246,7 @@ try {
     if (mode === 'merge') {
       const key = (await desktop.invoke('get_sync_status')).local_author_pubkey;
       await openTopic(desktop, TOPIC, 'timeline');
-      writeFileSync(join(root, 'desktop-ticket'), await desktop.invoke('get_local_peer_ticket'));
+      write('desktop-ticket', await desktop.invoke('get_local_peer_ticket'));
       await desktop.invoke('import_peer_ticket', { request: { ticket: await marker('game-ticket') } });
       const post = await marker('game-post');
       const request = { topic: TOPIC, scope: { kind: 'public' }, cursor: null, limit: 20 };
@@ -255,7 +260,7 @@ try {
       );
       await shoot('desktop-timeline.png');
       console.log(`shown ${post} ${key}`);
-      writeFileSync(join(root, 'received'), post);
+      write('received', post);
     }
   }
 } finally {
