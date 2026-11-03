@@ -68,7 +68,7 @@ FFI と Sidecar は同じ要求・応答の形と同じ dispatcher を使う。�
 | command | `list_action_rooms` | #1978 | 1 つの application ID の action session の room を、更新の新しい順に 1 頁 20 件ずつ返す。続きは応答の `next_cursor` で読む（CLI と SDK だけ。desktop・Web は表示しない） |
 | command | `join_game_session` / `leave_game_session` | #1978 | action session の room の host へ参加・退出する。参加の応答に session ID を返す |
 | command | `publish_game_asset` | #1980 | 発行者の profile で manifest に署名して公開する（Sidecar・CLI だけ。§5.3） |
-| command | `list_game_assets` / `fetch_game_asset` | #1980 | 発行者の公開鍵と application ID で、指定した asset ID（1 回 32 件まで）の最新の release を読み、検証済みの file の path を得る |
+| command | `list_game_assets` / `fetch_game_asset` | #1980 | 発行者の公開鍵と application ID で、指定した asset ID（1 回 32 件まで）の最新の release を読み、検証済みの file の path を得る。`fetch_game_asset` は、適用中の版があればそれを待たずに返す（新しい版は背景で確かめる） |
 | command | `set_live_broadcast` / `stop_live_broadcast` / `watch_live_media` / `stop_watching_live_media` / `set_live_volume` | #1982 | desktop-runtime にある Live の配信・視聴の操作を登録簿へ載せる |
 | command | `set_public_channel_subscription` | #1982 | 公開スレッド（公開 channel。ADR 0068）の投稿・リアクションの知らせを購読する・やめる。desired として保存し、topic の購読と同じ上限に数える（CLI と SDK だけ。desktop・Web は開いている列で購読する）。保存は旧版の読まない `public-channel-subscriptions.json` に分け（旧版は `subscriptions.json` の channel を private channel として復元して起動に失敗するため。2026-10-31 のユーザー判断）、backup には含めない |
 | command | `start_game_player` / `get_game_player` | #1996 | profile の game player を作る・読む（1 つの profile に 1 つのゲーム。§4.1） |
@@ -564,6 +564,8 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
   - アセットの数に上限を置かない。asset ID は Unity Editor からの発行のときにゲームの設定 asset へ登録し、Player は登録された ID の record を読む。
   - この端末で適用中の版は cache の掃除で消さず、ほかの端末への提供元にする。新しい版を適用したら、古い版は通常の cache の規則に戻る。
   - 新しい版の取得は自動。更新の知らせを受けたら、適用中のアセットは背景で取得・検証・適用し、`game_asset_updated` で path とともに知らせる。
+- 2026-11-04 のユーザー判断（#1984）: `fetch_game_asset` は、適用中の版があれば新しい版の確認を待たずに返す。確認と取得は背景で行い、新しい版を適用したら `game_asset_updated` で知らせる。ゲームを閉じている間に新しい版が出ていると、起動直後は適用中の版で表示し、取れた時点で差し替わる。適用中の版が無い初回は、従来どおり取得を待つ。
+  - 理由: 確認の読みは、読み先が終了していると 5 秒ずつ時間切れを繰り返す。dispatcher は変更操作を 1 つずつ実行するので（ADR 0049）、その間 SDK の他の command がすべて止まり、30 秒で時間切れになっていた。
 - record の key は発行者の制御領域の `game-assets/<application ID>/<asset ID>` で、値は署名した envelope（kind `game-asset-release`）。日の bucket に置かないので、新しい端末も 1 回の exact な読みで最新版に届く（件数に比例しない）。
   - 読み手は手元 → 発行者本人 → ゲームの公開 topic の参加者の順に読み、受けた record（最大 8 件）をすべて検証して revision が最大のものを採る。別の名義で古い署名済みの record を書かれても、新しい版より優先しない。
   - 適用は revision が大きいときだけ（`applied_game_assets` の行）。取得は `.partial` へ書き、長さを確かめてから使える名前にする（hash は転送で照合する）。
