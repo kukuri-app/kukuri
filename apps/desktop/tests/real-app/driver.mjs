@@ -115,15 +115,15 @@ export async function launch({ app, root, name, port, env = {}, fresh = true }) 
   };
 }
 
-/// WebView2(CDP)。最初の app の page に繋ぐ。
-async function connectCdp(port) {
+/// WebView2・Chrome(CDP)。最初の `origin` の page に繋ぐ。
+export async function connectCdp(port, origin = 'http://tauri.localhost') {
   const target = await eventually(
     'the WebView2 debugging port',
     async () => {
       const targets = await fetch(`http://127.0.0.1:${port}/json/list`)
         .then((response) => response.json())
         .catch(() => []);
-      return targets.find((each) => each.type === 'page' && each.url.startsWith('http://tauri.localhost'));
+      return targets.find((each) => each.type === 'page' && each.url.startsWith(origin));
     },
     STARTUP_MS
   );

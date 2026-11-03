@@ -6,10 +6,12 @@ import { eventually } from '../web-e2e/wait.mjs';
 export const TOPIC = 'kukuri:topic:test';
 
 /// 同意して runtime が動き始めるのを待ち、開発者モード(live・Metaverse の列)を有効にし、画面の言語を日本語に
-/// して(文言は日本語の翻訳 file から引く。OS の言語に左右されない)読み直し、試験の topic を開く。
-export async function accept(instance) {
+/// して(文言は日本語の翻訳 file から引く。OS の言語に左右されない)読み直し、試験の topic を開く。`communityNode` を
+/// 渡すと、コミュニティノードを外さずにその文書に同意する(Community Node でしかつながらない Web。#1984 AC-1)。
+export async function accept(instance, { communityNode = null } = {}) {
+  // Web は起動の直後に初期化中を返す(同意が要るかはその後に分かる)。
   const status = await eventually(`${instance.name} startup status`, () =>
-    instance.invoke('get_desktop_startup_status').catch(() => null)
+    instance.invoke('get_desktop_startup_status').then((each) => each.status !== 'initializing' && each).catch(() => null)
   );
   const fresh = status.status === 'consent_required';
   if (fresh) {
@@ -25,9 +27,15 @@ export async function accept(instance) {
     60_000
   );
   if (fresh) {
-    // 試験の instance どうしだけでつながるよう、コミュニティノードを外し(利用者が設定で外すのと同じ)、初回プロフィールを
-    // 保存する(どちらの案内の dialog も開かず、操作の focus を奪わない)。
-    await instance.invoke('set_community_node_config', { request: { nodes: [], trust_node_priority: null } });
+    // 試験の instance どうしだけでつながるよう、コミュニティノードを外し(利用者が設定で外すのと同じ。`communityNode` が
+    // あればその文書に同意する)、初回プロフィールを保存する(どちらの案内の dialog も開かず、操作の focus を奪わない)。
+    if (communityNode) {
+      const { policies } = await instance.invoke('fetch_community_node_policies', { request: { base_url: communityNode, language: 'ja' } });
+      const documents = policies.map(({ policy_slug, policy_version, policy_snapshot_revision }) => ({ policy_slug, policy_version, policy_snapshot_revision }));
+      await instance.invoke('accept_community_node_consents', { request: { base_url: communityNode, documents, language: 'ja' } });
+    } else {
+      await instance.invoke('set_community_node_config', { request: { nodes: [], trust_node_priority: null } });
+    }
     const { active_account_id: accountId } = await instance.invoke('list_accounts');
     await instance.invoke('save_initial_profile', {
       request: {

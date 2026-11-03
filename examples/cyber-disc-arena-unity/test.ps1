@@ -14,6 +14,11 @@
 # - 掲示板と結果: host は試合の後に「結果を投稿」で得点の文と画面の画像を投稿する。`-DesktopApp` なら、desktop はその投稿を
 #   timeline で読み（画像の添付つき）、ゲームが終わった後に返信する。再起動した host が掲示板（Enter）でその thread を開くと、
 #   同じ投稿 ID の下に desktop の返信が並ぶ。
+# - desktop・Web との相互運用（#1984 AC-1）: `-WebOrigin` に試験の Community Node の fixture（harness の `web_e2e_fixture`）の
+#   配信の origin を渡すと、その Web の build を開いた Chrome も desktop と同じく配信を受けて応援（🎉 GG!）し、結果を読んで
+#   返信する。host と観戦の Player は fixture の Community Node に同意して Web とつながる（再起動した host は保存した設定で
+#   つながる）。host が 2 試合を終えると、desktop と Web はそれぞれ camera で配信し、観戦の Player のモニターがその配信を
+#   受けて映す。
 # - 4 つの Prefab の最小の scene（土台と、その Prefab だけ）: 観戦の Player は ArenaStreamViewer の scene で観戦する。
 #   LiveSkinLoader の scene は作者が発行したスキンを選んで見本の体に着せ、InGameBoardUI の scene は掲示板に投稿して読み、
 #   DiscNetworkSync の scene の 2 つの Player は部屋を作って参加し、試合を始めて host の終了を受ける。
@@ -28,6 +33,7 @@ param(
     [ValidateSet("Mono2x", "IL2CPP")] [string]$Backend = "Mono2x",
     [switch]$SkipEditMode,
     [string]$DesktopApp,
+    [string]$WebOrigin,
     [int]$DelayMs = 25,
     [double]$LossPercent = 1
 )
@@ -218,6 +224,24 @@ public sealed class ArenaProbe : MonoBehaviour
         }
         await Until(() => account.Screen == "playing" && (profile == null || profile.Ready) && (lobby == null || lobby.gameObject.activeInHierarchy),
             60, "the game did not start");
+        // Web は Community Node でしかつながらないので、fixture の Community Node の文書に同意する（#1984 AC-1）。
+        var node = Arg("-arena-cn");
+        if (node != null)
+        {
+            await Call("set_community_node_config", new JObject { ["nodes"] = new JArray(new JObject { ["base_url"] = node }) });
+            var policies = (JArray)(await Call("fetch_community_node_policies", new JObject { ["base_url"] = node, ["language"] = "ja" }))["policies"];
+            await Call("accept_community_node_consents", new JObject
+            {
+                ["base_url"] = node,
+                ["language"] = "ja",
+                ["documents"] = new JArray(policies.Select(policy => new JObject
+                {
+                    ["policy_slug"] = policy["policy_slug"],
+                    ["policy_version"] = policy["policy_version"],
+                    ["policy_snapshot_revision"] = policy["policy_snapshot_revision"],
+                })),
+            });
+        }
     }
 
     async Task Consent()
@@ -371,7 +395,7 @@ public sealed class ArenaProbe : MonoBehaviour
         Debug.Log("KGS_LIVE_STARTED " + broadcast.LiveSession);
         File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "live.tmp"), $"{Arg("-arena-topic")}\n{broadcast.LiveSession}\n{broadcast.LivePost}");
         File.Move(Path.Combine(Arg("-arena-exchange"), "live.tmp"), Path.Combine(Arg("-arena-exchange"), "live"));
-        var expected = Arg("-arena-desktop") != null ? new[] { "FIRE!", "CLAP!" } : new[] { "FIRE!" };
+        var expected = new[] { "FIRE!", Arg("-arena-desktop") != null ? "CLAP!" : null, Arg("-arena-web") != null ? "GG!" : null }.Where(label => label != null).ToArray();
         await Until(() => expected.All(cheers.Contains), 180, "the cheers did not arrive");
         await Shot("1c-cheer");
         Debug.Log("KGS_CHEERS " + string.Join(",", cheers.OrderBy(label => label)));
@@ -519,23 +543,27 @@ public sealed class ArenaProbe : MonoBehaviour
         }
     }
 
-    /// ゲームを終えた後に再起動した host: 掲示板（Enter）で結果の投稿の thread を開き、desktop の返信を読む。
+    /// ゲームを終えた後に再起動した host: 掲示板（Enter）で結果の投稿の thread を開き、desktop・Web の返信を読む。
     async Task Resume()
     {
         await StartGame(true);
         var exchange = Arg("-arena-exchange");
-        await Call("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(Path.Combine(exchange, "desktop-ticket")) });
+        if (File.Exists(Path.Combine(exchange, "desktop-ticket")))
+            await Call("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(Path.Combine(exchange, "desktop-ticket")) });
         var board = arenaBoard.Board;
         board.Topic = Arg("-arena-topic");
         board.gameObject.SetActive(true);
         var post = File.ReadAllText(Path.Combine(exchange, "result-post")).Trim();
-        var reply = File.ReadAllText(Path.Combine(exchange, "replied")).Trim();
         await Until(() => board.Posts.Any(item => item.ObjectId == post), 120, "the result was not on the board");
         await board.OpenThreadAsync(post);
-        await Until(() => board.Posts.Any(item => item.ObjectId == reply), 120, "the reply did not arrive");
-        var root = board.Posts[0];
-        var answer = board.Posts.First(item => item.ObjectId == reply);
-        Debug.Log($"KGS_RESULT_THREAD {root.ObjectId} {answer.ObjectId} {answer.ThreadId} {root.AuthorPubkey != answer.AuthorPubkey}");
+        foreach (var name in new[] { "desktop", "web" }.Where(name => File.Exists(Path.Combine(exchange, name + "-replied"))))
+        {
+            var reply = File.ReadAllText(Path.Combine(exchange, name + "-replied")).Trim();
+            await Until(() => board.Posts.Any(item => item.ObjectId == reply), 120, "the reply from " + name + " did not arrive");
+            var root = board.Posts[0];
+            var answer = board.Posts.First(item => item.ObjectId == reply);
+            Debug.Log($"KGS_RESULT_THREAD {name} {root.ObjectId} {answer.ObjectId} {answer.ThreadId} {root.AuthorPubkey != answer.AuthorPubkey}");
+        }
         await Shot("resume-thread");
         File.WriteAllText(Path.Combine(exchange, "done"), "done");
     }
@@ -619,8 +647,15 @@ public sealed class ArenaProbe : MonoBehaviour
 
     async Task Spectator()
     {
-        // ArenaStreamViewer の最小の scene で観戦する（対戦の Prefab は無い）。
+        // ArenaStreamViewer の最小の scene で観戦する（対戦の Prefab は無い）。desktop は host が終えた後にも配信するので、
+        // desktop とも直接つながる（#1984 AC-1）。
         await Join("host");
+        var desktopTicket = Path.Combine(Arg("-arena-exchange"), "desktop-ticket");
+        if (Arg("-arena-desktop") != null)
+        {
+            await Until(() => File.Exists(desktopTicket), 120, "no ticket from the desktop");
+            await Call("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(desktopTicket) });
+        }
         broadcast.Topic = Arg("-arena-topic");
         await Until(() => broadcast.Viewer.SessionId != null && broadcast.Viewer.FramesShown > 10, 180, "the monitors did not show the live");
         var first = broadcast.Viewer.SessionId;
@@ -637,6 +672,27 @@ public sealed class ArenaProbe : MonoBehaviour
         Debug.Log("KGS_REWATCHED True");
         File.WriteAllText(Path.Combine(Arg("-arena-exchange"), "rewatched"), "done");
         await Until(() => File.Exists(Path.Combine(Arg("-arena-exchange"), "host-done")), 600, "the host did not finish");
+        // host が終えた後に desktop・Web が始める配信も、モニターが 1 つずつ受けて映す（#1984 AC-1）。映ったら印を書き、
+        // その配信が終わると、モニターは残りの配信へ移る。
+        var external = new[] { "desktop", "web" }.Where(name => Arg("-arena-" + name) != null).ToList();
+        while (external.Count > 0)
+        {
+            string current = null, seen = null;
+            var since = 0;
+            await Until(() =>
+            {
+                if (broadcast.Viewer.SessionId != current)
+                    (current, since) = (broadcast.Viewer.SessionId, broadcast.Viewer.FramesShown);
+                seen = external.FirstOrDefault(name =>
+                    current != null && File.Exists(Path.Combine(Arg("-arena-exchange"), name + "-live")) &&
+                    File.ReadAllText(Path.Combine(Arg("-arena-exchange"), name + "-live")).Trim() == current);
+                return seen != null && broadcast.Viewer.FramesShown > since + 10;
+            }, 300, "the monitors did not show the live of " + string.Join(" or ", external));
+            Debug.Log($"KGS_EXTERNAL_WATCHED {seen} {broadcast.Viewer.FramesShown - since}");
+            await Shot("spectator-" + seen);
+            File.WriteAllText(Path.Combine(Arg("-arena-exchange"), seen + "-live-seen"), "done");
+            external.Remove(seen);
+        }
     }
 
     void Update()
@@ -749,12 +805,26 @@ if ($DesktopApp) {
         -RedirectStandardOutput $desktopLog -RedirectStandardError (Join-Path $work "desktop.err") -NoNewWindow -PassThru
     $null = $desktop.Handle
 }
-$watchers = "-arena-spectator 1" + $(if ($DesktopApp) { " -arena-desktop 1" } else { "" })
+$web = $null
+$communityNode = $null
+if ($WebOrigin) {
+    # WebRTC の ICE の候補は bind の IP で、Chrome は loopback の候補と組まない（組めないと relay を通る）。Web とつなぐ回は
+    # 127.0.0.1 に bind しない（既定の経路の IP になる。ticket の宛先は 127.0.0.1 のまま）。
+    Remove-Item env:KUKURI_BIND_ADDR
+    $communityNode = (Invoke-RestMethod "$WebOrigin/fixture/info").community_node
+    $driver = Join-Path $PSScriptRoot "..\..\sdk\unity\transfer-desktop.mjs"
+    $webLog = Join-Path $work "web.log"
+    $web = Start-Process -FilePath "node" -ArgumentList "`"$driver`" $WebOrigin `"$work`" web" `
+        -RedirectStandardOutput $webLog -RedirectStandardError (Join-Path $work "web.err") -NoNewWindow -PassThru
+    $null = $web.Handle
+}
+$watchers = "-arena-spectator 1" + $(if ($DesktopApp) { " -arena-desktop 1" } else { "" }) + $(if ($WebOrigin) { " -arena-web 1" } else { "" })
 $roles = [ordered]@{ "host" = ""; "client" = ""; "spectator" = "ArenaStreamViewer"; "mini-skin" = "LiveSkinLoader";
     "mini-board" = "InGameBoardUI"; "mini-host" = "DiscNetworkSync"; "mini-client" = "DiscNetworkSync" }
 foreach ($role in $roles.Keys) {
     $log = Join-Path $work "$role.log"
     $scene = if ($roles[$role]) { "-arena-scene $($roles[$role]) " } else { "" }
+    if ($communityNode -and $role -in "host", "spectator") { $scene += "-arena-cn $communityNode " }
     $arguments = "-screen-fullscreen 0 -screen-width 1280 -screen-height 720 -arena-role $role $scene-arena-profile-dir `"$(Join-Path $work $role)`" " +
         "-arena-topic $topic -arena-exchange `"$work`" -arena-publisher-dir `"$publisherDir`" $watchers -arena-delay $DelayMs -arena-loss $LossPercent -logFile `"$log`""
     $players[$role] = @{ Process = (Start-Process -FilePath $exe -ArgumentList $arguments -PassThru); Log = $log }
@@ -799,38 +869,50 @@ $secondInput = [int]((Lines "host" "KGS_SECOND_INPUT (\d+)") | Select-Object -Fi
 $skinWorn = (Lines "host" "KGS_SKIN_WORN (.*)") | Select-Object -First 1
 $skinRemote = (Lines "client" "KGS_SKIN_REMOTE (.*)") | Select-Object -First 1
 $skinUpdated = "$((Lines "host" "KGS_SKIN_UPDATED (\d+)") | Select-Object -First 1),$((Lines "client" "KGS_SKIN_UPDATED (\d+)") | Select-Object -First 1)"
-# ゲームを終えた後に desktop が結果へ返信し、再起動した host が掲示板の thread で読む。
+# ゲームを終えた後に desktop・Web が結果へ返信し、再起動した host が掲示板の thread で読む。
 $resultPost = (Lines "host" "KGS_RESULT_POST (\S+)") | Select-Object -First 1
-$thread = "skipped"
-if ($desktop) {
+$externals = @(@{ Name = "desktop"; Process = $desktop; Log = $desktopLog }, @{ Name = "web"; Process = $web; Log = $webLog }) | Where-Object { $_.Process }
+if ($externals) {
     Set-Content (Join-Path $work "game-exited") "exited"
     $resumeLog = Join-Path $work "resume.log"
-    for ($i = 0; $i -lt 240 -and -not (Test-Path (Join-Path $work "replied")); $i++) { Start-Sleep -Milliseconds 500 }
+    foreach ($external in $externals) {
+        for ($i = 0; $i -lt 240 -and -not (Test-Path (Join-Path $work "$($external.Name)-replied")); $i++) { Start-Sleep -Milliseconds 500 }
+    }
     $arguments = "-screen-fullscreen 0 -screen-width 1280 -screen-height 720 -arena-role resume -arena-profile-dir `"$(Join-Path $work "host")`" " +
         "-arena-topic $topic -arena-exchange `"$work`" -logFile `"$resumeLog`""
     $resume = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
     $exits["resume"] = if ($resume.WaitForExit(300000)) { $resume.ExitCode } else { Stop-Process -Id $resume.Id -Force; "timeout" }
-    $thread = (Select-String -Path $resumeLog -Pattern "KGS_RESULT_THREAD (.*)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value })
 }
 $liveStarted = (Lines "host" "KGS_LIVE_STARTED (\S+)") | Select-Object -First 1
 $liveEnded = (Lines "host" "KGS_LIVE_ENDED (\S+)") | Select-Object -First 1
 $cheersShown = (Lines "host" "KGS_CHEERS (\S+)") | Select-Object -First 1
 $spectated = (Lines "spectator" "KGS_SPECTATED (\d+)") | Select-Object -First 1
 $rewatched = ((Lines "spectator" "KGS_LEFT_FINISHED (\S+)") | Select-Object -First 1) + "," + ((Lines "spectator" "KGS_REWATCHED (\S+)") | Select-Object -First 1)
-$desktopOk = $true
-if ($desktop) {
-    if (-not $desktop.WaitForExit(120000)) { Stop-Process -Id $desktop.Id -Force }
-    $desktopOk = (Select-String -Path $desktopLog -Pattern "^watched" -Quiet) -and (Select-String -Path $desktopLog -Pattern "^reacted" -Quiet)
-    $resultSeen = (Select-String -Path $desktopLog -Pattern "^result-seen (\d+)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value })
-    $replied = (Select-String -Path $desktopLog -Pattern "^replied (\S+)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value })
+# desktop・Web: 配信を受けて応援し、結果を画像つきで読み、自分の配信が観戦の Player のモニターに映り、返信が再起動した host の
+# 掲示板の thread に並ぶ。topic の経路は Relay Fallback でない（desktop は Direct P2P、Web は Relay Supported P2P）。
+$externalsOk = $true
+foreach ($external in $externals) {
+    if (-not $external.Process.WaitForExit(120000)) { Stop-Process -Id $external.Process.Id -Force }
+    $name = $external.Name
+    $logged = { param($pattern) Select-String -Path $external.Log -Pattern $pattern | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value } }
+    $resultSeen = & $logged "^result-seen (\d+)"
+    $replied = & $logged "^replied (\S+)"
+    $thread = Select-String -Path $resumeLog -Pattern "KGS_RESULT_THREAD $name (.*)" | Select-Object -First 1 | ForEach-Object { $_.Matches[0].Groups[1].Value }
+    $monitor = (Lines "spectator" "KGS_EXTERNAL_WATCHED $name (\d+)") | Select-Object -First 1
+    $path = & $logged "^path (\S+)"
+    $externalOk = (Select-String -Path $external.Log -Pattern "^watched" -Quiet) -and (Select-String -Path $external.Log -Pattern "^reacted" -Quiet) -and
+        ([int]$resultSeen -ge 1) -and (Select-String -Path $external.Log -Pattern "^broadcast-seen" -Quiet) -and ([int]$monitor -gt 10) -and
+        ($thread -eq "$resultPost $replied $resultPost True") -and ($path -in "direct_p2p", "relay_supported_p2p")
+    $externalsOk = $externalsOk -and $externalOk
+    Write-Output "Player $name ($Backend): watched_and_reacted=$((Select-String -Path $external.Log -Pattern '^reacted' -Quiet)) result_attachments=$resultSeen monitor_frames=$monitor path=$path reply=$replied thread=[$thread] ok=$externalOk"
 }
 $typing = (Lines "host" "KGS_BOARD_TYPING (.*)") | Select-Object -First 1
-$boardOk = ($typing -eq "True True") -and ($resultPost -match "^[0-9a-f]{64}$") -and ((-not $desktop) -or (([int]$resultSeen -ge 1) -and ($thread -eq "$resultPost $replied $resultPost True") -and ($exits["resume"] -eq 0)))
-Write-Output "Player board ($Backend): typing_blocks_match=[$typing] result=$resultPost desktop_seen_attachments=$resultSeen reply=$replied thread=[$thread] ok=$boardOk"
-$expectedCheers = if ($DesktopApp) { "CLAP!,FIRE!" } else { "FIRE!" }
+$boardOk = ($typing -eq "True True") -and ($resultPost -match "^[0-9a-f]{64}$") -and ((-not $externals) -or ($exits["resume"] -eq 0))
+Write-Output "Player board ($Backend): typing_blocks_match=[$typing] result=$resultPost exits_resume=$($exits['resume']) ok=$boardOk"
+$expectedCheers = (@("FIRE!") + $(if ($DesktopApp) { "CLAP!" }) + $(if ($WebOrigin) { "GG!" }) | Sort-Object) -join ","
 $liveOk = ($liveStarted -match "\S") -and ($liveEnded -eq "True") -and ($cheersShown -eq $expectedCheers) -and ([int]$spectated -gt 10) -and ($rewatched -eq "True,True") -and
-    $desktopOk -and ($exits["spectator"] -eq 0)
-Write-Output "Player live ($Backend): started=$liveStarted spectator_frames=$spectated left_and_rewatched=$rewatched cheers=$cheersShown desktop=$(if ($desktop) { $desktopOk } else { 'skipped' }) ended=$liveEnded exits_spectator=$($exits['spectator']) ok=$liveOk"
+    $externalsOk -and ($exits["spectator"] -eq 0)
+Write-Output "Player live ($Backend): started=$liveStarted spectator_frames=$spectated left_and_rewatched=$rewatched cheers=$cheersShown externals=$(if ($externals) { $externalsOk } else { 'skipped' }) ended=$liveEnded exits_spectator=$($exits['spectator']) ok=$liveOk"
 $skinStandard = (Lines "host" "KGS_SKIN_STANDARD (\S+)") | Select-Object -First 1
 $skinFromClient = (Lines "host" "KGS_SKIN_FROM_CLIENT (.*)") | Select-Object -First 1
 $skinOk = ($skinWorn -eq "neon-red 1") -and ($skinStandard -eq "True") -and ($skinFromClient -eq "gold 1") -and ($skinRemote -eq "neon-red 1") -and ($skinUpdated -eq "2,2")
