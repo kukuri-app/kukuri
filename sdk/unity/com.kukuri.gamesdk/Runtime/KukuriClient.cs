@@ -342,8 +342,12 @@ namespace Kukuri.GameSdk
             if (closed)
                 return 0;
             var clock = Stopwatch.StartNew();
+            LastPollMilliseconds = null;
             if (backlog.Count == 0)
+            {
                 Receive(maxItems, maxBytes);
+                LastPollMilliseconds = clock.Elapsed.TotalMilliseconds;
+            }
             var handled = 0;
             while (!closed && backlog.Count > 0)
             {
@@ -354,6 +358,13 @@ namespace Kukuri.GameSdk
             }
             return handled;
         }
+
+        /// 直前の `Pump` で native から取り出して写すのにかかった時間（ADR 0070 §8.4 の poll の計測。取り出さなかった
+        /// ときは null）。応答と event の処理（利用者の handler）は含まない。
+        public double? LastPollMilliseconds { get; private set; }
+
+        /// SDK の DLL の Rust 側が今確保している bytes（ADR 0070 §8.4 の memory の計測。libvpx などの C の確保は含まない）。
+        public static long AllocatedBytes => (long)Native.kukuri_sdk_allocated_bytes();
 
         /// native の batch を 1 回取り出し、managed の memory へ写してから解放する。
         void Receive(int maxItems, int maxBytes)

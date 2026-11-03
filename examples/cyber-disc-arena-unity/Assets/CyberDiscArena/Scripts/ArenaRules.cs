@@ -182,8 +182,14 @@ namespace CyberDiscArena
             Emit(new ArenaEvent { Kind = ArenaEventKind.Throw, Player = player, Target = -1, Position = Disc.Position, Velocity = Disc.Velocity });
         }
 
-        /// 受け止める要求。少しの間（`CatchWindow`）有効で、その間にディスクが届けば受け止める。
-        public void Catch(int player) => catchUntil[player] = clock + CatchWindow;
+        /// 受け止める要求。少しの間（`CatchWindow`）有効で、その間にディスクが届けば受け止める。もう届いていれば次の tick を
+        /// 待たずに受け止める（client の操作の確定を tick の間隔だけ遅らせない）。
+        public void Catch(int player)
+        {
+            catchUntil[player] = clock + CatchWindow;
+            if (Disc.Mode == DiscMode.Flying && player != Disc.Thrower && Near(player, CatchRange, 0.5f))
+                Give(player, ArenaEventKind.Catch);
+        }
 
         /// 1 tick 進める。出した出来事は `Events` に足す（送った側が消す）。
         public void Step(ArenaInput[] inputs, float seconds)

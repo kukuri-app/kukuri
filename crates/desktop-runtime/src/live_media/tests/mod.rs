@@ -157,7 +157,7 @@ impl Swarm {
     async fn fake_microphone(&self) -> FakeMicrophone {
         let mut broadcasts = self.broadcaster.live.broadcasts.lock().await;
         let current = broadcasts.get_mut(&self.session_id).expect("broadcast");
-        let mut private = moq_net::broadcast::Info::new().produce();
+        let mut private = private_broadcast(&current.broadcast);
         let private_catalog = moq_mux::catalog::Producer::new(
             &mut private,
             moq_mux::catalog::Config::default().with_clock(current.catalog.clock()),
@@ -690,6 +690,71 @@ fn fake_voice(
         }
     });
     (speaking, AbortOnDropHandle::new(task))
+}
+
+/// 配信の timeline（moq-mux が区切りごとに足す記録。kukuri は読まない）を溜めない（溜めると配信の間 memory が増え続ける。
+/// #1984）。
+#[tokio::test]
+async fn live_media_does_not_keep_the_timeline() {
+    let swarm = swarm().await;
+    swarm.start().await;
+    let _microphone = swarm.fake_microphone().await;
+    for index in 0..7 {
+        swarm.push(index, true).await;
+        n0_future::time::sleep(Duration::from_millis(1100)).await;
+    }
+    let (broadcast, section) = {
+        let broadcasts = swarm.broadcaster.live.broadcasts.lock().await;
+        let current = broadcasts.get(&swarm.session_id).expect("broadcast");
+        (
+            current.broadcast.consume(),
+            current.catalog.timeline().section(),
+        )
+    };
+    let mut timeline = moq_mux::timeline::Consumer::<()>::subscribe(&broadcast, &section)
+        .await
+        .expect("timeline");
+    let mut kept = std::collections::BTreeSet::new();
+    while let Ok(Ok(Some(event))) =
+        n0_future::time::timeout(Duration::from_millis(500), timeline.next()).await
+    {
+        match event {
+            moq_mux::timeline::Event::Push { index, .. } => {
+                kept.insert(index);
+            }
+            moq_mux::timeline::Event::Pop(range) | moq_mux::timeline::Event::Skip(range) => {
+                kept.retain(|index| !range.contains(index));
+            }
+            _ => {}
+        }
+    }
+    assert!(kept.len() <= 2, "{} timeline records kept", kept.len());
+    swarm.shutdown().await;
+}
+
+/// mic とゲームの音を書く非公開の broadcast は、古い group を cache から外す(外さないと配信の間 memory が増え続ける。
+/// #1984)。
+#[tokio::test(start_paused = true)]
+async fn private_audio_broadcast_releases_old_groups() {
+    let fanout = Fanout::new(TOPIC.into(), MAX_DIRECT_VIEWERS, Vec::new());
+    let public = fanout
+        .origin
+        .create_broadcast(live_media_broadcast_path("private-audio"))
+        .expect("broadcast");
+    let mut private = private_broadcast(&public);
+    let catalog =
+        moq_mux::catalog::Producer::new(&mut private, moq_mux::catalog::Config::default())
+            .expect("catalog");
+    let (_, _voice) = fake_voice(&mut private, catalog);
+    let pool = private.info().pool.clone();
+    n0_future::time::sleep(Duration::from_secs(10)).await;
+    let early = pool.used();
+    n0_future::time::sleep(Duration::from_secs(60)).await;
+    assert!(
+        early > 0 && pool.used() <= early * 2,
+        "{early} -> {}",
+        pool.used()
+    );
 }
 
 #[test]

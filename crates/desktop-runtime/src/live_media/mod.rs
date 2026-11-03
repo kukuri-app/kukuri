@@ -51,6 +51,8 @@ const REJOIN_INTERVAL: Duration = Duration::from_secs(5);
 const STALL: Duration = Duration::from_secs(5);
 /// 視聴の購読の最大遅延(映像。ADR 0067 §4)と、音声の再生前の保持の上限(ADR 0041 client の既定 8 × 20 ms)。
 const VIDEO_MAX_AGE: Duration = Duration::from_secs(1);
+/// 音声の署名で timeline を外す間隔(Opus の 20 ms の frame で 2 秒)。
+const TIMELINE_DROP_FRAMES: u32 = 100;
 const AUDIO_PLAYOUT: Duration = Duration::from_millis(160);
 /// Opus の 1 frame の長さ(μs)。
 const OPUS_FRAME_MICROS: u64 = 20_000;
@@ -247,7 +249,7 @@ async fn open_microphone(
     catalog: &moq_mux::catalog::Producer,
     signer: LiveMediaSigner,
 ) -> Result<(devices::Capture, AbortOnDropHandle<()>)> {
-    let mut private = moq_net::broadcast::Info::new().produce();
+    let mut private = private_broadcast(broadcast);
     let private_catalog = moq_mux::catalog::Producer::new(
         &mut private,
         moq_mux::catalog::Config::default().with_clock(catalog.clock()),
@@ -261,6 +263,20 @@ async fn open_microphone(
     .await?;
     let signing = sign_audio(&private, &private_catalog, broadcast, catalog, signer).await?;
     Ok((capture, signing))
+}
+
+/// moq-mux が区切りごとに足す timeline の記録を外す。kukuri の視聴は最新の group から始めて timeline を読まないので、外さない
+/// と配信の間ずっと溜まる(#1984)。
+fn drop_timeline(catalog: &moq_mux::catalog::Producer) {
+    let _ = catalog.timeline().pop(u64::MAX);
+}
+
+/// mic とゲームの音を書く非公開の broadcast。配信の broadcast と同じ cache に置く。cache の古い group を外す時計は
+/// origin の driver が進めるので、別の cache では書いた group が配信の間ずっと残る(#1984)。
+fn private_broadcast(broadcast: &moq_net::broadcast::Producer) -> moq_net::broadcast::Producer {
+    let mut info = moq_net::broadcast::Info::new();
+    info.pool = broadcast.info().pool.clone();
+    info.produce()
 }
 
 /// 非公開の broadcast の音声を読み、配信者の署名を付けて配信の音声の track へ写す(ADR 0067 §8)。
@@ -291,12 +307,19 @@ async fn sign_audio(
         catalog.track_info(hang::catalog::PRIORITY.audio),
     )?;
     let mut signed = catalog.audio(track, Container::try_from(&config)?, config)?;
+    let (private_catalog, catalog) = (private_catalog.clone(), catalog.clone());
     Ok(AbortOnDropHandle::new(n0_future::task::spawn(async move {
+        let mut written = 0_u32;
         while let Ok(Some(mut frame)) = frames.read().await {
             frame.payload = signer
                 .sign(LIVE_AUDIO_TRACK, micros(frame.timestamp), &frame.payload)
                 .into();
             let _ = signed.write(frame);
+            written = written.wrapping_add(1);
+            if written.is_multiple_of(TIMELINE_DROP_FRAMES) {
+                drop_timeline(&private_catalog);
+                drop_timeline(&catalog);
+            }
         }
     })))
 }
@@ -539,6 +562,9 @@ impl LiveMedia {
         }
         written?;
         current.last_video_us = timestamp_us;
+        if keyframe {
+            drop_timeline(&current.catalog);
+        }
         if !current.fanout.announced.load(Ordering::Acquire) {
             current.broadcast.announce(origin::Route::default())?;
             current.fanout.announced.store(true, Ordering::Release);

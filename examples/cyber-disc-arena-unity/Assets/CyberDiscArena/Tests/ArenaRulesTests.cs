@@ -24,6 +24,8 @@ namespace CyberDiscArena.Tests
                 rules.Step(inputs ?? Still, ArenaRules.TickSeconds);
         }
 
+        static Vector2 Flat(Vector3 value) => new Vector2(value.x, value.z);
+
         static float Toward(ArenaRules rules, int from)
         {
             var delta = rules.Players[1 - from].Position - rules.Players[from].Position;
@@ -55,6 +57,19 @@ namespace CyberDiscArena.Tests
             CollectionAssert.AreEqual(new byte[] { 0, 0 }, rules.Scores);
             Assert.AreEqual(1, rules.Disc.Holder);
             Assert.AreEqual(1, rules.Events.Single(@event => @event.Kind == ArenaEventKind.Catch).Target);
+        }
+
+        [Test]
+        public void ACatchWithinReachHoldsTheDiscBeforeTheNextTick()
+        {
+            var rules = Playing();
+            rules.Throw(0, Toward(rules, 0));
+            for (var tick = 0; tick < 60 && Flat(rules.Disc.Position - rules.Players[1].Position).magnitude > ArenaRules.CatchRange; tick++)
+                rules.Step(Still, ArenaRules.TickSeconds);
+            Assert.AreEqual(DiscMode.Flying, rules.Disc.Mode);
+            rules.Catch(1);
+            Assert.AreEqual(1, rules.Disc.Holder);
+            Assert.AreEqual(ArenaEventKind.Catch, rules.Events.Last().Kind);
         }
 
         [Test]

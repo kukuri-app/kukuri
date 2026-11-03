@@ -172,10 +172,13 @@ impl AppService {
     /// remote の読取りは namespace を import・sync しない。自分の replica は手元だけを読む。
     /// `topic` があれば、author 本人の宛先の次に、その公開 topic の参加者(最大 4)を読み先に入れる。公開 topic の Dome の
     /// 記録を、owner がオフラインでも、検証して保持した参加者から読む(#1909。#1419 の profile と同じ形)。
+    /// `source` は対象の更新の hint を届けた peer で、参加者より先に読む(参加者の候補は回るので、新しい版を持つ peer が
+    /// 入らないことがある。#1984)。
     pub(crate) async fn read_author_object<T, Fut>(
         &self,
         author_pubkey: &str,
         topic: Option<&str>,
+        source: Option<&str>,
         read: impl Fn(Arc<dyn DocsSync>, DocFetchPolicy) -> Fut,
     ) -> Result<Option<T>>
     where
@@ -187,14 +190,21 @@ impl AppService {
             if own {
                 return Vec::new();
             }
-            let participants = match topic {
-                Some(topic) => self
-                    .hint_transport()
-                    .topic_read_candidates(&TopicId::new(topic))
-                    .await
-                    .unwrap_or_default(),
-                None => Vec::new(),
-            };
+            let mut participants: Vec<SeedPeer> = source
+                .map(|endpoint_id| SeedPeer {
+                    endpoint_id: endpoint_id.to_owned(),
+                    addr_hint: None,
+                })
+                .into_iter()
+                .collect();
+            if let Some(topic) = topic {
+                participants.extend(
+                    self.hint_transport()
+                        .topic_read_candidates(&TopicId::new(topic))
+                        .await
+                        .unwrap_or_default(),
+                );
+            }
             writer_readers(
                 &self.services,
                 &replica,
@@ -235,6 +245,7 @@ impl AppService {
             .read_author_object(
                 preset_ref.owner_pubkey.as_str(),
                 public_dome_topic(context),
+                None,
                 |docs, policy| async move {
                     self.read_dome_preset_manifest(docs.as_ref(), policy, preset_ref, keep)
                         .await
@@ -398,7 +409,7 @@ impl AppService {
         move_id: &str,
     ) -> Result<Option<DomeMoveRecordV1>> {
         let replica = &author_replica_id(owner_pubkey);
-        self.read_author_object(owner_pubkey, None, |docs, policy| async move {
+        self.read_author_object(owner_pubkey, None, None, |docs, policy| async move {
             let docs = docs.as_ref();
             let records = docs
                 .query_replica_with_policy(

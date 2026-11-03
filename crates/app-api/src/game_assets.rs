@@ -273,7 +273,7 @@ mod native {
 
         /// release を手元 → 発行者本人 → topic の参加者の順に読む。読めた読み先は blob の取得元の候補として覚える。
         /// `keep_newer_than` があれば、その版より新しい record だけを保持してほかの端末へ提供する(保持した新しい版を古い版で
-        /// 上書きしない)。
+        /// 上書きしない)。`source` は更新の hint を届けた peer で、参加者より先に読む。
         async fn read_game_asset(
             &self,
             topic_id: &str,
@@ -281,9 +281,10 @@ mod native {
             application_id: &str,
             asset_id: &str,
             keep_newer_than: Option<u64>,
+            source: Option<&str>,
         ) -> Result<Option<(GameAssetReleaseV1, Option<String>)>> {
             let blobs = self.services.blob_service.clone();
-            self.read_author_object(publisher, Some(topic_id), |docs, policy| {
+            self.read_author_object(publisher, Some(topic_id), source, |docs, policy| {
                 let blobs = blobs.clone();
                 async move {
                     let Some((release, author)) =
@@ -335,7 +336,7 @@ mod native {
             let read =
                 futures_util::future::try_join_all(asset_ids.iter().map(|asset_id| async move {
                     let Some((release, _)) = self
-                        .read_game_asset(topic_id, publisher, application_id, asset_id, None)
+                        .read_game_asset(topic_id, publisher, application_id, asset_id, None, None)
                         .await?
                     else {
                         return anyhow::Ok(None);
@@ -364,7 +365,7 @@ mod native {
             let _fetching = self
                 .lock_game_asset(publisher, application_id, asset_id)
                 .await;
-            self.fetch_game_asset_locked(topic_id, publisher, application_id, asset_id)
+            self.fetch_game_asset_locked(topic_id, publisher, application_id, asset_id, None)
                 .await
         }
 
@@ -387,6 +388,7 @@ mod native {
             publisher: &str,
             application_id: &str,
             asset_id: &str,
+            source: Option<&str>,
         ) -> Result<GameAssetFileView> {
             let store = &self.services.projection_store;
             let applied = store
@@ -406,6 +408,7 @@ mod native {
                     application_id,
                     asset_id,
                     Some(applied.as_ref().map_or(0, |row| row.revision)),
+                    source,
                 )
                 .await?;
             let (release, author) = match (read, &applied) {
@@ -501,11 +504,12 @@ mod native {
         }
 
         /// 更新の知らせを受けた。新しい release を読めたら、適用中のアセットは背景で取得・適用して、まだ適用していない
-        /// アセットはそのまま知らせる。
+        /// アセットはそのまま知らせる。`source` は知らせを届けた peer(新しい release を持つ見込みが高いので先に読む)。
         pub(crate) async fn receive_game_asset_hint(
             &self,
             topic_id: &str,
             id: &str,
+            source: Option<&str>,
         ) -> Result<bool> {
             let mut parts = id.splitn(3, '/');
             let (Some(publisher), Some(asset_id), Some(application_id)) =
@@ -519,7 +523,7 @@ mod native {
                 return Ok(false);
             }
             let Some((release, _)) = self
-                .read_game_asset(topic_id, publisher, application_id, asset_id, None)
+                .read_game_asset(topic_id, publisher, application_id, asset_id, None, source)
                 .await?
             else {
                 return Ok(false);
@@ -548,7 +552,11 @@ mod native {
                     {
                         return Ok(true);
                     }
-                    let (app, topic) = (self.account_handle(), topic_id.to_owned());
+                    let (app, topic, source) = (
+                        self.account_handle(),
+                        topic_id.to_owned(),
+                        source.map(str::to_owned),
+                    );
                     n0_future::task::spawn(async move {
                         let (publisher, application_id, asset_id) = (
                             &update.publisher_pubkey,
@@ -579,7 +587,13 @@ mod native {
                             return;
                         }
                         let fetched = app
-                            .fetch_game_asset_locked(&topic, publisher, application_id, asset_id)
+                            .fetch_game_asset_locked(
+                                &topic,
+                                publisher,
+                                application_id,
+                                asset_id,
+                                source.as_deref(),
+                            )
                             .await;
                         match fetched {
                             Ok(file) if file.release.revision > before => {

@@ -318,14 +318,15 @@ impl AppService {
                                 last_sync.set(now).await;
                             }
                             hint => {
-                                applied = reader.apply_content_hint(&topic, &scope, hint).await;
+                                let source = Some(event.source_peer.as_str()).filter(|peer| !peer.is_empty());
+                                applied = reader.apply_content_hint(&topic, &scope, hint, source).await;
                                 session_retries.record(hint, 0, applied > 0);
                             }
                         }
                     }
                     _ = n0_future::time::sleep_until(retry.unwrap_or(window_end)), if retry.is_some() => {
                         if let Some((retried, hint)) = session_retries.take_due() {
-                            applied = reader.apply_content_hint(&topic, &scope, &hint).await;
+                            applied = reader.apply_content_hint(&topic, &scope, &hint, None).await;
                             session_retries.record(&hint, retried, applied > 0);
                         }
                     }
@@ -622,21 +623,17 @@ impl AppService {
                     .await?
                     .is_some())
             }
-            // #1980: ゲームのアセットの新しい release の知らせ(公開 topic の hint。SDK を持つ native だけ)。
-            #[cfg(not(target_family = "wasm"))]
-            crate::GAME_ASSET_HINT_KIND if *scope == TimelineScope::Public => {
-                self.receive_game_asset_hint(topic_id, session_id).await
-            }
             _ => Ok(false),
         }
     }
 
-    /// hint が指す対象だけを読む。戻り値は反映した件数。
+    /// hint が指す対象だけを読む。戻り値は反映した件数。`source` は hint を届けた peer。
     pub(crate) async fn apply_content_hint(
         &self,
         topic_id: &str,
         scope: &TimelineScope,
         hint: &GossipHint,
+        #[cfg_attr(target_family = "wasm", allow(unused_variables))] source: Option<&str>,
     ) -> usize {
         let mut applied = 0;
         let objects: Vec<(EnvelopeId, &str)> = match hint {
@@ -657,9 +654,22 @@ impl AppService {
                 object_kind,
                 ..
             } => {
-                return self
+                // #1980: ゲームのアセットの新しい release の知らせ(公開 topic の hint。SDK を持つ native だけ)。
+                #[cfg(not(target_family = "wasm"))]
+                let read = if object_kind == crate::GAME_ASSET_HINT_KIND
+                    && *scope == TimelineScope::Public
+                {
+                    self.receive_game_asset_hint(topic_id, session_id, source)
+                        .await
+                } else {
+                    self.read_session(topic_id, scope, session_id, object_kind)
+                        .await
+                };
+                #[cfg(target_family = "wasm")]
+                let read = self
                     .read_session(topic_id, scope, session_id, object_kind)
-                    .await
+                    .await;
+                return read
                     .inspect_err(|error| warn!(%error, "failed to read a hinted session"))
                     .unwrap_or_default() as usize;
             }
