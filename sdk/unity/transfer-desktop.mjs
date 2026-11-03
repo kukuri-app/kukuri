@@ -115,9 +115,12 @@ const live = async (emoji, frame) => {
   await startBroadcast(desktop);
   write(`${desktop.name}-live`, own);
   await marker(`${desktop.name}-live-seen`);
-  // 観戦の Player が見ている間の topic の経路と、相手の数・relay を通る相手の数。
-  const sync = await desktop.invoke('get_sync_status');
-  const topicPath = sync.topic_diagnostics.find((each) => each.topic === topic);
+  // 観戦の Player が見ている間の topic の経路と、相手の数・relay を通る相手の数。host が終了した直後は、host だけと
+  // つながっていた端末が近隣を探し直している（相手 0 人の経路は分類できない）ので、相手が 1 人以上になるまで待つ。
+  const topicPath = await eventually(`a topic peer on ${desktop.name}`, () =>
+    desktop.invoke('get_sync_status').then((sync) => sync.topic_diagnostics.find((each) => each.topic === topic && each.peer_count > 0)),
+    120_000
+  );
   console.log(`path ${topicPath?.active_path} ${topicPath?.peer_count} ${topicPath?.fallback_peer_count}`);
   // 利用者と同じく配信を止めてから終える（取り込みが続く間は映像が届き、モニターは次の配信へ移らない）。
   await click(desktop, t('media.stopBroadcast'), { within: BAR });
