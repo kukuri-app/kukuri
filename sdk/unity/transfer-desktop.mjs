@@ -19,7 +19,7 @@
 //   post へ 👏 で応援する。`watched`・`reacted` を log に書く。続けて、host が試合の後に投稿した結果
 //   （<作業 dir>/result-post）を timeline で読む（`result-seen <添付の数>`）。host が終えたら（<作業 dir>/host-done）自分も
 //   camera で配信し（#1984 AC-1）、session を <作業 dir>/desktop-live に書き、観戦の Player のモニターに映った印
-//   （<作業 dir>/desktop-live-seen）で配信を終える（`broadcast-seen`。映った時点の topic の経路と相手の数を `path` で書く）。ゲームが
+//   （<作業 dir>/desktop-live-seen）で配信を終える（`broadcast-seen`。映る前の見ている間に、相手が 1 人以上だった最後の topic の経路と相手の数を `path` で書く）。ゲームが
 //   終わった印（<作業 dir>/game-exited）の後に返信して <作業 dir>/desktop-replied に書き、再起動したゲームが掲示板で読んだ印
 //   （<作業 dir>/done）まで待って終わる。
 // - web（#1984 AC-1）: live と同じことを、試験の Community Node の fixture（harness の `web_e2e_fixture`）が配る Web の
