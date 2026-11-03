@@ -654,6 +654,9 @@ impl AppService {
                 object_kind,
                 ..
             } => {
+                let listed = self
+                    .listed_session_manifest(topic_id, session_id, object_kind)
+                    .await;
                 // #1980: ゲームのアセットの新しい release の知らせ(公開 topic の hint。SDK を持つ native だけ)。
                 #[cfg(not(target_family = "wasm"))]
                 let read = if object_kind == crate::GAME_ASSET_HINT_KIND
@@ -669,9 +672,15 @@ impl AppService {
                 let read = self
                     .read_session(topic_id, scope, session_id, object_kind)
                     .await;
-                return read
+                let read = read
                     .inspect_err(|error| warn!(%error, "failed to read a hinted session"))
-                    .unwrap_or_default() as usize;
+                    .unwrap_or_default();
+                // live・game は、一覧の行の manifest が変わったときだけ反映したとする。読み先が一覧と同じ版しか持たなければ、
+                // hint の版はまだ届いていないので、読み直しを予定する(#1984)。
+                let after = self
+                    .listed_session_manifest(topic_id, session_id, object_kind)
+                    .await;
+                return usize::from(read && (after.is_none() || after != listed));
             }
             _ => Vec::new(),
         };
@@ -700,6 +709,31 @@ impl AppService {
             }
         }
         applied
+    }
+
+    /// live・game の session の一覧の行が指す manifest(他の種類と、行が無いときは `None`)。
+    async fn listed_session_manifest(
+        &self,
+        topic_id: &str,
+        session_id: &str,
+        object_kind: &str,
+    ) -> Option<kukuri_core::BlobHash> {
+        let projection_store = &self.services.projection_store;
+        match object_kind {
+            "live-session" => projection_store
+                .get_live_session(topic_id, session_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|row| row.manifest_blob_hash),
+            "game-session" => projection_store
+                .get_game_room(topic_id, session_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|row| row.manifest_blob_hash),
+            _ => None,
+        }
     }
 
     /// 取り下げは元投稿の位置に置かれる。手元に元投稿が無い取り下げは読まない。

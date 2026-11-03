@@ -53,6 +53,8 @@ struct Fixture {
     transport: Arc<StaticTransport>,
     /// 読み先を近隣から順に回して選ぶとき(`fixture_rotating`)の、選ぶ位置。
     rotation: Option<Arc<RotatingReadPeers>>,
+    /// 読み先を回して選ぶときの、作った端末以外の近隣の docs。
+    others: Vec<Arc<CountingDocsSync>>,
     topic: TopicId,
 }
 
@@ -75,6 +77,9 @@ async fn fixture_with(name: &str, rotating: bool) -> Fixture {
             next: AtomicUsize::new(0),
         })
     });
+    let others = (1..NEIGHBORS.len())
+        .map(|_| Arc::new(CountingDocsSync::default()))
+        .collect::<Vec<_>>();
     let (docs, hints): (CountingDocsSync, Arc<dyn HintTransport>) = match &rotation {
         None => (
             CountingDocsSync::reading_from(provider.clone()),
@@ -84,11 +89,11 @@ async fn fixture_with(name: &str, rotating: bool) -> Fixture {
             CountingDocsSync::reading_from_peers(
                 NEIGHBORS
                     .iter()
-                    .map(|peer| {
-                        let docs: Arc<dyn DocsSync> = if *peer == NEIGHBORS[0] {
-                            provider.clone()
-                        } else {
-                            Arc::new(CountingDocsSync::default())
+                    .enumerate()
+                    .map(|(index, peer)| {
+                        let docs: Arc<dyn DocsSync> = match index {
+                            0 => provider.clone(),
+                            _ => others[index - 1].clone(),
                         };
                         (peer.to_string(), docs)
                     })
@@ -116,6 +121,7 @@ async fn fixture_with(name: &str, rotating: bool) -> Fixture {
         blobs,
         transport,
         rotation,
+        others,
         topic,
     };
     fixture.barrier().await;
@@ -160,12 +166,16 @@ impl Fixture {
     }
 
     async fn listed(&self, session_id: &str) -> bool {
+        self.status(session_id).await.is_some()
+    }
+
+    async fn status(&self, session_id: &str) -> Option<LiveSessionStatus> {
         let projection_store: &dyn ProjectionStore = self.store.as_ref();
         projection_store
             .get_live_session(self.topic.as_str(), session_id)
             .await
             .expect("projection")
-            .is_some()
+            .map(|row| row.status)
     }
 
     /// 最初の読み直し(と少しの余裕)のうちに一覧に出るか。
@@ -181,18 +191,36 @@ impl Fixture {
 
     /// 読み先に、`owner` の署名つきの session を置く。
     async fn put_session(&self, owner: &KukuriKeys, session_id: &str) {
-        write_live_session(
+        self.put_manifest(
             self.provider.as_ref(),
+            owner,
+            &self.manifest(owner, session_id),
+        )
+        .await;
+    }
+
+    fn manifest(&self, owner: &KukuriKeys, session_id: &str) -> LiveSessionManifestBlobV1 {
+        live_manifest(
+            session_id,
+            &self.topic,
+            None,
+            &owner.public_key_hex(),
+            LiveSessionStatus::Live,
+        )
+    }
+
+    async fn put_manifest(
+        &self,
+        docs: &dyn DocsSync,
+        owner: &KukuriKeys,
+        manifest: &LiveSessionManifestBlobV1,
+    ) {
+        write_live_session(
+            docs,
             self.blobs.as_ref(),
             &topic_replica_id(self.topic.as_str()),
             Some(owner),
-            &live_manifest(
-                session_id,
-                &self.topic,
-                None,
-                &owner.public_key_hex(),
-                LiveSessionStatus::Live,
-            ),
+            manifest,
         )
         .await;
     }
@@ -330,5 +358,46 @@ async fn retries_are_bounded_per_session_and_per_task() {
         f.reads(&ids[SESSION_RETRY_CAPACITY]).await,
         per_read,
         "a hint beyond the capacity is not retried"
+    );
+}
+
+// #1984: 終わった session の hint の時点で、読み先の近隣がまだ配信中の版(一覧と同じ版)しか持っていなくても、読み
+// 直しで終わった版を読み、一覧を終了にする(一覧と同じ版を読んだだけでは、読めたとしない)。
+#[tokio::test(start_paused = true)]
+async fn an_ended_session_read_only_from_stale_neighbors_is_retried() {
+    let f = fixture_with("stale", true).await;
+    let rotation = f.rotation.as_ref().expect("the read peers rotate");
+    let (owner, session_id) = owned_session();
+    let live = f.manifest(&owner, &session_id);
+    f.put_manifest(f.provider.as_ref(), &owner, &live).await;
+    for other in &f.others {
+        f.put_manifest(other.as_ref(), &owner, &live).await;
+    }
+    rotation.next.store(0, std::sync::atomic::Ordering::SeqCst);
+    f.hint(&session_id, 1).await;
+    f.barrier().await;
+    assert_eq!(f.status(&session_id).await, Some(LiveSessionStatus::Live));
+
+    let ended = LiveSessionManifestBlobV1 {
+        revision: 2,
+        status: LiveSessionStatus::Ended,
+        ended_at: Some(Utc::now().timestamp_millis()),
+        ..live
+    };
+    f.put_manifest(f.provider.as_ref(), &owner, &ended).await;
+    // hint の時点の読みは、作った端末以外の 4 人に聞く。
+    rotation.next.store(1, std::sync::atomic::Ordering::SeqCst);
+    f.hint(&session_id, 2).await;
+    f.barrier().await;
+    assert_eq!(f.status(&session_id).await, Some(LiveSessionStatus::Live));
+    assert!(
+        timeout(SESSION_RETRY_DELAYS[0] + Duration::from_secs(1), async {
+            while f.status(&session_id).await != Some(LiveSessionStatus::Ended) {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok(),
+        "the first retry reads the ended session"
     );
 }
