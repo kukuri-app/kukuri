@@ -1791,6 +1791,8 @@ async function publicBlob() {
   await nativeShows(topic);
   const image = `public blob image ${RUN}`;
   await native('create_post', { request: { topic, content: image, reply_to: null, attachments: [imageAttachment(png)] } });
+  // 投稿の時刻は秒単位で、同じ秒の投稿は ID の順に並ぶ。画像の投稿を一番古くするため、次の秒まで待つ。
+  await new Promise((resolve) => setTimeout(resolve, 1100));
   const newest = `after the image ${RUN} 14`;
   for (let index = 0; index < 15; index++) {
     await native('create_post', { request: { topic, content: `after the image ${RUN} ${index}`, reply_to: null } });
