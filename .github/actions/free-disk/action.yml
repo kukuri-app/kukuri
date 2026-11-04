@@ -1,0 +1,22 @@
+name: Free disk on a small runner
+description: >-
+  GitHub の ubuntu-24.04 の runner の約 1 割は / の空きが 14 GB しかない（他は 86 GB。30 台の実測）。小さい runner でだけ、
+  job が使わない同梱の toolchain と image を消して約 50 GB にする（数秒で済む）。消す toolchain を使う step より前に置く。
+inputs:
+  keep-android:
+    description: Android SDK を残す（emulator を使う job）
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        KEEP_ANDROID: ${{ inputs.keep-android }}
+      run: |
+        [ "$(df -BG --output=avail / | tail -1 | tr -dc 0-9)" -ge 40 ] && exit 0
+        [ "$KEEP_ANDROID" = true ] || sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/dotnet /usr/local/.ghcup /opt/ghc /usr/share/swift /usr/local/julia* \
+          /usr/lib/jvm /usr/lib/google-cloud-sdk /opt/az /usr/local/share/powershell /usr/local/share/chromium \
+          /opt/microsoft /opt/google /usr/local/lib/node_modules /usr/share/miniconda /opt/hostedtoolcache
+        docker image prune -af > /dev/null
+        df -h /

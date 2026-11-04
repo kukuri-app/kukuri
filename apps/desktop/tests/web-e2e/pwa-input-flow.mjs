@@ -40,8 +40,12 @@ async function configureJapanese(browser, field, adb) {
   await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
   await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK');
   await field.click();
-  await adb('shell', 'input', 'tap', '400', '1000');
-  await eventually('configured Japanese keyboard opens', () => browser.execute(() => visualViewport.height < innerHeight * .8));
+  // 設定の画面から Chrome へ戻る途中の tap は失われることがあるので、開くまで tap し直す。
+  await eventually('configured Japanese keyboard opens', async () => {
+    if (await browser.execute(() => visualViewport.height < innerHeight * .8)) return true;
+    await adb('shell', 'input', 'tap', '400', '1000');
+    return false;
+  });
   await nativeSnapshot(adb, 'gboard-configured');
 
 }
