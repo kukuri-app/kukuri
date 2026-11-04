@@ -28,7 +28,7 @@
 #   残すことを選べ、まとめた後は B の公開鍵・B の進行の ID とスキンで続き、選ばなかった進行もセーブに残る。
 # 先に sdk/unity/build-native.ps1 で native を置く。Unity の project は短い path へ写して使う（深い path は MAX_PATH に当たる）。
 param(
-    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
+    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f2\Editor\Unity.exe",
     [string]$ProjectDir = (Join-Path $env:TEMP "kcda-test"),
     [ValidateSet("Mono2x", "IL2CPP")] [string]$Backend = "Mono2x",
     [switch]$SkipEditMode,

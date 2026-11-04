@@ -4,7 +4,7 @@
 #   切断が届く。client は FFI と Sidecar の 2 回
 # 先に build-native.ps1 で native を置く。NGO を入れない build は test.ps1 が確かめる。
 param(
-    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
+    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f2\Editor\Unity.exe",
     [string]$ProjectDir = (Join-Path $env:TEMP "kgs-ngo"),
     [ValidateSet("Mono2x", "IL2CPP")] [string]$Backend = "Mono2x"
 )

@@ -8,7 +8,7 @@
 # 試合は 3 分で終わるので、測る間は host の probe が残り時間と得点を戻して続ける（負荷は変えない）。
 # 結果は <ProjectDir>\runs\report.md と標準出力に書く。先に sdk/unity/build-native.ps1 で native と proxy を置く。
 param(
-    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
+    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f2\Editor\Unity.exe",
     [string]$ProjectDir = (Join-Path $env:TEMP "kcda-slo"),
     [ValidateSet("Mono2x", "IL2CPP")] [string]$Backend = "IL2CPP",
     [string]$Proxy = (Join-Path $PSScriptRoot "..\..\target\x86_64-pc-windows-msvc\release\kukuri-sdk-net-proxy.exe"),

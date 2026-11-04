@@ -12,7 +12,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Dist,
     [Parameter(Mandatory = $true)][string]$Source,
-    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
+    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f2\Editor\Unity.exe",
     [string]$WorkDir = (Join-Path $env:TEMP "kgsd"),
     [string]$DesktopApp
 )
@@ -30,7 +30,7 @@ if (Test-Path $WorkDir) { Remove-Item -Recurse -Force $WorkDir }
 New-Item -ItemType Directory -Force $WorkDir | Out-Null
 $result = Join-Path $WorkDir "smoke-result.txt"
 function Record([string]$line) { Write-Output $line; Add-Content -Path $result -Value $line -Encoding utf8 }
-Record "source=$Source version=$($info.version) rust=$($info.rust) unity=$(Split-Path (Split-Path (Split-Path $Unity)) -Leaf)"
+Record "source=$Source version=$($info.version) rust=$($info.rust) unity=$(Split-Path (Split-Path (Split-Path $Unity)) -Leaf) desktop=$([bool]$DesktopApp)"
 
 # 2. 利用者と同じ配置: .tgz の隣に sample を展開して、そのまま開く。
 Copy-Item $tarball $WorkDir

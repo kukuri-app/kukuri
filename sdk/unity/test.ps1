@@ -13,7 +13,7 @@
 #   公開鍵と game player ID で再開する（#1997 AC-3。実際の Steam は未確認）
 # 先に build-native.ps1 で native を置く。Unity の project は短い path に作る（深い path は MAX_PATH に当たる）。
 param(
-    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
+    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f2\Editor\Unity.exe",
     [string]$ProjectDir = (Join-Path $env:TEMP "kgs-test"),
     [ValidateSet("Mono2x", "IL2CPP")] [string]$Backend = "Mono2x",
     [switch]$SkipEditMode,

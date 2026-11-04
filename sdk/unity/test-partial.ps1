@@ -1,13 +1,15 @@
 ﻿# 部分導入の確認（#1984 AC-3）。NGO の標準の Unity Transport で 2 peer が同期する小さなゲームへ、ゲームの通信を変えずに
 # 掲示板だけを足す。
 # 1. 空の project に NGO を入れ、Unity Transport で cube の位置を同期するゲームを作り、2 つの Player で確かめる。
-# 2. package の manifest に配布物の .tgz を 1 行足し、scene に KukuriRunner・開始の画面・掲示板の prefab を足して build する。
-#    ゲームの script は変えない（SHA-256 で確かめる）。
-# 3. 2 つの Player で、ゲームの同期を Unity Transport のまま続けながら、掲示板の投稿が相手に届くことを確かめる。
+# 2. 手順書（docs/runbooks/game-sdk-quickstart.md の「自分のゲームに掲示板だけを足す」）のとおりに、manifest に配布物の .tgz を
+#    1 行足し、設定 asset・KukuriRunner・開始の画面・掲示板の prefab・掲示板を開く script を足して build する。ゲームの script は
+#    変えない（SHA-256 で確かめる）。
+# 3. 2 つの Player で、ゲームの同期を Unity Transport のまま続けながら、掲示板の投稿が相手に届くことを確かめる。host は設定 asset の
+#    既定の profile で開く。同じ PC で同じ profile を 2 つの process が使えないので、client だけ試験の script が profile の dir を替える。
 # 足した manifest の行、scene の object、段ごとの時間を出力する。
 param(
     [Parameter(Mandatory = $true)][string]$Tarball,
-    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
+    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f2\Editor\Unity.exe",
     [string]$ProjectDir = (Join-Path $env:TEMP "kgs-partial"),
     [ValidateSet("Mono2x", "IL2CPP")] [string]$Backend = "Mono2x"
 )
@@ -218,7 +220,8 @@ using Newtonsoft.Json.Linq;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using UnityEngine;
-/// 掲示板を足した確認: ゲームの同期を続けたまま、host の投稿が client の掲示板に届く。
+/// 掲示板を足した確認: ゲームの同期を続けたまま、host の投稿が client の掲示板に届く。KukuriRunner より先に動かす。
+[DefaultExecutionOrder(-1000)]
 public sealed class PartialBoardCheck : MonoBehaviour
 {
     [SerializeField] KukuriRunner runner;
@@ -229,9 +232,10 @@ public sealed class PartialBoardCheck : MonoBehaviour
     string exchange;
     void Awake()
     {
-        if (PartialGame.Arg("-partial-role") == null) return;
-        runner.Settings = KukuriSettings.Create(KukuriMode.Ffi, "partial", PartialGame.Arg("-partial-profile-dir"));
-        runner.enabled = true;
+        var role = PartialGame.Arg("-partial-role");
+        if (role == null) return;
+        board.Topic = PartialGame.Arg("-partial-topic");
+        if (role == "client") runner.Settings = KukuriSettings.Create(KukuriMode.Ffi, "partial", PartialGame.Arg("-partial-profile-dir"));
     }
     static async Task Until(Func<bool> condition, double seconds, string what)
     {
@@ -261,8 +265,6 @@ public sealed class PartialBoardCheck : MonoBehaviour
             var theirs = Path.Combine(exchange, other + ".ticket");
             await Until(() => File.Exists(theirs), 60, "no ticket from the " + other);
             await runner.Client.SendAsync("import_peer_ticket", new JObject { ["ticket"] = File.ReadAllText(theirs) });
-            board.Topic = PartialGame.Arg("-partial-topic");
-            board.gameObject.SetActive(true);
             await Until(() => board.Subscribed, 60, "the board did not subscribe");
             Debug.Log("KGS_TRANSPORT " + network.NetworkConfig.NetworkTransport.GetType().Name);
             var postFile = Path.Combine(exchange, "post");
@@ -297,6 +299,23 @@ public sealed class PartialBoardCheck : MonoBehaviour
     }
 }
 '@ | Set-Content (Join-Path $ProjectDir "Assets\PartialBoardCheck.cs") -Encoding utf8
+# 手順書の script と同じ。
+@'
+using Kukuri.GameSdk;
+using Kukuri.GameSdk.Social;
+using UnityEngine;
+public sealed class BoardOpener : MonoBehaviour
+{
+    [SerializeField] KukuriAccountScreen account;
+    [SerializeField] KukuriBoard board;
+    void Update()
+    {
+        if (account.Screen != "playing" || board.gameObject.activeSelf) return;
+        account.Visible = false;
+        board.gameObject.SetActive(true);
+    }
+}
+'@ | Set-Content (Join-Path $ProjectDir "Assets\BoardOpener.cs") -Encoding utf8
 @'
 using Kukuri.GameSdk;
 using Kukuri.GameSdk.Social;
@@ -311,8 +330,10 @@ public static class PartialBoardBuild
         var scene = EditorSceneManager.OpenScene("Assets/Game.unity");
         GameObjectUtility.RemoveMonoBehavioursWithMissingScript(Object.FindAnyObjectByType<PartialGame>().gameObject);
         var host = new GameObject("kukuri");
+        var settings = ScriptableObject.CreateInstance<KukuriSettings>();
+        AssetDatabase.CreateAsset(settings, "Assets/KukuriSettings.asset");
         var runner = host.AddComponent<KukuriRunner>();
-        runner.enabled = false;
+        PartialGameBuild.Link(runner, "settings", settings);
         var account = host.AddComponent<KukuriAccountScreen>();
         PartialGameBuild.Link(account, "runner", runner);
         var boardObject = (GameObject)PrefabUtility.InstantiatePrefab(
@@ -320,6 +341,9 @@ public static class PartialBoardBuild
         var board = boardObject.GetComponent<KukuriBoard>();
         PartialGameBuild.Link(board, "runner", runner);
         boardObject.SetActive(false);
+        var opener = host.AddComponent<BoardOpener>();
+        PartialGameBuild.Link(opener, "account", account);
+        PartialGameBuild.Link(opener, "board", board);
         var check = host.AddComponent<PartialBoardCheck>();
         PartialGameBuild.Link(check, "runner", runner);
         PartialGameBuild.Link(check, "account", account);
@@ -335,15 +359,21 @@ $boardExe = Join-Path $ProjectDir "Builds\Board\Game.exe"
 Invoke-Build "PartialBoardBuild.Build" "build-board.log" $boardExe
 Write-Step "the board added: imported and built"
 
-# 3. Unity Transport のままで、掲示板が動く。
+# 3. Unity Transport のままで、掲示板が動く。host は設定 asset の既定の profile で開く。
+$productData = Join-Path $env:USERPROFILE "AppData\LocalLow\DefaultCompany\$(Split-Path $ProjectDir -Leaf)"
+if (Test-Path $productData) { Remove-Item -Recurse -Force $productData }
 $work = Invoke-Players "board" $boardExe 17802
+$defaultProfile = Test-Path (Join-Path $productData "kukuri\profiles\default")
+Remove-Item -Recurse -Force $productData -ErrorAction SilentlyContinue
 $seen = Get-Marker (Join-Path $work "client.log") "KGS_BOARD_SEEN (\S+ \d+)"
 $transports = foreach ($role in "host", "client") { Get-Marker (Join-Path $work "$role.log") "KGS_TRANSPORT (\S+)" }
 Write-Step "the board added: two Players"
 $unchanged = (Get-FileHash $gameScript).Hash -eq $gameHash
 Write-Output "packages added: $($added -join ', ')"
-Write-Output "scene objects added: kukuri (KukuriRunner, KukuriAccountScreen), KukuriBoard"
+Write-Output "added: Assets/KukuriSettings.asset, Assets/BoardOpener.cs, scene objects kukuri (KukuriRunner, KukuriAccountScreen, BoardOpener), KukuriBoard"
+Write-Output "the host opened the default profile of the settings asset: $defaultProfile"
 Write-Output "the game script unchanged: $unchanged"
 Write-Output "transports: $($transports -join ',')"
 Write-Output "the board post seen by the client while the game synced: $seen"
-if (-not $seen -or -not $unchanged -or ($transports | Where-Object { $_ -ne "UnityTransport" })) { exit 1 }
+if (-not $seen -or -not $unchanged -or -not $defaultProfile -or ($added -join ",") -ne "com.kukuri.gamesdk" -or
+    @($transports | Where-Object { $_ -eq "UnityTransport" }).Count -ne 2) { exit 1 }

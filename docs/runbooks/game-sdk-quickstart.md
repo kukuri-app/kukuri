@@ -6,7 +6,7 @@ Unity のゲームへ kukuri Game SDK を入れる手順。配布物だけで進
 
 | 対象 | 版 |
 | --- | --- |
-| Unity | 6000.3（Unity 6.3 LTS）。Editor は Mono、Player は IL2CPP と Mono |
+| Unity | 6000.3.27f2（Unity 6.3 LTS）。Editor は Mono、Player は IL2CPP と Mono。他の版は確かめていないので対応に含めない |
 | OS・graphics | Windows 11 x64、Direct3D 12。Windows 10 と他の OS・graphics は確かめていないので対応に含めない |
 | 任意の package | URP 17.3.0。Netcode for GameObjects 2.13.3（NGO の Transport を使うとき）。glTFast 6.20.0（スキンを使うとき） |
 
@@ -27,11 +27,12 @@ Unity の project は短い path に置く。深い path は Windows の path �
 
 利用者は別のサイトで登録しない。メールやパスワードも、SNS 用のプロフィールも要らない。
 
-1. scene に空の GameObject を置き、`KukuriRunner` と `KukuriAccountScreen` を足す。`KukuriAccountScreen` の `runner` に `KukuriRunner` を、`applicationId` にゲームの ID（例: `com.example.game`）を設定する。
-2. 実行すると、同意の画面 →「はじめる」→ プレイの順に進む。「はじめる」でアカウントと game player が自動で作られ、次の起動からは同じものでそのまま再開する。
-3. ゲームのセーブは `game_player_id` で参照する。鍵やアカウントはゲームのコードから扱わない。
+1. Project の Create の `kukuri/Settings` で設定 asset を作る。既定のまま（mode は FFI、profile は `default`）でよい。
+2. scene に空の GameObject を置き、`KukuriRunner` と `KukuriAccountScreen` を足す。`KukuriRunner` の `settings` に 1 の asset を、`KukuriAccountScreen` の `runner` に `KukuriRunner` を、`applicationId` にゲームの ID（例: `com.example.game`）を設定する。
+3. 実行すると、同意の画面 →「はじめる」→ プレイの順に進む。同意でアカウントが、「はじめる」で game player が自動で作られ、次の起動からは同じものでそのまま再開する。
+4. ゲームのセーブは `KukuriAccountScreen.GamePlayerId` で参照する。鍵やアカウントはゲームのコードから扱わない。
 
-profile は `Application.persistentDataPath/kukuri/profiles/<profile>` に置かれる。鍵を含むので、ゲームのセーブと一緒に公開しない。
+profile は `Application.persistentDataPath/kukuri/profiles/<profile>` に置かれる。アカウントの鍵は既定では OS の keyring（Windows の資格情報マネージャー）に置き、keyring を使えないときは profile の file に置く。「Steam Cloud に保存」を有効にしている間は、鍵の写しが profile の `game-account.json` に入る。profile をゲームのセーブと一緒に公開しない。
 
 ## 2 つの端末をつなぐ
 
@@ -50,19 +51,41 @@ profile は `Application.persistentDataPath/kukuri/profiles/<profile>` に置か
 | 機能 | 置くもの | 設定 |
 | --- | --- | --- |
 | ロビーと対戦 | `Runtime/Lobby/KukuriLobby.prefab`。NGO を使うなら `NetworkManager` の Transport に `KukuriNetcodeTransport` | `runner`・`applicationId`・`topic`。組み方は package の sample「Netcode Sync」 |
-| 掲示板 | `Runtime/Social/KukuriBoard.prefab` | `runner`・`topic`。使わないときは GameObject を無効にする |
+| 掲示板 | `Runtime/Social/KukuriBoard.prefab` | `runner`・`topic`。GameObject を無効で置き、`KukuriAccountScreen.Screen` が `playing` になってから有効にする（下の script） |
 | スキン | `KukuriSkinLoader`（glTFast が要る） | `runner`・`topic`・信頼する発行者の公開鍵・application ID・asset ID。組み方は package の sample「Skin Loader」 |
-| Live | 配信は `KukuriLiveBroadcaster`、視聴は `KukuriLiveViewer` | `create_live_session` で作った session を `StartBroadcast`。視聴は `StartWatching` で、映像は `Output` の RenderTexture に出る |
+| Live | 配信は `KukuriLiveBroadcaster`、視聴は `KukuriLiveViewer` | どちらも code で `Client`（`runner.Client`）と `Topic` を設定する。配信は `SourceCamera` も設定し、`create_live_session` で作った session を `StartBroadcast` に渡す。視聴は `StartWatching` で、映像は `screen` の Renderer と `Output` の RenderTexture に出る。組み方は Arena の `Assets/CyberDiscArena/Scripts/ArenaBroadcast.cs` |
 
 UI の prefab は、scene に `EventSystem` が無ければ Unity の menu の UI から足す。
 
 ### 自分のゲームに掲示板だけを足す
 
-ゲームの通信はそのままでよい。NGO の Unity Transport で動いているゲームに足すときも、Transport を替えない。足すのは次の 3 つだけである（`sdk/unity/test-partial.ps1` で確かめている）。
+ゲームの通信はそのままでよい。NGO の Unity Transport で動いているゲームに足すときも、Transport を替えない。足すのは次の 4 つだけである（`sdk/unity/test-partial.ps1` で確かめている）。
 
 1. `manifest.json` の 1 行（上の「導入」）。
-2. `KukuriRunner` と `KukuriAccountScreen` を持つ GameObject。
-3. `KukuriBoard.prefab`（`runner` と `topic` を設定する）。
+2. 設定 asset と、`KukuriRunner`・`KukuriAccountScreen` を持つ GameObject（上の「ゲームを始める」）。
+3. `KukuriBoard.prefab`。`runner` と `topic` を設定し、GameObject を無効にして置く。
+4. 掲示板を開く script。同じ GameObject に足し、`account` と `board` を設定する。開始の前は SNS を開かない。開始の画面は Canvas の上に描かれ、押すと両方が反応するので、掲示板を開く間は `Visible` を `false` にする。
+
+```csharp
+using Kukuri.GameSdk;
+using Kukuri.GameSdk.Social;
+using UnityEngine;
+
+public sealed class BoardOpener : MonoBehaviour
+{
+    [SerializeField] KukuriAccountScreen account;
+    [SerializeField] KukuriBoard board;
+
+    void Update()
+    {
+        if (account.Screen != "playing" || board.gameObject.activeSelf) return;
+        account.Visible = false;
+        board.gameObject.SetActive(true);
+    }
+}
+```
+
+これは開始してすぐ開く最小の形である。キーで開閉する例は Arena の `Assets/CyberDiscArena/Scripts/ArenaBoard.cs` にある。
 
 ### スキンを発行する
 
@@ -80,12 +103,12 @@ UI の prefab は、scene に `EventSystem` が無ければ Unity の menu の U
 
 | 操作 | 画面 | 結果 |
 | --- | --- | --- |
-| 既存の kukuri アカウントで始める | 開始の画面の「kukuriアカウントを使う」 | kukuri app の「別の端末へ移す」でコピーしたリンクを「貼り付け」、両方で確認コードを承認する。鍵の文字列は入力しない。この鍵はゲームの profile に渡り、kukuri app からは取り消せない |
-| desktop・Web でも使う | プレイ中の「kukuriで続ける」 | リンクを kukuri app の「別の端末から移す」で受ける。同じ鍵なので、投稿の ID と署名はそのまま続く |
+| 既存の kukuri アカウントで始める | 開始の画面の「kukuriアカウントを使う」 | kukuri app の「別の端末へ移す」でコピーしたリンクを「貼り付け」、両方で確認コードを承認して「はじめる」を押す。鍵の文字列は入力しない。この鍵はゲームの profile に渡り、kukuri app からは取り消せない |
+| desktop・Web でも使う | プレイ中の「kukuriで続ける」 | リンクを kukuri app の「別の端末から移す」で受ける。同じ鍵なので、投稿の ID と署名はそのまま続く。ゲームから desktop へ移す経路は確かめた。Web は同じ移行の仕組みを使うが、ゲームから Web へ移す組み合わせは確かめていない（2026-11-04 のユーザー判断）。Web は Community Node が要る |
 | 既存のアカウントへまとめる | プレイ中の「既存のアカウントへまとめる」 | ゲームの結び付きを別のアカウントへ付け替える。古い投稿は元のアカウントのまま残る |
 | 新しい PC で再開する（Steam） | プレイ中の「Steam Cloud に保存」（`steamCloud` の設定） | 下の「外部ログイン」 |
 
-暗号化 export の取り込み（`import_account_key`）は、復旧の上級の操作である。通常の開始には使わない。
+暗号化 export の取り込み（開始の画面の「復旧（上級）」）は、端末を失ったときの操作である。通常の開始には使わない。
 
 ### 外部ログインと復旧（Steam）
 
@@ -126,6 +149,7 @@ kukuri はサーバーを必須にしないが、常に費用がかからない�
 
 | 症状 | 確かめること |
 | --- | --- |
+| 画面が「起動しています…」のまま | 画面の「未接続」は `KukuriRunner` の `settings` が空のときに出る。設定 asset を入れる |
 | SDK が開かない | `KukuriRunner.OpenError` の code。`abi_mismatch` は DLL と C# の版の違いで、package を入れ直す。DLL を差し替えたら Editor を再起動する（Windows は読み込んだ DLL を解放しない） |
 | `consent_required` | 同意の前である。`KukuriAccountScreen` を置き、同意と「はじめる」を済ませる |
 | `profile_in_use` | 同じ profile を別の process が使っている。Sidecar が動いていないか確かめ、別の Player には別の profile を渡す |
@@ -135,4 +159,4 @@ kukuri はサーバーを必須にしないが、常に費用がかからない�
 | Live の映像が出ない | 状態（`KukuriLiveViewer.State`）が `no_media` なら配信者がまだ映像を置いていない。音声の出力の機器が無い PC では、音声のある Live の映像も届かない |
 | 実行の log | Editor は Console、Player は `Player.log`。SDK は秘密を log に書かない |
 
-停止は `KukuriRunner` を破棄するか、ゲームを終了する。profile の lock は終了で外れる。profile の dir を消すと、そのアカウントの鍵も消える（Steam Cloud や別の端末へ移していなければ戻せない）。
+停止は `KukuriRunner` を破棄するか、ゲームを終了する。profile の lock は終了で外れる。profile の dir を消すと、次の起動は新しいアカウントと game player で始まる。Steam Cloud や別の端末へ移していなければ、元のアカウントには戻れない。keyring の鍵の項目は消えずに残る。
