@@ -685,6 +685,7 @@ async fn later_reader_gets_an_offline_owners_sessions_from_a_topic_peer() -> Res
                 title: "relayed game".into(),
                 description: String::new(),
                 participants: vec!["a".into(), "b".into()],
+                action: None,
             },
         )
         .await?;

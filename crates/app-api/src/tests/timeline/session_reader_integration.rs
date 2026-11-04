@@ -148,6 +148,7 @@ async fn real_iroh_session_target_reads_its_bucket_without_importing_it() -> Res
                 title: "remote game".into(),
                 description: String::new(),
                 participants: vec!["a".into(), "b".into()],
+                action: None,
             },
         )
         .await?;

@@ -266,8 +266,7 @@ async fn a_creation_hint_places_the_row_on_a_device_with_the_topic_lease() {
 }
 
 // 無関係なスレッドと投稿(別の topic のスレッド、topic のタイムラインの投稿)を増やしても、1 ページの照合が provider
-// から読む record と key の一覧の数は変わらず、一覧は投稿を保持しない。投稿の作成は hint を間を空けて 3 回送るので、
-// 投稿は少なくする。
+// から読む record と key の一覧の数は変わらず、一覧は投稿を保持しない。
 #[tokio::test]
 async fn a_list_page_reads_the_same_amount_however_many_unrelated_threads_and_posts_exist() {
     let mut reads = Vec::new();
