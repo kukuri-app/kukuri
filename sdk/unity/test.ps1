@@ -357,8 +357,8 @@ $dll = Test-Path (Join-Path $ProjectDir "Builds\$Backend\Kgs_Data\Plugins\x86_64
 Write-Output "Player ($Backend): built=$built native_dll_included=$dll"
 if (-not $built -or -not $dll) { exit 1 }
 
-# Player の profile は persistentDataPath（LocalLow\DefaultCompany\kgs-test）の下。前の回の profile を消してから始める。
-$profileRoot = Join-Path $env:USERPROFILE "AppData\LocalLow\DefaultCompany\kgs-test\kukuri"
+# Player の profile は persistentDataPath（LocalLow\DefaultCompany\<project の dir の名前>）の下。前の回の profile を消してから始める。
+$profileRoot = Join-Path $env:USERPROFILE "AppData\LocalLow\DefaultCompany\$(Split-Path $ProjectDir -Leaf)\kukuri"
 if (Test-Path $profileRoot) { Remove-Item -Recurse -Force $profileRoot }
 
 function Start-Player([string]$name, [string]$extra) {
