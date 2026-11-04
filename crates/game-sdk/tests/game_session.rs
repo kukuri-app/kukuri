@@ -200,7 +200,10 @@ fn scenario(host: *mut KukuriHandle, guest: *mut KukuriHandle, topic: &str) {
         "poll during the bulk transfer: p99 {p99:?} over {} polls",
         times.len()
     );
-    assert!(p99 <= Duration::from_millis(1), "poll p99 {p99:?}");
+    // 閾値は指定の PC で判定する（§8.4）。CI の共有の runner は他の処理に割り込まれるので、値の記録だけにする。
+    if std::env::var_os("CI").is_none() {
+        assert!(p99 <= Duration::from_millis(1), "poll p99 {p99:?}");
+    }
 
     // F-SES-2: 退出した session は、どちらの端末からも送れない。
     call(
