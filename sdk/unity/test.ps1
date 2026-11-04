@@ -17,7 +17,9 @@ param(
     [string]$ProjectDir = (Join-Path $env:TEMP "kgs-test"),
     [ValidateSet("Mono2x", "IL2CPP")] [string]$Backend = "Mono2x",
     [switch]$SkipEditMode,
-    [string]$DesktopApp
+    [string]$DesktopApp,
+    # 配布物の UPM package（.tgz）。指定すると、その tarball を project に入れる（smoke-dist.ps1）。
+    [string]$Tarball
 )
 $ErrorActionPreference = "Stop"
 $package = (Resolve-Path (Join-Path $PSScriptRoot "com.kukuri.gamesdk")).Path
@@ -26,7 +28,7 @@ if (-not (Test-Path (Join-Path $package "Runtime\Plugins\x86_64\kukuri_game_sdk.
 if (Test-Path $ProjectDir) { Remove-Item -Recurse -Force $ProjectDir }
 & $Unity -batchmode -nographics -quit -createProject $ProjectDir -logFile (Join-Path $env:TEMP "kgs-create.log") | Out-Null
 $manifest = Get-Content (Join-Path $ProjectDir "Packages\manifest.json") -Raw | ConvertFrom-Json
-$manifest.dependencies | Add-Member -NotePropertyName "com.kukuri.gamesdk" -NotePropertyValue ("file:" + ($package -replace '\\', '/')) -Force
+$manifest.dependencies | Add-Member -NotePropertyName "com.kukuri.gamesdk" -NotePropertyValue ("file:" + ($(if ($Tarball) { $Tarball } else { $package }) -replace '\\', '/')) -Force
 $manifest.dependencies | Add-Member -NotePropertyName "com.unity.test-framework" -NotePropertyValue "1.6.0" -Force
 $manifest | Add-Member -NotePropertyName "testables" -NotePropertyValue @("com.kukuri.gamesdk") -Force
 # Unity の Package Manager は BOM のある JSON を読めないので、BOM なしの UTF-8 で書く。
@@ -46,7 +48,7 @@ if (-not $SkipEditMode) {
     [xml]$xml = Get-Content $results
     $run = $xml.'test-run'
     Write-Output "EditMode: total=$($run.total) passed=$($run.passed) failed=$($run.failed)"
-    if ($run.failed -ne "0") { $failed = $true }
+    if ($run.failed -ne "0" -or $run.total -eq "0") { $failed = $true }
 }
 
 # Gameplay の package（NGO 等）が入っていないことを確かめてから、Player を build する。
@@ -355,8 +357,8 @@ $dll = Test-Path (Join-Path $ProjectDir "Builds\$Backend\Kgs_Data\Plugins\x86_64
 Write-Output "Player ($Backend): built=$built native_dll_included=$dll"
 if (-not $built -or -not $dll) { exit 1 }
 
-# Player の profile は persistentDataPath（LocalLow\DefaultCompany\kgs-test）の下。前の回の profile を消してから始める。
-$profileRoot = Join-Path $env:USERPROFILE "AppData\LocalLow\DefaultCompany\kgs-test\kukuri"
+# Player の profile は persistentDataPath（LocalLow\DefaultCompany\<project の dir の名前>）の下。前の回の profile を消してから始める。
+$profileRoot = Join-Path $env:USERPROFILE "AppData\LocalLow\DefaultCompany\$(Split-Path $ProjectDir -Leaf)\kukuri"
 if (Test-Path $profileRoot) { Remove-Item -Recurse -Force $profileRoot }
 
 function Start-Player([string]$name, [string]$extra) {

@@ -364,6 +364,8 @@ Add-AssetSection -Lines $lines -Title "Source-only non-code assets" -Items $sour
 
 $lines.AddRange([string[]](Get-Content -LiteralPath (Join-Path $repoRoot "docs/licenses/cn-search.md") -Encoding UTF8))
 $lines.Add("") | Out-Null
+$lines.AddRange([string[]](Get-Content -LiteralPath (Join-Path $repoRoot "docs/licenses/game-sdk-native.md") -Encoding UTF8))
+$lines.Add("") | Out-Null
 
 Add-InventorySection -Lines $lines -Title "Rust crates" -Items $rustInventory
 Add-InventorySection -Lines $lines -Title "Desktop npm packages" -Items $npmInventory

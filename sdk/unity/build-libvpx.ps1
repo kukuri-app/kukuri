@@ -4,7 +4,8 @@
 # make（Git Bash に無ければ Strawberry Perl の gmake）、Visual Studio の C++ build tools が要る。
 # build の作業 dir は source の隣（`<source>-kukuri-build`）に作る。
 #   powershell -ExecutionPolicy Bypass -File sdk/unity/build-libvpx.ps1 -Source C:\src\libvpx -Out C:\src\libvpx-out
-#   $env:KUKURI_LIBVPX_DIR = "C:\src\libvpx-out"; cargo build --release -p kukuri-game-sdk --features vp8
+#   $env:KUKURI_LIBVPX_DIR = "C:\src\libvpx-out"; powershell -ExecutionPolicy Bypass -File sdk/unity/build-native.ps1
+# CRT は静的に link する（--enable-static-msvcrt）。SDK の Rust も同じ設定で build する（build-native.ps1）。
 param(
     [Parameter(Mandatory = $true)][string]$Source,
     [Parameter(Mandatory = $true)][string]$Out
@@ -27,7 +28,7 @@ Push-Location $build
 try {
     $relative = "../" + (Split-Path $Source -Leaf)
     # Windows の make は shell script の path を bash に読めない形で渡すので、vpx.def は先に bash で作っておく。
-    bash -c "'$relative/configure' --target=x86_64-win64-vs17 --disable-vp9 --disable-examples --disable-tools --disable-docs --disable-unit-tests --enable-realtime-only --as=nasm && '$relative/build/make/gen_msvs_def.sh' --name=vpx --out=vpx.def '$relative/vp8/exports_enc' '$relative/vp8/exports_dec' '$relative/vpx/exports_com' '$relative/vpx/exports_enc' '$relative/vpx/exports_dec' && `$(command -v make || command -v gmake)"
+    bash -c "'$relative/configure' --target=x86_64-win64-vs17 --disable-vp9 --disable-examples --disable-tools --disable-docs --disable-unit-tests --enable-realtime-only --enable-static-msvcrt --as=nasm && '$relative/build/make/gen_msvs_def.sh' --name=vpx --out=vpx.def '$relative/vp8/exports_enc' '$relative/vp8/exports_dec' '$relative/vpx/exports_com' '$relative/vpx/exports_enc' '$relative/vpx/exports_dec' && `$(command -v make || command -v gmake)"
 } finally {
     Pop-Location
 }
@@ -46,7 +47,7 @@ $objects = foreach ($file in $asm) {
     if ($LASTEXITCODE -ne 0) { throw "nasm failed: $($file.Name)" }
     $object
 }
-& $lib.FullName /NOLOGO "/OUT:$(Join-Path $Out 'lib\vpx.lib')" (Join-Path $build "x64\Release\vpxmd.lib") @objects
+& $lib.FullName /NOLOGO "/OUT:$(Join-Path $Out 'lib\vpx.lib')" (Join-Path $build "x64\Release\vpxmt.lib") @objects
 if ($LASTEXITCODE -ne 0) { throw "lib failed" }
 Copy-Item (Join-Path $Source "vpx\*.h") (Join-Path $Out "include\vpx") -Force
 Write-Output "libvpx is ready in $Out (set KUKURI_LIBVPX_DIR to it)"

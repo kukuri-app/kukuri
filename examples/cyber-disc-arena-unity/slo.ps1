@@ -11,7 +11,7 @@ param(
     [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
     [string]$ProjectDir = (Join-Path $env:TEMP "kcda-slo"),
     [ValidateSet("Mono2x", "IL2CPP")] [string]$Backend = "IL2CPP",
-    [string]$Proxy = (Join-Path $PSScriptRoot "..\..\target\release\kukuri-sdk-net-proxy.exe"),
+    [string]$Proxy = (Join-Path $PSScriptRoot "..\..\target\x86_64-pc-windows-msvc\release\kukuri-sdk-net-proxy.exe"),
     [int]$Runs = 5,
     [int]$MeasureSeconds = 180,
     [int]$MemorySeconds = 600,

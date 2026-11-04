@@ -270,11 +270,13 @@ fn broadcast_and_watch(broadcaster: *mut KukuriHandle, viewer: *mut KukuriHandle
         std::thread::sleep(Duration::from_millis(5));
     }
 
-    assert!(
-        received.states.contains(&"watching".to_owned()),
-        "{:?}",
-        received.states
-    );
+    // 視聴の状態の知らせは `call` が応答を待つ間に届くことがあるので、受けた item の全体から探す。
+    support::wait_for(viewer, "the watching state", |json, _| {
+        (json["type"] == "live_watch_status"
+            && json["session_id"] == live.as_str()
+            && json["state"] == "watching")
+            .then_some(())
+    });
     // 番号 0 の frame は送る前に断られた分と区別できないので数えない。後半の frame が届いていること。
     let late: Vec<u8> = received
         .frames

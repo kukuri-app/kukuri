@@ -1,0 +1,81 @@
+name: Kukuri Game SDK
+
+# Rust の Game SDK を libvpx つきで build・試験し、Windows/UPM の配布候補を作って照合する（#1984 AC-2）。公開はしない。
+# Unity の Editor の試験と Player の smoke は CI につながず（2026-11-04 のユーザー判断）、artifact を手元の Unity で
+# sdk/unity/smoke-dist.ps1 で確かめる（docs/runbooks/game-sdk-distribution.md）。
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/kukuri-game-sdk.yml'
+      - 'crates/game-sdk/**'
+      - 'sdk/unity/**'
+      - 'examples/cyber-disc-arena-unity/**'
+      - 'scripts/release/game_sdk_dist.py'
+      - 'scripts/release/release_assets.py'
+      - 'docs/licenses/libvpx-*'
+  # SDK が依存する crate の変更は、毎晩の main で確かめる。
+  schedule:
+    - cron: '30 18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kukuri-game-sdk-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  windows-distribution:
+    # 配布物なので cache を使わず、他の run の cache を持ち込まない（#1413 と同じ）。
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      # libvpx の tag v1.17.0 の commit。
+      LIBVPX_COMMIT: 6df3ec34557879fff673706f4a1d9fbd0f3a6f0e
+      KUKURI_LIBVPX_DIR: C:\libvpx-out
+      CARGO_TARGET_DIR: C:\t
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.1
+      - name: Install nasm
+        shell: pwsh
+        run: |
+          choco install nasm --version=2.16.3 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "nasm was not installed" }
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files\NASM"
+      - name: Build libvpx 1.17.0
+        shell: pwsh
+        run: |
+          git clone --quiet --depth 1 --branch v1.17.0 https://chromium.googlesource.com/webm/libvpx C:\libvpx
+          if ((git -C C:\libvpx rev-parse HEAD) -ne $env:LIBVPX_COMMIT) { throw "the v1.17.0 tag moved" }
+          ./sdk/unity/build-libvpx.ps1 -Source C:\libvpx -Out $env:KUKURI_LIBVPX_DIR
+      - name: Build the DLL and the Sidecar
+        shell: pwsh
+        run: ./sdk/unity/build-native.ps1 -TargetDir $env:CARGO_TARGET_DIR
+      # Live の試験は音声の出力の機器を開く。実アプリの試験と同じ仮想の線（VB-CABLE）を既定の入出力にする。
+      - name: Install a virtual audio cable
+        uses: AlekseyMartynov/action-vbcable-win@6ec0facd8780f0f463d7dc2fcfd630e06eb1fc0b
+      - name: Test the SDK
+        shell: pwsh
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          $env:KUKURI_SOURCE_COMMIT = git rev-parse HEAD
+          cargo test --locked --release -p kukuri-game-sdk --features vp8 --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "the SDK tests failed" }
+      - name: Package and verify the candidate
+        shell: pwsh
+        run: |
+          $release = "$env:CARGO_TARGET_DIR\x86_64-pc-windows-msvc\release"
+          python scripts/release/game_sdk_dist.py package --source (git rev-parse HEAD) --dll "$release\kukuri_game_sdk.dll" --sidecar "$release\kukuri-sdk-sidecar.exe" --output dist
+          if ($LASTEXITCODE -ne 0) { throw "the candidate did not verify" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kukuri-game-sdk-${{ github.sha }}
+          if-no-files-found: error
+          path: dist/
