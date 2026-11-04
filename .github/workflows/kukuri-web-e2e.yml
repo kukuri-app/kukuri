@@ -300,6 +300,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Free disk on a small runner
+        uses: ./.github/actions/free-disk
+        with:
+          keep-android: 'true'
+
       - name: Install Rust 1.98
         uses: dtolnay/rust-toolchain@stable
         with:
