@@ -40,6 +40,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.1
+      - name: Install nasm
+        shell: pwsh
+        run: |
+          choco install nasm --version=2.16.3 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "nasm was not installed" }
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files\NASM"
       - name: Build libvpx 1.17.0
         shell: pwsh
         run: |
