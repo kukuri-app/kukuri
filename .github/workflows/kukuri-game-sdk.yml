@@ -57,13 +57,15 @@ jobs:
       - name: Build the DLL and the Sidecar
         shell: pwsh
         run: ./sdk/unity/build-native.ps1 -TargetDir $env:CARGO_TARGET_DIR
+      # Live の 2 件は音声の出力の機器と、配信者を含む複数の profile の実時間の処理が要るので、runner では動かさず、
+      # 手元で確かめる（docs/runbooks/game-sdk-distribution.md）。
       - name: Test the SDK
         shell: pwsh
         env:
           RUSTFLAGS: -C target-feature=+crt-static
         run: |
           $env:KUKURI_SOURCE_COMMIT = git rev-parse HEAD
-          cargo test --locked --release -p kukuri-game-sdk --features vp8 --target x86_64-pc-windows-msvc
+          cargo test --locked --release -p kukuri-game-sdk --features vp8 --target x86_64-pc-windows-msvc -- --skip game_and_desktop_broadcast_and_watch_each_other --skip the_fifth_viewer_is_relayed
           if ($LASTEXITCODE -ne 0) { throw "the SDK tests failed" }
       - name: Package and verify the candidate
         shell: pwsh
