@@ -9,6 +9,8 @@ fn main() -> std::process::ExitCode {
 
     use kukuri_game_sdk::{Mode, SdkClient, SdkConfig, sidecar};
 
+    // 配布物の照合の印を binary に残す。
+    std::hint::black_box(kukuri_game_sdk::BUILD_ID);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let value = |flag: &str| {
         args.iter()

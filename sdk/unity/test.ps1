@@ -17,7 +17,9 @@ param(
     [string]$ProjectDir = (Join-Path $env:TEMP "kgs-test"),
     [ValidateSet("Mono2x", "IL2CPP")] [string]$Backend = "Mono2x",
     [switch]$SkipEditMode,
-    [string]$DesktopApp
+    [string]$DesktopApp,
+    # 配布物の UPM package（.tgz）。指定すると、その tarball を project に入れる（smoke-dist.ps1）。
+    [string]$Tarball
 )
 $ErrorActionPreference = "Stop"
 $package = (Resolve-Path (Join-Path $PSScriptRoot "com.kukuri.gamesdk")).Path
@@ -26,7 +28,7 @@ if (-not (Test-Path (Join-Path $package "Runtime\Plugins\x86_64\kukuri_game_sdk.
 if (Test-Path $ProjectDir) { Remove-Item -Recurse -Force $ProjectDir }
 & $Unity -batchmode -nographics -quit -createProject $ProjectDir -logFile (Join-Path $env:TEMP "kgs-create.log") | Out-Null
 $manifest = Get-Content (Join-Path $ProjectDir "Packages\manifest.json") -Raw | ConvertFrom-Json
-$manifest.dependencies | Add-Member -NotePropertyName "com.kukuri.gamesdk" -NotePropertyValue ("file:" + ($package -replace '\\', '/')) -Force
+$manifest.dependencies | Add-Member -NotePropertyName "com.kukuri.gamesdk" -NotePropertyValue ("file:" + ($(if ($Tarball) { $Tarball } else { $package }) -replace '\\', '/')) -Force
 $manifest.dependencies | Add-Member -NotePropertyName "com.unity.test-framework" -NotePropertyValue "1.6.0" -Force
 $manifest | Add-Member -NotePropertyName "testables" -NotePropertyValue @("com.kukuri.gamesdk") -Force
 # Unity の Package Manager は BOM のある JSON を読めないので、BOM なしの UTF-8 で書く。

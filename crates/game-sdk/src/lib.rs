@@ -24,6 +24,14 @@ pub use client::{
     ItemKind, MAX_EVENTS, MAX_PENDING, MAX_POLL_ITEMS, Mode, SdkClient, SdkConfig, Started, Status,
 };
 
+/// 配布物の照合の印（`scripts/release/game_sdk_dist.py` が DLL と Sidecar の bytes から探す）。
+#[used]
+pub static BUILD_ID: &str = concat!(
+    "kukuri-game-sdk-build:",
+    env!("KUKURI_SDK_BUILD_ID"),
+    ":end"
+);
+
 /// C# が読み込み直後に照合する ABI の版（2: `kukuri_sdk_send_binary` と batch の bytes の項目。#1979）。
 pub const ABI_VERSION: u32 = 2;
 /// poll 済みで未解放の batch の合計の上限。達したら新しい packet を受け取らない（ADR 0070 §3、F-ABI-16）。

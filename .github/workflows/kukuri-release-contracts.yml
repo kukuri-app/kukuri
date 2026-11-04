@@ -27,6 +27,7 @@ jobs:
         run: |
           python3 scripts/release/test_release_assets.py
           python3 scripts/release/test_cli_archive.py
+          python3 scripts/release/test_game_sdk_dist.py
           python3 scripts/release/test_release_workflow.py
           python3 scripts/release/test_windows_store_package.py
           python3 scripts/release/test_publish_preview.py
