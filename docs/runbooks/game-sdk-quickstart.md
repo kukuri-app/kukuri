@@ -14,8 +14,8 @@ Unity の project は短い path に置く。深い path は Windows の path �
 
 ## 導入
 
-1. 配布物の `com.kukuri.gamesdk-<版>.tgz` を、ゲームの project の外か `Packages` の隣に置く。`SHA256SUMS` と照合する。
-2. `Packages/manifest.json` の `dependencies` に 1 行足す。path は `Packages` からの相対か絶対で書く。
+1. 配布物の `com.kukuri.gamesdk-<版>.tgz` を、ゲームの project の dir の隣に置く。`SHA256SUMS` と照合する。
+2. `Packages/manifest.json` の `dependencies` に 1 行足す。path は `Packages` からの相対か絶対で書く。次の例は相対で、project の dir の隣を指す。
 
    ```json
    "com.kukuri.gamesdk": "file:../../com.kukuri.gamesdk-0.1.0.tgz"
