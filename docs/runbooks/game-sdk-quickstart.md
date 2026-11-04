@@ -50,7 +50,7 @@ profile は `Application.persistentDataPath/kukuri/profiles/<profile>` に置か
 
 | 機能 | 置くもの | 設定 |
 | --- | --- | --- |
-| ロビーと対戦 | `Runtime/Lobby/KukuriLobby.prefab`。NGO を使うなら `NetworkManager` の Transport に `KukuriNetcodeTransport` | `runner`・`applicationId`・`topic`。組み方は package の sample「Netcode Sync」 |
+| ロビーと対戦 | `Runtime/Lobby/KukuriLobby.prefab`。NGO を使うなら `NetworkManager` の Transport に `KukuriNetcodeTransport` | `runner`・`applicationId`・`topic`。掲示板と同じく、`KukuriAccountScreen.Screen` が `playing` になってから有効にする。組み方は package の sample「Netcode Sync」 |
 | 掲示板 | `Runtime/Social/KukuriBoard.prefab` | `runner`・`topic`。GameObject を無効で置き、`KukuriAccountScreen.Screen` が `playing` になってから有効にする（下の script） |
 | スキン | `KukuriSkinLoader`（glTFast が要る） | `runner`・`topic`・信頼する発行者の公開鍵・application ID・asset ID。組み方は package の sample「Skin Loader」 |
 | Live | 配信は `KukuriLiveBroadcaster`、視聴は `KukuriLiveViewer` | どちらも code で `Client`（`runner.Client`）と `Topic` を設定する。配信は `SourceCamera` も設定し、`create_live_session` で作った session を `StartBroadcast` に渡す。視聴は `StartWatching` で、映像は `screen` の Renderer と `Output` の RenderTexture に出る。組み方は Arena の `Assets/CyberDiscArena/Scripts/ArenaBroadcast.cs` |
@@ -63,7 +63,7 @@ UI の prefab は、scene に `EventSystem` が無ければ Unity の menu の U
 
 1. `manifest.json` の 1 行（上の「導入」）。
 2. 設定 asset と、`KukuriRunner`・`KukuriAccountScreen` を持つ GameObject（上の「ゲームを始める」）。
-3. `KukuriBoard.prefab`。`runner` と `topic` を設定し、GameObject を無効にして置く。
+3. `KukuriBoard.prefab`。`runner` と `topic` を設定し、GameObject を無効にして置く。scene に `EventSystem` が無ければ、Unity の menu の UI から足す。
 4. 掲示板を開く script。同じ GameObject に足し、`account` と `board` を設定する。開始の前は SNS を開かない。開始の画面は Canvas の上に描かれ、押すと両方が反応するので、掲示板を開く間は `Visible` を `false` にする。
 
 ```csharp
@@ -85,7 +85,7 @@ public sealed class BoardOpener : MonoBehaviour
 }
 ```
 
-これは開始してすぐ開く最小の形である。キーで開閉する例は Arena の `Assets/CyberDiscArena/Scripts/ArenaBoard.cs` にある。
+これは開始してすぐ開く最小の形で、開始の画面を隠したままにする。「kukuriで続ける」などのアカウントの操作を使うゲームは、掲示板を閉じたら `Visible` を `true` に戻す。キーで開閉する例は Arena の `Assets/CyberDiscArena/Scripts/ArenaBoard.cs` にある。
 
 ### スキンを発行する
 

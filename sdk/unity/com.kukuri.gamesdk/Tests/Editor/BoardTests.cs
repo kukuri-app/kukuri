@@ -179,8 +179,8 @@ namespace Kukuri.GameSdk.Tests
             yield return Wait(board.RefreshAsync());
             Assert.AreEqual(20, board.Posts.Count);
             Assert.IsTrue(board.HasMore);
-            // 同じ秒の投稿は ID の順に並ぶので、最後の 2 件のどちらかが先頭に来る。
-            CollectionAssert.Contains(new[] { "test: post 23", "test: post 24" }, board.Posts[0].Content);
+            // 同じ秒の投稿は ID の順に並ぶので、作った順ではなく時刻で比べる。
+            Assert.AreEqual(board.Posts.Max(item => item.CreatedAt), board.Posts[0].CreatedAt);
             yield return Wait(board.LoadMoreAsync());
             Assert.AreEqual(25, board.Posts.Count);
             Assert.AreEqual(25, Shown(boardA).Length);
@@ -309,7 +309,7 @@ namespace Kukuri.GameSdk.Tests
             Assert.AreEqual(held[10], board.Posts[0].ObjectId);
             yield return Wait(board.BackAsync());
             Assert.AreEqual(20, board.Posts.Count);
-            CollectionAssert.Contains(new[] { "test: newer", "test: newest" }, board.Posts[0].Content);
+            Assert.AreEqual(board.Posts.Max(item => item.CreatedAt), board.Posts[0].CreatedAt);
             Assert.IsFalse(back.gameObject.activeSelf);
         }
     }

@@ -158,7 +158,7 @@ namespace Kukuri.GameSdk.Social
             var view = View();
             var page = await ListAsync(nextCursor);
             if (view == View())
-                Append(page);
+                Append(page, true);
         });
 
         /// 投稿の thread を開く（root と返信を古い順に読む）。読めなければ元の表示のまま。
@@ -199,7 +199,7 @@ namespace Kukuri.GameSdk.Social
         });
 
         /// 表示中の頁の新しい側を読み、読んでいない投稿を足す（読んだ続きの頁は保つ）。一覧は先頭の頁、thread は末尾まで
-        /// 読んでいれば最後の投稿の後ろを読む（続きを残していれば「さらに表示」に任せる）。
+        /// 読んでいれば最後の投稿の秒の先頭から読む（続きを残していれば「さらに表示」に任せる）。
         public Task ReadNewAsync() => Serial(LoadNewAsync);
 
         /// 閉じる。購読を外し、新着を受けるのをやめる（`OnDisable` でも呼ぶ）。次に開く操作をするまで開き直さない。
@@ -300,7 +300,7 @@ namespace Kukuri.GameSdk.Social
             }
             nextCursor = null;
             Replace(new List<BoardPost>());
-            Append(page);
+            Append(page, true);
         }
 
         async Task LoadNewAsync()
@@ -340,8 +340,11 @@ namespace Kukuri.GameSdk.Social
             }
             if (posts.Count == 0 || ThreadId != null)
             {
-                // 頁が埋まっていれば、続きは「さらに表示」で読む（同じ秒の行で頁が埋まっても先へ進める）。
-                Append(page);
+                var held = posts.Count;
+                Append(page, cursor == null);
+                // 同じ秒の読んだ行だけで頁が埋まっていれば、その先は「さらに表示」で読む（同じ頁を読み続けない）。
+                if (posts.Count == held && page["next_cursor"] is JObject rest)
+                    nextCursor = rest;
                 return;
             }
             // 一覧は新しい順に並ぶ。先頭の頁の読んでいない投稿を、先頭に足す（足した行だけを描く）。
@@ -458,7 +461,7 @@ namespace Kukuri.GameSdk.Social
         }
 
         /// 頁を後ろに足す（読んでいない投稿だけ）。`withCursor` なら続きの位置を頁のものにする。
-        void Append(JToken page)
+        void Append(JToken page, bool withCursor)
         {
             var from = posts.Count;
             foreach (var item in (JArray)page["items"])
@@ -467,7 +470,8 @@ namespace Kukuri.GameSdk.Social
                 if (known.Add(post.ObjectId))
                     posts.Add(post);
             }
-            nextCursor = page["next_cursor"] is JObject cursor ? cursor : null;
+            if (withCursor)
+                nextCursor = page["next_cursor"] is JObject cursor ? cursor : null;
             if (posts.Count > MaxPosts)
             {
                 Trim(true);
