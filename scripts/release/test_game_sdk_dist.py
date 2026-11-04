@@ -181,6 +181,7 @@ class GameSdkDist(unittest.TestCase):
             ("Runtime/leak.txt", "-----BEGIN PRIVATE KEY-----", "contains a secret"),
             ("Runtime/kukuri.db", "x", "forbidden file"),
             ("Runtime/kukuri.nsec", "x", "forbidden file"),
+            ("Runtime/kukuri.app-consent.json", "x", "forbidden file"),
             ("Runtime/kukuri.iroh-store/blobs", "x", "forbidden file"),
             ("Runtime/endpoint-secret.json", "x", "forbidden file"),
         ):

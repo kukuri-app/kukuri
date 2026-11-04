@@ -1,4 +1,4 @@
-# Game SDK の配布候補（CI の artifact `kukuri-game-sdk-<commit>`）を手元の Unity で確かめる（#1984 AC-2。2026-11-04 のユーザー判断で
+﻿# Game SDK の配布候補（CI の artifact `kukuri-game-sdk-<commit>`）を手元の Unity で確かめる（#1984 AC-2。2026-11-04 のユーザー判断で
 # Unity は CI につながない）。Rust は要らない。結果は <WorkDir>\smoke-result.txt に書く。
 # 1. scripts/release/game_sdk_dist.py verify で、配布物と commit を照合する。
 # 2. sample を配布物と同じ dir に展開し、sample の manifest のまま（隣の .tgz を読む）開いて compile する。

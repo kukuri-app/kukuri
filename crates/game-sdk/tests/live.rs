@@ -87,37 +87,14 @@ fn session(handle: *mut KukuriHandle, title: &str) -> String {
 }
 
 /// 視聴を始め、音量を 0 にする（試験で speaker から音を出さない。復号・出力・再生時刻は動く）。
-/// 視聴を始める。`call` は応答以外の item を捨てるので、応答を待つ間に届く視聴の状態も受けて返す。
-fn watch(viewer: *mut KukuriHandle, session_id: &str) -> Received {
-    let mut received = Received::default();
-    for (command, payload) in [
-        (
-            "watch_live_media",
-            json!({"topic": TOPIC, "session_id": session_id}),
-        ),
-        (
-            "set_live_volume",
-            json!({"session_id": session_id, "volume": 0.0}),
-        ),
-    ] {
-        let request = id();
-        support::send(viewer, &support::request(&request, command, payload));
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            received.poll(viewer);
-            if let Some(response) = received
-                .responses
-                .iter()
-                .find(|response| response["request_id"] == request.as_str())
-            {
-                assert_eq!(response["ok"], true, "{command}: {response}");
-                break;
-            }
-            assert!(Instant::now() < deadline, "no response to {command}");
-            std::thread::sleep(Duration::from_millis(2));
-        }
-    }
-    received
+fn watch(viewer: *mut KukuriHandle, session_id: &str) {
+    media(viewer, "watch_live_media", session_id);
+    call(
+        viewer,
+        &id(),
+        "set_live_volume",
+        json!({"session_id": session_id, "volume": 0.0}),
+    );
 }
 
 fn media(handle: *mut KukuriHandle, command: &str, session_id: &str) {
@@ -133,7 +110,6 @@ fn media(handle: *mut KukuriHandle, command: &str, session_id: &str) {
 #[derive(Default)]
 struct Received {
     states: Vec<String>,
-    responses: Vec<serde_json::Value>,
     /// 番号ごとの最初の受信（frame の timestamp、音声の再生時刻、受けた時刻）。
     frames: HashMap<u8, (u64, u64, Instant)>,
     last_i420: Vec<u8>,
@@ -163,9 +139,6 @@ impl Received {
             }
         }
         for item in &items {
-            if item.kind == 1 {
-                self.responses.push(item.json.clone());
-            }
             if item.kind == 3 && item.json["type"] == "live_watch_status" {
                 self.states
                     .push(item.json["state"].as_str().unwrap().to_owned());
@@ -261,7 +234,9 @@ fn broadcast_and_watch(broadcaster: *mut KukuriHandle, viewer: *mut KukuriHandle
     );
     std::thread::sleep(Duration::from_millis(500));
     join(viewer, &live);
-    let mut received = watch(viewer, &live);
+    watch(viewer, &live);
+
+    let mut received = Received::default();
     let mut sent = HashMap::new();
     let started = Instant::now();
     let mut audio_sent = 0;
@@ -295,11 +270,13 @@ fn broadcast_and_watch(broadcaster: *mut KukuriHandle, viewer: *mut KukuriHandle
         std::thread::sleep(Duration::from_millis(5));
     }
 
-    assert!(
-        received.states.contains(&"watching".to_owned()),
-        "{:?}",
-        received.states
-    );
+    // 視聴の状態の知らせは `call` が応答を待つ間に届くことがあるので、受けた item の全体から探す。
+    support::wait_for(viewer, "the watching state", |json, _| {
+        (json["type"] == "live_watch_status"
+            && json["session_id"] == live.as_str()
+            && json["state"] == "watching")
+            .then_some(())
+    });
     // 番号 0 の frame は送る前に断られた分と区別できないので数えない。後半の frame が届いていること。
     let late: Vec<u8> = received
         .frames

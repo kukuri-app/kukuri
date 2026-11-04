@@ -47,7 +47,7 @@ SUMS = "SHA256SUMS"
 INFO = "build-info.json"
 FORBIDDEN_NAME = re.compile(
     r"(^|/)(\.env[^/]*|accounts\.json|endpoint-secret\.json|game-account[^/]*\.json|game-player[^/]*\.json|"
-    r"kukuri\.(account|community-node|db|game-assets|gossip|identity|iroh|nsec|private-channel|public-channel|remote-blobs|subscriptions)[^/]*(/.*)?|"
+    r"kukuri\.(account|app-consent|community-node|db|game-assets|gossip|identity|iroh|nsec|private-channel|public-channel|remote-blobs|subscriptions)[^/]*(/.*)?|"
     r"\.kukuri-profile[^/]*|[^/]*\.(db|sqlite|pem|key|pfx|p12|ulf|alf)|(Library|Logs|Temp|UserSettings)/.*)$",
     re.IGNORECASE,
 )

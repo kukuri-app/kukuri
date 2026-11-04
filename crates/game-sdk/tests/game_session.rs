@@ -200,7 +200,7 @@ fn scenario(host: *mut KukuriHandle, guest: *mut KukuriHandle, topic: &str) {
         "poll during the bulk transfer: p99 {p99:?} over {} polls",
         times.len()
     );
-    // 閾値は指定の PC で判定する（§8.4）。CI の共有の runner は他の処理に割り込まれるので、値の記録だけにする。
+    // 閾値は指定の PC で判定する（§8.4）。CI の共有の runner は他の処理に割り込まれるので、判定しない。
     if std::env::var_os("CI").is_none() {
         assert!(p99 <= Duration::from_millis(1), "poll p99 {p99:?}");
     }
