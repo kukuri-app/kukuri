@@ -23,7 +23,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $package = (Resolve-Path (Join-Path $PSScriptRoot "com.kukuri.gamesdk")).Path
-if (-not (Test-Path (Join-Path $package "Runtime\Plugins\x86_64\kukuri_game_sdk.dll"))) { throw "run build-native.ps1 first" }
+if (-not $Tarball -and -not (Test-Path (Join-Path $package "Runtime\Plugins\x86_64\kukuri_game_sdk.dll"))) { throw "run build-native.ps1 first" }
 
 if (Test-Path $ProjectDir) { Remove-Item -Recurse -Force $ProjectDir }
 & $Unity -batchmode -nographics -quit -createProject $ProjectDir -logFile (Join-Path $env:TEMP "kgs-create.log") | Out-Null

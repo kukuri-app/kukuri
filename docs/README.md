@@ -60,6 +60,7 @@
 | 計画の粒度と形式 | root `PLANS.md` |
 | リファクタリング境界、path別検証の選定・中断 | root `REFACTORING.md` |
 | コマンドの実行方法・環境差 | `docs/runbooks/dev.md` |
+| Game SDK の導入（Unity のゲームの作者向け） | `docs/runbooks/game-sdk-quickstart.md` |
 | Game SDK の配布候補の生成・照合・手元の Unity での確認 | `docs/runbooks/game-sdk-distribution.md` |
 | UI作業の事前成果物・確認・例外 | `docs/adr/0014-uiux-dev-flow.md` |
 | CSS・state・dataの実装配置 | `docs/architecture/desktop-ui-implementation.md` |
