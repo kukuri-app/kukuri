@@ -92,13 +92,9 @@ class Fixture:
         return dist.verify(self.repository, self.source, self.output)
 
     def reseal(self):
-        """改ざんの後に checksum と build-info を合わせ直す（中身の照合だけで検出することを確かめる）。"""
+        """改ざんの後に checksum を合わせ直す（中身の照合だけで検出することを確かめる）。"""
         package_name, sample_name = dist.names(VERSION)
-        artifacts = [dist.DLL, dist.SIDECAR, package_name, sample_name]
-        info = json.loads((self.output / dist.INFO).read_text(encoding="utf-8"))
-        info["artifacts"] = {name: dist.digest((self.output / name).read_bytes()) for name in artifacts}
-        (self.output / dist.INFO).write_text(json.dumps(info), encoding="utf-8")
-        dist.write_sums(self.output, artifacts + [dist.INFO])
+        dist.write_sums(self.output, [dist.DLL, dist.SIDECAR, package_name, sample_name, dist.INFO])
 
 
 class GameSdkDist(unittest.TestCase):
@@ -184,9 +180,13 @@ class GameSdkDist(unittest.TestCase):
         for name, content, message in (
             ("Runtime/leak.txt", "-----BEGIN PRIVATE KEY-----", "contains a secret"),
             ("Runtime/kukuri.db", "x", "forbidden file"),
+            ("Runtime/kukuri.nsec", "x", "forbidden file"),
+            ("Runtime/kukuri.iroh-store/blobs", "x", "forbidden file"),
+            ("Runtime/endpoint-secret.json", "x", "forbidden file"),
         ):
             with self.subTest(name):
                 path = self.fixture.repository / dist.PACKAGE / name
+                path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content, encoding="utf-8")
                 self.fixture.git("add", "-f", ".")
                 self.fixture.git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", name)

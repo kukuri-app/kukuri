@@ -11,7 +11,7 @@ CI の workflow `Kukuri Game SDK` が、同じ commit から次を作り、artif
 | `com.kukuri.gamesdk-<版>.tgz` | UPM package。commit の `sdk/unity/com.kukuri.gamesdk` に、DLL・Sidecar と、`Documentation~` の license・第三者 notice を足したもの |
 | `cyber-disc-arena-unity-<版>.zip` | sample project（commit の `examples/cyber-disc-arena-unity` から開発用の試験を除いたもの）。隣の `.tgz` を読む |
 | `kukuri_game_sdk.dll`・`kukuri-sdk-sidecar.exe` | package に入れたものと同じ binary |
-| `build-info.json` | 版、source の commit、Rust・libvpx・Unity の版、package の依存、binary が読み込む Windows の DLL、各 file の SHA-256 |
+| `build-info.json` | 版、source の commit、Rust・libvpx・Unity の版、package の依存、binary が読み込む Windows の DLL |
 | `SHA256SUMS` | 上の全 file の SHA-256 |
 
 版は `sdk/unity/com.kukuri.gamesdk/package.json` の `version` に揃える。DLL と Sidecar には、版と source の commit を印として埋め込む（`crates/game-sdk/build.rs`）。
@@ -20,7 +20,7 @@ CI の workflow `Kukuri Game SDK` が、同じ commit から次を作り、artif
 
 `scripts/release/game_sdk_dist.py` の `verify` は、次のどれかが成り立たなければ失敗する。成果物が欠けた候補を成功として扱わない。
 
-- artifact の file の一覧が過不足なく揃い、`SHA256SUMS` と `build-info.json` が中身と一致する。
+- artifact の file の一覧が過不足なく揃い、`SHA256SUMS` が中身と一致し、`build-info.json` の版と source が指定と一致する。
 - DLL と Sidecar の印が、指定した commit と版に一致する。
 - DLL と Sidecar が読み込む DLL が Windows の DLL だけである（VC++ の再頒布 package を要らなくする。ADR 0070 §8.1）。
 - package と sample の中身が、commit から組み立て直した内容と 1 byte まで一致する。手元の未追跡の file と profile は入らない。
@@ -32,13 +32,16 @@ CI は Rust の SDK の試験（`cargo test -p kukuri-game-sdk --features vp8`�
 
 Unity は CI につながない（2026-11-04 のユーザー判断。Unity の license の認証情報を CI に置かない）。正規の license の Unity 6000.3 が入った手元の Windows で、配布物から確かめる。Rust は要らない。
 
+固定した commit の候補は、branch の先端で workflow を手動で起動して作る（workflow が main に入った後）。PR の run の artifact は、GitHub が一時的に作った merge commit を source にする。使うときは、artifact の名前の commit を `git fetch origin <commit>` で取って checkout する。
+
 ```powershell
-git checkout <commit>
+gh workflow run "Kukuri Game SDK" --repo kukuri-app/kukuri --ref <branch>
+git checkout <branch の先端の commit>
 gh run download <run id> --repo kukuri-app/kukuri --name kukuri-game-sdk-<commit> --dir C:\kgs-dist
 powershell -ExecutionPolicy Bypass -File sdk/unity/smoke-dist.ps1 -Dist C:\kgs-dist -Source <commit> -Unity "C:\Program Files\Unity\Hub\Editor\<版>\Editor\Unity.exe"
 ```
 
-`smoke-dist.ps1` は次を順に行い、結果を `%TEMP%\kgsd\smoke-result.txt` に書く。1 つでも失敗すれば止まる。
+`smoke-dist.ps1` は次を順に行い、結果を `%TEMP%\kgsd\smoke-result.txt` に書く。1・2 は失敗した時点で止まる。3・4 は全部を動かしてから、1 つでも失敗していれば失敗で終わる。
 
 1. 配布物を commit と照合する。
 2. sample を `.tgz` の隣に展開し、sample の manifest のまま開いて compile する。

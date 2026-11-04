@@ -11,6 +11,8 @@ on:
       - 'sdk/unity/**'
       - 'examples/cyber-disc-arena-unity/**'
       - 'scripts/release/game_sdk_dist.py'
+      - 'scripts/release/release_assets.py'
+      - 'docs/licenses/libvpx-*'
   # SDK が依存する crate の変更は、毎晩の main で確かめる。
   schedule:
     - cron: '30 18 * * *'

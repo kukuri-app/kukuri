@@ -4,7 +4,8 @@
 # make（Git Bash に無ければ Strawberry Perl の gmake）、Visual Studio の C++ build tools が要る。
 # build の作業 dir は source の隣（`<source>-kukuri-build`）に作る。
 #   powershell -ExecutionPolicy Bypass -File sdk/unity/build-libvpx.ps1 -Source C:\src\libvpx -Out C:\src\libvpx-out
-#   $env:KUKURI_LIBVPX_DIR = "C:\src\libvpx-out"; cargo build --release -p kukuri-game-sdk --features vp8
+#   $env:KUKURI_LIBVPX_DIR = "C:\src\libvpx-out"; powershell -ExecutionPolicy Bypass -File sdk/unity/build-native.ps1
+# CRT は静的に link する（--enable-static-msvcrt）。SDK の Rust も同じ設定で build する（build-native.ps1）。
 param(
     [Parameter(Mandatory = $true)][string]$Source,
     [Parameter(Mandatory = $true)][string]$Out

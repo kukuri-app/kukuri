@@ -48,7 +48,7 @@ if (-not $SkipEditMode) {
     [xml]$xml = Get-Content $results
     $run = $xml.'test-run'
     Write-Output "EditMode: total=$($run.total) passed=$($run.passed) failed=$($run.failed)"
-    if ($run.failed -ne "0") { $failed = $true }
+    if ($run.failed -ne "0" -or $run.total -eq "0") { $failed = $true }
 }
 
 # Gameplay の package（NGO 等）が入っていないことを確かめてから、Player を build する。

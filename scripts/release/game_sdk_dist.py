@@ -46,7 +46,8 @@ OS_DLLS = re.compile(
 SUMS = "SHA256SUMS"
 INFO = "build-info.json"
 FORBIDDEN_NAME = re.compile(
-    r"(^|/)(\.env[^/]*|accounts\.json|game-account[^/]*\.json|game-players\.json|kukuri\.(identity|db|community-node)[^/]*|"
+    r"(^|/)(\.env[^/]*|accounts\.json|endpoint-secret\.json|game-account[^/]*\.json|game-player[^/]*\.json|"
+    r"kukuri\.(account|community-node|db|game-assets|gossip|identity|iroh|nsec|private-channel|public-channel|remote-blobs|subscriptions)[^/]*(/.*)?|"
     r"\.kukuri-profile[^/]*|[^/]*\.(db|sqlite|pem|key|pfx|p12|ulf|alf)|(Library|Logs|Temp|UserSettings)/.*)$",
     re.IGNORECASE,
 )
@@ -64,7 +65,7 @@ def digest(data):
 
 def git(repository, *args):
     return subprocess.run(
-        ["git", "-c", "core.autocrlf=false", *args], cwd=repository, check=True, capture_output=True
+        ["git", "-c", "core.autocrlf=false", "-c", "core.eol=lf", *args], cwd=repository, check=True, capture_output=True
     ).stdout
 
 
@@ -212,7 +213,6 @@ def package(repository, source, dll, sidecar, output, rust):
         "unity": UNITY,
         "package_dependencies": json.loads(files["package.json"])["dependencies"],
         "windows_imports": imports,
-        "artifacts": {name: digest((output / name).read_bytes()) for name in artifacts},
     }
     (output / INFO).write_text(json.dumps(info, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     write_sums(output, artifacts + [INFO])
@@ -240,8 +240,6 @@ def verify(repository, source, dist):
     info = json.loads((dist / INFO).read_text(encoding="utf-8"))
     if info["source"] != source or info["version"] != version:
         raise ValueError(f"{INFO} is not for {version} at {source}")
-    if info["artifacts"] != {name: digest((dist / name).read_bytes()) for name in artifacts}:
-        raise ValueError(f"{INFO} does not match the files")
     binaries = {name: (dist / name).read_bytes() for name in (DLL, SIDECAR)}
     imports = {name: check_binary(data, name, version, source) for name, data in binaries.items()}
     if info["windows_imports"] != imports:

@@ -47,7 +47,6 @@ Copy-Item (Join-Path $PSScriptRoot "test.ps1") (Split-Path $packageDir)
 $arena = Join-Path $WorkDir "repo\examples\cyber-disc-arena-unity"
 New-Item -ItemType Directory -Force (Split-Path $arena) | Out-Null
 Move-Item $sample $arena
-foreach ($generated in "Library", "Logs", "Temp", "UserSettings", "obj") { Remove-Item -Recurse -Force (Join-Path $arena $generated) -ErrorAction SilentlyContinue }
 Copy-Item (Join-Path $repository "examples\cyber-disc-arena-unity\test.ps1") $arena
 
 $failed = $false
@@ -60,8 +59,11 @@ $runs = @(
 foreach ($run in $runs) {
     $log = Join-Path $WorkDir "$($run.Name).log"
     $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $run.Script, "-Unity", $Unity, "-ProjectDir", (Join-Path $WorkDir "p-$($run.Name)")) + $run.Arguments
+    # 子の stderr で止まらず、全部の run を回して結果を残す。
+    $ErrorActionPreference = "Continue"
     & powershell @arguments 2>&1 | Out-File -Encoding utf8 $log
     $code = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
     Record "$($run.Name): exit=$code"
     if ($code -ne 0) { $failed = $true }
 }
