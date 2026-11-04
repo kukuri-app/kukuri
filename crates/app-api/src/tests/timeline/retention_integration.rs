@@ -110,6 +110,8 @@ async fn later_reader_reads_retained_topic_content_from_the_retaining_peer() -> 
             None,
         )
         .await?;
+    // 最も新しい投稿の record には保護参照が付かない(#2034)。`post` がそれに当たらないよう、Live の開始の投稿と秒をずらす。
+    sleep(Duration::from_millis(1100)).await;
     let live = a
         .create_live_session(
             topic.as_str(),

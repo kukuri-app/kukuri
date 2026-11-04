@@ -48,5 +48,5 @@ Arena の Player の項目は、掲示板、Live の配信と観戦、Prefab ご
 
 ## 残したこと
 
-- 音声の出力の機器が無い PC では、音声の track がある Live の映像も届かない（視聴が再生の機器を開くところで失敗する。runner で確かめた）。AC-2 の範囲外なので、利用者の体験の判断として別に扱う。
+- 音声の出力の機器が無い PC では、音声の track がある Live の映像も届かない（視聴が再生の機器を開くところで失敗する。runner で確かめた）。AC-2 の範囲外なので、利用者の体験の判断として別に扱う（[#2029](https://github.com/kukuri-app/kukuri/issues/2029) で直した。CI の VB-CABLE も外した）。
 - GitHub の Linux の runner で、ディスク不足（`No space left on device`）の job の失敗がこの 2 日で 3 回出た。差分とは関係なく、再実行で通った。

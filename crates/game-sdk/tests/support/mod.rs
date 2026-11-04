@@ -19,6 +19,8 @@ pub fn open_real(dir: &std::path::Path) -> *mut KukuriHandle {
     let mut handle = std::ptr::null_mut();
     let status =
         unsafe { kukuri_sdk_open(ABI_VERSION, config.as_ptr(), config.len(), &mut handle) };
+    // SDK は panic の文面を隠す。試験では、どの判定で落ちたかが分かるように既定の hook へ戻す。
+    let _ = std::panic::take_hook();
     assert_eq!(status, Status::Ok as i32);
     handle
 }

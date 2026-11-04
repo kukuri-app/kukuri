@@ -77,8 +77,19 @@ fn counting_client(count: Arc<AtomicUsize>) -> SdkClient {
     .unwrap()
 }
 
-/// pipe へ hello だけを送り、返事を読む。
+/// pipe へ hello だけを送り、返事を読む。切った接続に server が気づくまでは `profile_in_use` が返るので、送り直す。
 fn raw_hello(profile_dir: &std::path::Path, hello: Value) -> Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let reply = send_hello(profile_dir, &hello);
+        if reply["code"] != "profile_in_use" || std::time::Instant::now() > deadline {
+            return reply;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+fn send_hello(profile_dir: &std::path::Path, hello: &Value) -> Value {
     let mut pipe = std::fs::OpenOptions::new()
         .read(true)
         .write(true)

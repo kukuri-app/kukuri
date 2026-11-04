@@ -746,7 +746,12 @@ async function settings() {
     await eventually('the node list is saved', async () => !(await unsaved()));
   };
   await browser.$('button=Add Node').click();
-  await (await browser.$$('input[aria-label="Base URL"]')).at(-1).setValue(extra);
+  // Safari の WebDriver は、続けて同じ文字を送ると 1 文字落とすことがある（`htp://`）。入力できるまで入れ直す。
+  const baseUrl = (await browser.$$('input[aria-label="Base URL"]')).at(-1);
+  await eventually('the base URL is typed', async () => {
+    await baseUrl.setValue(extra);
+    return (await baseUrl.getValue()) === extra;
+  });
   await saveNodes();
   await browser.$(`${extraNode}/ancestor::section[1]//button[normalize-space()="Remove"]`).click();
   await saveNodes();

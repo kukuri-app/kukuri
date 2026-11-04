@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use lindera::{dictionary::load_dictionary, mode::Mode, segmenter::Segmenter};
+use lindera::{dictionary::Dictionary, mode::Mode, segmenter::Segmenter};
 use lindera_tantivy::tokenizer::LinderaTokenizer;
 use tantivy::{
     DocAddress, DocSet, Index, IndexReader, IndexWriter, ReloadPolicy, TERMINATED, TantivyDocument,
@@ -70,12 +70,52 @@ fn object_key(kind: IndexScopeKind, scope: &str, id: &str) -> String {
     serde_json::to_string(&(kind.as_str(), scope, id)).expect("strings serialize")
 }
 
+/// 形態素解析の辞書。release は binary に埋め込む。
+#[cfg(not(debug_assertions))]
+fn neologd() -> Result<Dictionary> {
+    Ok(lindera::dictionary::load_dictionary(
+        "embedded://ipadic-neologd",
+    )?)
+}
+
+/// 開発と試験の build は、lindera の build の出力を読む。埋め込むと辞書を使う binary が 1 個 1 GB を超え、試験の
+/// binary の数だけ disk を使って CI の runner で足りなくなる。出力の置き場所は
+/// `$LINDERA_BUILD_DICTIONARY_CACHE_DIR/<版>/` か `target/<profile>/build/<crate>-<hash>/out/`。
+#[cfg(debug_assertions)]
+fn neologd() -> Result<Dictionary> {
+    static LOADED: std::sync::OnceLock<Dictionary> = std::sync::OnceLock::new();
+    if let Some(dictionary) = LOADED.get() {
+        return Ok(dictionary.clone());
+    }
+    let exe = std::env::current_exe()?;
+    let build = exe
+        .ancestors()
+        .map(|dir| dir.join("build"))
+        .find(|dir| dir.is_dir());
+    let cache =
+        std::env::var_os("LINDERA_BUILD_DICTIONARY_CACHE_DIR").map(std::path::PathBuf::from);
+    let dictionary = [cache, build]
+        .into_iter()
+        .flatten()
+        .filter_map(|root| std::fs::read_dir(root).ok())
+        .flatten()
+        .flatten()
+        .flat_map(|entry| {
+            let dir = entry.path();
+            [
+                dir.join("lindera-ipadic-neologd"),
+                dir.join("out/lindera-ipadic-neologd"),
+            ]
+        })
+        .filter(|dir| dir.is_dir())
+        .find_map(|dir| lindera::dictionary::load_fs_dictionary(&dir).ok())
+        .context("the NEologd dictionary is not in the build output")?;
+    Ok(LOADED.get_or_init(|| dictionary).clone())
+}
+
 fn configure(index: &Index) -> Result<()> {
-    let tokenizer = LinderaTokenizer::from_segmenter(Segmenter::new(
-        Mode::Normal,
-        load_dictionary("embedded://ipadic-neologd")?,
-        None,
-    ));
+    let tokenizer =
+        LinderaTokenizer::from_segmenter(Segmenter::new(Mode::Normal, neologd()?, None));
     index.tokenizers().register("neologd", tokenizer);
     Ok(())
 }

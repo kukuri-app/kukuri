@@ -101,11 +101,20 @@ async fn three_devices_receive_independent_presses_and_resolve_the_original_atta
         attachment_hash: before.attachments[1].hash.as_str().into(),
     };
     let mut received = c.subscribe_live_overlay_pushes();
-    let visible = b
-        .list_timeline_scoped(TOPIC, scope.timeline_scope(), None, 50)
-        .await
-        .unwrap();
-    assert!(visible.items.iter().any(|item| item.object_id == post));
+    timeout(Duration::from_secs(5), async {
+        while !b
+            .list_timeline_scoped(TOPIC, scope.timeline_scope(), None, 50)
+            .await
+            .unwrap()
+            .items
+            .iter()
+            .any(|item| item.object_id == post)
+        {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the post reaches b");
     for _ in 0..10 {
         a.push_live_overlay(target.clone()).await.unwrap();
         b.push_live_overlay(target.clone()).await.unwrap();
