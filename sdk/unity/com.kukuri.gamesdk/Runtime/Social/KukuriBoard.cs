@@ -340,11 +340,7 @@ namespace Kukuri.GameSdk.Social
             }
             if (posts.Count == 0 || ThreadId != null)
             {
-                var held = posts.Count;
                 Append(page, cursor == null);
-                // 同じ秒の読んだ行だけで頁が埋まっていれば、その先は「さらに表示」で読む（同じ頁を読み続けない）。
-                if (posts.Count == held && page["next_cursor"] is JObject rest)
-                    nextCursor = rest;
                 return;
             }
             // 一覧は新しい順に並ぶ。先頭の頁の読んでいない投稿を、先頭に足す（足した行だけを描く）。
@@ -460,7 +456,8 @@ namespace Kukuri.GameSdk.Social
             Render();
         }
 
-        /// 頁を後ろに足す（読んでいない投稿だけ）。`withCursor` なら続きの位置を頁のものにする。
+        /// 頁を後ろに足す（読んでいない投稿だけ）。`withCursor` なら続きの位置を頁のものにする。読んだ行だけの頁でも、同じ頁を
+        /// 読み続けないよう、続きの位置を頁のものにする（その先は「さらに表示」で読む）。
         void Append(JToken page, bool withCursor)
         {
             var from = posts.Count;
@@ -470,7 +467,7 @@ namespace Kukuri.GameSdk.Social
                 if (known.Add(post.ObjectId))
                     posts.Add(post);
             }
-            if (withCursor)
+            if (withCursor || posts.Count == from)
                 nextCursor = page["next_cursor"] is JObject cursor ? cursor : null;
             if (posts.Count > MaxPosts)
             {

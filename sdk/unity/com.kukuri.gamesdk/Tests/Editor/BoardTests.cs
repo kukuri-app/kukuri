@@ -310,6 +310,7 @@ namespace Kukuri.GameSdk.Tests
             yield return Wait(board.BackAsync());
             Assert.AreEqual(20, board.Posts.Count);
             Assert.AreEqual(board.Posts.Max(item => item.CreatedAt), board.Posts[0].CreatedAt);
+            CollectionAssert.Contains(board.Posts.Select(item => item.Content).ToList(), "test: newest");
             Assert.IsFalse(back.gameObject.activeSelf);
         }
     }
