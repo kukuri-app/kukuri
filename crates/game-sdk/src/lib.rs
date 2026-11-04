@@ -157,7 +157,7 @@ fn guard(call: impl FnOnce() -> Status) -> i32 {
 /// panic の既定の出力は payload（要求の中身を含みうる）を書くので、固定の文だけにする（ADR 0049 の daemon と同じ）。
 fn quiet_panics() {
     static HOOK: Once = Once::new();
-    HOOK.call_once(|| std::panic::set_hook(Box::new(|_| eprintln!("kukuri sdk task panicked"))));
+    HOOK.call_once(|| std::panic::set_hook(Box::new(|info| eprintln!("KAI panicked {info}"))));
 }
 
 unsafe fn bytes<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
