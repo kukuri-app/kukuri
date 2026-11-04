@@ -623,7 +623,7 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 
 | 対象 | 固定するもの |
 | --- | --- |
-| Unity | 6000.3.27f1（Unity 6.3 LTS）。6000.3 系の新しい patch へ上げるときは #1984 の CI で確かめてから上げる |
+| Unity | 6000.3.27f2（Unity 6.3 LTS）。6000.3 系の別の patch へ替えるときは、配布候補の smoke（`sdk/unity/smoke-dist.ps1`）を手元で通してから替える。2026-11-04 のユーザー判断で、固定を 27f1 から実際に確かめた 27f2 へ替え、Unity を CI につながないので確かめ方も手元の smoke に替えた |
 | package | URP 17.3.0、Netcode for GameObjects 2.13.3（6.3 に同梱の版。Netcode module だけが依存する）、glTFast 6.20.0（Assets module だけが依存する） |
 | OS・graphics | Windows 11 x64、Direct3D 12（6.3 の Windows の既定）。Windows 10 と他の graphics API は確かめていないので対応に含めない |
 | scripting | Editor は Mono。Player は IL2CPP を基準とし、Mono の Player も build・実行できる |

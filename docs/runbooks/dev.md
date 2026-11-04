@@ -430,7 +430,7 @@ cargo xtask desktop-package
 
 ## Unity の Game SDK（ADR 0070、#1977）
 
-Unity 6.3 LTS（6000.3.27f1）と Windows x64 が対象。UPM の package は `sdk/unity/com.kukuri.gamesdk`。配布候補の生成と照合は [Game SDK の配布候補](game-sdk-distribution.md)。
+Unity 6.3 LTS（6000.3.27f2）と Windows x64 が対象。UPM の package は `sdk/unity/com.kukuri.gamesdk`。配布候補の生成と照合は [Game SDK の配布候補](game-sdk-distribution.md)。
 
 ```powershell
 # Live の VP8 に使う libvpx 1.17.0 を build する（初回だけ。-Source は libvpx の tag v1.17.0 の clone。source の隣に

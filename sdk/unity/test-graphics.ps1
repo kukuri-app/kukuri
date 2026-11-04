@@ -3,7 +3,7 @@
 # 2 つの profile で、keyring を使わず loopback だけで動かす。先に build-native.ps1 で native を置く。glTFast を入れない build
 # は test.ps1 が確かめる。
 param(
-    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
+    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f2\Editor\Unity.exe",
     [string]$ProjectDir = (Join-Path $env:TEMP "kgs-assets")
 )
 $ErrorActionPreference = "Stop"

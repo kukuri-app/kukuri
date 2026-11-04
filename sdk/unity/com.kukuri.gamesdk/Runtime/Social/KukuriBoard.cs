@@ -199,7 +199,7 @@ namespace Kukuri.GameSdk.Social
         });
 
         /// 表示中の頁の新しい側を読み、読んでいない投稿を足す（読んだ続きの頁は保つ）。一覧は先頭の頁、thread は末尾まで
-        /// 読んでいれば最後の投稿の後ろを読む（続きを残していれば「さらに表示」に任せる）。
+        /// 読んでいれば最後の投稿の秒の先頭から読む（続きを残していれば「さらに表示」に任せる）。
         public Task ReadNewAsync() => Serial(LoadNewAsync);
 
         /// 閉じる。購読を外し、新着を受けるのをやめる（`OnDisable` でも呼ぶ）。次に開く操作をするまで開き直さない。
@@ -314,8 +314,14 @@ namespace Kukuri.GameSdk.Social
             JToken cursor = null;
             if (ThreadId != null && posts.Count > 0)
             {
+                // 投稿の時刻は秒単位で、同じ秒の投稿は ID の順に並ぶ。後から書かれた投稿が最後の行より前に並んでも読むよう、
+                // 最後の行の秒の先頭から読む（読んだ行は Append が除く）。root の位置は「返信の先頭」を指す。
                 var last = posts[posts.Count - 1];
-                cursor = new JObject { ["created_at"] = last.CreatedAt, ["object_id"] = last.ObjectId };
+                cursor = new JObject
+                {
+                    ["created_at"] = last.CreatedAt,
+                    ["object_id"] = last.ObjectId == ThreadId ? last.ObjectId : "",
+                };
             }
             JToken page;
             try
@@ -450,7 +456,8 @@ namespace Kukuri.GameSdk.Social
             Render();
         }
 
-        /// 頁を後ろに足す（読んでいない投稿だけ）。`withCursor` なら続きの位置を頁のものにする。
+        /// 頁を後ろに足す（読んでいない投稿だけ）。`withCursor` なら続きの位置を頁のものにする。読んだ行だけの頁でも、同じ頁を
+        /// 読み続けないよう、続きの位置を頁のものにする（その先は「さらに表示」で読む）。
         void Append(JToken page, bool withCursor)
         {
             var from = posts.Count;
@@ -460,7 +467,7 @@ namespace Kukuri.GameSdk.Social
                 if (known.Add(post.ObjectId))
                     posts.Add(post);
             }
-            if (withCursor)
+            if (withCursor || posts.Count == from)
                 nextCursor = page["next_cursor"] is JObject cursor ? cursor : null;
             if (posts.Count > MaxPosts)
             {

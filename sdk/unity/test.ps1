@@ -13,7 +13,7 @@
 #   公開鍵と game player ID で再開する（#1997 AC-3。実際の Steam は未確認）
 # 先に build-native.ps1 で native を置く。Unity の project は短い path に作る（深い path は MAX_PATH に当たる）。
 param(
-    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f1\Editor\Unity.exe",
+    [string]$Unity = "C:\Program Files\Unity\Hub\Editor\6000.3.27f2\Editor\Unity.exe",
     [string]$ProjectDir = (Join-Path $env:TEMP "kgs-test"),
     [ValidateSet("Mono2x", "IL2CPP")] [string]$Backend = "Mono2x",
     [switch]$SkipEditMode,
@@ -23,7 +23,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $package = (Resolve-Path (Join-Path $PSScriptRoot "com.kukuri.gamesdk")).Path
-if (-not (Test-Path (Join-Path $package "Runtime\Plugins\x86_64\kukuri_game_sdk.dll"))) { throw "run build-native.ps1 first" }
+if (-not $Tarball -and -not (Test-Path (Join-Path $package "Runtime\Plugins\x86_64\kukuri_game_sdk.dll"))) { throw "run build-native.ps1 first" }
 
 if (Test-Path $ProjectDir) { Remove-Item -Recurse -Force $ProjectDir }
 & $Unity -batchmode -nographics -quit -createProject $ProjectDir -logFile (Join-Path $env:TEMP "kgs-create.log") | Out-Null

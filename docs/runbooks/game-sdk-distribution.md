@@ -38,14 +38,18 @@ Unity は CI につながない（2026-11-04 のユーザー判断。Unity の l
 gh workflow run "Kukuri Game SDK" --repo kukuri-app/kukuri --ref <branch>
 git checkout <branch の先端の commit>
 gh run download <run id> --repo kukuri-app/kukuri --name kukuri-game-sdk-<commit> --dir C:\kgs-dist
-powershell -ExecutionPolicy Bypass -File sdk/unity/smoke-dist.ps1 -Dist C:\kgs-dist -Source <commit> -Unity "C:\Program Files\Unity\Hub\Editor\<版>\Editor\Unity.exe"
+powershell -ExecutionPolicy Bypass -File sdk/unity/smoke-dist.ps1 -Dist C:\kgs-dist -Source <commit> -DesktopApp <kukuri-desktop-tauri.exe>
 ```
 
-`smoke-dist.ps1` は次を順に行い、結果を `%TEMP%\kgsd\smoke-result.txt` に書く。1・2 は失敗した時点で止まる。3・4 は全部を動かしてから、1 つでも失敗していれば失敗で終わる。
+`smoke-dist.ps1` は次を順に行い、結果を `%TEMP%\kgsd\smoke-result.txt` に書く。1・2 は失敗した時点で止まる。3〜6 は全部を動かしてから、1 つでも失敗していれば失敗で終わる。段ごとの時間も書く。
 
 1. 配布物を commit と照合する。
 2. sample を `.tgz` の隣に展開し、sample の manifest のまま開いて compile する。
-3. 空の project に `.tgz` を入れ、Mono Editor の EditMode の試験と、Mono・IL2CPP の Player を動かす（`sdk/unity/test.ps1`）。
-4. sample と展開した package で、Arena の試験を Mono・IL2CPP の Player で動かす（`examples/cyber-disc-arena-unity/test.ps1`。試験の script だけは repository の同じ commit のものを使う）。
+3. 空の project に `.tgz` を入れ、Mono Editor の EditMode の試験と、Mono・IL2CPP の Player を動かす（`sdk/unity/test.ps1`）。開始と再開（AC-3 の U1）、Steam Cloud の file からの再開（U2・U5）を含む。`-DesktopApp` を渡すと、desktop との移行とまとめ（U3・U4）も確かめる。渡したかどうかは結果の file の先頭に書く。
+4. 展開した package で、sample の Netcode Sync（`test-netcode.ps1`）と Skin Loader・Live（`test-graphics.ps1`）を確かめる。
+5. sample と展開した package で、Arena の試験を Mono・IL2CPP の Player で動かす（`examples/cyber-disc-arena-unity/test.ps1`）。
+6. NGO の Unity Transport のゲームへ掲示板だけを足す部分導入を確かめる（`test-partial.ps1`）。
 
-作業の dir は 1 回で十数 GB を使う。終わったら `%TEMP%\kgsd` を消す。
+Rust は PATH から外して動かす。試験の script は配布しないので、repository の同じ commit のものを使う。
+
+作業の dir は 1 回で数十 GB を使う。終わったら `%TEMP%\kgsd` を消す。
