@@ -6,8 +6,8 @@
 
 | 項目 | 値 |
 | --- | --- |
-| source | `ca4860abd`（PR #2028 の head `6fa53af75` を main `dc9aae51c` へ merge した、CI の commit） |
-| CI の run | [41806366542](https://github.com/kukuri-app/kukuri/actions/runs/41806366542) |
+| source | `5447d485d`（PR #2028 の head `f5227322e` を main `dc9aae51c` へ merge した、CI の commit） |
+| CI の run | [41817254235](https://github.com/kukuri-app/kukuri/actions/runs/41817254235) |
 | 版 | 0.1.0 |
 | Unity | 6000.3.27f2（Windows 11、正規の license）。ADR 0070 §8.1 の固定をこの版へ替えた（2026-11-04 のユーザー判断） |
 | Rust | PATH から外し、`cargo` が見つかれば script が止まる |
@@ -19,17 +19,17 @@
 
 作業の手動の操作は、Unity Hub のサインイン（license の認証。ユーザーが事前に実施）だけである。外部の担当者は要らない。
 
-それ以外は script が行う。Unity の画面を人が操作した確認ではなく、Player は実際の build を起動し、`KukuriAccountScreen` の操作を試験の script から呼んでいる。desktop は画面の操作を CDP で動かす。時間は script の実行時間で、全体で 30 分だった。
+それ以外は script が行う。Unity の画面を人が操作した確認ではなく、Player は実際の build を起動し、`KukuriAccountScreen` の操作を試験の script から呼んでいる。desktop は画面の操作を CDP で動かす。時間は script の実行時間で、全体で 29 分だった。
 
 | 段 | 時間 | 確かめたこと |
 | --- | --- | --- |
-| package-mono | 335 秒 | 空の project へ `.tgz` を入れ、EditMode の試験（22 件中 20 件が通過、失敗 0、描画が要る 2 件は省略）、Mono の Player、U1〜U4 の desktop の経路、U5 |
-| package-il2cpp | 143 秒 | IL2CPP の Player、U1・U2・U5 |
+| package-mono | 329 秒 | 空の project へ `.tgz` を入れ、EditMode の試験（22 件中 20 件が通過、失敗 0、描画が要る 2 件は省略）、Mono の Player、U1〜U4 の desktop の経路、U5 |
+| package-il2cpp | 134 秒 | IL2CPP の Player、U1・U2・U5 |
 | netcode | 99 秒 | sample「Netcode Sync」。FFI と Sidecar の両方で 2 peer が同期した |
-| graphics | 72 秒 | sample「Skin Loader」と Live。省略した 2 件の Live の試験もここで動く。配信を Sidecar の profile が 32 frame 受け、ゲームに 30 frame 出た |
-| arena-mono | 399 秒 | sample の展開と Arena の項目（掲示板、Live、機能ごとの最小の scene、対戦、スキン、退出、状態の保存）。desktop・Web を付けた段は除く（AC-1 で確かめた） |
-| arena-il2cpp | 496 秒 | 同じ項目を IL2CPP で |
-| partial | 120 秒 | 部分導入（下記） |
+| graphics | 67 秒 | sample「Skin Loader」と Live。省略した 2 件の Live の試験もここで動く。配信を Sidecar の profile が 31 frame 受け、ゲームに 30 frame 出た |
+| arena-mono | 388 秒 | sample の展開と Arena の項目（掲示板、Live、機能ごとの最小の scene、対戦、スキン、退出、状態の保存）。desktop・Web を付けた段は除く（AC-1 で確かめた） |
+| arena-il2cpp | 478 秒 | 同じ項目を IL2CPP で |
+| partial | 105 秒 | 部分導入（下記） |
 
 ## U1〜U5 の結果
 
@@ -85,10 +85,10 @@ NGO の Unity Transport で cube の位置を同期するゲームへ、手順�
 ## 途中で見つけて直したもの
 
 - 手順書に設定 asset の作成と `KukuriRunner` への割当てが無く、手順どおりでは SDK が開かなかった（独立監査）。当時の試験は設定を code で渡していたので気づけなかった。手順書を直し、部分導入の試験を手順書と同じ構成にした。
-- 掲示板の thread が、同じ秒に書かれて ID が小さい返信を読み飛ばしていた。投稿の時刻は秒単位で、最後の行より後だけを読んでいたためである。smoke の EditMode の試験が揺れて分かった。SDK の command だけの反復で、投稿の直後の読取りの約 200 回に 16 回で再現した。最後の行の秒の先頭から読むように直した。同じ秒の読んだ行だけで頁が埋まったときは、その先を「さらに表示」で読む。
+- 掲示板の thread が、同じ秒に書かれて ID が小さい返信を読み飛ばしていた。投稿の時刻は秒単位で、最後の行より後だけを読んでいたためである。smoke の EditMode の試験が揺れて分かった。SDK の command だけの反復で、投稿の直後の読取りの約 200 回に 16 回で再現した。最後の行の秒の先頭から読むように直した。同じ秒の読んだ行だけで頁が埋まったときは、その先を「さらに表示」で読む。この分岐は、1 秒に 20 件を作れないので実行していない。
 - `BoardTests` の 2 か所が、同じ秒でも作った順に並ぶと決めつけていた。
 
-smoke は、上の修正の途中で 3 回実行した。1 回目は全段が通り、2 回目は `package-mono` の EditMode の試験だけが掲示板の不具合で落ち、3 回目は全段が通った。ここに書いた結果は、すべてを直した後の 4 回目である。
+smoke は、上の修正の途中で 4 回実行した。1 回目は全段が通り、2 回目は `package-mono` の EditMode の試験だけが掲示板の不具合で落ち、3 回目と 4 回目は全段が通った。ここに書いた結果は、すべてを直した後の 5 回目である。
 
 ## 残したこと
 
