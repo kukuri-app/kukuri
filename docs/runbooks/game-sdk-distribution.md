@@ -26,7 +26,7 @@ CI の workflow `Kukuri Game SDK` が、同じ commit から次を作り、artif
 - package と sample の中身が、commit から組み立て直した内容と 1 byte まで一致する。手元の未追跡の file と profile は入らない。
 - 秘密や個人の profile に当たる file 名（`kukuri.identity*`・`*.db`・`.env*` など）と、秘密鍵や token の文字列が無い。
 
-CI は Rust の SDK の試験（`cargo test -p kukuri-game-sdk --features vp8`。Live の試験は、音声の出力の機器として仮想の線 VB-CABLE を入れて動かす）も動かす。PR では SDK・sample・配布の script の変更で動き、SDK が依存する crate の変更は毎晩の main で確かめる。poll の p99 の閾値（`tests/game_session.rs`）は指定の PC の値（ADR 0070 §8.4）で、手元と SLO の計測で判定するので、CI の共有の runner では判定しない。
+CI は Rust の SDK の試験（`cargo test -p kukuri-game-sdk --features vp8`。runner には音声の出力の機器が無いので、Live の試験は機器が無くても映像が届くことも確かめる。#2029）も動かす。PR では SDK・sample・配布の script の変更で動き、SDK が依存する crate の変更は毎晩の main で確かめる。poll の p99 の閾値（`tests/game_session.rs`）は指定の PC の値（ADR 0070 §8.4）で、手元と SLO の計測で判定するので、CI の共有の runner では判定しない。
 
 ## 手元の Unity で確かめる
 
