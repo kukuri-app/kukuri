@@ -436,6 +436,7 @@ mod link_preview_records;
 #[cfg(feature = "iroh-integration-tests")]
 mod non_utf8_key;
 mod page_bounds;
+mod post_hint_resend;
 mod private_epoch_reads;
 mod profile_index;
 mod profile_index_attacks;

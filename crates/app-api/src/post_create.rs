@@ -270,29 +270,38 @@ impl AppService {
                 sent_at: None,
             }],
         };
-        let mut hint_error = None;
-        for attempt in 0..3 {
-            if attempt > 0 {
-                n0_future::time::sleep(std::time::Duration::from_millis(250 * attempt)).await;
+        // 成功しても間を空けて送り直す。送信の成功は相手へ届いたことを示さず、送った時点の neighbor にしか届かない
+        // ので、これから join が成立する相手へ届けるため(#2030)。投稿の応答は待たせず、account の停止でやめる。
+        let hint_transport = self.services.hint_transport.clone();
+        let mut closed = self.services.content_closed.subscribe();
+        let (log_topic, object_id) = (topic_id.to_owned(), envelope.id.0.clone());
+        n0_future::task::spawn(async move {
+            let sending = async {
+                let mut hint_error = None;
+                for attempt in 0..3 {
+                    if attempt > 0 {
+                        n0_future::time::sleep(std::time::Duration::from_millis(250 * attempt))
+                            .await;
+                    }
+                    match hint_transport.publish_hint(&hint_topic, hint.clone()).await {
+                        Ok(()) => hint_error = None,
+                        Err(error) => hint_error = Some(error),
+                    }
+                }
+                if let Some(error) = hint_error {
+                    warn!(
+                        topic = %log_topic,
+                        object_id = %object_id,
+                        error = %error,
+                        "failed to publish post hint; durable docs state was already persisted"
+                    );
+                }
+            };
+            tokio::select! {
+                () = sending => {}
+                _ = closed.wait_for(|closed| *closed) => {}
             }
-            match self
-                .services
-                .hint_transport
-                .publish_hint(&hint_topic, hint.clone())
-                .await
-            {
-                Ok(()) => hint_error = None,
-                Err(error) => hint_error = Some(error),
-            }
-        }
-        if let Some(error) = hint_error {
-            warn!(
-                topic = %topic_id,
-                object_id = %envelope.id.0,
-                error = %error,
-                "failed to publish post hint; durable docs state was already persisted"
-            );
-        }
+        });
         if effective_channel_id.is_none() {
             // この topic の neighbor と補助の数だけを読む(通信状態の全体は作らない。#1221 R2-D)。
             let direct_peer_count = self
