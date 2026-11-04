@@ -179,7 +179,8 @@ namespace Kukuri.GameSdk.Tests
             yield return Wait(board.RefreshAsync());
             Assert.AreEqual(20, board.Posts.Count);
             Assert.IsTrue(board.HasMore);
-            Assert.AreEqual("test: post 24", board.Posts[0].Content);
+            // 同じ秒の投稿は ID の順に並ぶので、最後の 2 件のどちらかが先頭に来る。
+            CollectionAssert.Contains(new[] { "test: post 23", "test: post 24" }, board.Posts[0].Content);
             yield return Wait(board.LoadMoreAsync());
             Assert.AreEqual(25, board.Posts.Count);
             Assert.AreEqual(25, Shown(boardA).Length);
@@ -226,6 +227,32 @@ namespace Kukuri.GameSdk.Tests
             yield return Wait(board.ReleaseAsync());
             yield return Subscribed(a, shared, value => subscribed = value);
             Assert.IsTrue(subscribed);
+        }
+
+        /// 投稿の時刻は秒単位で、同じ秒の投稿は ID の順に並ぶ。秒の頭から続けて返信し、後の返信が前の返信より先に並んでも
+        /// thread に出る（#1984 AC-3 の smoke で見つけた）。
+        [UnityTest]
+        public IEnumerator RepliesPostedInTheSameSecondAreAllShownInTheThread()
+        {
+            var topic = NewTopic();
+            a = KukuriClient.Open(KukuriMode.Ffi, "a", NewProfileDirectory());
+            yield return Accept(a);
+            var board = Board(a, topic, out boardA);
+            var root = board.PostAsync("test: root");
+            yield return Wait(root);
+            yield return Wait(board.OpenThreadAsync(root.Result));
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                while (DateTimeOffset.UtcNow.Millisecond > 100)
+                    yield return null;
+                for (var index = 0; index < 2; index++)
+                {
+                    var reply = board.PostAsync($"test: reply {attempt}-{index}");
+                    yield return Wait(reply);
+                    Assert.IsTrue(board.Posts.Any(item => item.ObjectId == reply.Result), $"reply {attempt}-{index} is not shown");
+                }
+            }
+            Assert.AreEqual(17, board.Posts.Count);
         }
 
         [UnityTest]
@@ -282,7 +309,7 @@ namespace Kukuri.GameSdk.Tests
             Assert.AreEqual(held[10], board.Posts[0].ObjectId);
             yield return Wait(board.BackAsync());
             Assert.AreEqual(20, board.Posts.Count);
-            Assert.AreEqual("test: newest", board.Posts[0].Content);
+            CollectionAssert.Contains(new[] { "test: newer", "test: newest" }, board.Posts[0].Content);
             Assert.IsFalse(back.gameObject.activeSelf);
         }
     }
