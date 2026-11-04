@@ -57,9 +57,7 @@ jobs:
       - name: Build the DLL and the Sidecar
         shell: pwsh
         run: ./sdk/unity/build-native.ps1 -TargetDir $env:CARGO_TARGET_DIR
-      # Live の試験は音声の出力の機器を開く。実アプリの試験と同じ仮想の線（VB-CABLE）を既定の入出力にする。
-      - name: Install a virtual audio cable
-        uses: AlekseyMartynov/action-vbcable-win@6ec0facd8780f0f463d7dc2fcfd630e06eb1fc0b
+      # Windows の runner には音声の出力の機器が無い。Live の試験は、機器が無くても映像が届くことも確かめる（#2029）。
       - name: Test the SDK
         shell: pwsh
         env:

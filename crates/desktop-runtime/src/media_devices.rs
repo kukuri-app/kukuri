@@ -27,8 +27,11 @@ mod real {
     }
 
     impl Playback {
+        /// 出力の機器が無くても開ける(機器が付くまで音は捨て、付けば鳴り始める。映像は機器を要らない。#2029)。
         pub(crate) async fn open() -> Result<Self> {
-            let engine = playback::Engine::open(playback::Config::default()).await?;
+            let mut config = playback::Config::default();
+            config.wait_for_device = true;
+            let engine = playback::Engine::open(config).await?;
             Ok(Self { engine })
         }
 

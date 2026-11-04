@@ -156,7 +156,8 @@ kukuri はサーバーを必須にしないが、常に費用がかからない�
 | `sidecar_missing` | package に Sidecar が入っていない。配布物の `.tgz` を入れ直す |
 | 相手が見つからない | `get_sync_status` の `topic_diagnostics` の `peer_count` と `active_path`（経路）。ticket を交換するか、Community Node を設定する |
 | アセットを取得できない（`unavailable`・`not_found`） | 発行者か保持する端末が動いているか。発行者の公開鍵と application ID・asset ID が合っているか |
-| Live の映像が出ない | 状態（`KukuriLiveViewer.State`）が `no_media` なら配信者がまだ映像を置いていない。音声の出力の機器が無い PC では、音声のある Live の映像も届かない |
+| Live の映像が出ない | 状態（`KukuriLiveViewer.State`）が `no_media` なら配信者がまだ映像を置いていない |
+| Live の音が出ない | 音声の出力の機器があるか。機器が無くても映像は届き、機器をつなぐと操作なしで鳴り始める |
 | 実行の log | Editor は Console、Player は `Player.log`。SDK は秘密を log に書かない |
 
 停止は `KukuriRunner` を破棄するか、ゲームを終了する。profile の lock は終了で外れる。profile の dir を消すと、次の起動は新しいアカウントと game player で始まる。Steam Cloud や別の端末へ移していなければ、元のアカウントには戻れない。keyring の鍵の項目は消えずに残る。
