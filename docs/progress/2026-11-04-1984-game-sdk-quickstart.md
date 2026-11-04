@@ -6,30 +6,30 @@
 
 | 項目 | 値 |
 | --- | --- |
-| source | `2cd6bac8d`（PR #2028 の head `ef9985d90` を main `dc9aae51c` へ merge した、CI の commit） |
-| CI の run | [41796358027](https://github.com/kukuri-app/kukuri/actions/runs/41796358027) |
+| source | `ca4860abd`（PR #2028 の head `6fa53af75` を main `dc9aae51c` へ merge した、CI の commit） |
+| CI の run | [41806366542](https://github.com/kukuri-app/kukuri/actions/runs/41806366542) |
 | 版 | 0.1.0 |
 | Unity | 6000.3.27f2（Windows 11、正規の license）。ADR 0070 §8.1 の固定をこの版へ替えた（2026-11-04 のユーザー判断） |
 | Rust | PATH から外し、`cargo` が見つかれば script が止まる |
 | desktop | main `dc9aae51c` の release（`tauri/custom-protocol` 付き）を手元で build した。SDK の配布物ではなく、利用者が持っている kukuri app の役である |
 | keyring | smoke は `KUKURI_DISABLE_KEYRING=1` で動く。OS の keyring の経路は、下の「keyring を有効にした確認」で別に確かめた |
-| 外への通信 | 端末どうしの通信は `static_peer` で `127.0.0.1` につなぐ。`static_peer` でも公開の Mainline DHT へは出る。投稿は試験の topic へ書く |
+| 外への通信 | 端末どうしの通信は `static_peer` で `127.0.0.1` につなぐ。`static_peer` でも公開の Mainline DHT へは出る（#1825）。投稿は試験の topic へ書く。Arena の試験は画像つきの投稿を作るので、公開の添付の hash の告知と補助 index への登録も起きうる |
 
 ## 手動の操作と作業時間
 
 作業の手動の操作は、Unity Hub のサインイン（license の認証。ユーザーが事前に実施）だけである。外部の担当者は要らない。
 
-それ以外は script が行う。Unity の画面を人が操作した確認ではなく、Player は実際の build を起動し、`KukuriAccountScreen` の操作を試験の script から呼んでいる。desktop は画面の操作を CDP で動かす。時間は script の実行時間で、全体で 29 分だった。
+それ以外は script が行う。Unity の画面を人が操作した確認ではなく、Player は実際の build を起動し、`KukuriAccountScreen` の操作を試験の script から呼んでいる。desktop は画面の操作を CDP で動かす。時間は script の実行時間で、全体で 30 分だった。
 
 | 段 | 時間 | 確かめたこと |
 | --- | --- | --- |
-| package-mono | 346 秒 | 空の project へ `.tgz` を入れ、EditMode の試験（22 件中 20 件が通過、失敗 0、描画が要る 2 件は省略）、Mono の Player、U1〜U4 の desktop の経路、U5 |
-| package-il2cpp | 155 秒 | IL2CPP の Player、U1・U2・U5 |
-| netcode | 106 秒 | sample「Netcode Sync」。FFI と Sidecar の両方で 2 peer が同期した |
-| graphics | 66 秒 | sample「Skin Loader」と Live。省略した 2 件の Live の試験もここで動く。配信を Sidecar の profile が 31 frame 受け、ゲームに 30 frame 出た |
-| arena-mono | 373 秒 | sample の展開と Arena の項目（掲示板、Live、機能ごとの最小の scene、対戦、スキン、退出、状態の保存）。desktop・Web を付けた段は除く（AC-1 で確かめた） |
-| arena-il2cpp | 487 秒 | 同じ項目を IL2CPP で |
-| partial | 110 秒 | 部分導入（下記） |
+| package-mono | 335 秒 | 空の project へ `.tgz` を入れ、EditMode の試験（22 件中 20 件が通過、失敗 0、描画が要る 2 件は省略）、Mono の Player、U1〜U4 の desktop の経路、U5 |
+| package-il2cpp | 143 秒 | IL2CPP の Player、U1・U2・U5 |
+| netcode | 99 秒 | sample「Netcode Sync」。FFI と Sidecar の両方で 2 peer が同期した |
+| graphics | 72 秒 | sample「Skin Loader」と Live。省略した 2 件の Live の試験もここで動く。配信を Sidecar の profile が 32 frame 受け、ゲームに 30 frame 出た |
+| arena-mono | 399 秒 | sample の展開と Arena の項目（掲示板、Live、機能ごとの最小の scene、対戦、スキン、退出、状態の保存）。desktop・Web を付けた段は除く（AC-1 で確かめた） |
+| arena-il2cpp | 496 秒 | 同じ項目を IL2CPP で |
+| partial | 120 秒 | 部分導入（下記） |
 
 ## U1〜U5 の結果
 
@@ -54,7 +54,7 @@ smoke は keyring を無効にして動くので、利用者の既定の経路�
 | 確かめたこと | 結果 |
 | --- | --- |
 | U1 | 通過。開始、再開で同じ公開鍵と game player |
-| 鍵の置き場所 | 保存した profile の項目は資格情報マネージャーに 2 件。profile に鍵の file は無い（`game-account.json` の写しを除く） |
+| 鍵の置き場所 | この project の項目は資格情報マネージャーに 2 件（前の段で消した profile の項目を含む）。profile にアカウントの鍵の file は無い（`game-account.json` の写しを除く。`endpoint-secret.json` は端末の通信用の鍵） |
 | U2・U5 | 通過。keyring の項目と profile を消し、`game-account.json` だけから同じ公開鍵と game player に戻った |
 | profile の dir を消した後 | keyring の項目を残したままでも、次の起動は新しいアカウントと game player で始まる。手順書の記述をこれに合わせた |
 
@@ -85,10 +85,10 @@ NGO の Unity Transport で cube の位置を同期するゲームへ、手順�
 ## 途中で見つけて直したもの
 
 - 手順書に設定 asset の作成と `KukuriRunner` への割当てが無く、手順どおりでは SDK が開かなかった（独立監査）。当時の試験は設定を code で渡していたので気づけなかった。手順書を直し、部分導入の試験を手順書と同じ構成にした。
-- 掲示板の thread が、同じ秒に書かれて ID が小さい返信を読み飛ばしていた。投稿の時刻は秒単位で、最後の行より後だけを読んでいたためである。smoke の EditMode の試験が揺れて分かった。SDK の command だけの反復で、投稿の直後の読取りの約 8% で再現した。最後の行の秒の先頭から読むように直した。
+- 掲示板の thread が、同じ秒に書かれて ID が小さい返信を読み飛ばしていた。投稿の時刻は秒単位で、最後の行より後だけを読んでいたためである。smoke の EditMode の試験が揺れて分かった。SDK の command だけの反復で、投稿の直後の読取りの約 200 回に 16 回で再現した。最後の行の秒の先頭から読むように直した。同じ秒の読んだ行だけで頁が埋まったときは、その先を「さらに表示」で読む。
 - `BoardTests` の 2 か所が、同じ秒でも作った順に並ぶと決めつけていた。
 
-smoke は、上の 2 つを直す前に 2 回実行した。1 回目は全段が通り、2 回目は `package-mono` の EditMode の試験だけが掲示板の不具合で落ちた。
+smoke は、上の修正の途中で 3 回実行した。1 回目は全段が通り、2 回目は `package-mono` の EditMode の試験だけが掲示板の不具合で落ち、3 回目は全段が通った。ここに書いた結果は、すべてを直した後の 4 回目である。
 
 ## 残したこと
 
