@@ -84,6 +84,12 @@ export function resolveCargoTargetDir(env = process.env, cwd = process.cwd()) {
   return path.join(cwd, 'src-tauri', 'target', 'dev-instances', instance);
 }
 
+// 開発中のアプリは OS の keyring を使う。`.cargo/config.toml` の既定（無効）は試験のためのもので、
+// 環境にある値を上書きしない。
+export function resolveDisableKeyring(env = process.env) {
+  return env.KUKURI_DISABLE_KEYRING ?? '0';
+}
+
 async function createDevConfig(host, port) {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'kukuri-tauri-dev-'));
   const configPath = path.join(tempDir, 'tauri.dev.auto.conf.json');
@@ -131,6 +137,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     KUKURI_TAURI_DEV_HOST: host,
     KUKURI_TAURI_DEV_PORT: String(port),
     TAURI_DEV_HOST: host,
+    KUKURI_DISABLE_KEYRING: resolveDisableKeyring(env),
     ...(cargoTargetDir ? { CARGO_TARGET_DIR: cargoTargetDir } : {}),
   };
 

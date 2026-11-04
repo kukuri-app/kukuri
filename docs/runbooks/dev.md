@@ -535,6 +535,10 @@ export KUKURI_DISCOVERY_SEEDS=<node_id または node_id@host:port をカンマ�
 - #1105 より前の開発ビルドが配布版の dir に残した同意記録やアカウントは移動・削除しない。記録には `build_profile` が無く、配布版の記録と区別できない。開発ビルドの `.dev` dir は初回起動時に空の状態から始まる。
 - WebView の保存領域（theme / 言語などの localStorage）は identifier 単位のため、配布版と開発ビルドで共有される。
 - `KUKURI_DISABLE_KEYRING=1` を設定すると OS keyring を使わず、app data dir 内の `*.identity-key` fallback file を使う。
+- `.cargo/config.toml` の `[env]` がこの値を既定で `1` にする。`cargo test`・`cargo nextest`・`cargo xtask`・`cargo run` から起動した process は OS keyring を使わない。手元の試験が一時 DB の項目を残し続けると、Windows の資格情報マネージャーの書込みが他のアプリの分まで失敗するためである。環境にある値はそのまま優先される。
+  - `tauri:dev` は `KUKURI_DISABLE_KEYRING=0` を渡すので、これまでどおり OS keyring を使う。
+  - `cargo run` の CLI で keyring に保存済みの profile を開くときや、keyring の動作を確かめるときは、`KUKURI_DISABLE_KEYRING=0` を付ける。
+  - cargo を通さずに実行ファイルを起動する試験（実アプリの試験の driver、`sdk/unity`・`examples/cyber-disc-arena-unity` の `*.ps1`、`web_e2e_fixture`）は、それぞれの入口で `1` を設定する。
 - `KUKURI_DISCOVERY_MODE` / `KUKURI_DISCOVERY_SEEDS` を設定すると discovery panel は read-only になり、env が local file より優先される。
 
 ## Linux client daemon

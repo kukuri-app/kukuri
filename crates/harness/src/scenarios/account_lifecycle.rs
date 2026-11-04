@@ -11,7 +11,6 @@ pub(crate) async fn run_account_lifecycle(
 ) -> Result<HarnessResult> {
     let _env = RestoreEnvironment(
         [
-            "KUKURI_DISABLE_KEYRING",
             "KUKURI_BIND_ADDR",
             "KUKURI_DISCOVERY_MODE",
             "KUKURI_DISCOVERY_SEEDS",
@@ -22,7 +21,6 @@ pub(crate) async fn run_account_lifecycle(
     );
     // Harness scenarios run serially. Keep account lifecycle traffic on loopback.
     unsafe {
-        std::env::set_var("KUKURI_DISABLE_KEYRING", "1");
         std::env::set_var("KUKURI_BIND_ADDR", "127.0.0.1:0");
         std::env::set_var("KUKURI_DISCOVERY_MODE", "static_peer");
         std::env::set_var("KUKURI_DISCOVERY_SEEDS", "");

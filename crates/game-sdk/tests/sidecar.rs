@@ -192,7 +192,6 @@ fn the_sidecar_binary_listens_on_no_tcp_port_and_logs_no_secret() {
         .env_remove("KUKURI_INSTANCE")
         .env_remove("KUKURI_DISCOVERY_SEEDS")
         .env_remove("KUKURI_ADVERTISE_PORT")
-        .env("KUKURI_DISABLE_KEYRING", "1")
         .env("KUKURI_DISCOVERY_MODE", "static_peer")
         .env("KUKURI_BIND_ADDR", "127.0.0.1:0")
         .env("KUKURI_ADVERTISE_HOST", "127.0.0.1")

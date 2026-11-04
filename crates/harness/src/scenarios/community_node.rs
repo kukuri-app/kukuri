@@ -114,8 +114,6 @@ pub(crate) async fn run_community_node_connectivity(
     artifacts_dir: &Path,
     identity_mode: CommunityNodeIdentityMode,
 ) -> Result<HarnessResult> {
-    unsafe { std::env::set_var("KUKURI_DISABLE_KEYRING", "1") };
-
     let step_timeout = ci_timeout_floor(
         Duration::from_millis(scenario.timeouts.step_ms),
         Duration::from_secs(180),

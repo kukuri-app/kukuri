@@ -4,8 +4,6 @@ pub(crate) async fn run_pairwise_direct_message_connectivity(
     scenario: &ScenarioSpec,
     artifacts_dir: &Path,
 ) -> Result<HarnessResult> {
-    unsafe { std::env::set_var("KUKURI_DISABLE_KEYRING", "1") };
-
     let db_a = artifacts_dir.join("pairwise-dm-a.db");
     let db_b = artifacts_dir.join("pairwise-dm-b.db");
     cleanup_runtime_artifacts(&db_a)?;

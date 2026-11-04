@@ -79,13 +79,17 @@ impl ClientStorage for FakeKeyringStore {
     }
 }
 
-fn clear_identity_env() {
-    unsafe { std::env::remove_var("KUKURI_DISABLE_KEYRING") };
+/// 試験が OS の資格情報へ一時 DB の項目を残さない（`.cargo/config.toml` の `[env]`）。
+#[test]
+fn tests_started_by_cargo_do_not_use_the_os_keyring() {
+    assert_eq!(
+        IdentityStorageMode::from_env(),
+        IdentityStorageMode::FileOnly
+    );
 }
 
 #[tokio::test]
 async fn auto_mode_prefers_keyring_secret_over_file_secret() {
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     let keyring_secret = KukuriKeys::generate().export_secret_hex();
@@ -117,7 +121,6 @@ async fn auto_mode_prefers_keyring_secret_over_file_secret() {
 
 #[tokio::test]
 async fn auto_mode_falls_back_to_file_when_keyring_write_fails() {
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     let keyring = FakeKeyringStore::default();
@@ -149,7 +152,6 @@ async fn auto_mode_falls_back_to_file_when_keyring_write_fails() {
 
 #[tokio::test]
 async fn auto_mode_generated_keyring_secret_survives_restart() {
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     let keyring = FakeKeyringStore::default();
@@ -228,7 +230,6 @@ async fn keyring_identity_created_before_db_file_survives_db_creation() {
     // クリーンインストールでは DB ファイル作成前に鍵を keyring へ保存する。
     // DB 作成後に canonicalize の結果(Windows では `\\?\` 付き)が変わっても
     // 同じ entry を引けなければ、marker=keyring のまま起動不能になる。
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     let keyring = FakeKeyringStore::default();
@@ -247,7 +248,6 @@ async fn keyring_identity_created_before_db_file_survives_db_creation() {
 #[tokio::test]
 async fn keyring_identity_saved_under_uncanonicalized_account_still_loads() {
     // 修正前の版が DB 不在時に書いた entry(生のパス)を救済できること。
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     std::fs::write(&db_path, b"").expect("create db file");
@@ -273,7 +273,6 @@ async fn keyring_identity_saved_under_uncanonicalized_account_still_loads() {
 
 #[tokio::test]
 async fn optional_secret_saved_before_db_file_survives_db_creation() {
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     let keyring = FakeKeyringStore::default();
@@ -304,7 +303,6 @@ async fn optional_secret_saved_before_db_file_survives_db_creation() {
 
 #[tokio::test]
 async fn file_only_mode_rejects_existing_keyring_backend_marker() {
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     let secret = KukuriKeys::generate().export_secret_hex();
@@ -334,7 +332,6 @@ async fn file_only_mode_rejects_existing_keyring_backend_marker() {
 
 #[tokio::test]
 async fn optional_secret_keyring_set_failure_does_not_shadow_file_fallback() {
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     let keyring = FakeKeyringStore::default();
@@ -394,7 +391,6 @@ async fn optional_secret_keyring_set_failure_does_not_shadow_file_fallback() {
 
 #[tokio::test]
 async fn optional_secret_uses_file_fallback_without_a_default_keyring() {
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     let keyring = FakeKeyringStore::default();
@@ -422,7 +418,6 @@ async fn optional_secret_uses_file_fallback_without_a_default_keyring() {
 
 #[tokio::test]
 async fn optional_secret_keyring_delete_treats_missing_default_store_as_absent() {
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     let keyring = FakeKeyringStore::default();
@@ -440,7 +435,6 @@ async fn optional_secret_keyring_delete_treats_missing_default_store_as_absent()
 
 #[tokio::test]
 async fn file_only_optional_secret_ignores_keyring_shadow_and_failure() {
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     let keyring = FakeKeyringStore::default();
@@ -475,7 +469,6 @@ async fn file_only_optional_secret_ignores_keyring_shadow_and_failure() {
 
 #[tokio::test]
 async fn optional_secret_persists_to_file_even_when_keyring_delete_fails() {
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     let keyring = FakeKeyringStore::default();
@@ -591,7 +584,6 @@ async fn persisted_secret_file_keeps_private_mode() {
 
 #[tokio::test]
 async fn legacy_nsec_file_still_loads() {
-    clear_identity_env();
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("kukuri.db");
     let keys = KukuriKeys::generate();

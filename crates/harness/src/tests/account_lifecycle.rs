@@ -3,7 +3,6 @@ use super::*;
 #[tokio::test]
 async fn desktop_account_lifecycle() {
     let _guard = acquire_scenario_test_lock().await;
-    disable_keyring_for_tests();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()

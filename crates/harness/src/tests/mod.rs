@@ -5,15 +5,8 @@ use kukuri_desktop_runtime::{
     FreezePrivateChannelRequest, ImportFriendOnlyGrantRequest, ImportFriendPlusShareRequest,
     RotatePrivateChannelRequest,
 };
-use std::sync::{Once, OnceLock};
+use std::sync::OnceLock;
 use tokio::sync::{Mutex, MutexGuard};
-
-fn disable_keyring_for_tests() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| unsafe {
-        std::env::set_var("KUKURI_DISABLE_KEYRING", "1");
-    });
-}
 
 async fn acquire_scenario_test_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

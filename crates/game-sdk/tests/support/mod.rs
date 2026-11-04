@@ -187,7 +187,7 @@ pub fn send_secret(handle: *mut KukuriHandle, request: &[u8], secret: &[u8]) -> 
     }
 }
 
-/// 同意の後は実際の runtime を起動するので、CLI の process 試験と同じく keyring を使わず loopback だけで動かす。
+/// 同意の後は実際の runtime を起動するので、CLI の process 試験と同じく loopback だけで動かす。
 pub fn isolated_environment() {
     static SET: Once = Once::new();
     SET.call_once(|| unsafe {
@@ -199,7 +199,6 @@ pub fn isolated_environment() {
         ] {
             std::env::remove_var(name);
         }
-        std::env::set_var("KUKURI_DISABLE_KEYRING", "1");
         std::env::set_var("KUKURI_DISCOVERY_MODE", "static_peer");
         std::env::set_var("KUKURI_BIND_ADDR", "127.0.0.1:0");
         std::env::set_var("KUKURI_ADVERTISE_HOST", "127.0.0.1");
@@ -553,7 +552,6 @@ pub mod sidecar_process {
             .env_remove("KUKURI_INSTANCE")
             .env_remove("KUKURI_DISCOVERY_SEEDS")
             .env_remove("KUKURI_ADVERTISE_PORT")
-            .env("KUKURI_DISABLE_KEYRING", "1")
             .env("KUKURI_DISCOVERY_MODE", "static_peer")
             .env("KUKURI_BIND_ADDR", "127.0.0.1:0")
             .env("KUKURI_ADVERTISE_HOST", "127.0.0.1");

@@ -20,7 +20,6 @@ fn base_cli_command(root: &Path) -> Command {
         .env("XDG_DATA_HOME", root.join("data"))
         .env("XDG_RUNTIME_DIR", root.join("runtime"))
         .env("HOME", root.join("home"))
-        .env("KUKURI_DISABLE_KEYRING", "1")
         .env_remove("KUKURI_APP_DATA_DIR")
         .env_remove("KUKURI_INSTANCE");
     command

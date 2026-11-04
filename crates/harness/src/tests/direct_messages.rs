@@ -2,7 +2,6 @@ use super::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pairwise_dm_offline_text_image_video_delivery_and_local_delete() {
-    disable_keyring_for_tests();
     let _serial = acquire_scenario_test_lock().await;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
