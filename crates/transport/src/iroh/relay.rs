@@ -38,15 +38,19 @@ fn relay_backed_on_platform(is_windows: bool, relay_urls: &[RelayUrl]) -> bool {
 }
 
 const PACKET_THRESHOLD: u32 = 64;
+const TIME_THRESHOLD: f32 = 5.0 / 4.0;
 
 /// kukuri の endpoint の QUIC の設定。輻輳制御は BBR3（既定の Cubic は損失で送る速さを落とし、往復 50 ms・損失 1% の経路で
 /// 5 MiB に 16 秒かかる。BBR3 は 2〜4 秒。ADR 0070 §8.4、2026-11-02 のユーザー判断）。後の packet が `PACKET_THRESHOLD` 個
-/// 届くまで、前の packet を失われたとみなさない（順序の入れ替わりを損失と誤って送る速さを落とさない。往復時間の 9/8 による
-/// 判定は残る。同じユーザー判断）。Windows で relay を使うときは、relay の経路に合わせて GSO と MTU の探索を止める。
+/// 届くまで、前の packet を失われたとみなさない（順序の入れ替わりを損失と誤って送る速さを落とさない。同じユーザー判断）。
+/// 時間では往復時間の `TIME_THRESHOLD` 倍まで待つ（既定の 9/8 は遅延のゆらぎで届いている packet を損失とみなし、BBR3 が
+/// 小さい送信量から戻れなくなる。#2041、2026-11-05 のユーザー判断）。Windows で relay を使うときは、relay の経路に合わせて
+/// GSO と MTU の探索を止める。
 fn transport_config(relay_urls: &[RelayUrl]) -> QuicTransportConfig {
     let config = QuicTransportConfig::builder()
         .congestion_controller_factory(Arc::new(noq_proto::congestion::Bbr3Config::default()))
-        .packet_threshold(PACKET_THRESHOLD);
+        .packet_threshold(PACKET_THRESHOLD)
+        .time_threshold(TIME_THRESHOLD);
     if !relay_backed_on_platform(cfg!(target_os = "windows"), relay_urls) {
         return config.build();
     }
