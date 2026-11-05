@@ -192,5 +192,6 @@ export async function pwaShellFlow({ openClient, greetNative, native, fixture, o
       return accepted.filter(item => item.kind === 'dm').every(item => messages.some(message => message.message_id === item.id && message.delivered));
     });
     console.log('PWA real WASM offline/restart/update/receipt and same-ID delivery: PASS');
+    console.log(`TEMP-2043 runtime events\n${(await browser.execute(() => window.__kukuriRuntimeEvents)).join('\n')}`);
   } finally { await network(false); }
 }
