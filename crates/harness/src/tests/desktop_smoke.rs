@@ -2,7 +2,6 @@ use super::*;
 
 #[tokio::test]
 async fn desktop_smoke_post_persist() {
-    disable_keyring_for_tests();
     let _serial = acquire_scenario_test_lock().await;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -21,7 +20,6 @@ async fn desktop_smoke_post_persist() {
 }
 #[tokio::test]
 async fn desktop_smoke_live_session_persist() {
-    disable_keyring_for_tests();
     let _serial = acquire_scenario_test_lock().await;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -40,7 +38,6 @@ async fn desktop_smoke_live_session_persist() {
 }
 #[tokio::test]
 async fn desktop_smoke_game_room_persist() {
-    disable_keyring_for_tests();
     let _serial = acquire_scenario_test_lock().await;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -60,7 +57,6 @@ async fn desktop_smoke_game_room_persist() {
 
 #[tokio::test]
 async fn desktop_smoke_metaverse_dome_persist() {
-    disable_keyring_for_tests();
     let _serial = acquire_scenario_test_lock().await;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -80,7 +76,6 @@ async fn desktop_smoke_metaverse_dome_persist() {
 
 #[tokio::test]
 async fn desktop_smoke_metaverse_dome_move() {
-    disable_keyring_for_tests();
     let _serial = acquire_scenario_test_lock().await;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -100,7 +95,6 @@ async fn desktop_smoke_metaverse_dome_move() {
 
 #[tokio::test]
 async fn desktop_smoke_metaverse_dome_connections() {
-    disable_keyring_for_tests();
     let _serial = acquire_scenario_test_lock().await;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -120,7 +114,6 @@ async fn desktop_smoke_metaverse_dome_connections() {
 
 #[tokio::test]
 async fn desktop_smoke_metaverse_dome_transition() {
-    disable_keyring_for_tests();
     let _serial = acquire_scenario_test_lock().await;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -140,7 +133,6 @@ async fn desktop_smoke_metaverse_dome_transition() {
 
 #[tokio::test]
 async fn desktop_smoke_bookmark_workflow() {
-    disable_keyring_for_tests();
     let _serial = acquire_scenario_test_lock().await;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()

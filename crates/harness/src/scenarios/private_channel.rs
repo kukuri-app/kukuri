@@ -4,8 +4,6 @@ pub(crate) async fn run_private_channel_invite_connectivity(
     scenario: &ScenarioSpec,
     artifacts_dir: &Path,
 ) -> Result<HarnessResult> {
-    unsafe { std::env::set_var("KUKURI_DISABLE_KEYRING", "1") };
-
     let db_a = artifacts_dir.join("private-channel-a.db");
     let db_b = artifacts_dir.join("private-channel-b.db");
     let db_c = artifacts_dir.join("private-channel-c.db");

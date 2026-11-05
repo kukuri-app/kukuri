@@ -12,6 +12,7 @@ import {
   parsePreferredDevPort,
   resolveCargoTargetDir,
   resolveDevHost,
+  resolveDisableKeyring,
 } from './tauri-cli.mjs';
 
 const servers = [];
@@ -96,5 +97,10 @@ describe('tauri cli wrapper', () => {
         '/repo/apps/desktop'
       )
     ).toBe('/custom/target');
+  });
+
+  it('keeps the OS keyring in the dev app unless the environment disables it', () => {
+    expect(resolveDisableKeyring({})).toBe('0');
+    expect(resolveDisableKeyring({ KUKURI_DISABLE_KEYRING: '1' })).toBe('1');
   });
 });

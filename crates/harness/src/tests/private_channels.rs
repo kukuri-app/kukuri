@@ -2,7 +2,6 @@ use super::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn private_channel_invite_connectivity() {
-    disable_keyring_for_tests();
     let _serial = acquire_scenario_test_lock().await;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -25,7 +24,6 @@ async fn friend_only_rotate_requires_fresh_grant() {
         // CI still covers fresh-grant rotation in app-api and desktop-runtime.
         return;
     }
-    disable_keyring_for_tests();
     let _serial = acquire_scenario_test_lock().await;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -371,7 +369,6 @@ async fn friend_plus_share_freeze_rotate_connectivity() {
         // CI still covers freeze/rotate/share recovery in app-api and desktop-runtime.
         return;
     }
-    disable_keyring_for_tests();
     let _serial = acquire_scenario_test_lock().await;
     let dir = tempfile::tempdir().expect("tempdir");
     let db_a = dir.path().join("friend-plus-harness-a.db");

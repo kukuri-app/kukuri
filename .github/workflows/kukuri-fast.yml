@@ -421,8 +421,6 @@ jobs:
         run: cargo xtask scenario community_node_public_connectivity
 
       - name: Community-node index client scenario
-        env:
-          KUKURI_DISABLE_KEYRING: "1"
         run: |
           cargo xtask scenario community_node_index_query_client
           cargo xtask scenario community_node_report_routing

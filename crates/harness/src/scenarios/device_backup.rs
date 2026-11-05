@@ -18,7 +18,6 @@ pub(crate) async fn run_device_backup_restore(
     scenario: &ScenarioSpec,
     artifacts_dir: &Path,
 ) -> Result<HarnessResult> {
-    unsafe { std::env::set_var("KUKURI_DISABLE_KEYRING", "1") };
     let run_dir = tempfile::Builder::new()
         .prefix("device-backup-")
         .tempdir_in(artifacts_dir)?;

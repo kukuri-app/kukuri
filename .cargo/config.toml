@@ -3,6 +3,10 @@ xtask = "run --package xtask --"
 # harness を使わない command 用（e2e-smoke / scenario 以外）。CI の build 量を減らす（#1120）。
 xtask-lite = "run --package xtask --no-default-features --"
 
+# cargo から起動した試験が、OS の資格情報へ一時 DB の項目を残さない。環境にある値を優先する（`tauri:dev` は 0 を渡す）。
+[env]
+KUKURI_DISABLE_KEYRING = "1"
+
 # ブラウザ（wasm32-unknown-unknown）の乱数源と試験の実行（ADR 0056 §3）。
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

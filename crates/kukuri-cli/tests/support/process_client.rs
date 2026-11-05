@@ -87,7 +87,6 @@ impl ProcessClient {
             .env_remove("KUKURI_ADVERTISE_PORT")
             .env("XDG_DATA_HOME", self.root.path().join("data"))
             .env("XDG_RUNTIME_DIR", self.root.path().join("run"))
-            .env("KUKURI_DISABLE_KEYRING", "1")
             .env("KUKURI_DISCOVERY_MODE", "static_peer")
             .env("KUKURI_BIND_ADDR", "127.0.0.1:0")
             .env("KUKURI_ADVERTISE_HOST", "127.0.0.1");
