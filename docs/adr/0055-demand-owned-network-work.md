@@ -135,7 +135,7 @@ holderは次の5種類だけで、同じkeyを複数のholderが持っても枠�
   最も新しい日を1回に1日だけ、索引と`sessions/live/`・`sessions/game/`のkeyを最後まで読み、読み終えた日にする（初回と停止していた
   間の日も同じ。`topic_retention_days`）。読む日は、読む前にtopicのbucketのreplicaを保護の登録（`topic_retention_scopes`）に置く。
   登録した日のbucketのrecordは、cacheへの書込みと同じtransactionで保護参照`retain:<topic>:<bucket>`を付け、登録より前に置かれた
-  recordには1回128件まで付ける。添付とDomeの資材のblobは取得の前に、manifestとリンクプレビューの画像のblobと、Domeのownerの
+  recordには1回128件まで付ける（複数の日へ進み、recordの無い日も1件と数えるので、期間の日数の回を待たない。#2034）。添付とDomeの資材のblobは取得の前に、manifestとリンクプレビューの画像のblobと、Domeのownerの
   制御領域のrecordは読んだ後に付ける。保護参照の日は、内容の日（bucketの日）。保護参照を付けたrecordとblobの大きさは、
   付けたとき・書き換わったとき・外したときにtopicと日ごと、全体の合計へ足し引きする（毎回の全件の合計は取らない）。合計は
   保護参照ごとの和で、同じblobを複数の日やtopicが参照すると、参照ごとに数える。1回の回ごとに、外している途中の日（期間を

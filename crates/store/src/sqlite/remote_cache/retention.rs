@@ -256,9 +256,9 @@ impl SqliteStore {
         Ok(refs.len())
     }
 
-    /// 登録より前に置かれた、保護する bucket の record に、日の保護参照を `limit` 件まで付ける。付けた件数を返す。
-    /// record の cache key は `<replica>\0<key>\0<author>` なので、bucket の record は `<replica>\0` から `<replica>\x01`
-    /// の前までに並ぶ。
+    /// 登録より前に置かれた、保護する bucket の record に、日の保護参照を付ける。複数の日へ進み、付けた record と、付け
+    /// 終えた record の無い日(1 件と数える)を合わせて `limit` まで進める。進めた件数を返す。record の cache key は
+    /// `<replica>\0<key>\0<author>` なので、bucket の record は `<replica>\0` から `<replica>\x01` の前までに並ぶ。
     pub(in crate::sqlite) async fn protect_retained_scopes_step(
         &self,
         limit: usize,
@@ -272,44 +272,49 @@ impl SqliteStore {
             return Ok(0);
         }
         let mut update = self.begin_protected_ref_update().await?;
-        let scope = sqlx::query(
-            "SELECT scope_key, topic_id, bucket, protect_after FROM topic_retention_scopes \
-             WHERE protect_after IS NOT NULL ORDER BY scope_key LIMIT 1",
-        )
-        .fetch_optional(&mut *update.tx)
-        .await?;
-        let Some(scope) = scope else {
-            self.commit_protected_ref_update(update).await?;
-            return Ok(0);
-        };
-        let scope_key: String = scope.get("scope_key");
-        let topic_id: String = scope.get("topic_id");
-        let bucket = u64::try_from(scope.get::<i64, _>("bucket"))?;
-        let after: String = scope.get("protect_after");
-        let lower = if after.is_empty() {
-            format!("{scope_key}\0")
-        } else {
-            after
-        };
-        let keys = sqlx::query_scalar::<_, String>(
-            "SELECT cache_key FROM remote_content_cache \
-             WHERE kind = 'record' AND cache_key > ?1 AND cache_key < ?2 ORDER BY cache_key LIMIT ?3",
-        )
-        .bind(&lower)
-        .bind(format!("{scope_key}\u{1}"))
-        .bind(i64::try_from(limit)?)
-        .fetch_all(&mut *update.tx)
-        .await?;
-        for key in &keys {
-            Self::claim_retained_in_tx(&mut update.tx, "record", key, &topic_id, bucket).await?;
-        }
-        sqlx::query("UPDATE topic_retention_scopes SET protect_after = ?2 WHERE scope_key = ?1")
+        let mut spent = 0;
+        while spent < limit {
+            let scope = sqlx::query(
+                "SELECT scope_key, topic_id, bucket, protect_after FROM topic_retention_scopes \
+                 WHERE protect_after IS NOT NULL ORDER BY scope_key LIMIT 1",
+            )
+            .fetch_optional(&mut *update.tx)
+            .await?;
+            let Some(scope) = scope else { break };
+            let scope_key: String = scope.get("scope_key");
+            let topic_id: String = scope.get("topic_id");
+            let bucket = u64::try_from(scope.get::<i64, _>("bucket"))?;
+            let after: String = scope.get("protect_after");
+            let lower = if after.is_empty() {
+                format!("{scope_key}\0")
+            } else {
+                after
+            };
+            let left = limit - spent;
+            let keys = sqlx::query_scalar::<_, String>(
+                "SELECT cache_key FROM remote_content_cache \
+                 WHERE kind = 'record' AND cache_key > ?1 AND cache_key < ?2 ORDER BY cache_key LIMIT ?3",
+            )
+            .bind(&lower)
+            .bind(format!("{scope_key}\u{1}"))
+            .bind(i64::try_from(left)?)
+            .fetch_all(&mut *update.tx)
+            .await?;
+            for key in &keys {
+                Self::claim_retained_in_tx(&mut update.tx, "record", key, &topic_id, bucket)
+                    .await?;
+            }
+            sqlx::query(
+                "UPDATE topic_retention_scopes SET protect_after = ?2 WHERE scope_key = ?1",
+            )
             .bind(&scope_key)
-            .bind(keys.last().filter(|_| keys.len() == limit))
+            .bind(keys.last().filter(|_| keys.len() == left))
             .execute(&mut *update.tx)
             .await?;
+            spent += keys.len().max(1);
+        }
         self.commit_protected_ref_update(update).await?;
-        Ok(keys.len())
+        Ok(spent)
     }
 
     /// 保護参照を外す日を選ぶ。期間を過ぎた日を外す日にしてから、外している途中の日を古い順に返す。無ければ、合計が容量を
