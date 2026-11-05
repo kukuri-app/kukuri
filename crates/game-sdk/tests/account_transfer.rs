@@ -631,6 +631,12 @@ fn the_game_account_is_merged_into_an_existing_account_and_its_relations_follow(
     }
     let (others, invite) = channel_with_invite(other);
     join(game, &invite);
+    // 参加の知らせは A の送信待ちから持ち主へ届く。切り替えた後の A は送らないので、まとめる前に届いたことを確かめる。
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while participants(other, &others) != 2 {
+        assert!(Instant::now() < deadline, "the owner did not see A join");
+        std::thread::sleep(Duration::from_millis(100));
+    }
 
     // B を受けても、残す進行の選択で取り消せば何も変わらない（B は profile に残り、切り替えない）。
     let received = receive(&source, game);
@@ -726,11 +732,11 @@ fn the_game_account_is_merged_into_an_existing_account_and_its_relations_follow(
     assert!(channels.contains(&owned), "{channels:?}");
     // A の参加資格は残る（持ち主から見て、持ち主と A の 2 人のまま）。新しい招待を出すと epoch が変わり、以後は
     // その epoch に入った人を数える。
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while participants(other, &others) != 2 {
-        assert!(Instant::now() < deadline, "A is no longer a participant");
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    assert_eq!(
+        participants(other, &others),
+        2,
+        "A is no longer a participant"
+    );
     let again = secret_output(
         other,
         &id("invite"),

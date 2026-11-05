@@ -173,13 +173,15 @@ async fn a_second_reread_reads_the_head_again() -> Result<()> {
     reader.learn(&writer).await?;
     writer.learn(&reader).await?;
     let topic = "kukuri:topic:r5h-reread-head";
-    let mut last = String::new();
     for index in 0..60 {
-        last = writer
+        writer
             .app
             .create_post(topic, &format!("bulk {index}"), None)
             .await?;
     }
+    // 索引は秒の新しい順で、同じ秒の中は ID の順になる。1 ページに入るよう、最新の投稿を次の秒に置く。
+    sleep(Duration::from_millis(1_100)).await;
+    let last = writer.app.create_post(topic, "the newest", None).await?;
     reader.app.reread_scope(topic, &TimelineScope::Public).await;
     assert!(
         reader.projected(&last).await,
