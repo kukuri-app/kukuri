@@ -836,8 +836,7 @@ impl IrohGossipTransport {
                         gossip_lagged = gossip_lagged.saturating_add(1);
                         continue;
                     }
-                    // 上流が今後足す event（iroh-gossip 0.102 で non_exhaustive）。
-                    Ok(_) => continue,
+                    Ok(_) => continue, // 上流が今後足す event（iroh-gossip 0.102 で non_exhaustive）
                     Err(error) => {
                         let message = format!("gossip receiver closed: {error}");
                         *last_error_task.lock().await = Some(message.clone());
