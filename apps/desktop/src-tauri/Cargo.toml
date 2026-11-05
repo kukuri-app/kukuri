@@ -60,7 +60,7 @@ tempfile = "3.27.0"
 
 [patch.crates-io]
 # Keep the standalone Tauri workspace on the same docs error-path fix as the root.
-iroh-docs = { git = "https://github.com/KingYoSun/iroh-docs", rev = "b5c5d47585111ef8bd49845677752bf010cfa574" }
+iroh-docs = { git = "https://github.com/KingYoSun/iroh-docs", rev = "ef767da5e84745ae9e0f64737400c74853af2877" }
 # Match the root workspace's inactive address/connection reclamation fixes.
 iroh = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
 iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
