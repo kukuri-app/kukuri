@@ -404,10 +404,10 @@ iroh-blobs は fork しない。Web は上流の `MemStore` と、blob の提供
 3. WASM の build: 上の共用 crate の wasm32 の clippy。
 4. browser↔native の roundtrip: `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer`（保存 → reload → native との送受信、relay と WebRTC の経路、`MemStore` に blob-service の内容が残らないこと、取得 gate の前提）。
 
-### 上流 iroh-docs の patch rev を上げるとき（ADR 0058 §7、#1216 W3 AC-4）
-iroh-docs は fork せず、root `Cargo.toml` の `[patch.crates-io]` で上流の rev を固定する。native は redb の永続 store、Web は `Store::memory()` を使い、Web の本人の record は保存 trait（`ContentCacheStore`）の IndexedDB の実装が持つ。Web の memory store は、上流の GC と iroh-docs の保護（`ProtectCallbackHandler`）で閉じた replica の内容を消す。上流の変更点（特に store の形式、`drop_doc`、`ProtectCallbackHandler`、`get_many` の並び）を読んでから次を順に行い、どれかが通らない rev は採らない。型の compile が通ることだけを Web の保存の成功としない。
+### iroh-docs の patch rev を上げるとき（ADR 0058 §1・§7、#1216 W3 AC-4）
+iroh-docs は root `Cargo.toml` と `apps/desktop/src-tauri/Cargo.toml` の `[patch.crates-io]` で fork `KingYoSun/iroh-docs` の rev を固定する（2026-11-05 から。上流 main に未 merge の #114 と依存の版上げだけを載せる。ADR 0058 §1）。上流が #114 と依存の更新を含む版を出したら、patch を外して crates.io の版へ戻す。native は redb の永続 store、Web は `Store::memory()` を使い、Web の本人の record は保存 trait（`ContentCacheStore`）の IndexedDB の実装が持つ。Web の memory store は、上流の GC と iroh-docs の保護（`ProtectCallbackHandler`）で閉じた replica の内容を消す。上流の変更点（特に store の形式、`drop_doc`、`ProtectCallbackHandler`、`get_many` の並び）を読んでから次を順に行い、どれかが通らない rev は採らない。型の compile が通ることだけを Web の保存の成功としない。
 
-1. root `Cargo.toml` の iroh-docs の patch rev を上げ、`cargo update -p iroh-docs` で lockfile を更新する。
+1. fork の branch を上流 main へ rebase して push し、root と `apps/desktop/src-tauri` の `Cargo.toml` の iroh-docs の patch rev を上げ、それぞれ `cargo update -p iroh-docs` で lockfile を更新する。
 2. native の保存互換: `cargo test -p kukuri-docs-sync -p kukuri-iroh-node`（既存の redb の store を開き直す試験、有界な reader、本人の record の保護と保持分の併合）と `cargo test -p kukuri-desktop-runtime protected_migration`（旧 store からの移行）。
 3. WASM の build: 上の共用 crate の wasm32 の clippy。
 4. browser での動作: `scripts/ci/browser_peer_test.sh kukuri-web-runtime web_storage_peer`（本人の record の保護、reload の後の復元、native との読み合い、閉じた replica の memory からの回収、失敗の負例）。

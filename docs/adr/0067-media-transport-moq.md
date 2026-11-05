@@ -138,6 +138,7 @@ Accepted（#1031、2026-10-13 のユーザー判断 D1〜D4）。実装と検証
   収録時刻が後退していない間は、消費済みPCMより前へ再配置しない。デバイスbufferの変動で収録時刻が後退した場合は、保持した履歴への再配置を維持する。
   実際の再生・収録は待たせず、参照の上限・回収とSA-4の5%・10%基準を維持する。
 - #2029（2026-11-04のユーザー判断）では、同じforkの `abcace3aaeeda82a6cc0ffe932736c3c44f89b13` に進める。再生の `Config::wait_for_device` を足し、最初の機器が開けないときも失敗せず、機器を失ったときと同じ間隔（0.5〜4秒）で開き直す。
+- 2026-11-05（依存の更新、ユーザー判断）では、fork の変更を上流の release の commit `51e93fc22`（moq-audio 0.1.20・moq-tokio 0.19.33・moq-mux 0.10.21）へ載せ替えた branch `kukuri/rebase-0.1.20` の `0d4ed185c37e01331a21f22b3e02dd4f08fb7b4a` に進め、workspace の版を `moq-net` 0.3.20・`hang` 0.21.21・`moq-tokio` 0.19.33・`moq-audio` 0.1.20・`moq-mux` 0.10.21 にする。上流の release 系列には fork の修正（参照の読み、時刻合わせの有界履歴、wasm の moq-tokio、web-time、`wait_for_device`）が無いので fork を続ける。submodule を外した commit は上流が同じ変更を入れたので落とした。`web-transport-iroh` は 0.7 のまま（0.8 は web-transport-trait 0.5 を要求し、公開済みの moq-net は 0.4 系）。
 - aws-lc は既に desktop の build に入っている（str0m 経由）ため、web-transport-iroh の既定の TLS で新しい C の build は増えない。
 - 輻輳制御と QUIC の stream 数の上限は endpoint の既定のままとし、変える必要は #1033・#1034 の計測で示す。
 - moq 側の版を上げるときは、moq-lite の版（§1）と ALPN の版を同時に見直す。

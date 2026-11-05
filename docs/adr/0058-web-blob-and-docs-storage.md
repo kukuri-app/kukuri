@@ -26,7 +26,8 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
 
 ### 1. 上流の memory store を使う
 
-- Web の iroh-blobs は上流の `MemStore`、iroh-docs は上流（root `Cargo.toml` の patch rev）の `Store::memory()` を使う。どちらも fork しない。wire protocol・hash・取得 gate は native と同じ。
+- Web の iroh-blobs は上流の `MemStore`、iroh-docs は root `Cargo.toml` の patch rev の `Store::memory()` を使う。store・actor・同期 protocol に kukuri の変更を入れない。wire protocol・hash・取得 gate は native と同じ。
+  - 2026-11-05 のユーザー判断で、iroh-docs の patch を上流の PR #114 の rev から fork `KingYoSun/iroh-docs` の branch `kukuri/pr114-blobs-0.104-gossip-0.102`（`b5c5d47585111ef8bd49845677752bf010cfa574`）へ移した。上流 main（`8cfeacb`。#117 の range の namespace への制限、#118 の短い record identifier の拒否を含む）に未 merge の #114 を載せ、依存を iroh-blobs 0.104・iroh-gossip 0.102 へ上げたもの（gossip の `Event` の non_exhaustive に合わせた match 1 か所だけ）。上流の iroh-docs が main でも iroh-blobs 0.103・iroh-gossip 0.101 のままで、上流 0.102 が kukuri の iroh-gossip の fork の変更を含むため、iroh-gossip の fork をやめるのに要る。§7 の不採用の案（fork して非同期の store を足す）は引き続き採らない。上流が #114 と依存の更新を含む版を出したら、crates.io の版へ戻す。
 - Web の blob-service は `MemStore` へ書かない。本人の blob（`put_owned_blob`）・remote の blob（`put_remote_blob`）・pin は保存 trait（§2）へだけ書き、取得は一時 bytes の経路（ephemeral）だけを使う。
   これで `MemStore` に残るのは iroh-docs の entry が参照する内容と転送中の temp tag だけになる（その保持の上限は W3 AC-1 が決める）。blob の回収に上流の GC は使わない（docs の閉じた replica の内容の回収にだけ使う。§7）。
 - Web が持つ blob を相手へ提供するのは `/kukuri/remote-blob/1` とする。iroh-blobs の取得は `MemStore` に無いので Missing になり、既存の fallback がこの protocol で取りに来る。protocol は変えない。
@@ -128,7 +129,7 @@ native には、同じ責務を持つ kukuri の層が既にある（`docs/archi
 - 再構築・再送は、保存 trait の record をそのまま提供する。docs へ書き直さないので、更新の ID と時刻は変わらない。
   実装（W3 AC-3）: 手元の exact・docs author 指定・key の一覧と、相手への key の一覧（topic の replica 以外）が、保存 trait の自分の record（`own_only`）を合わせる（native は保護参照 `own_docs` の索引、Web は `own`・`own_by_author` の索引）。一覧の併合は `merge_record_keys` を共用する。
 - 保存 trait への書込みに失敗したら、書込み全体を失敗として返し、偽の保存成功を返さない。native の `protect_own_record` は cache や account が無いと何もせずに成功を返すが、Web には常に保存 trait があるので、この分岐を Web の保護の成功として扱わない。
-- 上流 iroh-docs の patch rev を更新するときの互換検証（native の保存互換、WASM の build と動作）の手順を AC-4 で `docs/runbooks/dev.md` に書く。
+- iroh-docs の patch rev（§1 の fork）を更新するときの互換検証（native の保存互換、WASM の build と動作）の手順を AC-4 で `docs/runbooks/dev.md` に書く。
 
 採らない方式:
 

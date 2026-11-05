@@ -77,7 +77,7 @@ UPM package includes them under `Documentation~`.
 
 ## Rust crates
 
-Total packages: 1070
+Total packages: 1068
 
 | Package | Version | License | Source |
 | --- | --- | --- | --- |
@@ -142,7 +142,7 @@ Total packages: 1070
 | axum | 0.8.9 | MIT | https://crates.io/crates/axum |
 | axum-core | 0.5.6 | MIT | https://crates.io/crates/axum-core |
 | backon | 1.6.0 | Apache-2.0 | https://crates.io/crates/backon |
-| bao-tree | 0.16.1 | MIT OR Apache-2.0 | https://crates.io/crates/bao-tree |
+| bao-tree | 0.17.0 | MIT OR Apache-2.0 | https://crates.io/crates/bao-tree |
 | base16ct | 1.0.0 | Apache-2.0 OR MIT | https://crates.io/crates/base16ct |
 | base64 | 0.21.7 | MIT OR Apache-2.0 | https://crates.io/crates/base64 |
 | base64 | 0.22.1 | MIT OR Apache-2.0 | https://crates.io/crates/base64 |
@@ -328,7 +328,6 @@ Total packages: 1070
 | filetime | 0.2.29 | MIT/Apache-2.0 | https://crates.io/crates/filetime |
 | find-msvc-tools | 0.1.15 | MIT OR Apache-2.0 | https://crates.io/crates/find-msvc-tools |
 | fixed-resample | 0.13.0 | MIT | https://crates.io/crates/fixed-resample |
-| fixedbitset | 0.5.7 | MIT OR Apache-2.0 | https://crates.io/crates/fixedbitset |
 | flagset | 0.4.7 | Apache-2.0 | https://crates.io/crates/flagset |
 | flate2 | 1.1.10 | MIT OR Apache-2.0 | https://crates.io/crates/flate2 |
 | flume | 0.12.0 | Apache-2.0/MIT | https://crates.io/crates/flume |
@@ -345,7 +344,6 @@ Total packages: 1070
 | futures | 0.3.34 | MIT OR Apache-2.0 | https://crates.io/crates/futures |
 | futures-buffered | 0.2.13 | MIT | https://crates.io/crates/futures-buffered |
 | futures-channel | 0.3.34 | MIT OR Apache-2.0 | https://crates.io/crates/futures-channel |
-| futures-concurrency | 7.7.1 | MIT OR Apache-2.0 | https://crates.io/crates/futures-concurrency |
 | futures-core | 0.3.34 | MIT OR Apache-2.0 | https://crates.io/crates/futures-core |
 | futures-executor | 0.3.34 | MIT OR Apache-2.0 | https://crates.io/crates/futures-executor |
 | futures-intrusive | 0.5.0 | MIT OR Apache-2.0 | https://crates.io/crates/futures-intrusive |
@@ -454,10 +452,10 @@ Total packages: 1070
 | ipnet | 2.12.2 | MIT OR Apache-2.0 | https://crates.io/crates/ipnet |
 | iroh | 1.4.1 | MIT OR Apache-2.0 | https://crates.io/crates/iroh |
 | iroh-base | 1.4.1 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-base |
-| iroh-blobs | 0.103.1 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-blobs |
+| iroh-blobs | 0.104.1 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-blobs |
 | iroh-dns | 1.4.1 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-dns |
 | iroh-docs | 0.101.0 | MIT/Apache-2.0 | https://crates.io/crates/iroh-docs |
-| iroh-gossip | 0.101.0 | MIT/Apache-2.0 | https://crates.io/crates/iroh-gossip |
+| iroh-gossip | 0.102.0 | MIT/Apache-2.0 | https://crates.io/crates/iroh-gossip |
 | iroh-io | 0.6.2 | Apache-2.0 OR MIT | https://crates.io/crates/iroh-io |
 | iroh-mainline-address-lookup | 0.6.0 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-mainline-address-lookup |
 | iroh-mainline-endpoint-discovery | 0.1.3 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-mainline-endpoint-discovery |
@@ -465,7 +463,7 @@ Total packages: 1070
 | iroh-metrics-derive | 1.0.1 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-metrics-derive |
 | iroh-relay | 1.4.1 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-relay |
 | iroh-tickets | 1.0.0 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-tickets |
-| iroh-util | 0.6.0 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-util |
+| iroh-util | 0.7.0 | MIT OR Apache-2.0 | https://crates.io/crates/iroh-util |
 | irpc | 0.17.0 | Apache-2.0/MIT | https://crates.io/crates/irpc |
 | irpc-derive | 0.17.0 | Apache-2.0/MIT | https://crates.io/crates/irpc-derive |
 | is | 0.12.0 | MIT OR Apache-2.0 | https://crates.io/crates/is |
@@ -543,17 +541,17 @@ Total packages: 1070
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | https://crates.io/crates/miniz_oxide |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | https://crates.io/crates/miniz_oxide |
 | mio | 1.2.4 | MIT | https://crates.io/crates/mio |
-| moq-audio | 0.1.11 | MIT OR Apache-2.0 | https://crates.io/crates/moq-audio |
+| moq-audio | 0.1.20 | MIT OR Apache-2.0 | https://crates.io/crates/moq-audio |
 | moq-binary | 0.1.20 | MIT OR Apache-2.0 | https://crates.io/crates/moq-binary |
 | moq-flate | 0.2.0 | MIT OR Apache-2.0 | https://crates.io/crates/moq-flate |
 | moq-json | 0.5.18 | MIT OR Apache-2.0 | https://crates.io/crates/moq-json |
 | moq-loc | 0.2.29 | MIT OR Apache-2.0 | https://crates.io/crates/moq-loc |
 | moq-msf | 0.5.1 | MIT OR Apache-2.0 | https://crates.io/crates/moq-msf |
-| moq-mux | 0.10.12 | MIT OR Apache-2.0 | https://crates.io/crates/moq-mux |
+| moq-mux | 0.10.21 | MIT OR Apache-2.0 | https://crates.io/crates/moq-mux |
 | moq-net | 0.3.20 | MIT OR Apache-2.0 | https://crates.io/crates/moq-net |
 | moq-pattern | 0.1.4 | MIT OR Apache-2.0 | https://crates.io/crates/moq-pattern |
 | moq-sock | 0.2.0 | MIT OR Apache-2.0 | https://crates.io/crates/moq-sock |
-| moq-tokio | 0.19.24 | MIT OR Apache-2.0 | https://crates.io/crates/moq-tokio |
+| moq-tokio | 0.19.33 | MIT OR Apache-2.0 | https://crates.io/crates/moq-tokio |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 | https://crates.io/crates/moxcms |
 | mp4-atom | 0.15.0 | MIT OR Apache-2.0 | https://crates.io/crates/mp4-atom |
 | mpeg2ts | 0.6.1 | MIT | https://crates.io/crates/mpeg2ts |

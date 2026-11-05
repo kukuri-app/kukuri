@@ -619,9 +619,9 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.16.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "149a2a6017771141e2cd5d0c55b3892d8ff1958df5c318b2e496bf3544b426ed"
+checksum = "50d0e17303b78c9bb240014f3f401ecae5c0460438ace49a171e5f97e3ae57ba"
 dependencies = [
  "blake3",
  "bytes",
@@ -1981,7 +1981,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2090,12 +2090,6 @@ dependencies = [
  "ringbuf",
  "rubato",
 ]
-
-[[package]]
-name = "fixedbitset"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flagset"
@@ -2214,19 +2208,6 @@ checksum = "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4"
 dependencies = [
  "futures-core",
  "futures-sink",
-]
-
-[[package]]
-name = "futures-concurrency"
-version = "7.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "175cd8cca9e1d45b87f18ffa75088f2099e3c4fe5e2f83e42de112560bea8ea6"
-dependencies = [
- "fixedbitset",
- "futures-core",
- "futures-lite",
- "pin-project",
- "smallvec",
 ]
 
 [[package]]
@@ -3192,11 +3173,10 @@ dependencies = [
 
 [[package]]
 name = "iroh-blobs"
-version = "0.103.1"
+version = "0.104.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3148ad01585eb6b7cfb641e4100564f4f56db644f4cbed8c10ab2478663161f"
+checksum = "4f0c0f527363afa91564f82080fc5d31dd463e1831df0b546ff9594bbfa3cb60"
 dependencies = [
- "arrayvec",
  "bao-tree",
  "bytes",
  "cfg_aliases",
@@ -3256,7 +3236,7 @@ dependencies = [
 [[package]]
 name = "iroh-docs"
 version = "0.101.0"
-source = "git+https://github.com/n0-computer/iroh-docs?rev=e7233d14853cb4db9966e30050bac1e689cdeec8#e7233d14853cb4db9966e30050bac1e689cdeec8"
+source = "git+https://github.com/KingYoSun/iroh-docs?rev=b5c5d47585111ef8bd49845677752bf010cfa574#b5c5d47585111ef8bd49845677752bf010cfa574"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -3294,14 +3274,14 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.101.0"
-source = "git+https://github.com/KingYoSun/iroh-gossip?rev=23cd6cc76d51582b3678b3b743db72d51ce296d4#23cd6cc76d51582b3678b3b743db72d51ce296d4"
+version = "0.102.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f78267c0d936a3f51b8aa24419a7a267e42d1800ac99315f48045f2540c57922"
 dependencies = [
  "blake3",
  "bytes",
  "data-encoding",
  "derive_more",
- "futures-concurrency",
  "hex",
  "indexmap 2.14.2",
  "iroh",
@@ -3312,6 +3292,7 @@ dependencies = [
  "n0-future",
  "postcard",
  "rand 0.10.3",
+ "rustc-hash",
  "serde",
  "tokio",
  "tokio-util",
@@ -3480,9 +3461,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-util"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20e41eb982f15230c55f0a70a74a514360e1f565b07861924fd0e8db172b3d00"
+checksum = "889d5cc9da2eaac9f63657237c491db17d1fe9fffdc7c0f2f0e04c49d5d45053"
 dependencies = [
  "derive_more",
  "iroh",
@@ -4884,8 +4865,8 @@ dependencies = [
 
 [[package]]
 name = "moq-audio"
-version = "0.1.11"
-source = "git+https://github.com/KingYoSun/moq?rev=abcace3aaeeda82a6cc0ffe932736c3c44f89b13#abcace3aaeeda82a6cc0ffe932736c3c44f89b13"
+version = "0.1.20"
+source = "git+https://github.com/KingYoSun/moq?rev=0d4ed185c37e01331a21f22b3e02dd4f08fb7b4a#0d4ed185c37e01331a21f22b3e02dd4f08fb7b4a"
 dependencies = [
  "block2",
  "bytes",
@@ -4979,13 +4960,14 @@ dependencies = [
 
 [[package]]
 name = "moq-mux"
-version = "0.10.12"
-source = "git+https://github.com/KingYoSun/moq?rev=abcace3aaeeda82a6cc0ffe932736c3c44f89b13#abcace3aaeeda82a6cc0ffe932736c3c44f89b13"
+version = "0.10.21"
+source = "git+https://github.com/KingYoSun/moq?rev=0d4ed185c37e01331a21f22b3e02dd4f08fb7b4a#0d4ed185c37e01331a21f22b3e02dd4f08fb7b4a"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
  "bytes",
  "crc",
+ "ebml-iterable",
  "h264-parser",
  "hang",
  "kio 0.6.4",
@@ -5058,8 +5040,8 @@ dependencies = [
 
 [[package]]
 name = "moq-tokio"
-version = "0.19.24"
-source = "git+https://github.com/KingYoSun/moq?rev=abcace3aaeeda82a6cc0ffe932736c3c44f89b13#abcace3aaeeda82a6cc0ffe932736c3c44f89b13"
+version = "0.19.33"
+source = "git+https://github.com/KingYoSun/moq?rev=0d4ed185c37e01331a21f22b3e02dd4f08fb7b4a#0d4ed185c37e01331a21f22b3e02dd4f08fb7b4a"
 dependencies = [
  "bytes",
  "futures",
@@ -5598,7 +5580,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6728,7 +6710,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7218,7 +7200,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7311,7 +7293,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8670,7 +8652,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9819,7 +9801,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

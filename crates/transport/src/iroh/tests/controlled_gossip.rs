@@ -58,6 +58,7 @@ async fn emit_to_selected_peer(
             // Timer admission and maintenance remain explicit production work.
             OutEvent::ScheduleTimer(_, _) | OutEvent::PeerData(_, _) => {}
             OutEvent::DisconnectPeer(_) => panic!("unexpected disconnect during roundtrip"),
+            other => panic!("unexpected gossip output during roundtrip: {other:?}"),
         }
     }
     events
