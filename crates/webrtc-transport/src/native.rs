@@ -24,6 +24,10 @@ use crate::{
 /// STUN の送信先ごとに応答を待つ上限。
 const STUN_TIMEOUT: Duration = Duration::from_millis(500);
 
+/// DataChannel を閉じた後に受信と timer を続ける上限。sctp-proto 0.10.8 から、相手は reset より前に送った DATA を受け取る
+/// （再送 0 回で捨てた分は FORWARD-TSN で越える）まで stream を閉じず、こちらの DATA の ack を待ってから reset を返す。
+const CLOSE_LINGER: Duration = Duration::from_secs(1);
+
 /// 既定の経路の IP（パケットは送らない）。
 pub(crate) fn default_route_ip() -> Option<IpAddr> {
     let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
@@ -145,9 +149,9 @@ impl Driver {
                 }
                 Output::Event(event) => {
                     if !self.handle_event(event) {
-                        // 相手が閉じた DataChannel への応答（こちらの stream の reset）を送り切ってから終える。送らずに終えると、
+                        // 相手が閉じた DataChannel への応答（こちらの stream の reset）を返してから終える。返さずに終えると、
                         // 相手の DataChannel は closing のまま close の event が出ない。
-                        self.flush().await;
+                        self.linger().await;
                         return Ok(None);
                     }
                 }
@@ -185,17 +189,59 @@ impl Driver {
     async fn close(&mut self) -> String {
         if let Some(id) = self.channel {
             self.rtc.direct_api().close_data_channel(id);
-            // 自分の `ChannelClose` の event では止めずに、要求を送り切る。
-            self.flush().await;
+            // 自分の `ChannelClose` の event では止めない。
+            self.linger().await;
         }
         "closed".to_string()
     }
 
-    /// 出力を `Timeout` まで出し、送信を送り切る（event は捨てる）。
-    async fn flush(&mut self) {
+    /// stream の reset の送受信を `CLOSE_LINGER` の間続ける（event は捨てる）。reset の完了は event にならないので、上限まで待つ。
+    async fn linger(&mut self) {
+        let end = Instant::now() + CLOSE_LINGER;
+        let mut buf = vec![0u8; 2048];
+        while let Some(next) = self.flush().await {
+            if !self.rtc.is_alive() || Instant::now() >= end {
+                break;
+            }
+            let wait = next.min(end).saturating_duration_since(Instant::now());
+            tokio::select! {
+                received = self.socket.recv_from(&mut buf) => {
+                    if let Ok((len, source)) = received {
+                        let _ = self.receive(&buf[..len], source);
+                    }
+                }
+                _ = tokio::time::sleep(wait.max(Duration::from_millis(1))) => {
+                    let _ = self.rtc.handle_input(Input::Timeout(Instant::now()));
+                }
+            }
+        }
+    }
+
+    /// 受け取った UDP の packet を渡す。
+    fn receive(&mut self, contents: &[u8], source: SocketAddr) -> Result<()> {
+        let Ok(contents) = contents.try_into() else {
+            return Ok(());
+        };
+        let input = Input::Receive(
+            Instant::now(),
+            Receive {
+                proto: Protocol::Udp,
+                source,
+                destination: self.local,
+                contents,
+            },
+        );
+        if self.rtc.accepts(&input) {
+            self.rtc.handle_input(input)?;
+        }
+        Ok(())
+    }
+
+    /// 出力を `Timeout` まで出し、送信を送り切る（event は捨てる）。次の timer の時刻を返す。
+    async fn flush(&mut self) -> Option<Instant> {
         while let Ok(output) = self.rtc.poll_output() {
             match output {
-                Output::Timeout(_) => break,
+                Output::Timeout(deadline) => return Some(deadline),
                 Output::Transmit(transmit) => {
                     let _ = self
                         .socket
@@ -205,6 +251,7 @@ impl Driver {
                 Output::Event(_) => {}
             }
         }
+        None
     }
 
     fn send(&mut self, datagram: &[u8]) -> Result<()> {
@@ -324,21 +371,7 @@ async fn run(start: Start) -> Result<String> {
                 let Ok((len, source)) = received else {
                     continue;
                 };
-                let Ok(contents) = buf[..len].try_into() else {
-                    continue;
-                };
-                let input = Input::Receive(
-                    Instant::now(),
-                    Receive {
-                        proto: Protocol::Udp,
-                        source,
-                        destination: driver.local,
-                        contents,
-                    },
-                );
-                if driver.rtc.accepts(&input) {
-                    driver.rtc.handle_input(input)?;
-                }
+                driver.receive(&buf[..len], source)?;
             }
             _ = tokio::time::sleep(wait.max(Duration::from_millis(1))) => {
                 driver.rtc.handle_input(Input::Timeout(Instant::now()))?;

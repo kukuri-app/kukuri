@@ -113,7 +113,7 @@ impl DocsSync for ControlledDocs {
         {
             let skip = self
                 .local_gate_skip
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
                 .is_ok();
             let gate = if skip {
                 None

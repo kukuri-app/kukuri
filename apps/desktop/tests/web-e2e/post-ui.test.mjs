@@ -21,7 +21,7 @@ before(async () => {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
-  browser = await remote({ logLevel: 'error', waitforTimeout: 1000, capabilities: {
+  browser = await remote({ logLevel: 'error', waitforTimeout: 1000, strictSelectors: false, capabilities: {
     browserName: 'chrome',
     'goog:chromeOptions': { args: ['--headless=new', '--no-sandbox'] },
     ...(process.env.CHROMEDRIVER ? { 'wdio:chromedriverOptions': { binary: process.env.CHROMEDRIVER } } : {}),
@@ -34,7 +34,7 @@ before(async () => {
       await browser.execute(() => window.renderPost());
     }
     return exists;
-  }, true);
+  }, { attachToElement: true });
 });
 after(async () => {
   await browser?.deleteSession();

@@ -31,7 +31,7 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 
 - 新しい crate `crates/webrtc-transport`（package `kukuri-webrtc-transport`）に閉じる。iroh の `unstable-custom-transports` を有効にするのはこの crate だけにし、不安定な API をこの crate の外へ出さない。
 - 共通部分: `CustomTransport` の実装、アドレスの形、session の登録簿、資源の上限、W10 へ渡す session の API。
-- native backend（`cfg(not(target_family = "wasm"))`）: str0m 0.24（`default-features = false, features = ["rust-crypto"]`。aws-lc の C build を避け、Windows・Linux で同じ backend を使う）。
+- native backend（`cfg(not(target_family = "wasm"))`）: str0m 0.25（`default-features = false, features = ["rust-crypto"]`。aws-lc の C build を避け、Windows・Linux で同じ backend を使う）。
   ICE の UDP は session ごとに 1 つの tokio の socket を持つ（session 数の上限 §4 で socket 数も上限つき）。
 - browser backend（`cfg(target_family = "wasm")`）: web-sys の `RTCPeerConnection`・`RTCDataChannel`。ADR 0056 §1・§4 のとおり main thread で動かし、
   JS オブジェクトは session ごとの `spawn_local` の task の中だけで持つ。`CustomEndpoint`・`CustomSender` はその task と channel でやり取りする `Send` の handle だけを持つ。
@@ -109,6 +109,7 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
   - 対象は、WebRTC 層が検出して session を閉じた喪失（DataChannel の close、相手の close の到着、PeerConnection の failed・closed、native の ICE の切断の検出）。
     回線が無言で切れたときは、WebRTC 層が検出するか path の idle 期限が来るまで止まる（#1482 の対象外）。
     native は、相手が閉じた DataChannel への応答（こちらの stream の reset）を送り切ってから session を終える。送らずに終えると、相手の browser の DataChannel は closing のまま close の event が出ず、browser は PeerConnection の failed（約 30 秒）まで喪失を知らなかった（#1220 AC-3c2。browser の試験 `a_data_channel_closed_outside_the_transport_closes_the_session`）。
+    sctp-proto 0.10.8（str0m 0.25）から、stream の reset は RFC 6525 のとおり、reset より前に送った DATA の受信（再送 0 回で捨てた分は FORWARD-TSN）と、応答の reset の前に送った DATA の ack を待つ。そこで native は、DataChannel を閉じたとき・相手の close に応答したとき、reset の送受信を 1 秒（`CLOSE_LINGER`）続けてから session を終える（reset の完了は str0m の event にならない）。閉じてすぐ終えると、相手は残った DATA を待って stream を閉じず、ICE の切断の検出まで session が残った（2026-11-05、依存の更新。`a_custom_path_lost_before_the_relay_path_is_validated_falls_back_to_the_relay`）。
   - 接続の直後、相手の connection ID が届く前（約 1 RTT）に失ったときは、新しい path を開けないので、閉じ直す契機が来ない。
     #1482 の時点では、その接続が QUIC の idle 期限（30 秒）で閉じるまで止まり、その間は同じ相手への新しい接続の最初の送信も届かなかった。
     #1571 で、iroh の fork に次の 2 つを載せた（2026-10-05 ユーザー判断）。

@@ -18,10 +18,10 @@ runs:
   steps:
     - name: Cache Lindera dictionary
       if: env.LINDERA_BUILD_DICTIONARY_CACHE_DIR != ''
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
-        path: ${{ env.LINDERA_BUILD_DICTIONARY_CACHE_DIR }}/5.3.0-fmt2/lindera-ipadic-neologd
-        key: lindera-ipadic-neologd-5.3.0-fmt2-${{ runner.os }}
+        path: ${{ env.LINDERA_BUILD_DICTIONARY_CACHE_DIR }}/6.2.0-fmt2/lindera-ipadic-neologd
+        key: lindera-ipadic-neologd-6.2.0-fmt2-${{ runner.os }}
 
     - name: Remove the toolchains this job does not use
       shell: bash

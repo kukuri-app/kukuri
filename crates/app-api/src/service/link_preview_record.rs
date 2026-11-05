@@ -64,7 +64,7 @@ impl LinkPreviewReads {
     pub(super) fn admit(&self) -> Option<PendingRead<'_>> {
         use std::sync::atomic::Ordering;
         self.pending
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
                 (pending < MAX_PENDING_READS).then_some(pending + 1)
             })
             .ok()

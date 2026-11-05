@@ -35,7 +35,7 @@ jobs:
       release_source: ${{ steps.source.outputs.release_source }}
     steps:
       - name: Checkout workflow scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Resolve release input
@@ -50,7 +50,7 @@ jobs:
             --tag "$RELEASE_TAG" --ref "$GITHUB_REF" --draft "$RELEASE_DRAFT" >> "$GITHUB_OUTPUT"
 
       - name: Checkout release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ steps.release.outputs.release_tag }}
 
@@ -63,10 +63,10 @@ jobs:
           test "$source" = "$WORKFLOW_SOURCE" || { echo 'Select the same workflow ref as the release tag' >&2; exit 1; }
           echo "release_source=$source" >> "$GITHUB_OUTPUT"
 
-      - name: Install Rust 1.98
+      - name: Install Rust 1.99
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
@@ -114,30 +114,30 @@ jobs:
     # script や setup 系 action から見えないようにする）。
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate-release-inputs.outputs.release_source }}
 
-      - name: Install Rust 1.98
+      - name: Install Rust 1.99
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
           components: clippy,rustfmt
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '^22.23.4'
 
       # package の記録 step が python を使う。runner の image に入っている版を前提にしない。
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -231,21 +231,21 @@ jobs:
           New-Item -ItemType Directory -Path dist/updater-verifier | Out-Null
           Copy-Item -LiteralPath $binary -Destination dist/updater-verifier/updater-verifier.exe
           [IO.File]::WriteAllText('dist/updater-verifier/source-commit.txt', $env:RELEASE_SOURCE, [Text.UTF8Encoding]::new($false))
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: kukuri-updater-verifier
           if-no-files-found: error
           path: dist/updater-verifier/
 
       - name: Upload Windows bundle artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kukuri-windows-preview-bundle
           path: apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/
           if-no-files-found: error
 
       - name: Attest Windows bundle
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*
 
@@ -258,7 +258,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout validated source for changelog generation
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate-release-inputs.outputs.release_source }}
           fetch-depth: 0
@@ -301,7 +301,7 @@ jobs:
       # Upload the section before proposing the CHANGELOG change so the release
       # asset embedding never depends on the pull request step succeeding.
       - name: Upload changelog section
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kukuri-changelog-section
           path: dist/changelog/CHANGELOG_SECTION.md
@@ -344,7 +344,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate-release-inputs.outputs.release_source }}
 
@@ -359,31 +359,31 @@ jobs:
         run: ./scripts/release/test-generate-third-party-notices.ps1
 
       - name: Download Windows bundle artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: kukuri-windows-preview-bundle
           path: dist/package-input/windows
 
       - name: Download Linux GUI bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: kukuri-linux-x86_64-distribution
           path: dist/package-input/linux
 
       - name: Download CLI bundles
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: kukuri-cli-linux-*
           path: dist/package-input/cli
 
       - name: Download changelog section artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: kukuri-changelog-section
           path: dist/changelog
 
       - name: Download signature verifier from the same build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: kukuri-updater-verifier
           path: dist/updater-verifier
@@ -414,7 +414,7 @@ jobs:
             -VerifierExecutable (Resolve-Path dist/updater-verifier/updater-verifier.exe).Path
 
       - name: Upload release assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kukuri-release-assets
           path: dist/release-assets/
@@ -427,12 +427,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate-release-inputs.outputs.release_source }}
           persist-credentials: false
       - name: Download release assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: kukuri-release-assets
           path: dist/release-assets
@@ -455,11 +455,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate-release-inputs.outputs.release_source }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: kukuri-release-assets
           path: dist/release-assets

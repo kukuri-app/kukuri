@@ -52,6 +52,8 @@ runs:
                        -o Acquire::Retries=1 -o APT::Update::Error-Mode=any)
               apt-get "${options[@]}" update
               if [[ "$upgrade" == true ]]; then
+                # firefox の移行用 package は upgrade で snap を取りに行き、上限の時間を超える（AppImage には同梱しない）。
+                apt-mark hold firefox >/dev/null 2>&1 || true
                 apt-get "${options[@]}" upgrade -y -o Dpkg::Options::=--force-confold \
                   -o APT::Get::Always-Include-Phased-Updates=true
               fi

@@ -63,12 +63,12 @@ tokio = { workspace = true, features = ["fs", "rt-multi-thread"] }
 # 通報の送信（ブラウザの fetch の転送の拒否。ADR 0056 §2）、passphrase の鍵の導出の Worker（src/kdf.rs）、
 # live の mic と再生（src/media_devices.rs の Web の実装。#1879）。
 [target.'cfg(target_family = "wasm")'.dependencies]
-js-sys = "0.3.106"
+js-sys = "0.3.107"
 # Web の live の状態(moq-lite の型は Send でない)を runtime に置く包み（src/live_media）。
 send_wrapper = "0.6.0"
-wasm-bindgen = "0.2.129"
-wasm-bindgen-futures = "0.4.79"
-web-sys = { version = "0.3.106", features = [
+wasm-bindgen = "0.2.130"
+wasm-bindgen-futures = "0.4.80"
+web-sys = { version = "0.3.107", features = [
   "AbortSignal",
   "AudioBuffer",
   "AudioBufferSourceNode",

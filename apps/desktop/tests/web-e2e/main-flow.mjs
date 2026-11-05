@@ -140,7 +140,8 @@ async function startClient(name, { ice, beforeConsent, media = false }) {
     for (const port of [new URL(ORIGIN).port, new URL(communityNode).port, relayPort]) await adb('reverse', `tcp:${port}`, `tcp:${port}`);
   }
   const capabilities = media ? withFakeMedia(BROWSERS[kind]) : BROWSERS[kind];
-  const browser = await remote({ logLevel: 'warn', capabilities });
+  // `$` は一致した最初の要素を使う（WebdriverIO 10 の既定の strict selectors は複数の一致を失敗にする）。
+  const browser = await remote({ logLevel: 'warn', strictSelectors: false, capabilities });
   browser.label = `${name}-${RUN}`;
   browser.kind = kind;
   console.log(browser.label, browser.capabilities.browserName, browser.capabilities.browserVersion);
@@ -152,7 +153,7 @@ async function startClient(name, { ice, beforeConsent, media = false }) {
     const activate = () =>
       new Promise((resolve, reject) => execFile('open', ['-a', 'Safari'], (error) => (error ? reject(error) : resolve())));
     for (const command of ['click', 'addValue', 'setValue']) {
-      browser.overwriteCommand(command, async (original, ...args) => (await activate(), original(...args)), true);
+      browser.overwriteCommand(command, async (original, ...args) => (await activate(), original(...args)), { attachToElement: true });
     }
     browser.overwriteCommand('keys', async (original, ...args) => (await activate(), original(...args)));
   }
@@ -189,9 +190,9 @@ async function startClient(name, { ice, beforeConsent, media = false }) {
         // 中心が覆われていれば（列のページの表示が列の右下の操作に重なる。#1588）、利用者と同じく見えている部分を押す。
         return androidClick(browser, this, original, WAIT);
       },
-      true
+      { attachToElement: true }
     );
-    browser.overwriteCommand('addValue', async (original, ...args) => typed(await original(...args)), true);
+    browser.overwriteCommand('addValue', async (original, ...args) => typed(await original(...args)), { attachToElement: true });
     browser.overwriteCommand('keys', async (original, ...args) => typed(await original(...args)));
     // Android の chromedriver は長い文字列（鍵の export・移行のリンク）を打つと 1 文字も入らないことがある。利用者が貼り付けるのと
     // 同じく、値を入れて input の event を出す（1 文字ずつ打つ操作は投稿の本文の addValue で確かめる）。
@@ -208,7 +209,7 @@ async function startClient(name, { ice, beforeConsent, media = false }) {
           value
         );
       },
-      true
+      { attachToElement: true }
     );
   }
   if (!ice) {

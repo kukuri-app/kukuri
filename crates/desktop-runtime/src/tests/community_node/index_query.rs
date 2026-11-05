@@ -138,7 +138,7 @@ async fn mock_indexing_status(
         != Some(expected_header.as_str())
         || state
             .unauthorized_remaining
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                 remaining.checked_sub(1)
             })
             .is_ok()
@@ -226,7 +226,7 @@ async fn mock_index_query(
     }
     if state
         .unauthorized_remaining
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
             remaining.checked_sub(1)
         })
         .is_ok()

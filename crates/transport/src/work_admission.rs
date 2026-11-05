@@ -193,7 +193,7 @@ pub struct NetworkWorkOwner {
 impl NetworkWorkOwner {
     pub fn new(limits: WorkLimits) -> Self {
         let owner = OWNER_SEQUENCE
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .expect("network work owner identity exhausted");
         Self {
             owner,

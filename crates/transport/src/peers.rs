@@ -220,7 +220,7 @@ impl Default for RemoteFetchRetryState {
     fn default() -> Self {
         Self {
             instance_id: REMOTE_FETCH_STATE_SEQUENCE
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
                 .expect("remote fetch service identity exhausted"),
             retry_after: BTreeMap::new(),
             retry_deadlines: BTreeSet::new(),

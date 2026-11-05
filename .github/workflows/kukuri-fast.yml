@@ -64,15 +64,15 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Community-node image pull contract
         run: bash .github/actions/cn-test-images/test.sh
 
-      - name: Install Rust 1.98
+      - name: Install Rust 1.99
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
           components: clippy,rustfmt
 
       - name: Install Linux system dependencies
@@ -80,7 +80,7 @@ jobs:
         timeout-minutes: 10
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '^22.23.4'
 
@@ -122,15 +122,15 @@ jobs:
         shard: [1, 2]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Free disk on a small runner
         uses: ./.github/actions/free-disk
 
-      - name: Install Rust 1.98
+      - name: Install Rust 1.99
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
@@ -149,7 +149,7 @@ jobs:
 
       - name: Setup Python for upstream resource contract
         if: matrix.shard == 1
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.13'
 
@@ -163,12 +163,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Install Rust 1.98
+      - name: Install Rust 1.99
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
           targets: wasm32-unknown-unknown
           components: clippy
 
@@ -186,7 +186,7 @@ jobs:
       - name: Install wasm-bindgen test runner
         uses: taiki-e/install-action@v2
         with:
-          tool: wasm-bindgen@0.2.129
+          tool: wasm-bindgen@0.2.130
 
       # ブラウザでも動く共用 crate（ADR 0056 §2・§3）。時刻・task の直接使用も clippy が検出する。
       - name: Shared crates wasm32 clippy
@@ -232,25 +232,25 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Install Rust 1.98
+      - name: Install Rust 1.99
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
         timeout-minutes: 10
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.16.1
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '^22.23.4'
           cache: pnpm
@@ -291,12 +291,12 @@ jobs:
             tests: --grep-invert 'metaverse-[a-z-]*\.spec\.ts'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Install Rust 1.98
+      - name: Install Rust 1.99
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
@@ -305,13 +305,13 @@ jobs:
           extra-packages: fonts-noto-cjk
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.16.1
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '^22.23.4'
           cache: pnpm
@@ -342,7 +342,7 @@ jobs:
 
       - name: Upload visual regression diff
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kukuri-desktop-visual-diff-${{ matrix.shard }}
           path: apps/desktop/test-results/
@@ -353,15 +353,15 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Free disk on a small runner
         uses: ./.github/actions/free-disk
 
-      - name: Install Rust 1.98
+      - name: Install Rust 1.99
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
@@ -395,12 +395,12 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Install Rust 1.98
+      - name: Install Rust 1.99
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
@@ -428,7 +428,7 @@ jobs:
 
       - name: Upload community-node artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kukuri-fast-community-node-artifacts
           path: test-results/kukuri/
@@ -439,22 +439,22 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Install Rust 1.98
+      - name: Install Rust 1.99
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
           components: clippy,rustfmt
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.16.1
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '^22.23.4'
           cache: pnpm
@@ -489,7 +489,7 @@ jobs:
 
       - name: Upload kukuri artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kukuri-windows-fast-artifacts
           path: test-results/kukuri/
@@ -502,21 +502,21 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Install Rust 1.98
+      - name: Install Rust 1.99
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.16.1
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '^22.23.4'
           cache: pnpm
@@ -556,7 +556,7 @@ jobs:
 
       - name: Keep real app logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kukuri-real-app-windows
           path: ${{ runner.temp }}/real-app
@@ -564,7 +564,7 @@ jobs:
 
       - name: Upload NSIS installer
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kukuri-windows-nsis
           path: apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/
