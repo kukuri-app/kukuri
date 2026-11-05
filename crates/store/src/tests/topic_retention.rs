@@ -462,6 +462,47 @@ async fn protected(store: &SqliteStore, kind: &str, key: &str) -> bool {
         == 1
 }
 
+/// #2034: 登録より前に置かれた record の保護は、record の無い日の分だけ回を待たない。1 回で `limit` まで複数の日へ進み、
+/// record の無い日も 1 件と数える。
+#[tokio::test]
+async fn scope_step_reaches_earlier_records_past_days_without_records() {
+    let store = SqliteStore::connect_memory().await.expect("sqlite store");
+    let replica = |bucket: u64| format!("bucket::v1::topic::61::{bucket}");
+    store.retain_topic("topic-a", 1).await.expect("retain");
+    store
+        .open_topic_retention_days("topic-a", 10, 13)
+        .await
+        .expect("open");
+    for key in ["k1", "k2"] {
+        store
+            .put_remote_record(&replica(13), key, "author", &[1; 100])
+            .await
+            .expect("put early record");
+    }
+    for bucket in 10..=13 {
+        assert!(
+            store
+                .protect_topic_retention_day("topic-a", bucket, &replica(bucket))
+                .await
+                .expect("protect day")
+        );
+    }
+    let mut steps = Vec::new();
+    for _ in 0..3 {
+        steps.push(
+            store
+                .protect_topic_retention_scopes_step(3)
+                .await
+                .expect("scope step"),
+        );
+    }
+    assert_eq!(steps, [3, 2, 0]);
+    for key in ["k1", "k2"] {
+        let cache_key = SqliteStore::remote_record_cache_key(&replica(13), key, "author");
+        assert!(protected(&store, "record", &cache_key).await, "{key}");
+    }
+}
+
 /// #1909 AC-3: 保持する日の record と blob に保護参照を付けて大きさを足し、期間を過ぎた日・容量を超えた分の古い日・保持を
 /// やめた topic の日から、1 回 `limit` 件まで外して引く。外した内容は通常の cache に戻る。
 #[tokio::test]

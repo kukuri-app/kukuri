@@ -169,7 +169,8 @@ pub trait TopicRetentionStore: Send + Sync {
         scope_key: &str,
         record_key: &str,
     ) -> Result<()>;
-    /// 登録より前に置かれた、保護する bucket の record に、保護参照を `limit` 件まで付ける。付けた件数を返す。
+    /// 登録より前に置かれた、保護する bucket の record に保護参照を付ける。付けた record と、付け終えた record の無い日
+    /// (1 件と数える)を合わせて `limit` まで進め、進めた件数を返す。
     async fn protect_topic_retention_scopes_step(&self, limit: usize) -> Result<usize>;
     /// 保護参照を `limit` 件まで外す(外し終えた日も 1 件と数える)。外している途中の日(`cutoff_bucket` より前の日と、
     /// 保持をやめた topic の日)を古い日から外し、無ければ合計が容量を超えている間の最も古い日を外し始める。進めた件数を返す。

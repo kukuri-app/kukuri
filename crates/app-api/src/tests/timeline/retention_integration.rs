@@ -110,8 +110,6 @@ async fn later_reader_reads_retained_topic_content_from_the_retaining_peer() -> 
             None,
         )
         .await?;
-    // 最も新しい投稿の record には保護参照が付かない(#2034)。`post` がそれに当たらないよう、Live の開始の投稿と秒をずらす。
-    sleep(Duration::from_millis(1100)).await;
     let live = a
         .create_live_session(
             topic.as_str(),
@@ -224,6 +222,18 @@ async fn later_reader_reads_retained_topic_content_from_the_retaining_peer() -> 
         "K retains the topic's content and blobs: {:?}",
         held().await?
     );
+    // 登録より前に lease の読みが置いた投稿の record も、期間の日数の回を待たずに保護する(#2034)。
+    let all_protected = eventually(|| async {
+        let unprotected: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM remote_content_cache WHERE kind = 'record' \
+             AND record_key LIKE 'objects/%/envelope' AND is_protected = 0",
+        )
+        .fetch_one(k_store.pool())
+        .await?;
+        Ok(unprotected == 0)
+    })
+    .await?;
+    assert!(all_protected, "K protects every post record it holds");
     // 保持した record と blob には日の保護参照が付き(topic の bucket の record、添付・資材の blob、owner の制御領域の
     // Instance)、その大きさを topic と全体の合計に数える(AC-3)。
     for bytes in [&image, &video, &poster, &thread_image, &asset_bytes] {
