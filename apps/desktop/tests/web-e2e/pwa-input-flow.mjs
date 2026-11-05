@@ -69,13 +69,13 @@ async function reviewTalkBack(browser, openSettings, adb) {
     };
     // 実画面の「Language & theme」へtouch explorationの焦点を置く。
     await adb('shell', 'input', 'tap', '590', '380');
-    await browser.executeAsync(done => setTimeout(done, 700));
+    await browser.execute(() => new Promise(done => setTimeout(done, 700)));
     await nativeSnapshot(adb, 'talkback-start');
     const focus = [await focused()];
     // 実touch explorationで異なるcontrolを探り、nodeの名前・位置の移動を照合する。
     for (const [step, x, y] of [[1, 220, 550], [2, 590, 550], [3, 450, 1300]]) {
       await adb('shell', 'input', 'tap', String(x), String(y));
-      await browser.executeAsync(done => setTimeout(done, 500));
+      await browser.execute(() => new Promise(done => setTimeout(done, 500)));
       await nativeSnapshot(adb, `talkback-focus-${step}`);
       focus.push(await focused());
     }
@@ -140,7 +140,7 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
       await age.click();
       assert.equal(await age.isSelected(), false);
       assert.equal(await browser.$('.app-consent-actions button').isEnabled(), false);
-      await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 700))));
+      await browser.execute(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 700)))));
       await nativeSnapshot(adb, `initial-consent-${locale}-320-font200`);
     }
     console.log('PWA input initial consent font scale', (await adb('shell', 'settings', 'get', 'system', 'font_scale')).trim());
@@ -317,7 +317,7 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
         await option.click();
         assert.equal(await option.getAttribute('aria-checked'), 'true');
         await eventually('selected theme reaches the rendered document', () => browser.execute(expected => document.documentElement.dataset.theme === expected, theme === 0 ? 'dark' : 'light'));
-        await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 700))));
+        await browser.execute(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 700)))));
         assert.equal(await browser.execute(() => document.documentElement.scrollWidth > innerWidth), false);
         await nativeSnapshot(adb, `settings-${locale}-${theme}-320-font200`);
       }
@@ -383,7 +383,7 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
     }), false, '320px/200% composer keeps text and attachment controls within its width');
     assert.equal(await composer.getProperty('value'), before);
     await browser.execute(element => element.scrollIntoView({ block: 'center', inline: 'center' }), await publicColumn(browser).$(`img[alt="draft preview ${name}"]`));
-    await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 700))));
+    await browser.execute(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 700)))));
     await nativeSnapshot(adb, 'file-selected-preview');
     await publicColumn(browser).$('.draft-attachment-list').$('button=Remove').click();
     console.log('PWA native file selection/read failure/retry retains text and accepts the explicit image: PASS');
@@ -413,7 +413,7 @@ export async function pwaInputFlow({ openClient, greetNative, openSettings, open
   await openSettings(browser, 'safety');
   await browser.$('#shell-settings-drawer').$('button=Open muted users').click();
   await eventually('settings handoff reaches muted connections', async () => (await browser.getUrl()).includes('connectionsView=muted'));
-  await browser.executeAsync(done => setTimeout(done, 200));
+  await browser.execute(() => new Promise(done => setTimeout(done, 200)));
   assert.ok((await browser.getUrl()).includes('connectionsView=muted'));
   assert.equal(await browser.$('#shell-settings-drawer').getAttribute('data-open'), 'false');
   console.log('PWA input composer/control center back and retained draft: PASS');
