@@ -1571,7 +1571,9 @@ async function dumpColumns(browser) {
       (node) => `[${node.dataset.columnId} visible=${node.dataset.runtimeVisible ?? 'false'}]\n${node.innerText.slice(0, 800)}`
     )
   );
+  const dialogs = await browser.execute(() => [...document.querySelectorAll('[role=dialog]')].map((node) => node.innerText.slice(0, 800)));
   const sessions = await sessionStates(browser).catch(() => []);
+  console.log(`${browser.label} open dialogs`, JSON.stringify(dialogs));
   console.log(`${browser.label} media events`, await browser.execute(() => window.__kukuriMediaEvents));
   console.log(`--- ${browser.label} sessions=${JSON.stringify(sessions)}\n${columns.join('\n')}`);
 }
@@ -2128,4 +2130,6 @@ if (name === '--list') {
     }
   }
   console.log(`web e2e ${name} on ${BROWSER}: PASS${unconfirmed.length ? ` (unconfirmed: ${unconfirmed.join('; ')})` : ''}`);
+  // session の終了が時間切れになると（Android の `Adb command timed out`）driver の子 process が残り、node が終わらない。
+  process.exit(0);
 }
