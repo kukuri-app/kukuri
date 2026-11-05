@@ -118,7 +118,8 @@ wiremock = "0.6"
 # Upstream #114 (open): sync_process_message error must not panic the whole docs actor.
 # fork は上流 main（#117・#118 を含む）に #114 を載せ、iroh-blobs 0.104・iroh-gossip 0.102 へ上げたもの
 # （branch `kukuri/pr114-blobs-0.104-gossip-0.102`。ADR 0058 §1）。上流が同じ内容の版を出したら外す。
-iroh-docs = { git = "https://github.com/KingYoSun/iroh-docs", rev = "b5c5d47585111ef8bd49845677752bf010cfa574" }
+# fork だけの変更（#2043）: actor の停止時に queue に残った要求を落とす（無いと呼出元が永久に待つ）。
+iroh-docs = { git = "https://github.com/KingYoSun/iroh-docs", rev = "ef767da5e84745ae9e0f64737400c74853af2877" }
 # Upstream #4447: release inactive endpoint/relay address mappings.
 # Upstream #4565: Endpoint::add_remote_addrs opens a custom path on a live connection (#1422).
 # fork だけの変更（#1482・#1571・#1654。上流へは PR を出さない）: custom transport が外した local addr の custom path を、

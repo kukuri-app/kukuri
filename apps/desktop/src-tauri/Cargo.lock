@@ -3501,7 +3501,7 @@ dependencies = [
 [[package]]
 name = "iroh-docs"
 version = "0.101.0"
-source = "git+https://github.com/KingYoSun/iroh-docs?rev=b5c5d47585111ef8bd49845677752bf010cfa574#b5c5d47585111ef8bd49845677752bf010cfa574"
+source = "git+https://github.com/KingYoSun/iroh-docs?rev=ef767da5e84745ae9e0f64737400c74853af2877#ef767da5e84745ae9e0f64737400c74853af2877"
 dependencies = [
  "anyhow",
  "async-channel",
