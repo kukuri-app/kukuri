@@ -1575,6 +1575,7 @@ async function dumpColumns(browser) {
   const dialogs = await browser.execute(() => [...document.querySelectorAll('[role=dialog]')].map((node) => node.innerText.slice(0, 800)));
   const sessions = await sessionStates(browser).catch(() => []);
   console.log(`${browser.label} open dialogs`, JSON.stringify(dialogs));
+  console.log(`${browser.label} runtime events\n${(await browser.execute(() => window.__kukuriRuntimeEvents ?? [])).join('\n')}`);
   console.log(`${browser.label} media events`, await browser.execute(() => window.__kukuriMediaEvents));
   console.log(`--- ${browser.label} sessions=${JSON.stringify(sessions)}\n${columns.join('\n')}`);
 }

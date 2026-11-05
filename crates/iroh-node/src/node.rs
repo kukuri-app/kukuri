@@ -35,7 +35,7 @@ use kukuri_webrtc_transport::{
 use n0_future::time::timeout;
 #[cfg(not(target_family = "wasm"))]
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::account_transfer::{ACCOUNT_SYNC_ALPN, ACCOUNT_TRANSFER_ALPN, AccountTransfer};
 use crate::dome_session::{DOME_SESSION_ALPN, DomeSessionConnections, DomeSessionSlot};
@@ -906,7 +906,9 @@ impl IrohDocsNode {
                 );
             }
         }
+        info!(target: "kukuri_connectivity", "iroh router stopped");
         self.endpoint.close().await;
+        info!(target: "kukuri_connectivity", "iroh endpoint closed");
         let _ = self.blobs.shutdown().await;
         blob_flush?;
         Ok(())

@@ -644,7 +644,8 @@ impl SharedIrohStack {
             let _ = reached.send(());
             let _ = resume.await;
         }
-        let _ = previous.shutdown().await;
+        let stopped = previous.shutdown().await;
+        info!(target: "kukuri_connectivity", ok = stopped.is_ok(), "previous iroh stack stopped");
         let next = BoundIrohStack::new(
             &self.source,
             self.network_config.clone(),
@@ -655,6 +656,7 @@ impl SharedIrohStack {
             StackOpen::Reopen(self.candidate_store.clone(), self.status_changes.clone()),
         )
         .await?;
+        info!(target: "kukuri_connectivity", "replacement iroh stack opened");
         // 差し替える前に設定する。設定の無い stack が、端末ごとの docs author で書くことが無いようにする。
         if let Some((seed, owner)) = self.docs_author_seed.lock().await.as_ref() {
             next.docs_sync.use_account_docs_author(seed, owner).await?;
@@ -799,6 +801,7 @@ impl SharedIrohStack {
     pub(crate) async fn shutdown_checked(&self) -> Result<()> {
         #[cfg(not(target_family = "wasm"))]
         self.remote_cache_reaper.abort();
+        info!(target: "kukuri_connectivity", "iroh stack stopping with the runtime");
         if let Some(current) = self.current.lock().await.take() {
             current.shutdown().await?;
         }

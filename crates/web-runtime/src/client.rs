@@ -341,6 +341,7 @@ async fn invoke_command(
 /// `config` は `{ communityNodeConfig }`（省略可）。
 #[wasm_bindgen]
 pub async fn start(config: JsValue) -> Result<JsValue, JsValue> {
+    crate::console_log::install();
     let config = match from_js(&config).map_err(|error| error_value(&error))? {
         Value::Null => StartConfig::default(),
         config => serde_json::from_value(config)

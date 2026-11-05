@@ -31,10 +31,19 @@
   }).observe(document, { childList: true, subtree: true });
   localStorage.setItem('kukuri:media-debug', '1');
   window.__kukuriMediaEvents = [];
+  // #2043: Rust の接続の経過と警告、捕まらなかった例外（wasm の panic を含む）。読み込み直すと消える。
+  window.__kukuriRuntimeEvents = [];
+  const recordRuntime = (line) => {
+    window.__kukuriRuntimeEvents.push(`${new Date().toISOString()} ${line}`);
+    if (window.__kukuriRuntimeEvents.length > 128) window.__kukuriRuntimeEvents.shift();
+  };
+  window.addEventListener('error', (event) => recordRuntime(`uncaught ${event.message}`));
+  window.addEventListener('unhandledrejection', (event) => recordRuntime(`unhandled rejection ${event.reason}`));
   for (const level of ['info', 'warn']) {
     const log = console[level];
     console[level] = (...args) => {
       if (args[0] === '[kukuri.e2e.dm]') recordDirectMessage(args[1]);
+      if (String(args[0]).startsWith('[kukuri.runtime]')) recordRuntime(args[0]);
       if (String(args[0]).startsWith('[kukuri.media]')) {
         window.__kukuriMediaEvents.push(args);
         if (window.__kukuriMediaEvents.length > 32) window.__kukuriMediaEvents.shift();

@@ -7,6 +7,7 @@ mod account;
 mod actor;
 mod attachments;
 mod client;
+mod console_log;
 mod content_cache;
 mod idb;
 mod lifecycle;

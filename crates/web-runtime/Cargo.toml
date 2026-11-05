@@ -21,10 +21,13 @@ n0-future.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry"] }
 wasm-bindgen = "0.2.130"
 wasm-bindgen-futures = "0.4.80"
 web-sys = { version = "0.3.107", features = [
   "Blob",
+  "console",
   "Crypto",
   "CryptoKey",
   "Document",
