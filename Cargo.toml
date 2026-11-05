@@ -91,7 +91,7 @@ n0-future = "0.3.2"
 n0-mainline = "0.7.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "query", "rustls"] }
 rapier3d = { version = "0.36.1", features = ["enhanced-determinism"] }
-redis = { version = "1.7.1", default-features = false, features = ["tokio-comp"] }
+redis = { version = "1.8.1", default-features = false, features = ["tokio-comp"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
 secp256k1 = { version = "0.33.1", features = ["global-context", "rand", "serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -110,7 +110,7 @@ tower-http = { version = "0.7.1", features = ["cors", "trace"] }
 tower_governor = "0.8.0"
 ts-rs = "12"
 url = "2.5.8"
-uuid = { version = "1.28.0", features = ["serde", "v4", "v7"] }
+uuid = { version = "1.29.0", features = ["serde", "v4", "v7"] }
 web-time = "1.1.0"
 wiremock = "0.6"
 

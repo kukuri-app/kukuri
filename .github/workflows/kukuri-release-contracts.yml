@@ -20,7 +20,7 @@ jobs:
   contracts:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Workflow parser
         run: python3 -m pip install PyYAML==6.0.3
       - name: No-publish contracts

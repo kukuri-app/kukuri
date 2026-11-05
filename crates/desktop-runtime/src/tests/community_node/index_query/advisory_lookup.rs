@@ -29,7 +29,7 @@ pub(crate) async fn mock_advisory_lookup(
     let unauthorized = authorization.as_deref() != Some(expected.as_str())
         || state
             .unauthorized_remaining
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                 remaining.checked_sub(1)
             })
             .is_ok();

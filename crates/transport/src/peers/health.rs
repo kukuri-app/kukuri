@@ -109,7 +109,7 @@ impl BlobPeerHealth {
         let record = self.entry(peer).await?;
         let generation = self
             .generation
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .expect("blob connection generation exhausted")
             + 1;
         let attempt = BlobPeerAttempt {

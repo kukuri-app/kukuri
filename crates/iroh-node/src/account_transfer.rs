@@ -783,7 +783,7 @@ async fn receive_bundle(
         }
         reason
     };
-    let mut staging = sink.begin(&secret).await.map_err(&storage_failed)?;
+    let mut staging = sink.begin(&secret).await.map_err(storage_failed)?;
     let staged = async {
         let mut count = 0;
         loop {

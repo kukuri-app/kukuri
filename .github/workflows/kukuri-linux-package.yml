@@ -81,7 +81,7 @@ jobs:
     runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))) && inputs.signing == 'distribution' && 'ubuntu-22.04' || 'ubuntu-24.04' }}
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref || github.sha }}
           persist-credentials: false
@@ -94,7 +94,7 @@ jobs:
           fi
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
       - name: Linux build dependencies
         uses: ./.github/actions/apt-install
         timeout-minutes: 10
@@ -104,11 +104,11 @@ jobs:
           # (libgcrypt20 #907, libsqlite3-0 #1094, libxml2 #1384).
           upgrade: 'true'
           extra-packages: libfuse2 file desktop-file-utils dbus binutils python3
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.16.1
           run_install: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '^22.23.4'
           # #1180: 配布の run では cache を使わない（空文字で無効）。`A && '' || B` は空文字が偽のため
@@ -128,7 +128,7 @@ jobs:
         working-directory: apps/desktop
         run: pnpm install --frozen-lockfile
       - uses: taiki-e/install-action@nextest
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         id: audio-python
         with:
           python-version: '3.13'
@@ -243,7 +243,7 @@ jobs:
               --root "$RUNNER_TEMP/real-app"'
       - name: Keep real app logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kukuri-real-app-linux
           path: ${{ runner.temp }}/real-app
@@ -298,7 +298,7 @@ jobs:
           TMPDIR="$fixture_tmp" cargo test "${test_args[@]}" -- --ignored
           rm -rf -- "$fixture_tmp"
       - name: Keep verified artifacts (no Release publication)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kukuri-linux-x86_64-${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))) && inputs.signing == 'distribution' && 'distribution' || 'test' }}
           if-no-files-found: error

@@ -86,7 +86,7 @@ class Fixture:
         return path
 
     def package(self, dll=None, sidecar=None):
-        dist.package(self.repository, self.source, dll or self.dll, sidecar or self.sidecar, self.output, "rustc 1.98.1")
+        dist.package(self.repository, self.source, dll or self.dll, sidecar or self.sidecar, self.output, "rustc 1.99.1")
 
     def verify(self):
         return dist.verify(self.repository, self.source, self.output)

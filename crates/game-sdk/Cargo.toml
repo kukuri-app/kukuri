@@ -21,7 +21,7 @@ path = "src/bin/net_proxy.rs"
 vp8 = ["kukuri-desktop-runtime/audio-devices"]
 
 [build-dependencies]
-cc = "1.9.0"
+cc = "1.11.0"
 serde_json.workspace = true
 
 [dependencies]

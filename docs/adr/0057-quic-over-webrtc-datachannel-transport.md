@@ -31,7 +31,7 @@ iroh の QUIC パケットを WebRTC DataChannel で運ぶ（#1213 D-1・D-15・
 
 - 新しい crate `crates/webrtc-transport`（package `kukuri-webrtc-transport`）に閉じる。iroh の `unstable-custom-transports` を有効にするのはこの crate だけにし、不安定な API をこの crate の外へ出さない。
 - 共通部分: `CustomTransport` の実装、アドレスの形、session の登録簿、資源の上限、W10 へ渡す session の API。
-- native backend（`cfg(not(target_family = "wasm"))`）: str0m 0.24（`default-features = false, features = ["rust-crypto"]`。aws-lc の C build を避け、Windows・Linux で同じ backend を使う）。
+- native backend（`cfg(not(target_family = "wasm"))`）: str0m 0.25（`default-features = false, features = ["rust-crypto"]`。aws-lc の C build を避け、Windows・Linux で同じ backend を使う）。
   ICE の UDP は session ごとに 1 つの tokio の socket を持つ（session 数の上限 §4 で socket 数も上限つき）。
 - browser backend（`cfg(target_family = "wasm")`）: web-sys の `RTCPeerConnection`・`RTCDataChannel`。ADR 0056 §1・§4 のとおり main thread で動かし、
   JS オブジェクトは session ごとの `spawn_local` の task の中だけで持つ。`CustomEndpoint`・`CustomSender` はその task と channel でやり取りする `Send` の handle だけを持つ。

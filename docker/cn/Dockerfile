@@ -1,4 +1,4 @@
-ARG RUST_VERSION=1.98.1
+ARG RUST_VERSION=1.99.1
 FROM rust:${RUST_VERSION}-bookworm AS chef
 
 # #1413: 依存 crate の build を application の build と別の layer にする（cargo-chef）。manifest と

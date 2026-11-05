@@ -55,7 +55,7 @@ iroh-mainline-address-lookup.workspace = true
 udp-addr-index.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
-wasm-bindgen-test = "0.3.79"
+wasm-bindgen-test = "0.3.80"
 
 # browser↔native の有界な読み出しの native 側（scripts/ci/browser_peer_test.sh）。
 [[example]]

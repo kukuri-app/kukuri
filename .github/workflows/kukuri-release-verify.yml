@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Checkout release source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref || github.sha }}
 
@@ -59,10 +59,10 @@ jobs:
             [[ "$REQUESTED_SOURCE" =~ ^[0-9a-f]{40}$ ]] && test "$(git rev-parse HEAD)" = "$REQUESTED_SOURCE"
           fi
 
-      - name: Install Rust 1.98
+      - name: Install Rust 1.99
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
           components: clippy,rustfmt
 
       - name: Install Linux system dependencies
@@ -72,13 +72,13 @@ jobs:
           extra-packages: ffmpeg
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
           run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '^22.23.4'
 
@@ -144,7 +144,7 @@ jobs:
 
       - name: Upload Linux verify artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kukuri-release-linux-artifacts
           path: test-results/kukuri/

@@ -22,9 +22,9 @@ axum.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
 hex.workspace = true
-tantivy = "0.26.2"
-lindera = { version = "5.3", features = ["embed-ipadic-neologd"] }
-lindera-tantivy = { version = "5.0.1", features = ["embed-ipadic-neologd"] }
+tantivy = "0.27.0"
+lindera = { version = "6.2", features = ["embed-ipadic-neologd"] }
+lindera-tantivy = { version = "6.2.0", features = ["embed-ipadic-neologd"] }
 unicode-normalization = "0.1"
 reqwest.workspace = true
 serde.workspace = true

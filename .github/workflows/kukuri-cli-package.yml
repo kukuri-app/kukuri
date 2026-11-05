@@ -40,13 +40,13 @@ jobs:
       matrix:
         arch: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref || github.sha }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.1
           targets: ${{ matrix.arch }}-unknown-linux-gnu
       - name: Build and emulation tools
         uses: ./.github/actions/apt-install
@@ -82,7 +82,7 @@ jobs:
           else
             python3 scripts/release/cli_archive.py smoke --arch "$ARCH" --version "$version" --archive "$archive"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: kukuri-cli-linux-${{ matrix.arch }}
           if-no-files-found: error

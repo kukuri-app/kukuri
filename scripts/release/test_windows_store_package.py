@@ -169,7 +169,7 @@ exit 1
         source = WORKFLOW.read_text(encoding="utf-8")
         self.assertNotIn("secrets.", source)
         self.assertIn(
-            "uses: microsoft/setup-WinAppCli@cc8ea9a08b3ee3db43d5aa6bddda4a0e87d800f7",
+            "uses: microsoft/setup-WinAppCli@9288bd0729bd3f71e2ed1b9eb247dc91470b824e",
             source,
         )
         self.assertIn("version: v0.6.1", source)

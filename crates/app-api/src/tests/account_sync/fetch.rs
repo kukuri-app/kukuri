@@ -54,7 +54,7 @@ impl DeviceDocs {
         }
         if self
             .fails_left
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                 left.checked_sub(1)
             })
             .is_ok()
@@ -62,7 +62,7 @@ impl DeviceDocs {
             anyhow::bail!("the connection was lost");
         }
         self.reads_left
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                 left.checked_sub(1)
             })
             .map(|_| ())
@@ -673,7 +673,7 @@ impl HintTransport for CandidateHints {
             if self
                 .account_hints
                 .dropping
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                     left.checked_sub(1)
                 })
                 .is_ok()

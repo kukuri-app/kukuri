@@ -628,7 +628,7 @@ SNS（§5.4）と Live（§5.5）は既存の分類を変えない。新しく�
 | OS・graphics | Windows 11 x64、Direct3D 12（6.3 の Windows の既定）。Windows 10 と他の graphics API は確かめていないので対応に含めない |
 | scripting | Editor は Mono。Player は IL2CPP を基準とし、Mono の Player も build・実行できる |
 | C# | P/Invoke の pointer を扱う SDK の asmdef だけで unsafe を許可する。利用者の project 設定は変えない |
-| native | Rust 1.98.1（repository の toolchain）、`x86_64-pc-windows-msvc` の cdylib。依存は OS の DLL だけにするため、CRT は静的に link する（Rust は `+crt-static`、libvpx は `--enable-static-msvcrt`） |
+| native | Rust 1.99.1（repository の toolchain）、`x86_64-pc-windows-msvc` の cdylib。依存は OS の DLL だけにするため、CRT は静的に link する（Rust は `+crt-static`、libvpx は `--enable-static-msvcrt`） |
 
 #### 8.2 Sidecar のローカル IPC
 

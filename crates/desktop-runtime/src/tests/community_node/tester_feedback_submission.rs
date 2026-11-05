@@ -22,7 +22,7 @@ async fn mock_tester_feedback(
 ) -> axum::response::Response {
     if state
         .unauthorized_remaining
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
             value.checked_sub(1)
         })
         .is_ok()
