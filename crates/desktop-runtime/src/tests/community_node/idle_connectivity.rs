@@ -218,7 +218,7 @@ async fn cancelled_stack_rebuild_marks_the_current_stack_unavailable_before_shut
 
 /// 作り直しの間に届いた docs の要求は、停止した actor でなく差し替えた stack が応える。Web は CN の session で relay が
 /// 付くと作り直し、その間のフォローが `sending to iroh_docs actor failed` で失敗した。
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn docs_requests_during_a_stack_rebuild_reach_the_replacement() {
     use kukuri_docs_sync::{DocFetchPolicy, DocOp, DocQuery, DocsSync};
     let dir = tempdir().expect("tempdir");
@@ -230,51 +230,45 @@ async fn docs_requests_during_a_stack_rebuild_reach_the_replacement() {
     .await
     .expect("runtime");
     let replica = kukuri_docs_sync::topic_replica_id("kukuri:topic:rebuild-requests");
-    let docs = runtime.iroh_stack.docs_sync.clone();
-    docs.apply_doc_op(
-        &replica,
-        DocOp::SetBytes {
-            key: "test/kept".into(),
-            value: b"kept".to_vec(),
-        },
-    )
-    .await
-    .expect("local write");
-    let stop = Arc::new(AtomicBool::new(false));
-    let reader = tokio::spawn({
-        let stop = stop.clone();
-        async move {
-            let mut failures = Vec::new();
-            while !stop.load(Ordering::SeqCst) {
-                let query = DocQuery::Exact("test/kept".into());
-                if let Err(error) = docs
-                    .query_replica_with_policy(&replica, query, DocFetchPolicy::LocalOnly)
-                    .await
-                {
+    let docs = &runtime.iroh_stack.docs_sync;
+    let op = DocOp::SetBytes {
+        key: "test/kept".into(),
+        value: b"kept".to_vec(),
+    };
+    docs.apply_doc_op(&replica, op).await.expect("local write");
+    let config = runtime.discovery_config.lock().await.clone();
+    let (reached, resume) = runtime
+        .iroh_stack
+        .pause_next_rebuild_before_shutdown()
+        .await;
+    let rebuild = runtime.iroh_stack.rebuild(&config, &[], Default::default());
+    tokio::pin!(rebuild);
+    tokio::select! {
+        result = &mut rebuild => panic!("rebuild finished before the test gate: {result:?}"),
+        reached = reached => reached.expect("rebuild gate"),
+    }
+    // 作り直しが始まってから終わるまで、読み続ける。
+    let _ = resume.send(());
+    let mut failures = Vec::new();
+    loop {
+        let query = DocQuery::Exact("test/kept".into());
+        tokio::select! {
+            biased;
+            rebuilt = &mut rebuild => break rebuilt.expect("rebuild"),
+            rows = docs.query_replica_with_policy(&replica, query, DocFetchPolicy::LocalOnly) => {
+                if let Err(error) = rows {
                     failures.push(format!("{error:#}"));
                 }
-                tokio::task::yield_now().await;
             }
-            failures
         }
-    });
-    let config = runtime.discovery_config.lock().await.clone();
-    for _ in 0..3 {
-        runtime
-            .iroh_stack
-            .rebuild(&config, &[], Default::default())
-            .await
-            .expect("rebuild");
     }
-    stop.store(true, Ordering::SeqCst);
-    let failures = reader.await.expect("reader");
-    runtime.shutdown().await;
     assert!(
         failures.is_empty(),
         "{} requests failed during the rebuild, first: {:?}",
         failures.len(),
         failures.first()
     );
+    runtime.shutdown().await;
 }
 
 #[tokio::test]
