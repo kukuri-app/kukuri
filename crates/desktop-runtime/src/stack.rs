@@ -104,10 +104,6 @@ macro_rules! reloadable_service {
             pub(crate) async fn current(&self) -> Arc<$inner> {
                 self.inner.read().await.clone()
             }
-
-            pub(crate) async fn replace(&self, inner: Arc<$inner>) {
-                *self.inner.write().await = inner;
-            }
         }
 
         $(
@@ -639,6 +635,10 @@ impl SharedIrohStack {
         // 開始した stack が残る。最初の await より前に印を立て、途中で future が drop
         // されても停止中または停止済みの actor を probe しない。
         self.current_shut_down.store(true, Ordering::SeqCst);
+        // 停止した actor へ要求を送らない: 差し替えまで wrapper の要求を待たせる(ADR 0058 §1)。
+        let mut transport = self.transport.inner.write().await;
+        let mut docs_sync = self.docs_sync.inner.write().await;
+        let mut blob_service = self.blob_service.inner.write().await;
         #[cfg(test)]
         if let Some((reached, resume)) = self.rebuild_before_shutdown_gate.lock().await.take() {
             let _ = reached.send(());
@@ -676,9 +676,9 @@ impl SharedIrohStack {
         if let Some(providers) = self.public_blob_providers.lock().await.as_ref() {
             next.node.install_public_blob_providers(providers.clone());
         }
-        self.transport.replace(next.transport.clone()).await;
-        self.docs_sync.replace(next.docs_sync.clone()).await;
-        self.blob_service.replace(next.blob_service.clone()).await;
+        *transport = next.transport.clone();
+        *docs_sync = next.docs_sync.clone();
+        *blob_service = next.blob_service.clone();
         *current = Some(next);
         self.dht_enabled.store(dht_enabled, Ordering::SeqCst);
         self.public_blobs_enabled

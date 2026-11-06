@@ -803,18 +803,19 @@ mod tests {
             .set_scope_display(column("kukuri:topic:leased"))
             .await
             .expect("an open column");
-        runtime
-            .create_post(crate::CreatePostRequest {
-                topic: "kukuri:topic:written".into(),
-                content: "post".into(),
-                reply_to: None,
-                channel_ref: kukuri_core::ChannelRef::Public,
-                attachments: Vec::new(),
-                content_labels: Vec::new(),
-                live: None,
-            })
-            .await
-            .expect("post");
+        // 書き込みで参加した topic(投稿は hint を背景で 3 回送り、作り直しの後の送信は次の stack で参加するので、
+        // 1 回だけ送る)。
+        let written = kukuri_core::TopicId::new("kukuri:topic:written");
+        let hint = kukuri_core::GossipHint::ProfileUpdated {
+            author: kukuri_core::Pubkey::from("written"),
+        };
+        kukuri_transport::HintTransport::publish_hint(
+            &*runtime.iroh_stack.transport,
+            &written,
+            hint,
+        )
+        .await
+        .expect("hint");
         let generation = runtime.iroh_stack.generation();
         // 直接だけから relay つきへの切替は、endpoint を作り直す(#1221 R2-B)。
         runtime

@@ -143,9 +143,9 @@ iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-addres
 # native では std と同じ型）。
 # #1944・#1955・#2029 の変更を含む fork を、上流の moq-audio 0.1.20 の release（51e93fc22）へ載せ替えた branch
 # `kukuri/rebase-0.1.20` に固定する（ADR 0067 §7）。
-moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "0d4ed185c37e01331a21f22b3e02dd4f08fb7b4a" }
-moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "0d4ed185c37e01331a21f22b3e02dd4f08fb7b4a" }
-moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "0d4ed185c37e01331a21f22b3e02dd4f08fb7b4a" }
+moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "f48a11c2dc862f032710f088e5e63800f473db82" }
+moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "f48a11c2dc862f032710f088e5e63800f473db82" }
+moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "f48a11c2dc862f032710f088e5e63800f473db82" }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"
