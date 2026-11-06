@@ -28,6 +28,7 @@ import { installPwa, openPwaFromHome, pwaEntry } from './pwa-entry.mjs';
 import { pwaShellFlow } from './pwa-shell-flow.mjs';
 import { pwaInputFlow } from './pwa-input-flow.mjs';
 import { pwaAttachmentFlow } from './pwa-attachment-flow.mjs';
+import { webInvoke } from './web-invoke.mjs';
 
 const ORIGIN = process.env.KUKURI_WEB_E2E_ORIGIN ?? 'http://127.0.0.1:4180';
 const TOPIC = 'kukuri:topic:general';
@@ -1213,11 +1214,16 @@ const earlierSessionsClose = (browser, count) =>
     (await sessionStates(browser)).slice(0, count).every((state) => state === 'closed')
   );
 
-/** native が公開投稿を `count` 件足す（履歴を増やす）。 */
-async function addHistory(tag, count) {
-  for (let index = 0; index < count; index++) {
-    await native('create_post', { request: { topic: TOPIC, content: `${tag} ${RUN} ${index}`, reply_to: null } });
-  }
+/** native が公開投稿を `count` 件足し（履歴を増やす）、`browser` の手元に全件が届くまで待つ。届く途中で頁を読み直すと、表示中の
+ * 範囲より古い行が後から足され（#1851）、窓の判定が履歴の量でなく届く順に左右される。 */
+async function addHistory(browser, tag, count) {
+  const contents = Array.from({ length: count }, (_, index) => `${tag} ${RUN} ${index}`);
+  for (const content of contents) await native('create_post', { request: { topic: TOPIC, content, reply_to: null } });
+  await eventually(`${browser.label} receives ${tag}`, async () => {
+    const page = await webInvoke(browser, 'list_timeline', { request: { topic: TOPIC, scope: { kind: 'public' }, cursor: null, limit: 50 } });
+    const received = new Set(page.items.map((item) => item.content));
+    return contents.every((content) => received.has(content));
+  });
 }
 
 /** 再開した画面の公開の列の最初の頁が窓（20 件）に収まり、閉じていない session が需要のある相手（`peers`）の数以下。どちらも
@@ -1391,7 +1397,7 @@ async function lifecycle() {
   await (await openComposer(channelColumn(a, channel.channelId))).setValue(draft);
 
   // reload（1 つ目の履歴の量）: 同じアカウント・EndpointId・設定・下書きで再開し、初回の dialog を出さない。reload の間の投稿も出る。
-  await addHistory('history-a', 25);
+  await addHistory(a, 'history-a', 25);
   const whileReloading = `posted while reloading ${RUN}`;
   await native('create_post', { request: { topic: TOPIC, content: whileReloading, reply_to: null } });
   await a.refresh();
@@ -1424,7 +1430,7 @@ async function lifecycle() {
 
   // 終了（2 つ目の履歴の量）: 別の tab が「このタブで使う」で引き継ぐと、元の tab の runtime は止まって session を閉じ、新しい
   // tab が保存から同じ EndpointId で再開する。
-  await addHistory('history-b', 25);
+  await addHistory(a, 'history-b', 25);
   const first = await a.getWindowHandle();
   // 作成結果の handle を使う。Safari は tab と window、他の browser は従来どおり tab を確かめる。
   let second;

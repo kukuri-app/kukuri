@@ -310,7 +310,16 @@ async fn sign_audio(
     let (private_catalog, catalog) = (private_catalog.clone(), catalog.clone());
     Ok(AbortOnDropHandle::new(n0_future::task::spawn(async move {
         let mut written = 0_u32;
-        while let Ok(Some(mut frame)) = frames.read().await {
+        loop {
+            let mut frame = match frames.read().await {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break,
+                // 以後この配信は音が出ない(映像は続く)。何も出さずに止まると原因を追えない。
+                Err(error) => {
+                    tracing::warn!(%error, "live microphone audio stopped");
+                    break;
+                }
+            };
             frame.payload = signer
                 .sign(LIVE_AUDIO_TRACK, micros(frame.timestamp), &frame.payload)
                 .into();
