@@ -104,13 +104,6 @@ macro_rules! reloadable_service {
             pub(crate) async fn current(&self) -> Arc<$inner> {
                 self.inner.read().await.clone()
             }
-
-            /// 差し替えの間、要求を待たせる(guard へ次の実体を書いて放すまで、`current()` は返らない)。
-            pub(crate) async fn begin_replace(
-                &self,
-            ) -> tokio::sync::RwLockWriteGuard<'_, Arc<$inner>> {
-                self.inner.write().await
-            }
         }
 
         $(
@@ -642,11 +635,10 @@ impl SharedIrohStack {
         // 開始した stack が残る。最初の await より前に印を立て、途中で future が drop
         // されても停止中または停止済みの actor を probe しない。
         self.current_shut_down.store(true, Ordering::SeqCst);
-        // 停止した actor へ送った要求は `sending into a closed channel` で失敗する。差し替えが済むまで wrapper の
-        // 要求を待たせ、次の stack で応える(作り直しに失敗したら、今までどおり停止した stack が失敗を返す)。
-        let mut transport = self.transport.begin_replace().await;
-        let mut docs_sync = self.docs_sync.begin_replace().await;
-        let mut blob_service = self.blob_service.begin_replace().await;
+        // 停止した actor へ要求を送らない: 差し替えまで wrapper の要求を待たせる(ADR 0058 §1)。
+        let mut transport = self.transport.inner.write().await;
+        let mut docs_sync = self.docs_sync.inner.write().await;
+        let mut blob_service = self.blob_service.inner.write().await;
         #[cfg(test)]
         if let Some((reached, resume)) = self.rebuild_before_shutdown_gate.lock().await.take() {
             let _ = reached.send(());
