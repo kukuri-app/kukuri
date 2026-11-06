@@ -18,6 +18,71 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.5.2-preview.1] - 2026-11-06
+
+### Features
+
+- Windows/UPM の配布候補を CI で作って照合する (#1984 AC-2) ([#2027](https://github.com/kukuri-app/kukuri/pull/2027))
+- ADR 0070 §8.4 の同時負荷の計測を足し、全閾値を満たす (#1984 AC-1) ([#2024](https://github.com/kukuri-app/kukuri/pull/2024))
+- QUIC の輻輳制御を BBR3 にする (#1984 AC-1) ([#2023](https://github.com/kukuri-app/kukuri/pull/2023))
+- 性能の計測の UDP proxy と SDK の memory の数え方 (#1984 AC-1a) ([#2021](https://github.com/kukuri-app/kukuri/pull/2021))
+- Cyber Disc Arena の掲示板・結果の投稿と 4 つの Prefab の最小の scene (#1983 AC-2d) ([#2020](https://github.com/kukuri-app/kukuri/pull/2020))
+- Cyber Disc Arena に試合の配信・4 面モニター・ゲーム外からの応援を足す (#1983 AC-2c) ([#2019](https://github.com/kukuri-app/kukuri/pull/2019))
+- Cyber Disc Arena にスキンのロッカーと相手への反映を足す (#1983 AC-2b) ([#2018](https://github.com/kukuri-app/kukuri/pull/2018))
+- 開始の画面を Runtime へ移し、Cyber Disc Arena で状態を game player ごとに続ける (#1983 AC-2a) ([#2017](https://github.com/kukuri-app/kukuri/pull/2017))
+- Cyber Disc Arena の対戦 ring の操作・裁定・同期を足す (#1983 AC-1) ([#2016](https://github.com/kukuri-app/kukuri/pull/2016))
+- Unity の掲示板 prefab を足し、開いている間だけ購読して新着の分だけ読み直す (#1981 AC-2) ([#2015](https://github.com/kukuri-app/kukuri/pull/2015))
+- ゲームのアカウントを既存のアカウントへまとめ、フォロー・ブロック・ミュートを背景で付け直す (#1998 AC-3) ([#2014](https://github.com/kukuri-app/kukuri/pull/2014))
+- 新しい端末で Steam Cloud の file から同じアカウントと game player で再開する (#1997 AC-3) ([#2013](https://github.com/kukuri-app/kukuri/pull/2013))
+- ゲームで作ったアカウントを Steam Cloud に保存する get/set_cloud_account を足す (#1997 AC-2) ([#2012](https://github.com/kukuri-app/kukuri/pull/2012))
+- プレイ中の「kukuriで続ける」でゲームのアカウントを同じ鍵のまま kukuri app へ移す (#1998 AC-2) ([#2011](https://github.com/kukuri-app/kukuri/pull/2011))
+- 既存の kukuri アカウントを移行の貼り付けで受けて始める入口を足す (#1996 AC-3) ([#2008](https://github.com/kukuri-app/kukuri/pull/2008))
+- ゲームの開始で game player を作り、再起動で同じ player とアカウントで再開する (#1996 AC-2) ([#2007](https://github.com/kukuri-app/kukuri/pull/2007))
+- Live の視聴者の転送・公開スレッドの購読・開始 post との対応を Unity へつなぐ (#1982 AC-2) ([#2005](https://github.com/kukuri-app/kukuri/pull/2005))
+- Unity の Live の配信・視聴と既存 Live との相互配信を追加する (#1982 AC-1) ([#2004](https://github.com/kukuri-app/kukuri/pull/2004))
+- 投稿・返信の新着の知らせと SNS の相互運用の試験を追加する (#1981 AC-1) ([#2003](https://github.com/kukuri-app/kukuri/pull/2003))
+- スキンのローダーと再起動なしの差し替えを追加する (#1980 AC-2) ([#2002](https://github.com/kukuri-app/kukuri/pull/2002))
+- ゲームのアセットの署名つきの発行・発見・取得・保持を追加する (#1980 AC-1) ([#2001](https://github.com/kukuri-app/kukuri/pull/2001))
+- NGO の Transport adapter と最小の同期の sample を追加する (#1979 AC-2) ([#2000](https://github.com/kukuri-app/kukuri/pull/2000))
+- 認可した action session の datagram・stream の送受信と上限を追加する (#1979 AC-1) ([#1999](https://github.com/kukuri-app/kukuri/pull/1999))
+- action session の参加と退出・終了・権限の失効で閉じる session を追加する (#1978 AC-2) ([#1995](https://github.com/kukuri-app/kukuri/pull/1995))
+- action session の room の作成・一覧・終了と Unity の Lobby prefab を追加する (#1978 AC-1) ([#1994](https://github.com/kukuri-app/kukuri/pull/1994))
+- Play・Stop と Player の再起動で handle と profile の lock を残さない (#1977 AC-2) ([#1993](https://github.com/kukuri-app/kukuri/pull/1993))
+- Game SDK の UPM package と FFI・Sidecar 共通の C# API を追加する (#1977 AC-1) ([#1992](https://github.com/kukuri-app/kukuri/pull/1992))
+- Sidecar の接続の寿命を Editor の Play・Stop と複数 profile に合わせる (#1976 AC-2) ([#1991](https://github.com/kukuri-app/kukuri/pull/1991))
+- Windows の開発用 Sidecar と named pipe の中継を追加する (#1976 AC-1) ([#1990](https://github.com/kukuri-app/kukuri/pull/1990))
+- Unity 向け Game SDK の C ABI と有限の待ち行列を追加する (#1975 AC-1) ([#1987](https://github.com/kukuri-app/kukuri/pull/1987))
+
+### Fixes
+
+- stack の作り直しをまたいだ docs の要求が永久に待つのを直す ([#2043](https://github.com/kukuri-app/kukuri/pull/2043), [#2046](https://github.com/kukuri-app/kukuri/pull/2046))
+- 登録より前の record の保護を期間の日数の回だけ待たせない ([#2034](https://github.com/kukuri-app/kukuri/pull/2034), [#2047](https://github.com/kukuri-app/kukuri/pull/2047))
+- cargo から起動した試験で OS の keyring を使わない ([#2032](https://github.com/kukuri-app/kukuri/pull/2032), [#2033](https://github.com/kukuri-app/kukuri/pull/2033))
+- 時間で損失とみなす待ちを往復時間の 5/4 にする ([#2041](https://github.com/kukuri-app/kukuri/pull/2041), [#2044](https://github.com/kukuri-app/kukuri/pull/2044))
+- CI で揺れていた試験を直す ([#2038](https://github.com/kukuri-app/kukuri/pull/2038))
+- 投稿の応答が hint の送り直しの間を待たないようにする (#2030 AC-1) ([#2035](https://github.com/kukuri-app/kukuri/pull/2035))
+- main の CI を直す（小さい runner の disk 不足ほか） ([#2037](https://github.com/kukuri-app/kukuri/pull/2037))
+- 音声の出力の機器が無い PC でも Live の映像を届ける ([#2029](https://github.com/kukuri-app/kukuri/pull/2029), [#2031](https://github.com/kukuri-app/kukuri/pull/2031))
+- Community Node の構成でだけ落ちていた相互運用の段を直す (#1984 AC-1) ([#2026](https://github.com/kukuri-app/kukuri/pull/2026))
+- moq の fork を submodule を外した commit に固定する ([#1988](https://github.com/kukuri-app/kukuri/pull/1988))
+- live-overlay-push の送信側 wall の上限を Release の 22.04 だけ 200 ms にする ([#1971](https://github.com/kukuri-app/kukuri/pull/1971))
+
+### Other
+
+- リリースの版を 0.5.2 にする ([#2048](https://github.com/kukuri-app/kukuri/pull/2048))
+- 依存・toolchain・Actions を最新へ更新し、fork を整理する ([#2045](https://github.com/kukuri-app/kukuri/pull/2045))
+- Nightly と Web E2E で揺れていた試験を直す ([#2042](https://github.com/kukuri-app/kukuri/pull/2042))
+- public-blob の画像の投稿を続く投稿より古い秒へ置く ([#2030](https://github.com/kukuri-app/kukuri/pull/2030), [#2039](https://github.com/kukuri-app/kukuri/pull/2039))
+- 導入の手順書と部分導入の確認を足し、掲示板の同じ秒の返信を直す (#1984 AC-3) ([#2028](https://github.com/kukuri-app/kukuri/pull/2028))
+- Unity と desktop・Web の相互運用を Arena の試験で確かめる (#1984 AC-1) ([#2025](https://github.com/kukuri-app/kukuri/pull/2025))
+- Steam Cloud によるアカウントの保存と別の端末での再開の契約を決める (#1997 AC-1) ([#2010](https://github.com/kukuri-app/kukuri/pull/2010))
+- ゲーム用のアカウントの引継ぎと既存のアカウントへのまとめの契約を決める (#1998 AC-1) ([#2009](https://github.com/kukuri-app/kukuri/pull/2009))
+- ゲームの開始の入口・game player・既存アカウントの受け取り方を決める (#1996 AC-1) ([#2006](https://github.com/kukuri-app/kukuri/pull/2006))
+- SDK の profile と既存のアカウント・同意の入口を確かめる (#1975 AC-2) ([#1989](https://github.com/kukuri-app/kukuri/pull/1989))
+- Game SDK の対応環境・映像方式・性能の閾値を ADR 0070 §8 に確定する (#1974 AC-2) ([#1986](https://github.com/kukuri-app/kukuri/pull/1986))
+- Unity 先行の Game SDK の共通契約とデータ分類を ADR 0070 に固定する (#1974 AC-1) ([#1985](https://github.com/kukuri-app/kukuri/pull/1985))
+- v0.5.1-preview.1 の changelog・LP・本番更新の記録 ([#1970](https://github.com/kukuri-app/kukuri/pull/1970))
+
 ## [v0.5.1-preview.1] - 2026-10-28
 
 ### Features
