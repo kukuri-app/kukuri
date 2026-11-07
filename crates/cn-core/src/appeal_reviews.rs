@@ -6,9 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::Row;
 use sqlx::postgres::{PgPool, PgRow};
-use uuid::Uuid;
 
-use crate::operator_actions::OperatorAction;
+use crate::operator_actions::{OperatorAction, append_operator_action_in_tx};
 use crate::safety_appeals::{
     RiskSignalCorrection, RiskSignalMetadataEdit, validate_optional_confidence,
     validate_optional_expires_at,
@@ -342,22 +341,16 @@ pub async fn apply_appeal_review_action(
         after["reissued_risk_signal"] = reissued_signal;
     }
 
-    let action_id = Uuid::new_v4().to_string();
-    let audit_row = sqlx::query(
-        "INSERT INTO cn_admin.operator_actions
-            (id, actor, action, target_kind, target_id, before_json, after_json)
-         VALUES ($1, $2, $3, 'risk_signal_appeal', $4, $5, $6)
-         RETURNING id, occurred_at, actor, action, target_kind, target_id, before_json, after_json",
+    let result = append_operator_action_in_tx(
+        &mut tx,
+        actor,
+        action,
+        "risk_signal_appeal",
+        risk_signal_id,
+        (before, after),
+        None,
     )
-    .bind(&action_id)
-    .bind(actor)
-    .bind(action)
-    .bind(risk_signal_id)
-    .bind(before)
-    .bind(after)
-    .fetch_one(&mut *tx)
     .await?;
-    let result = operator_action_from_row(&audit_row)?;
     tx.commit().await?;
     Ok(result)
 }
@@ -463,17 +456,4 @@ fn enum_or_current<T: Serialize + Copy>(value: Option<T>, current: &str) -> Resu
         .map(|value| to_db_enum(&value))
         .transpose()
         .map(|value| value.unwrap_or_else(|| current.to_string()))
-}
-
-fn operator_action_from_row(row: &PgRow) -> Result<OperatorAction> {
-    Ok(OperatorAction {
-        id: row.try_get("id")?,
-        occurred_at: row.try_get("occurred_at")?,
-        actor: row.try_get("actor")?,
-        action: row.try_get("action")?,
-        target_kind: row.try_get("target_kind")?,
-        target_id: row.try_get("target_id")?,
-        before: row.try_get("before_json")?,
-        after: row.try_get("after_json")?,
-    })
 }

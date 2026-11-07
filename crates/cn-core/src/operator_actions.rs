@@ -7,8 +7,8 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx::Row;
 use sqlx::postgres::{PgPool, PgRow};
+use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use crate::config::COMMUNITY_NODE_ADMISSION_SERVICE_NAME;
@@ -240,25 +240,47 @@ pub async fn apply_operator_action(
         }
     };
 
-    let id = Uuid::new_v4().to_string();
+    let result = append_operator_action_in_tx(
+        &mut tx,
+        actor,
+        action,
+        target_kind,
+        &target_id,
+        (before, after),
+        None,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+/// domainのtransactionに監査行を足す。trimとsnapshotの内容、commitは呼出元が所有する。
+pub(crate) async fn append_operator_action_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &str,
+    action: &str,
+    target_kind: &str,
+    target_id: &str,
+    (before, after): (Value, Value),
+    occurred_at: Option<DateTime<Utc>>,
+) -> Result<OperatorAction> {
     let row = sqlx::query(
         "INSERT INTO cn_admin.operator_actions
-            (id, actor, action, target_kind, target_id, before_json, after_json)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (id, actor, action, target_kind, target_id, before_json, after_json, occurred_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()))
          RETURNING id, occurred_at, actor, action, target_kind, target_id, before_json, after_json",
     )
-    .bind(&id)
+    .bind(Uuid::new_v4().to_string())
     .bind(actor)
     .bind(action)
     .bind(target_kind)
-    .bind(&target_id)
+    .bind(target_id)
     .bind(before)
     .bind(after)
-    .fetch_one(&mut *tx)
+    .bind(occurred_at)
+    .fetch_one(&mut **tx)
     .await?;
-    let result = operator_action_from_row(&row)?;
-    tx.commit().await?;
-    Ok(result)
+    operator_action_from_row(&row)
 }
 
 pub fn validate_admin_operation(operation: &AdminOperation) -> Result<()> {

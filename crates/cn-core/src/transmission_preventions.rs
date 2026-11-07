@@ -4,6 +4,7 @@
 //! 共有する。権利侵害の判断とは一意性・作成・解除の経路を分ける。対象は投稿と添付の blob hash で、blob hash の
 //! 判断は索引の行が参照する hash（`cn_index.index_entry_media`）で照合する。
 
+use crate::operator_actions::append_operator_action_in_tx;
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -166,14 +167,14 @@ pub(crate) async fn apply_transmission_prevention_in_tx(
         .await?;
         if let Some(row) = expired {
             let expired_decision = from_row(&row)?;
-            append_audit(
+            append_operator_action_in_tx(
                 tx,
                 "system:expiry",
                 "transmission_prevention.expire",
-                &current.subject_kind,
-                &current.subject_id,
-                before,
-                audit_snapshot(&expired_decision),
+                current.subject_kind.trim(),
+                current.subject_id.trim(),
+                (before, audit_snapshot(&expired_decision)),
+                None,
             )
             .await?;
         } else {
@@ -215,14 +216,14 @@ pub(crate) async fn apply_transmission_prevention_in_tx(
             ));
         }
     }
-    let audit = append_audit(
+    let audit = append_operator_action_in_tx(
         tx,
-        actor,
+        actor.trim(),
         "transmission_prevention.apply",
-        &input.subject_kind,
-        &input.subject_id,
-        json!({ "active": false }),
-        audit_snapshot(&decision),
+        input.subject_kind.trim(),
+        input.subject_id.trim(),
+        (json!({ "active": false }), audit_snapshot(&decision)),
+        None,
     )
     .await?;
     Ok(TransmissionPreventionMutation {
@@ -260,14 +261,14 @@ pub async fn release_transmission_prevention(
     .fetch_one(&mut *tx)
     .await?;
     let decision = from_row(&row)?;
-    let audit = append_audit(
+    let audit = append_operator_action_in_tx(
         &mut tx,
-        actor,
+        actor.trim(),
         "transmission_prevention.release",
-        subject_kind,
-        subject_id,
-        before,
-        audit_snapshot(&decision),
+        subject_kind.trim(),
+        subject_id.trim(),
+        (before, audit_snapshot(&decision)),
+        None,
     )
     .await?;
     tx.commit().await?;
@@ -575,42 +576,6 @@ async fn lock_subject(tx: &mut Transaction<'_, Postgres>, subject_id: &str) -> R
         .execute(&mut **tx)
         .await?;
     Ok(())
-}
-
-async fn append_audit(
-    tx: &mut Transaction<'_, Postgres>,
-    actor: &str,
-    action: &str,
-    target_kind: &str,
-    target_id: &str,
-    before: serde_json::Value,
-    after: serde_json::Value,
-) -> Result<OperatorAction> {
-    let row = sqlx::query(
-        "INSERT INTO cn_admin.operator_actions
-            (id, actor, action, target_kind, target_id, before_json, after_json)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, occurred_at, actor, action, target_kind, target_id, before_json, after_json",
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(actor.trim())
-    .bind(action)
-    .bind(target_kind.trim())
-    .bind(target_id.trim())
-    .bind(before)
-    .bind(after)
-    .fetch_one(&mut **tx)
-    .await?;
-    Ok(OperatorAction {
-        id: row.try_get("id")?,
-        occurred_at: row.try_get("occurred_at")?,
-        actor: row.try_get("actor")?,
-        action: row.try_get("action")?,
-        target_kind: row.try_get("target_kind")?,
-        target_id: row.try_get("target_id")?,
-        before: row.try_get("before_json")?,
-        after: row.try_get("after_json")?,
-    })
 }
 
 fn validate_actor(actor: &str) -> Result<()> {
