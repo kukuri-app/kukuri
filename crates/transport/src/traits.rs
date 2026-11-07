@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use futures_util::{Stream, StreamExt};
+use futures_util::{Stream, StreamExt, stream};
 pub use iroh::EndpointAddr;
 use kukuri_core::{GossipHint, Pubkey, SealedReceiveOfferV1, TopicId};
 use serde::{Deserialize, Serialize};
@@ -104,6 +104,35 @@ pub fn hint_stream_from_sender(sender: &broadcast::Sender<HintEnvelope>) -> Hint
             }))
         })
         .filter_map(std::future::ready);
+    Box::pin(stream)
+}
+
+pub(crate) fn stream_from_offer_sender(
+    sender: &broadcast::Sender<ReceiveOfferEnvelope>,
+    stop: &watch::Sender<ReceiveOfferStop>,
+) -> ReceiveOfferStream {
+    let stream = stream::unfold(
+        (sender.subscribe(), stop.subscribe()),
+        |(mut receiver, mut stop)| async move {
+            loop {
+                if *stop.borrow() != ReceiveOfferStop::Active {
+                    return None;
+                }
+                tokio::select! {
+                    biased;
+                    changed = stop.changed() => {
+                        let _ = changed;
+                        return None;
+                    }
+                    event = receiver.recv() => match event {
+                        Ok(envelope) => return Some((envelope, (receiver, stop))),
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Closed) => return None,
+                    },
+                }
+            }
+        },
+    );
     Box::pin(stream)
 }
 

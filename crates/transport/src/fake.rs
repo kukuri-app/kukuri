@@ -16,7 +16,6 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
-use futures_util::stream;
 use iroh::EndpointAddr;
 use kukuri_core::{GossipHint, Pubkey, SealedReceiveOfferV1, TopicId, receive_route_for_account};
 #[cfg(test)]
@@ -30,7 +29,7 @@ use crate::diagnostics::{peer_status_detail, topic_status_detail};
 use crate::traits::{
     HintEnvelope, HintStream, HintTransport, PeerPage, PeerSnapshot, ReceiveCandidateFence,
     ReceiveOfferEnvelope, ReceiveOfferLease, ReceiveOfferStop, ReceiveOfferSubscription,
-    TopicPeerSnapshot, Transport, next_receive_offer_lease,
+    TopicPeerSnapshot, Transport, next_receive_offer_lease, stream_from_offer_sender,
 };
 
 #[derive(Clone, Default)]
@@ -144,29 +143,8 @@ impl FakeTransport {
             lease,
             stop: stop.clone(),
         });
-        let stream = stream::unfold(
-            (sender.subscribe(), stop.subscribe()),
-            |(mut receiver, mut stop)| async move {
-                loop {
-                    if *stop.borrow() != ReceiveOfferStop::Active {
-                        return None;
-                    }
-                    tokio::select! {
-                        biased;
-                        changed = stop.changed() => {
-                            let _ = changed;
-                            return None;
-                        }
-                        event = receiver.recv() => match event {
-                            Ok(envelope) => return Some((envelope, (receiver, stop))),
-                            Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                            Err(broadcast::error::RecvError::Closed) => return None,
-                        },
-                    }
-                }
-            },
-        );
-        Ok(Some((lease, Box::pin(stream), stop.subscribe())))
+        let stream = stream_from_offer_sender(&sender, &stop);
+        Ok(Some((lease, stream, stop.subscribe())))
     }
 }
 

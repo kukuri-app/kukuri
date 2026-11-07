@@ -14,7 +14,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::Utc;
-use futures_util::{StreamExt, stream};
+use futures_util::StreamExt;
 #[cfg(test)]
 use iroh::RelayMode;
 #[cfg(not(target_family = "wasm"))]
@@ -55,8 +55,8 @@ use crate::tickets::{
 use crate::traits::PeerPage;
 use crate::traits::{
     HintEnvelope, HintStream, HintTransport, PeerSnapshot, ReceiveCandidateFence,
-    ReceiveOfferEnvelope, ReceiveOfferLease, ReceiveOfferStop, ReceiveOfferStream,
-    ReceiveOfferSubscription, TopicPeerSnapshot, Transport,
+    ReceiveOfferEnvelope, ReceiveOfferLease, ReceiveOfferStop, ReceiveOfferSubscription,
+    TopicPeerSnapshot, Transport,
 };
 
 struct HintTopicState {
