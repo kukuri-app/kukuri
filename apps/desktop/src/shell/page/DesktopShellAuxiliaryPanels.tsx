@@ -683,7 +683,6 @@ export type DesktopShellDetailSurfaceStackProps = {
   t: Translate;
   viewModels: Pick<
     ViewModels,
-    | 'authorDetailView'
     | 'buildPostCardView'
     | 'threadPanelState'
     | 'threadPostViews'

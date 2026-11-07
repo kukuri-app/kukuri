@@ -155,7 +155,6 @@ export const selectShellRoutingSlice = (s: DesktopShellStore) => ({
 export const selectShellViewModelsSlice = (s: DesktopShellStore) => ({
   activeTopic: activeTopic(s),
   adultContentEnabled: s.adultContentEnabled,
-  authorError: s.authorError,
   bookmarkedPosts: s.bookmarkedPosts,
   bookmarkedReactionAssets: s.bookmarkedReactionAssets,
   channelPanelStateByTopic: s.channelPanelStateByTopic,
@@ -196,7 +195,6 @@ export const selectShellViewModelsSlice = (s: DesktopShellStore) => ({
   profileDraft: s.profileDraft,
   profileTimeline: s.profileTimeline,
   reactionPanelState: s.reactionPanelState,
-  selectedAuthor: s.selectedAuthor,
   selectedChannelIdByTopic: selectedChannelIdByTopic(s),
   selectedDirectMessagePeerPubkey: s.selectedDirectMessagePeerPubkey,
   selectedThread: s.selectedThread,
