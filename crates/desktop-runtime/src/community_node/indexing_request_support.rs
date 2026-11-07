@@ -87,12 +87,11 @@ impl fmt::Display for CommunityNodeIndexingRequestError {
 impl std::error::Error for CommunityNodeIndexingRequestError {}
 
 impl DesktopRuntime {
-    pub(crate) async fn revoke_community_node_indexing(
+    pub(super) async fn indexing_base_url(
         &self,
-        request: CommunityNodeIndexingRequest,
-    ) -> Result<(), CommunityNodeIndexingRequestError> {
-        let _grant_guard = self.private_index_grant_guard.lock().await;
-        let base_url = normalize_http_url(&request.base_url).map_err(|error| {
+        input: &str,
+    ) -> Result<String, CommunityNodeIndexingRequestError> {
+        let base_url = normalize_http_url(input).map_err(|error| {
             CommunityNodeIndexingRequestError::new("INVALID_COMMUNITY_NODE_URL", error.to_string())
         })?;
         self.require_community_node(&base_url)
@@ -103,6 +102,60 @@ impl DesktopRuntime {
                     error.to_string(),
                 )
             })?;
+        Ok(base_url)
+    }
+
+    pub(super) async fn require_indexing_session(
+        &self,
+        base_url: &str,
+        consent_message: &str,
+    ) -> Result<(), CommunityNodeIndexingRequestError> {
+        match self
+            .ensure_community_node_session(base_url)
+            .await
+            .map_err(|error| {
+                CommunityNodeIndexingRequestError::new(
+                    "COMMUNITY_NODE_SESSION_FAILED",
+                    error.to_string(),
+                )
+            })? {
+            CommunityNodeSessionOutcome::Ready => Ok(()),
+            CommunityNodeSessionOutcome::ConsentRequired => Err(
+                CommunityNodeIndexingRequestError::new(CONSENT_REQUIRED_CODE, consent_message),
+            ),
+            CommunityNodeSessionOutcome::Deferred(phase) => {
+                Err(CommunityNodeIndexingRequestError::new(
+                    "COMMUNITY_NODE_SESSION_DEFERRED",
+                    format!("community node session is not ready ({phase:?})"),
+                ))
+            }
+        }
+    }
+
+    pub(super) async fn indexing_token(
+        &self,
+        base_url: &str,
+    ) -> Result<String, CommunityNodeIndexingRequestError> {
+        load_community_node_token(&self.db_path, self.identity_mode, base_url)
+            .await
+            .map_err(|error| {
+                CommunityNodeIndexingRequestError::new("AUTH_TOKEN_LOAD_FAILED", error.to_string())
+            })?
+            .map(|token| token.access_token)
+            .ok_or_else(|| {
+                CommunityNodeIndexingRequestError::new(
+                    AUTH_REQUIRED_CODE,
+                    "community node authentication is required",
+                )
+            })
+    }
+
+    pub(crate) async fn revoke_community_node_indexing(
+        &self,
+        request: CommunityNodeIndexingRequest,
+    ) -> Result<(), CommunityNodeIndexingRequestError> {
+        let _grant_guard = self.private_index_grant_guard.lock().await;
+        let base_url = self.indexing_base_url(&request.base_url).await?;
         let target_id = if request.scope_kind == IndexScopeKind::PrivateChannel {
             request.channel_id.as_deref().unwrap_or_default().trim()
         } else {
@@ -126,17 +179,7 @@ impl DesktopRuntime {
                     )
                 })?;
         }
-        let token = load_community_node_token(&self.db_path, self.identity_mode, &base_url)
-            .await
-            .map_err(|error| {
-                CommunityNodeIndexingRequestError::new("AUTH_TOKEN_LOAD_FAILED", error.to_string())
-            })?
-            .ok_or_else(|| {
-                CommunityNodeIndexingRequestError::new(
-                    AUTH_REQUIRED_CODE,
-                    "community node authentication is required",
-                )
-            })?;
+        let token = self.indexing_token(&base_url).await?;
         let response = community_node_http_client()
             .map_err(|error| {
                 CommunityNodeIndexingRequestError::new(
@@ -145,7 +188,7 @@ impl DesktopRuntime {
                 )
             })?
             .delete(format!("{base_url}{INDEXING_REQUESTS_PATH}"))
-            .bearer_auth(token.access_token)
+            .bearer_auth(token)
             .json(&RevokeIndexingRequestRequest {
                 kind: request.scope_kind,
                 target_id: target_id.clone(),
@@ -194,18 +237,7 @@ impl DesktopRuntime {
         request: CommunityNodeIndexingRequest,
     ) -> Result<SubmitIndexingRequestResponse, CommunityNodeIndexingRequestError> {
         let _grant_guard = self.private_index_grant_guard.lock().await;
-        let base_url = normalize_http_url(request.base_url.as_str()).map_err(|error| {
-            CommunityNodeIndexingRequestError::new("INVALID_COMMUNITY_NODE_URL", error.to_string())
-        })?;
-        self.require_community_node(base_url.as_str())
-            .await
-            .map_err(|error| {
-                CommunityNodeIndexingRequestError::new(
-                    "COMMUNITY_NODE_NOT_CONFIGURED",
-                    error.to_string(),
-                )
-            })?;
-
+        let base_url = self.indexing_base_url(&request.base_url).await?;
         let topic_id = request.topic_id.trim();
         if topic_id.is_empty() {
             return Err(CommunityNodeIndexingRequestError::new(
@@ -224,30 +256,11 @@ impl DesktopRuntime {
         }
         // セッション確立と同意確認は秘密値を組み立てる前に行う。必須同意が未承認のノードへは
         // 非公開チャンネルの秘密値を含む申請を送らない(#698)。
-        let session_outcome = self
-            .ensure_community_node_session(base_url.as_str())
-            .await
-            .map_err(|error| {
-                CommunityNodeIndexingRequestError::new(
-                    "COMMUNITY_NODE_SESSION_FAILED",
-                    error.to_string(),
-                )
-            })?;
-        match session_outcome {
-            CommunityNodeSessionOutcome::Ready => {}
-            CommunityNodeSessionOutcome::ConsentRequired => {
-                return Err(CommunityNodeIndexingRequestError::new(
-                    CONSENT_REQUIRED_CODE,
-                    "community node required policies must be accepted before indexing requests",
-                ));
-            }
-            CommunityNodeSessionOutcome::Deferred(phase) => {
-                return Err(CommunityNodeIndexingRequestError::new(
-                    "COMMUNITY_NODE_SESSION_DEFERRED",
-                    format!("community node session is not ready ({phase:?})"),
-                ));
-            }
-        }
+        self.require_indexing_session(
+            &base_url,
+            "community node required policies must be accepted before indexing requests",
+        )
+        .await?;
         let (target_id, epoch_id, channel_secret_hex) = match request.scope_kind {
             IndexScopeKind::PublicTopic => {
                 if request
@@ -294,17 +307,7 @@ impl DesktopRuntime {
             }
         };
 
-        let token = load_community_node_token(&self.db_path, self.identity_mode, base_url.as_str())
-            .await
-            .map_err(|error| {
-                CommunityNodeIndexingRequestError::new("AUTH_TOKEN_LOAD_FAILED", error.to_string())
-            })?
-            .ok_or_else(|| {
-                CommunityNodeIndexingRequestError::new(
-                    AUTH_REQUIRED_CODE,
-                    "community node authentication is required",
-                )
-            })?;
+        let token = self.indexing_token(&base_url).await?;
         let wire_request = SubmitIndexingRequestRequest {
             kind: request.scope_kind.as_str().to_string(),
             target_id,
@@ -315,11 +318,7 @@ impl DesktopRuntime {
         };
 
         let result = match self
-            .send_community_node_indexing_request(
-                base_url.as_str(),
-                &wire_request,
-                token.access_token.as_str(),
-            )
+            .send_community_node_indexing_request(base_url.as_str(), &wire_request, token.as_str())
             .await
         {
             Err(error) if error.status == Some(StatusCode::UNAUTHORIZED.as_u16()) => {

@@ -6,17 +6,13 @@
 //! 応答は client に永続化せず、呼出し側の表示 state でだけ保持する(INVAR-4)。
 
 use kukuri_cn_protocol::{
-    AUTH_REQUIRED_CODE, ApiErrorBody, CHANNEL_MEMBERSHIP_SECRET_HEADER, CONSENT_REQUIRED_CODE,
-    INDEXING_STATUS_PATH, IndexScopeKind, IndexingStatusParams, IndexingStatusResponse,
-    normalize_http_url,
+    ApiErrorBody, CHANNEL_MEMBERSHIP_SECRET_HEADER, INDEXING_STATUS_PATH, IndexScopeKind,
+    IndexingStatusParams, IndexingStatusResponse,
 };
 use reqwest::{StatusCode, header::RETRY_AFTER};
 use serde::{Deserialize, Serialize};
 
-use super::{
-    CommunityNodeIndexingRequestError, CommunityNodeSessionOutcome, community_node_http_client,
-    load_community_node_token,
-};
+use super::{CommunityNodeIndexingRequestError, community_node_http_client};
 use crate::runtime::DesktopRuntime;
 
 /// UI / IPC から受ける索引状況の読取り要求。
@@ -107,45 +103,16 @@ impl DesktopRuntime {
         &self,
         request: CommunityNodeIndexingStatusRequest,
     ) -> Result<IndexingStatusResponse, CommunityNodeIndexingRequestError> {
-        let base_url = normalize_http_url(request.base_url.as_str()).map_err(|error| {
-            CommunityNodeIndexingRequestError::new("INVALID_COMMUNITY_NODE_URL", error.to_string())
-        })?;
-        self.require_community_node(base_url.as_str())
-            .await
-            .map_err(|error| {
-                CommunityNodeIndexingRequestError::new(
-                    "COMMUNITY_NODE_NOT_CONFIGURED",
-                    error.to_string(),
-                )
-            })?;
+        let base_url = self.indexing_base_url(&request.base_url).await?;
         // 入力検証は I/O を伴わないため session より先に行う。非公開の確認 flag もここで固定する。
         let target = validate_status_target(&request)?;
 
         // 申請と同じ順序: session 確立と同意確認を秘密値の組立てより前に行う(#698)。
-        let session_outcome = self
-            .ensure_community_node_session(base_url.as_str())
-            .await
-            .map_err(|error| {
-                CommunityNodeIndexingRequestError::new(
-                    "COMMUNITY_NODE_SESSION_FAILED",
-                    error.to_string(),
-                )
-            })?;
-        match session_outcome {
-            CommunityNodeSessionOutcome::Ready => {}
-            CommunityNodeSessionOutcome::ConsentRequired => {
-                return Err(CommunityNodeIndexingRequestError::new(
-                    CONSENT_REQUIRED_CODE,
-                    "community node required policies must be accepted before reading indexing status",
-                ));
-            }
-            CommunityNodeSessionOutcome::Deferred(phase) => {
-                return Err(CommunityNodeIndexingRequestError::new(
-                    "COMMUNITY_NODE_SESSION_DEFERRED",
-                    format!("community node session is not ready ({phase:?})"),
-                ));
-            }
-        }
+        self.require_indexing_session(
+            &base_url,
+            "community node required policies must be accepted before reading indexing status",
+        )
+        .await?;
 
         let (params, channel_secret) = match target {
             StatusTarget::None => (IndexingStatusParams::default(), None),
@@ -181,23 +148,13 @@ impl DesktopRuntime {
             }
         };
 
-        let token = load_community_node_token(&self.db_path, self.identity_mode, base_url.as_str())
-            .await
-            .map_err(|error| {
-                CommunityNodeIndexingRequestError::new("AUTH_TOKEN_LOAD_FAILED", error.to_string())
-            })?
-            .ok_or_else(|| {
-                CommunityNodeIndexingRequestError::new(
-                    AUTH_REQUIRED_CODE,
-                    "community node authentication is required",
-                )
-            })?;
+        let token = self.indexing_token(&base_url).await?;
 
         match self
             .send_community_node_indexing_status(
                 base_url.as_str(),
                 &params,
-                token.access_token.as_str(),
+                token.as_str(),
                 channel_secret.as_deref(),
             )
             .await
