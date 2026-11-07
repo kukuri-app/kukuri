@@ -171,3 +171,43 @@ async fn postgres_budget_is_atomic_shared_and_survives_restart() -> Result<()> {
     db.cleanup().await?;
     result
 }
+
+#[tokio::test]
+async fn postgres_claim_reclaims_a_bounded_batch_of_unrelated_expired_keys() -> Result<()> {
+    let Some(admin) = database_url() else {
+        eprintln!("integration disabled");
+        return Ok(());
+    };
+    let db = TestDatabase::create(&admin, "cn_2055_claim").await?;
+    let pool = connect_postgres(&db.database_url).await?;
+    let result = async {
+        initialize_database(&pool).await?;
+        let store = PgContentScanStore::new(pool.clone());
+        let owner = uuid::Uuid::new_v4().to_string();
+        let old_owner = uuid::Uuid::new_v4().to_string();
+        let key = "f".repeat(64);
+        for count in [256_i32, 4096] {
+            sqlx::query("TRUNCATE cn_safety.content_scan_claims").execute(&pool).await?;
+            sqlx::query("INSERT INTO cn_safety.content_scan_claims (cache_key, owner, expires_at) SELECT lpad(to_hex(i), 64, '0'), $1::uuid, clock_timestamp() - interval '2 hours' FROM generate_series(1, $2) i")
+                .bind(&old_owner).bind(count).execute(&pool).await?;
+            // 対象keyは掃除の最古batchに入らなくても、既存のUPSERTで引き継げる。
+            sqlx::query("INSERT INTO cn_safety.content_scan_claims VALUES ($1, $2::uuid, clock_timestamp() - interval '1 hour')")
+                .bind(&key).bind(&old_owner).execute(&pool).await?;
+            assert!(store.claim(&key, &owner, CONTENT_SCAN_LEASE).await?);
+            let expired: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cn_safety.content_scan_claims WHERE expires_at <= clock_timestamp()")
+                .fetch_one(&pool).await?;
+            assert_eq!(expired, i64::from(count) - 128, "one claim must reclaim just one fixed batch");
+            let current: String = sqlx::query_scalar("SELECT owner::text FROM cn_safety.content_scan_claims WHERE cache_key = $1")
+                .bind(&key).fetch_one(&pool).await?;
+            assert_eq!(current, owner);
+            assert!(!store.claim(&key, &old_owner, CONTENT_SCAN_LEASE).await?);
+            let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cn_safety.content_scan_claims WHERE expires_at <= clock_timestamp()")
+                .fetch_one(&pool).await?;
+            assert_eq!(remaining, i64::from(count) - 256, "later claims keep reclaiming bounded batches");
+        }
+        Ok(())
+    }.await;
+    pool.close().await;
+    db.cleanup().await?;
+    result
+}
