@@ -509,7 +509,6 @@ export function DesktopShellPage({
   useFocusScroll({
     focusKey: liveFocusKey,
     readinessKey: liveSessionListItems.length,
-    // 他の列にある同じ Live の紹介カードへ寄せると、開いた Live の列が画面の外へ戻される。
     selector: liveFocusKey ? `.shell-column-surface[data-active="true"] [data-live-session-id=${JSON.stringify(liveFocusKey)}]` : null,
   });
   const gameFocusKey =
