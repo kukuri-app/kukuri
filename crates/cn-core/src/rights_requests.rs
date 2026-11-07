@@ -1,5 +1,6 @@
 //! Durable, accountless rights-infringement requests (#760).
 
+use crate::operator_actions::append_operator_action_in_tx;
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use kukuri_cn_protocol::{
@@ -736,18 +737,18 @@ async fn append_operator_audit(
     to_status: &str,
     occurred_at: DateTime<Utc>,
 ) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO cn_admin.operator_actions
-            (id, actor, action, target_kind, target_id, before_json, after_json, occurred_at)
-         VALUES ($1, $2, 'rights_request.transition', 'rights_request', $3, $4, $5, $6)",
+    append_operator_action_in_tx(
+        tx,
+        actor.trim(),
+        "rights_request.transition",
+        "rights_request",
+        request_id.trim(),
+        (
+            json!({ "status": from_status }),
+            json!({ "status": to_status }),
+        ),
+        Some(occurred_at),
     )
-    .bind(Uuid::new_v4().to_string())
-    .bind(actor.trim())
-    .bind(request_id.trim())
-    .bind(json!({ "status": from_status }))
-    .bind(json!({ "status": to_status }))
-    .bind(occurred_at)
-    .execute(&mut **tx)
     .await?;
     Ok(())
 }

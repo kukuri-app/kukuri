@@ -1,5 +1,6 @@
 //! 案件・データ区分を限定した legal hold と allowlist export。
 
+use crate::operator_actions::append_operator_action_in_tx;
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -83,15 +84,17 @@ pub async fn start_legal_hold(
     .bind(now)
     .fetch_one(&mut *tx)
     .await?;
-    append_hold_audit(
+    append_operator_action_in_tx(
         &mut tx,
+        actor.trim(),
         "legal_hold.start",
         target_kind,
         target_id,
-        actor,
-        json!({}),
-        json!({"hold_id": id, "data_categories": data_categories}),
-        now,
+        (
+            json!({}),
+            json!({"hold_id": id, "data_categories": data_categories}),
+        ),
+        Some(now),
     )
     .await?;
     let hold = hold_from_row(&row)?;
@@ -115,15 +118,17 @@ pub async fn release_legal_hold(
         .await?
         .context("legal hold was not found")?;
     let hold = hold_from_row(&row)?;
-    append_hold_audit(
+    append_operator_action_in_tx(
         &mut tx,
+        actor.trim(),
         "legal_hold.release",
         &hold.target_kind,
         &hold.target_id,
-        actor,
-        json!({"hold_id": hold.id, "active": true}),
-        json!({"hold_id": hold.id, "active": false, "data_categories": hold.data_categories}),
-        now,
+        (
+            json!({"hold_id": hold.id, "active": true}),
+            json!({"hold_id": hold.id, "active": false, "data_categories": hold.data_categories}),
+        ),
+        Some(now),
     )
     .await?;
     tx.commit().await?;
@@ -151,15 +156,17 @@ pub async fn export_legal_hold(
         }
     }
     let mut tx = pool.begin().await?;
-    append_hold_audit(
+    append_operator_action_in_tx(
         &mut tx,
+        actor.trim(),
         "legal_hold.export",
         &hold.target_kind,
         &hold.target_id,
-        actor,
-        json!({}),
-        json!({"hold_id": hold.id, "data_categories": hold.data_categories}),
-        now,
+        (
+            json!({}),
+            json!({"hold_id": hold.id, "data_categories": hold.data_categories}),
+        ),
+        Some(now),
     )
     .await?;
     tx.commit().await?;
@@ -398,35 +405,6 @@ async fn ensure_target_exists(
     if !exists {
         bail!("legal hold target was not found");
     }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn append_hold_audit(
-    tx: &mut Transaction<'_, Postgres>,
-    action: &str,
-    target_kind: &str,
-    target_id: &str,
-    actor: &str,
-    before: Value,
-    after: Value,
-    occurred_at: DateTime<Utc>,
-) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO cn_admin.operator_actions
-            (id, actor, action, target_kind, target_id, before_json, after_json, occurred_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(actor.trim())
-    .bind(action)
-    .bind(target_kind)
-    .bind(target_id)
-    .bind(before)
-    .bind(after)
-    .bind(occurred_at)
-    .execute(&mut **tx)
-    .await?;
     Ok(())
 }
 
