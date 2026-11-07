@@ -31,9 +31,10 @@ import {
 import { selectShellRoutingSlice } from '@/shell/storeSelectors';
 import {
   activeWorkspaceColumn,
-  activeWorkspaceScope,
   openTransientColumn,
   columnIdForScope,
+  channelSelectionUpdate,
+  type ChannelSelectionUpdate,
 } from '@/shell/slices/workspace';
 import { workspaceForRoute } from '@/shell/routing/routeWorkspaceProjection';
 
@@ -139,27 +140,8 @@ export function useRouteSynchronization({
     const setSelectedAuthorPubkey = (
       value: DesktopShellStateValue<'selectedAuthorPubkey'>
     ) => setField('selectedAuthorPubkey', value);
-    const setSelectedChannelIdByTopic = (
-      value:
-        | Record<string, string | null>
-        | ((current: Record<string, string | null>) => Record<string, string | null>)
-    ) => {
-      const currentScope = activeWorkspaceScope(storeApi.getState().workspaceState);
-      const currentProjection = { [currentScope.topicId]: currentScope.channelId };
-      const nextProjection = typeof value === 'function' ? value(currentProjection) : value;
-      const topicId = Object.keys(nextProjection).find(
-        (topic) => nextProjection[topic] !== currentProjection[topic]
-      ) ?? currentScope.topicId;
-      const scope = { topicId, channelId: nextProjection[topicId] ?? null };
-      setField('workspaceState', (current) =>
-        openTransientColumn(current, {
-          id: columnIdForScope(current, 'timeline', scope),
-          kind: 'timeline',
-          scope,
-          pinned: false,
-        })
-      );
-    };
+    const setSelectedChannelIdByTopic = (value: ChannelSelectionUpdate) =>
+      setField('workspaceState', channelSelectionUpdate(storeApi.getState().workspaceState, value, true));
     const setSelectedDirectMessagePeerPubkey = (
       value: DesktopShellStateValue<'selectedDirectMessagePeerPubkey'>
     ) => setField('selectedDirectMessagePeerPubkey', value);

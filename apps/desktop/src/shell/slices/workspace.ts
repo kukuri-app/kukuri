@@ -218,6 +218,29 @@ export function activeWorkspaceScope(state: WorkspaceState): ColumnScope {
   };
 }
 
+export type ChannelSelectionUpdate =
+  | Record<string, string | null>
+  | ((current: Record<string, string | null>) => Record<string, string | null>);
+
+/** 選択scopeは呼出時に確定し、列IDの解決と適用はworkspaceの更新時に行う。 */
+export function channelSelectionUpdate(
+  state: WorkspaceState,
+  value: ChannelSelectionUpdate,
+  reuseExistingColumn = false
+): (current: WorkspaceState) => WorkspaceState {
+  const currentScope = activeWorkspaceScope(state);
+  const currentProjection = { [currentScope.topicId]: currentScope.channelId };
+  const nextProjection = typeof value === 'function' ? value(currentProjection) : value;
+  const topicId = Object.keys(nextProjection).find(
+    (topic) => nextProjection[topic] !== currentProjection[topic]
+  ) ?? currentScope.topicId;
+  const scope = { topicId, channelId: nextProjection[topicId] ?? null };
+  return (current) => openTransientColumn(current, {
+    id: reuseExistingColumn ? columnIdForScope(current, 'timeline', scope) : columnIdentityId('timeline', scope),
+    kind: 'timeline', scope, pinned: false,
+  });
+}
+
 // scope に一致する Column の id。topic 切替後の一覧は id を変えず scope だけ
 // 変わるため、identity id だけで探すと既存 Column を見落として重複を開く(Issue #1053)。
 // active → identity id → 先頭の順に一致を探し、無ければ identity id を返す。
