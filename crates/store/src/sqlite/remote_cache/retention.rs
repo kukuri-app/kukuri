@@ -6,6 +6,43 @@ use super::*;
 use crate::topic_retention::retain_reference;
 
 impl SqliteStore {
+    /// 失効情報はtopicごとに書かず、最大365日分のbucketの世代を進める。
+    pub(in crate::sqlite) async fn advance_retention_expiry(&self, cutoff: u64) -> Result<()> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        sqlx::query("UPDATE topic_retention_limits SET expired_before = MAX(expired_before, ?1) WHERE id = 1")
+            .bind(i64::try_from(cutoff.saturating_sub(u64::from(crate::MAX_RETENTION_DAYS)))?)
+            .execute(&mut *tx).await?;
+        let floor: i64 =
+            sqlx::query_scalar("SELECT expired_before FROM topic_retention_limits WHERE id = 1")
+                .fetch_one(&mut *tx)
+                .await?;
+        for bucket in u64::try_from(floor)?..cutoff {
+            sqlx::query("INSERT INTO topic_retention_expiry (bucket, generation) VALUES (?1, 1) ON CONFLICT(bucket) DO UPDATE SET generation = generation + 1")
+                .bind(i64::try_from(bucket)?).execute(&mut *tx).await?;
+        }
+        sqlx::query("DELETE FROM topic_retention_expiry WHERE bucket < ?1")
+            .bind(floor)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub(in crate::sqlite) async fn retained_day_is_open(
+        tx: &mut sqlx::Transaction<'_, Sqlite>,
+        topic: &str,
+        bucket: u64,
+    ) -> Result<bool> {
+        Ok(sqlx::query_scalar::<_, i64>(
+            "SELECT EXISTS(SELECT 1 FROM topic_retention_days d \
+             JOIN topic_retention t ON t.topic_id = d.topic_id \
+             JOIN topic_retention_limits l ON l.id = 1 \
+             LEFT JOIN topic_retention_expiry e ON e.bucket = d.bucket \
+             WHERE d.topic_id = ?1 AND d.bucket = ?2 AND d.releasing = 0 \
+             AND d.bucket >= l.expired_before AND d.expiry_generation >= COALESCE(e.generation, 0))",
+        ).bind(topic).bind(i64::try_from(bucket)?).fetch_one(&mut **tx).await? != 0)
+    }
+
     /// 保護参照を 1 件外す。最後の参照なら、内容を容量の内なら非保護へ戻し、超えるなら消す。
     pub(in crate::sqlite) async fn remove_remote_protected_ref(
         tx: &mut sqlx::Transaction<'_, Sqlite>,
@@ -80,6 +117,9 @@ impl SqliteStore {
         topic_id: &str,
         bucket: u64,
     ) -> Result<()> {
+        if !Self::retained_day_is_open(tx, topic_id, bucket).await? {
+            return Ok(());
+        }
         let reference = retain_reference(topic_id, bucket);
         let held = sqlx::query_scalar::<_, i64>(
             "SELECT EXISTS(SELECT 1 FROM remote_content_cache_protected_ref \
@@ -187,19 +227,8 @@ impl SqliteStore {
         items: &[(&str, String)],
     ) -> Result<()> {
         let mut update = self.begin_protected_ref_update().await?;
-        let held = sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM topic_retention_days d \
-             JOIN topic_retention t ON t.topic_id = d.topic_id \
-             WHERE d.topic_id = ?1 AND d.bucket = ?2 AND d.releasing = 0)",
-        )
-        .bind(topic_id)
-        .bind(i64::try_from(bucket)?)
-        .fetch_one(&mut *update.tx)
-        .await?;
-        if held != 0 {
-            for (kind, key) in items {
-                Self::claim_retained_in_tx(&mut update.tx, kind, key, topic_id, bucket).await?;
-            }
+        for (kind, key) in items {
+            Self::claim_retained_in_tx(&mut update.tx, kind, key, topic_id, bucket).await?;
         }
         self.commit_protected_ref_update(update).await
     }
@@ -284,6 +313,14 @@ impl SqliteStore {
             let scope_key: String = scope.get("scope_key");
             let topic_id: String = scope.get("topic_id");
             let bucket = u64::try_from(scope.get::<i64, _>("bucket"))?;
+            if !Self::retained_day_is_open(&mut update.tx, &topic_id, bucket).await? {
+                sqlx::query("DELETE FROM topic_retention_scopes WHERE scope_key = ?1")
+                    .bind(&scope_key)
+                    .execute(&mut *update.tx)
+                    .await?;
+                spent += 1;
+                continue;
+            }
             let after: String = scope.get("protect_after");
             let lower = if after.is_empty() {
                 format!("{scope_key}\0")
@@ -317,51 +354,68 @@ impl SqliteStore {
         Ok(spent)
     }
 
-    /// 保護参照を外す日を選ぶ。期間を過ぎた日を外す日にしてから、外している途中の日を古い順に返す。無ければ、合計が容量を
+    /// 保存した失効世代と回収中の行から最古の一日を選ぶ。無ければ、合計が容量を
     /// 超えている間、最も古い保持の日を外し始め、その日より前の日を読まない印を置く。
-    pub(in crate::sqlite) async fn next_release_target(
-        &self,
-        cutoff_bucket: u64,
-    ) -> Result<Option<(String, u64)>> {
-        let cutoff = i64::try_from(cutoff_bucket)?;
+    pub(in crate::sqlite) async fn next_release_target(&self) -> Result<Option<(String, u64)>> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        // 登録も消し、以後の書込みに保護参照を付けない。
-        for query in [
-            "DELETE FROM topic_retention_scopes WHERE (topic_id, bucket) IN              (SELECT topic_id, bucket FROM topic_retention_days WHERE releasing = 0 AND bucket < ?1)",
-            "UPDATE topic_retention_days SET releasing = 1 WHERE releasing = 0 AND bucket < ?1",
-        ] {
-            sqlx::query(query).bind(cutoff).execute(&mut *tx).await?;
-        }
         let mut target = sqlx::query(
-            "SELECT topic_id, bucket FROM topic_retention_days WHERE releasing = 1              ORDER BY bucket, topic_id LIMIT 1",
+            "SELECT topic_id, bucket FROM topic_retention_days WHERE releasing = 1 ORDER BY bucket, topic_id LIMIT 1",
+        ).fetch_optional(&mut *tx).await?;
+        let floor: i64 =
+            sqlx::query_scalar("SELECT expired_before FROM topic_retention_limits WHERE id = 1")
+                .fetch_one(&mut *tx)
+                .await?;
+        let mut candidates = sqlx::query(
+            "SELECT topic_id, bucket FROM topic_retention_days WHERE releasing = 0 AND bucket < ?1 ORDER BY bucket, topic_id LIMIT 1",
+        ).bind(floor).fetch_all(&mut *tx).await?;
+        // bucketの表は最大365行。各bucketは複合索引から一日だけ選ぶ。
+        if let Some(row) = sqlx::query(
+            "SELECT d.topic_id, d.bucket FROM topic_retention_expiry e \
+             CROSS JOIN topic_retention_days d WHERE d.rowid = \
+             (SELECT candidate.rowid FROM topic_retention_days candidate \
+              WHERE candidate.bucket = e.bucket AND candidate.releasing = 0 \
+              AND candidate.expiry_generation < e.generation \
+              ORDER BY candidate.expiry_generation, candidate.topic_id LIMIT 1) \
+             ORDER BY e.bucket LIMIT 1",
         )
         .fetch_optional(&mut *tx)
-        .await?;
-        if target.is_none() {
+        .await?
+        {
+            candidates.push(row);
+        }
+        for row in candidates {
+            let key = |r: &sqlx::sqlite::SqliteRow| {
+                (r.get::<i64, _>("bucket"), r.get::<String, _>("topic_id"))
+            };
+            if target
+                .as_ref()
+                .is_none_or(|current| key(&row) < key(current))
+            {
+                target = Some(row);
+            }
+        }
+        let capacity_release = target.is_none();
+        if capacity_release {
             target = sqlx::query(
-                "SELECT d.topic_id, d.bucket FROM topic_retention_days d, topic_retention_limits l                  WHERE l.id = 1 AND l.used_bytes > l.capacity_bytes AND d.releasing = 0                  ORDER BY d.bucket, d.topic_id LIMIT 1",
-            )
-            .fetch_optional(&mut *tx)
-            .await?;
-            if let Some(oldest) = &target {
-                let (topic_id, bucket): (&str, i64) =
-                    (oldest.get("topic_id"), oldest.get("bucket"));
-                for query in [
-                    "UPDATE topic_retention_days SET releasing = 1 WHERE topic_id = ?1 AND bucket = ?2",
-                    "DELETE FROM topic_retention_scopes WHERE topic_id = ?1 AND bucket = ?2",
-                ] {
-                    sqlx::query(query)
-                        .bind(topic_id)
-                        .bind(bucket)
-                        .execute(&mut *tx)
-                        .await?;
-                }
-                sqlx::query(
-                    "UPDATE topic_retention_limits                      SET released_through = MAX(COALESCE(released_through, ?1), ?1) WHERE id = 1",
-                )
-                .bind(bucket)
-                .execute(&mut *tx)
-                .await?;
+                "SELECT d.topic_id, d.bucket FROM topic_retention_days d, topic_retention_limits l WHERE l.id = 1 AND l.used_bytes > l.capacity_bytes AND d.releasing = 0 ORDER BY d.bucket, d.topic_id LIMIT 1",
+            ).fetch_optional(&mut *tx).await?;
+        }
+        if let Some(row) = &target {
+            let topic: &str = row.get("topic_id");
+            let bucket: i64 = row.get("bucket");
+            for query in [
+                "UPDATE topic_retention_days SET releasing = 1 WHERE topic_id = ?1 AND bucket = ?2 AND releasing = 0",
+                "DELETE FROM topic_retention_scopes WHERE topic_id = ?1 AND bucket = ?2",
+            ] {
+                sqlx::query(query)
+                    .bind(topic)
+                    .bind(bucket)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            if capacity_release {
+                sqlx::query("UPDATE topic_retention_limits SET released_through = MAX(COALESCE(released_through, ?1), ?1) WHERE id = 1")
+                    .bind(bucket).execute(&mut *tx).await?;
             }
         }
         tx.commit().await?;

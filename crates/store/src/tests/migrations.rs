@@ -580,8 +580,8 @@ async fn all_generations_have_paired_down() {
 
     assert_eq!(
         generations.len(),
-        66,
-        "store migrations must cover exactly 66 generations, found versions: {:?}",
+        67,
+        "store migrations must cover exactly 67 generations, found versions: {:?}",
         generations.keys().collect::<Vec<_>>()
     );
 
@@ -673,8 +673,8 @@ async fn full_migration_round_trip() {
     expected_versions.dedup();
     assert_eq!(
         applied_versions.len(),
-        66,
-        "round trip must restore all 66 migration generations"
+        67,
+        "round trip must restore all 67 migration generations"
     );
     assert_eq!(applied_versions, expected_versions);
 }

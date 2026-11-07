@@ -444,12 +444,17 @@ table topic_retention_days
   column cid=2 name=used_bytes type=INTEGER notnull=1 default=Some("0") pk=0
   column cid=3 name=read_done type=INTEGER notnull=1 default=Some("0") pk=0
   column cid=4 name=releasing type=INTEGER notnull=1 default=Some("0") pk=0
+  column cid=5 name=expiry_generation type=INTEGER notnull=1 default=Some("0") pk=0
+table topic_retention_expiry
+  column cid=0 name=bucket type=INTEGER notnull=0 default=None pk=1
+  column cid=1 name=generation type=INTEGER notnull=1 default=None pk=0
 table topic_retention_limits
   column cid=0 name=id type=INTEGER notnull=0 default=None pk=1
   column cid=1 name=retention_days type=INTEGER notnull=1 default=None pk=0
   column cid=2 name=capacity_bytes type=INTEGER notnull=1 default=None pk=0
   column cid=3 name=used_bytes type=INTEGER notnull=1 default=None pk=0
   column cid=4 name=released_through type=INTEGER notnull=0 default=None pk=0
+  column cid=5 name=expired_before type=INTEGER notnull=1 default=Some("0") pk=0
 table topic_retention_retries
   column cid=0 name=topic_id type=TEXT notnull=1 default=None pk=1
   column cid=1 name=object_kind type=TEXT notnull=1 default=None pk=2
@@ -1048,6 +1053,12 @@ index sqlite_autoindex_withdrawal_write_outbox_1 table=withdrawal_write_outbox u
   key seqno=0 cid=0 name=Some("withdrawal_envelope_id")
   key seqno=1 cid=1 name=Some("replica_id")
   sql=None
+index topic_retention_days_expiry table=topic_retention_days unique=0 origin=c partial=0
+  key seqno=0 cid=1 name=Some("bucket")
+  key seqno=1 cid=4 name=Some("releasing")
+  key seqno=2 cid=5 name=Some("expiry_generation")
+  key seqno=3 cid=0 name=Some("topic_id")
+  sql=Some("CREATE INDEX topic_retention_days_expiry ON topic_retention_days (bucket, releasing, expiry_generation, topic_id)")
 index topic_retention_days_release table=topic_retention_days unique=0 origin=c partial=0
   key seqno=0 cid=4 name=Some("releasing")
   key seqno=1 cid=1 name=Some("bucket")
