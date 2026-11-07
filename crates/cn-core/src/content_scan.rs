@@ -38,8 +38,11 @@ impl ContentScanStore for PgContentScanStore {
             !lease.is_zero() && lease <= CONTENT_SCAN_LEASE,
             "invalid content scan lease"
         );
+        // 基準時刻を固定し、expiry索引から一回128件だけ掃除する。
         sqlx::query(
-            "DELETE FROM cn_safety.content_scan_claims WHERE expires_at <= clock_timestamp()",
+            "DELETE FROM cn_safety.content_scan_claims WHERE ctid = ANY (ARRAY(
+                 SELECT ctid FROM cn_safety.content_scan_claims
+                 WHERE expires_at <= statement_timestamp() ORDER BY expires_at LIMIT 128))",
         )
         .execute(&self.pool)
         .await?;
