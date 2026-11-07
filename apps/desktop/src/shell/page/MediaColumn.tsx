@@ -44,9 +44,11 @@ export function MediaShelfTabs({ column }: { column: ColumnState }) {
   </div>;
 }
 
+type PostMediaView = BookmarkedMediaView & { post: PostView };
+
 /** 自分の投稿の画像・動画。画像は 1 枚ずつ、動画は本体と poster の組(ブックマークの行と同じ形)。 */
-function postMediaItems(post: PostView): BookmarkedMediaView[] {
-  const row = (attachments: PostView['attachments']) => ({ hash: attachments[0].hash, attachments, content_labels: post.content_labels ?? [], bookmarked_at: post.created_at,
+function postMediaItems(post: PostView): PostMediaView[] {
+  const row = (attachments: PostView['attachments']) => ({ post, hash: attachments[0].hash, attachments, content_labels: post.content_labels ?? [], bookmarked_at: post.created_at,
     bookmarked_from_object_id: post.object_id, source: { topic_id: post.published_topic_id ?? '', object_id: post.object_id, author_pubkey: post.author_pubkey, created_at: post.created_at } });
   const posters = post.attachments.filter((asset) => asset.role === 'video_poster');
   return [
@@ -64,8 +66,6 @@ function MediaShelfBody({ column, shelfId }: { column: ColumnState; shelfId: Col
   // 「投稿」の各ページの読み始めの位置(プロフィールの読む位置と、その 1 回分の画像・動画の何件目からか)。ページの位置は
   // 1 から数えたこの配列の番号。
   const starts = useRef<Array<{ at: TimelineCursor | null; skip: number } | null>>([{ at: null, skip: 0 }]);
-  // 表示中の「投稿」の行の元の投稿(取り下げに使う)。
-  const posts = useRef(new Map<string, PostView>());
   const shelf = useMediaShelf<MediaBookmarkCursor | number>(column.id, true, async (cursor, before) => {
     if (shelfId !== 'posts') return api!.listBookmarkedMedia(cursor as MediaBookmarkCursor | null, before, shelfId);
     const page = (cursor as number | null) ?? 1;
@@ -74,10 +74,7 @@ function MediaShelfBody({ column, shelfId }: { column: ColumnState; shelfId: Col
     let next = null;
     for (let read = 0; read < POST_READS_PER_PAGE; read += 1) {
       const timeline = await api!.listProfileTimeline(localAuthor, at, POST_READ_LIMIT);
-      const media = timeline.items.filter((post) => post.author_pubkey === localAuthor && !post.repost_of && !post.withdrawal).flatMap((post) => {
-        posts.current.set(post.object_id, post);
-        return postMediaItems(post);
-      });
+      const media = timeline.items.filter((post) => post.author_pubkey === localAuthor && !post.repost_of && !post.withdrawal).flatMap(postMediaItems);
       const taken = media.slice(skip, skip + PAGE_ITEMS - items.length);
       items.push(...taken);
       // 20 件で切り、残りは同じ読む位置の続きから次のページにする。
@@ -99,7 +96,7 @@ function MediaShelfBody({ column, shelfId }: { column: ColumnState; shelfId: Col
     setBusy(true);
     try {
       if (shelfId === 'posts') {
-        const post = posts.current.get(item.bookmarked_from_object_id);
+        const post = (item as PostMediaView).post;
         if (post && await context?.withdrawPost?.(post)) {
           shelf.drop(shelf.page?.items.filter((row) => row.bookmarked_from_object_id === post.object_id).map((row) => row.hash) ?? []);
         }
