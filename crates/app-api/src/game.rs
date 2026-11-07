@@ -20,34 +20,22 @@ impl AppService {
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
         let channel_id = self.allowed_channel_id_for_scope(topic_id, &scope).await?;
         let allowed = BTreeSet::from([channel_id.clone()]);
-        let projection_store = Arc::clone(&self.services.projection_store);
-        let topic_key = topic_id.to_string();
-        let channel_key = channel_id.clone();
-        let hidden_author_pubkeys = Arc::new(hidden_author_pubkeys);
         let rows = load_projection_rows_with_one_refresh(
-            move || {
-                let projection_store = Arc::clone(&projection_store);
-                let topic_key = topic_key.clone();
-                let channel_key = channel_key.clone();
-                let hidden_author_pubkeys = Arc::clone(&hidden_author_pubkeys);
-                async move {
-                    Ok(projection_store
-                        .list_channel_game_rooms(
-                            topic_key.as_str(),
-                            channel_key.as_str(),
-                            LIVE_GAME_LIST_LIMIT,
-                        )
-                        .await?
-                        .into_iter()
-                        .filter(|row| !hidden_author_pubkeys.contains(row.host_pubkey.as_str()))
-                        .filter(|row| {
-                            row.room_kind != GameRoomKind::MetaverseRoom
-                                || row.metaverse.as_ref().is_some_and(|state| {
-                                    state.instance_status == DomeInstanceStatusV1::Active
-                                })
-                        })
-                        .collect())
-                }
+            || async {
+                Ok(self
+                    .services
+                    .projection_store
+                    .list_channel_game_rooms(topic_id, channel_id.as_str(), LIVE_GAME_LIST_LIMIT)
+                    .await?
+                    .into_iter()
+                    .filter(|row| !hidden_author_pubkeys.contains(row.host_pubkey.as_str()))
+                    .filter(|row| {
+                        row.room_kind != GameRoomKind::MetaverseRoom
+                            || row.metaverse.as_ref().is_some_and(|state| {
+                                state.instance_status == DomeInstanceStatusV1::Active
+                            })
+                    })
+                    .collect())
             },
             |rows| rows.is_empty(),
             || async {

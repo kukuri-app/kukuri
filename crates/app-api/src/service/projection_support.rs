@@ -308,23 +308,17 @@ mod bounded_list_tests {
     #[tokio::test]
     async fn projection_list_calls_the_store_once_or_twice_only() {
         for needs_refresh in [false, true] {
-            let loads = Arc::new(AtomicUsize::new(0));
-            let refreshes = Arc::new(AtomicUsize::new(0));
+            let loads = AtomicUsize::new(0);
+            let refreshes = AtomicUsize::new(0);
             let rows = load_projection_rows_with_one_refresh(
-                {
-                    let loads = Arc::clone(&loads);
-                    move || {
-                        let value = loads.fetch_add(1, Ordering::SeqCst) + 1;
-                        async move { Ok(vec![value]) }
-                    }
+                || {
+                    let value = loads.fetch_add(1, Ordering::SeqCst) + 1;
+                    async move { Ok(vec![value]) }
                 },
                 |_| needs_refresh,
-                {
-                    let refreshes = Arc::clone(&refreshes);
-                    move || async move {
-                        refreshes.fetch_add(1, Ordering::SeqCst);
-                        Ok(())
-                    }
+                || async {
+                    refreshes.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
                 },
             )
             .await
@@ -339,14 +333,11 @@ mod bounded_list_tests {
 
     #[tokio::test]
     async fn projection_list_does_not_read_again_when_refresh_fails() {
-        let loads = Arc::new(AtomicUsize::new(0));
+        let loads = AtomicUsize::new(0);
         let error = load_projection_rows_with_one_refresh(
-            {
-                let loads = Arc::clone(&loads);
-                move || {
-                    loads.fetch_add(1, Ordering::SeqCst);
-                    async { Ok(vec![1_usize]) }
-                }
+            || {
+                loads.fetch_add(1, Ordering::SeqCst);
+                async { Ok(vec![1_usize]) }
             },
             |_| true,
             || async { anyhow::bail!("refresh failed") },
