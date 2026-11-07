@@ -120,9 +120,7 @@ export function useDesktopShellViewModels({
     selectedChannelIdByTopic,
     directMessageDraftMediaItems,
     selectedThread,
-    selectedAuthor,
     knownAuthorsByPubkey,
-    authorError,
     error,
     localPeerTicket,
     peerTicket,
@@ -192,17 +190,11 @@ export function useDesktopShellViewModels({
     profileEditorFields,
     profileEditorPictureSrc,
     profileEditorHasPicture,
-    authorDetailView,
   } = useProfileViewModels({
-    authorError,
-    knownAuthorsByPubkey,
-    localAuthorPubkey: syncStatus.local_author_pubkey,
     localProfile,
     mediaObjectUrls,
     profileAvatarPreviewUrl,
     profileDraft,
-    selectedAuthor,
-    t,
   });
 
   const {
@@ -383,7 +375,6 @@ export function useDesktopShellViewModels({
     mentionCandidates,
     directMessageDraftViews,
     threadPanelState,
-    authorDetailView,
     connectivityPanelView,
     appearancePanelView,
     discoveryPanelView,
