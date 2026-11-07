@@ -23,7 +23,7 @@ impl TopicRetentionStore for SqliteStore {
         // 日へ戻す。
         if added != 0 {
             sqlx::query(
-                "UPDATE topic_retention_days SET read_done = 0, releasing = 0 WHERE topic_id = ?1",
+                "UPDATE topic_retention_days SET read_done = 0, releasing = 0, expiry_generation = COALESCE((SELECT generation FROM topic_retention_expiry e WHERE e.bucket = topic_retention_days.bucket), 0) WHERE topic_id = ?1",
             )
             .bind(topic_id)
             .execute(&mut *tx)
@@ -338,7 +338,7 @@ impl TopicRetentionStore for SqliteStore {
         for bucket in (start..oldest.min(to_bucket + 1)).chain(start.max(newest + 1)..=to_bucket) {
             let bucket = i64::try_from(bucket)?;
             let created = sqlx::query(
-                "INSERT OR IGNORE INTO topic_retention_days (topic_id, bucket) VALUES (?1, ?2)",
+                "INSERT OR IGNORE INTO topic_retention_days (topic_id, bucket, expiry_generation) VALUES (?1, ?2, COALESCE((SELECT generation FROM topic_retention_expiry WHERE bucket = ?2), 0))",
             )
             .bind(topic_id)
             .bind(bucket)
@@ -366,30 +366,11 @@ impl TopicRetentionStore for SqliteStore {
         bucket: u64,
         scope_key: &str,
     ) -> Result<bool> {
-        // 登録済みの日は書かない(回収は、外し始める日の登録を同じ transaction で消す)。
-        let registered = sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM topic_retention_scopes WHERE scope_key = ?1)",
-        )
-        .bind(scope_key)
-        .fetch_one(&self.pool)
-        .await?;
-        if registered != 0 {
-            return Ok(true);
-        }
-        // 回収が日を外し始める transaction と直列にし、外し始めた日へ登録を残さない。
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let bucket = i64::try_from(bucket)?;
-        let held = sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM topic_retention_days \
-             WHERE topic_id = ?1 AND bucket = ?2 AND releasing = 0)",
-        )
-        .bind(topic_id)
-        .bind(bucket)
-        .fetch_one(&mut *tx)
-        .await?;
-        if held == 0 {
+        if !Self::retained_day_is_open(&mut tx, topic_id, bucket).await? {
             return Ok(false);
         }
+        let bucket = i64::try_from(bucket)?;
         sqlx::query(
             "INSERT OR IGNORE INTO topic_retention_scopes \
              (scope_key, topic_id, bucket, protect_after) VALUES (?1, ?2, ?3, '')",
@@ -410,10 +391,13 @@ impl TopicRetentionStore for SqliteStore {
         to_bucket: u64,
     ) -> Result<Option<u64>> {
         let bucket = sqlx::query_scalar::<_, i64>(
-            "SELECT bucket FROM topic_retention_days WHERE topic_id = ?1 AND bucket >= ?2 \
-             AND bucket <= ?3 AND read_done = 0 AND releasing = 0 AND bucket > \
-             COALESCE((SELECT released_through FROM topic_retention_limits WHERE id = 1), -1) \
-             ORDER BY bucket DESC LIMIT 1",
+            "SELECT d.bucket FROM topic_retention_days d \
+             LEFT JOIN topic_retention_expiry e ON e.bucket = d.bucket \
+             JOIN topic_retention_limits l ON l.id = 1 \
+             WHERE d.topic_id = ?1 AND d.bucket >= ?2 AND d.bucket <= ?3 \
+             AND d.read_done = 0 AND d.releasing = 0 AND d.bucket >= l.expired_before \
+             AND d.expiry_generation >= COALESCE(e.generation, 0) \
+             AND d.bucket > COALESCE(l.released_through, -1) ORDER BY d.bucket DESC LIMIT 1",
         )
         .bind(topic_id)
         .bind(i64::try_from(from_bucket)?)
@@ -481,10 +465,14 @@ impl TopicRetentionStore for SqliteStore {
         cutoff_bucket: u64,
         limit: usize,
     ) -> Result<usize> {
+        if limit == 0 {
+            return Ok(0);
+        }
+        self.advance_retention_expiry(cutoff_bucket).await?;
         // 外した参照と外し終えた日(参照が無くても 1 と数える)を合わせて `limit` まで進める。
         let mut spent = 0;
         while spent < limit {
-            let Some((topic_id, bucket)) = self.next_release_target(cutoff_bucket).await? else {
+            let Some((topic_id, bucket)) = self.next_release_target().await? else {
                 break;
             };
             spent += self
@@ -527,7 +515,7 @@ impl SqliteStore {
         .await?;
         for topic_id in topics {
             for query in [
-                "UPDATE topic_retention_days SET releasing = 0, read_done = 0 \
+                "UPDATE topic_retention_days SET releasing = 0, read_done = 0, expiry_generation = COALESCE((SELECT generation FROM topic_retention_expiry WHERE bucket = ?2), 0) \
                  WHERE topic_id = ?1 AND bucket = ?2",
                 "DELETE FROM topic_retention_cursors WHERE topic_id = ?1 AND bucket = ?2",
             ] {
