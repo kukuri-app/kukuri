@@ -98,3 +98,46 @@ test('posts pages hold at most 20 media and continue inside a read batch', async
   await userEvent.click(screen.getByRole('button', { name: '前のページ' }));
   await waitFor(() => expect(screen.getAllByRole('img', { name: '画像添付' })).toHaveLength(20));
 });
+
+// #2054: ページの元投稿を蓄積せず、取得失敗時は表示中の撤回情報を保つ。
+test('posts retain one page of withdrawal data across paging and a failed page', async () => {
+  const posts = Array.from({ length: 80 }, (_, index) => ({ object_id: `p${index}`, author_pubkey: me,
+    created_at: 80 - index, published_topic_id: 'topic', attachments: [{ ...image, hash: `image-${index}` }] }) as PostView);
+  const fixtures = new Set(posts);
+  const owners = new Set<Map<unknown, unknown>>();
+  const originalSet = Map.prototype.set;
+  const spy = vi.spyOn(Map.prototype, 'set').mockImplementation(function (this: Map<unknown, unknown>, key, value) {
+    if (fixtures.has(value)) owners.add(this);
+    return originalSet.call(this, key, value);
+  });
+  const listProfileTimeline = vi.fn(async (_author, cursor) => {
+    const offset = cursor ? Number(cursor.object_id.slice(1)) + 1 : 0;
+    if (offset === 61) throw new Error('page unavailable');
+    const end = offset === 60 ? 61 : offset + 20;
+    return { items: posts.slice(offset, end), next_cursor: { created_at: 80 - end, object_id: `p${end - 1}` }, unavailable_count: 0 };
+  });
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  try {
+    const { store, withdrawPost } = await setup({ listProfileTimeline });
+    store.getState().setField('workspaceState', (current) => ({ ...current, columns: current.columns.map((candidate) => candidate.id === column.id ? { ...candidate, mediaShelf: 'posts' as const } : candidate) }));
+    await waitFor(() => expect(screen.getAllByRole('img', { name: '画像添付' })).toHaveLength(20));
+    for (const count of [2, 3]) {
+      await userEvent.click(screen.getByRole('button', { name: '次のページ' }));
+      await waitFor(() => expect(listProfileTimeline).toHaveBeenCalledTimes(count));
+      await waitFor(() => expect(screen.getAllByRole('button', { name: '投稿を撤回' })[0]).toBeEnabled());
+    }
+    expect([...owners].every((owner) => owner.size <= 20)).toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: '次のページ' }));
+    await waitFor(() => expect(listProfileTimeline).toHaveBeenCalledTimes(5));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: '投稿を撤回' })[0]).toBeEnabled());
+    await userEvent.click(screen.getAllByRole('button', { name: '投稿を撤回' })[0]);
+    expect(withdrawPost).toHaveBeenLastCalledWith(posts[40]);
+    await userEvent.click(screen.getByRole('button', { name: '前のページ' }));
+    await waitFor(() => expect(screen.getAllByRole('img', { name: '画像添付' })).toHaveLength(20));
+    await userEvent.click(screen.getAllByRole('button', { name: '投稿を撤回' })[0]);
+    expect(withdrawPost).toHaveBeenLastCalledWith(posts[20]);
+  } finally {
+    spy.mockRestore();
+    confirm.mockRestore();
+  }
+});
