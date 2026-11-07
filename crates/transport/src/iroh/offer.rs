@@ -2,6 +2,7 @@
 //! bounded offer; scope and provider authorization remain with the recipient.
 
 use super::*;
+use crate::traits::stream_from_offer_sender;
 use kukuri_core::receive_route_for_account;
 
 const OFFER_BOOTSTRAP_PER_SOURCE: usize = 4;
@@ -290,33 +291,4 @@ impl IrohGossipTransport {
             let _ = hold.task.await;
         }
     }
-}
-
-fn stream_from_offer_sender(
-    sender: &broadcast::Sender<ReceiveOfferEnvelope>,
-    stop: &watch::Sender<ReceiveOfferStop>,
-) -> ReceiveOfferStream {
-    let stream = stream::unfold(
-        (sender.subscribe(), stop.subscribe()),
-        |(mut receiver, mut stop)| async move {
-            loop {
-                if *stop.borrow() != ReceiveOfferStop::Active {
-                    return None;
-                }
-                tokio::select! {
-                    biased;
-                    changed = stop.changed() => {
-                        let _ = changed;
-                        return None;
-                    }
-                    event = receiver.recv() => match event {
-                        Ok(envelope) => return Some((envelope, (receiver, stop))),
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(broadcast::error::RecvError::Closed) => return None,
-                    },
-                }
-            }
-        },
-    );
-    Box::pin(stream)
 }

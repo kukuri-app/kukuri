@@ -10,7 +10,7 @@ async fn offer_arrives(
     left: &IrohGossipTransport,
     right: &IrohGossipTransport,
     recipient: &KukuriKeys,
-    incoming: &mut ReceiveOfferStream,
+    incoming: &mut crate::ReceiveOfferStream,
     limit: Duration,
 ) -> std::result::Result<(), String> {
     let now = chrono::Utc::now().timestamp_millis();
