@@ -195,3 +195,28 @@ test("replying from the stage opens the reply column next to the live column and
   expect(document.querySelector('.live-stage')).not.toBeNull();
   expect(await waitFor(() => getActiveColumn('Thread').querySelector('textarea'))).not.toBeNull();
 }, 30_000);
+
+// Live を開いた後の focus は、開いた Live の列の中の stage へ寄せる。他の列にある同じ Live の紹介カードへ寄せると、列を並べた画面が
+// その列へ戻され、開いた Live の列の右側が画面の外に残る(stage の右下に出る Push の画像が表示中と判定されず取得されない)。
+test('opening a live focuses the stage in the live column, not the same live in another column', async () => {
+  const centered: Element[] = [];
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value(this: HTMLElement, options?: ScrollIntoViewOptions) {
+      if (options?.block === 'center') centered.push(this);
+    },
+  });
+  const api = createDesktopMockApi();
+  const thread = await api.createPublicChannel(TOPIC, 'Watch party', '');
+  const sessionId = await api.createLiveSession(TOPIC, 'Night stream', '', { kind: 'public_channel', channel_id: thread.channel_id }, 'night start');
+  renderAtHash(`#/timeline?topic=kukuri%3Atopic%3Ageneral&channel=${thread.channel_id}`, api);
+  const detail = await waitFor(() => getActiveColumn('Public thread'));
+  await waitFor(() => expect(detail.querySelector(`[data-live-session-id="${sessionId}"]`)).not.toBeNull());
+
+  act(() => {
+    window.location.hash = `#/live?topic=kukuri%3Atopic%3Ageneral&channel=${thread.channel_id}&sessionId=${sessionId}`;
+  });
+  const column = await waitFor(() => getActiveColumn('Live'));
+  await waitFor(() => expect(centered).toHaveLength(1));
+  expect(centered[0]).toBe(column.querySelector('.live-stage'));
+}, 30_000);

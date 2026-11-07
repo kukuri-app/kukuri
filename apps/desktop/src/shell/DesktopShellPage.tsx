@@ -509,7 +509,7 @@ export function DesktopShellPage({
   useFocusScroll({
     focusKey: liveFocusKey,
     readinessKey: liveSessionListItems.length,
-    selector: liveFocusKey ? `[data-live-session-id=${JSON.stringify(liveFocusKey)}]` : null,
+    selector: liveFocusKey ? `.shell-column-surface[data-active="true"] [data-live-session-id=${JSON.stringify(liveFocusKey)}]` : null,
   });
   const gameFocusKey =
     shellChromeState.activePrimarySection === 'game' ? selectedGameRoomId : null;
