@@ -18,28 +18,16 @@ impl AppService {
             .clear_expired_live_presence(Utc::now().timestamp_millis())
             .await?;
         let channel_id = self.allowed_channel_id_for_scope(topic_id, &scope).await?;
-        let projection_store = Arc::clone(&self.services.projection_store);
-        let topic_key = topic_id.to_string();
-        let channel_key = channel_id.clone();
-        let hidden_author_pubkeys = Arc::new(hidden_author_pubkeys);
         let rows = load_projection_rows_with_one_refresh(
-            move || {
-                let projection_store = Arc::clone(&projection_store);
-                let topic_key = topic_key.clone();
-                let channel_key = channel_key.clone();
-                let hidden_author_pubkeys = Arc::clone(&hidden_author_pubkeys);
-                async move {
-                    Ok(projection_store
-                        .list_channel_live_sessions(
-                            topic_key.as_str(),
-                            channel_key.as_str(),
-                            LIVE_GAME_LIST_LIMIT,
-                        )
-                        .await?
-                        .into_iter()
-                        .filter(|row| !hidden_author_pubkeys.contains(row.host_pubkey.as_str()))
-                        .collect())
-                }
+            || async {
+                Ok(self
+                    .services
+                    .projection_store
+                    .list_channel_live_sessions(topic_id, channel_id.as_str(), LIVE_GAME_LIST_LIMIT)
+                    .await?
+                    .into_iter()
+                    .filter(|row| !hidden_author_pubkeys.contains(row.host_pubkey.as_str()))
+                    .collect())
             },
             |rows| rows.is_empty(),
             || async {

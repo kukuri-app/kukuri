@@ -28,24 +28,19 @@ impl AppService {
             .transpose()?;
         let hidden_author_pubkeys = self.current_hidden_author_pubkeys().await?;
         let channel_id = self.allowed_channel_id_for_scope(topic_id, &scope).await?;
-        let projection_store = Arc::clone(&self.services.projection_store);
         let first_page = before.is_none();
         let rows = load_projection_rows_with_one_refresh(
-            || {
-                let projection_store = Arc::clone(&projection_store);
-                let before = before.clone();
-                let channel_id = channel_id.clone();
-                async move {
-                    projection_store
-                        .list_channel_action_rooms(
-                            topic_id,
-                            channel_id.as_str(),
-                            application_id,
-                            before,
-                            ACTION_ROOM_PAGE_SIZE,
-                        )
-                        .await
-                }
+            || async {
+                self.services
+                    .projection_store
+                    .list_channel_action_rooms(
+                        topic_id,
+                        channel_id.as_str(),
+                        application_id,
+                        before.clone(),
+                        ACTION_ROOM_PAGE_SIZE,
+                    )
+                    .await
             },
             |rows| first_page && rows.is_empty(),
             || async {
