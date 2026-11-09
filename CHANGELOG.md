@@ -18,6 +18,27 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.5.3-preview.1] - 2026-11-09
+
+### Fixes
+
+- メディア列の元投稿を表示ページだけに保持する ([#2054](https://github.com/kukuri-app/kukuri/pull/2054), [#2063](https://github.com/kukuri-app/kukuri/pull/2063))
+- 内容scan予約の期限切れ掃除を128件に限定する ([#2055](https://github.com/kukuri-app/kukuri/pull/2055), [#2064](https://github.com/kukuri-app/kukuri/pull/2064))
+- 保持の失効世代を保存して回収開始を有界化する ([#2053](https://github.com/kukuri-app/kukuri/pull/2053), [#2062](https://github.com/kukuri-app/kukuri/pull/2062))
+- Live を開いた後の画面の移動を開いた列の中に限る ([#2051](https://github.com/kukuri-app/kukuri/pull/2051))
+- main の CI で揺れていた 3 件の試験の原因を直す ([#2050](https://github.com/kukuri-app/kukuri/pull/2050))
+
+### Other
+
+- リリースの版を 0.5.3 にする ([#2072](https://github.com/kukuri-app/kukuri/pull/2072))
+- session一覧の入力を複製せず借用する ([#2061](https://github.com/kukuri-app/kukuri/pull/2061), [#2070](https://github.com/kukuri-app/kukuri/pull/2070))
+- operator監査行の保存と復元を共用する ([#2059](https://github.com/kukuri-app/kukuri/pull/2059), [#2068](https://github.com/kukuri-app/kukuri/pull/2068))
+- 索引申請と状況取得の前処理を共用する ([#2060](https://github.com/kukuri-app/kukuri/pull/2060), [#2069](https://github.com/kukuri-app/kukuri/pull/2069))
+- channel選択のworkspace更新を共用する ([#2056](https://github.com/kukuri-app/kukuri/pull/2056), [#2065](https://github.com/kukuri-app/kukuri/pull/2065))
+- ReceiveOfferのstream変換を共用する ([#2058](https://github.com/kukuri-app/kukuri/pull/2058), [#2067](https://github.com/kukuri-app/kukuri/pull/2067))
+- 未使用の作者詳細projectionを撤去する ([#2057](https://github.com/kukuri-app/kukuri/pull/2057), [#2066](https://github.com/kukuri-app/kukuri/pull/2066))
+- v0.5.2-preview.1 の changelog・LP・本番更新の記録 ([#2049](https://github.com/kukuri-app/kukuri/pull/2049))
+
 ## [v0.5.2-preview.1] - 2026-11-06
 
 ### Features
