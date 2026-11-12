@@ -1909,7 +1909,11 @@ async function sameAccount() {
   const h = await transferAccount(webSource(e), 'web-h', account, { cut: 2048 });
   await eventually('h is in sync', async () => (await accountSyncState(h)) === 'synced');
   await openSettings(h, 'account');
-  const rows = await h.$('[data-testid="account-list"]').$$('li').map((row) => row.getText());
+  // 一覧は開いた後に読み込む。Active の行が出てから数える（#2075）。
+  const rows = await eventually('h lists its accounts', async () => {
+    const listed = await h.$('[data-testid="account-list"]').$$('li').map((row) => row.getText());
+    return listed.some((row) => row.includes('Active')) && listed;
+  });
   assert.equal(rows.filter((row) => row.includes(account)).length, 1, `h has the account once: ${JSON.stringify(rows)}`);
   await h.keys('Escape');
   // 担当は、経路を戻した後も g のまま。
