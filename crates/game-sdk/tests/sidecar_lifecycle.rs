@@ -26,8 +26,8 @@ fn identity(handle: *mut KukuriHandle, id: &str) -> (Value, Value) {
     )
 }
 
-/// 接続して `client.status` が通るまで繰り返す。前の接続を片付けている間（hello を送らない接続の期限を含む）は
-/// `profile_in_use` で断られるので、少し待って接続し直す（ADR 0070 §8.2。#2074）。
+/// 接続して `client.status` が通るまで繰り返す。SDK が接続し直す 1 秒より長く締め出される間（hello を送らない接続の期限、
+/// 開いてすぐ閉じた接続の片付け）は `profile_in_use` で断られるので、少し待って接続し直す（ADR 0070 §8.2）。
 fn connect_when_free(dir: &std::path::Path, within: Duration) -> *mut KukuriHandle {
     let started = Instant::now();
     loop {
@@ -72,10 +72,11 @@ fn repeated_attach_and_detach_keep_the_identity_without_accumulating_resources()
     assert!(identity_before.1.as_str().is_some_and(|id| !id.is_empty()));
     finish(first);
 
-    // Editor の Play と Stop を想定して接続と切断を繰り返す。毎回、要求を残したまま切る回も混ぜる。
+    // Editor の Play と Stop を想定して接続と切断を待たずに繰り返す。毎回、要求を残したまま切る回も混ぜる。前の接続を片付けて
+    // いる間に断られた接続は、SDK が接続し直す（#2086）。
     let mut samples = Vec::new();
     for round in 0..30 {
-        let handle = connect_when_free(dir.path(), Duration::from_secs(5));
+        let handle = SidecarServer::connect(dir.path());
         assert_eq!(identity(handle, &format!("id{round}")), identity_before);
         assert_eq!(
             send(
