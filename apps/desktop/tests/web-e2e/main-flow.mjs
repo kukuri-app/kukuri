@@ -1092,6 +1092,11 @@ async function openOwnProfile(browser) {
   await browser.$('[role=menu]').$('button=View profile').click();
   const profile = columnOf(browser, 'profile', '-:-');
   await profile.waitForExist({ timeout: WAIT });
+  // 列への focus は次の frame で移る。移る前に menu を開き直すと、遅れた focus で menu が閉じる。
+  const column = await profile;
+  await eventually('the profile column takes focus', () =>
+    browser.execute((element) => element.contains(document.activeElement), column)
+  );
   return profile;
 }
 
