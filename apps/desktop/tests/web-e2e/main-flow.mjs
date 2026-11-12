@@ -1029,7 +1029,10 @@ async function transferAccount(from, name, account, { history = null, duringHist
   await shown.waitForExist({ timeout: WAIT });
   // 落とす仕掛けは、移行の接続ができた（確認コードが出た）後に置く。接続の前に置くと、既に開いている他の相手との経路の受信で
   // 接続の handshake の最中に発火し、移行の途中の喪失にならない（#1590）。
+  // 移行の bytes は、WebRTC の経路が張れる前は relay を通る。経路が張れてから置かないと、移行が relay だけで終わって落ちない
+  // （Safari・Android と Chrome の間には経路が張れない。下の判定を参照）。
   if (cut !== null) {
+    if (!SINGLE) await directPathOpens(browser);
     await browser.execute((after) => {
       window.__kukuriCut = { after };
     }, cut);
