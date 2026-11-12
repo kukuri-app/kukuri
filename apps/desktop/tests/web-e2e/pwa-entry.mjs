@@ -2,13 +2,22 @@ import assert from 'node:assert/strict';
 import { eventually } from './wait.mjs';
 import { webInvoke } from './web-invoke.mjs';
 
+// 画面の要素の一覧。uiautomator の process はまれに落ちる（`Bad file descriptor`）ので、失敗は空として読み直させる。
+async function dumpUi(adb) {
+  try {
+    await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-pwa-entry.xml');
+    return await adb('shell', 'cat', '/sdcard/kukuri-pwa-entry.xml');
+  } catch {
+    return '';
+  }
+}
+
 // OS操作は隔離されたCIのemulatorだけ。手元の端末でこのhelperを使わない。
 export async function nativeTap(adb, matches, what, timeout = 30_000) {
   assert.equal(process.env.CI, 'true', 'PWA OS actions require the isolated CI emulator');
   let lastXml = '';
   const node = await eventually(`PWA Android ${what}`, async () => {
-    await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-pwa-entry.xml');
-    const xml = await adb('shell', 'cat', '/sdcard/kukuri-pwa-entry.xml');
+    const xml = await dumpUi(adb);
     lastXml = xml;
     for (const item of xml.matchAll(/<node\s[^>]+/g)) {
       const attrs = Object.fromEntries([...item[0].matchAll(/([\w-]+)="([^"]*)"/g)].map(m => [m[1], m[2]]));
@@ -46,9 +55,7 @@ async function nativeState(adb, what) {
   const activity = (await adb('shell', 'dumpsys', 'activity', 'activities')).split('\n')
     .filter(line => /mResumedActivity|topResumedActivity/.test(line));
   console.log(`PWA activity ${what}: ${JSON.stringify(activity)}`);
-  await adb('shell', 'uiautomator', 'dump', '/sdcard/kukuri-pwa-entry.xml');
-  const xml = await adb('shell', 'cat', '/sdcard/kukuri-pwa-entry.xml');
-  const controls = [...xml.matchAll(/<node\s[^>]+/g)].map(item =>
+  const controls = [...(await dumpUi(adb)).matchAll(/<node\s[^>]+/g)].map(item =>
     Object.fromEntries([...item[0].matchAll(/([\w-]+)="([^"]*)"/g)].map(match => [match[1], match[2]])))
     .filter(node => node.text || node['content-desc']).slice(0, 35)
     .map(node => ({ text: node.text, description: node['content-desc'], id: node['resource-id'], clickable: node.clickable }));
