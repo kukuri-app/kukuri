@@ -26,6 +26,27 @@ fn identity(handle: *mut KukuriHandle, id: &str) -> (Value, Value) {
     )
 }
 
+/// 接続して `client.status` が通るまで繰り返す。前の接続を片付けている間（hello を送らない接続の期限を含む）は
+/// `profile_in_use` で断られるので、少し待って接続し直す（ADR 0070 §8.2。#2074）。
+fn connect_when_free(dir: &std::path::Path, within: Duration) -> *mut KukuriHandle {
+    let started = Instant::now();
+    loop {
+        let handle = SidecarServer::connect(dir);
+        assert_eq!(
+            send(handle, &request("status", "client.status", json!({}))),
+            0
+        );
+        let response = response_for(handle, "status", Duration::from_secs(10));
+        if response["ok"] == true {
+            return handle;
+        }
+        assert_eq!(error_code(&response), "profile_in_use", "{response}");
+        finish(handle);
+        assert!(started.elapsed() < within, "still refused after {within:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// process の handle と thread の数（PowerShell の Get-Process）。
 fn resources(pid: u32) -> (u64, u64) {
     let output = Command::new("powershell")
@@ -54,7 +75,7 @@ fn repeated_attach_and_detach_keep_the_identity_without_accumulating_resources()
     // Editor の Play と Stop を想定して接続と切断を繰り返す。毎回、要求を残したまま切る回も混ぜる。
     let mut samples = Vec::new();
     for round in 0..30 {
-        let handle = SidecarServer::connect(dir.path());
+        let handle = connect_when_free(dir.path(), Duration::from_secs(5));
         assert_eq!(identity(handle, &format!("id{round}")), identity_before);
         assert_eq!(
             send(
@@ -148,25 +169,7 @@ fn a_client_that_never_says_hello_does_not_lock_others_out() {
         .write(true)
         .open(kukuri_game_sdk::sidecar::pipe_name(dir.path()))
         .unwrap();
-    let started = Instant::now();
-    let handle = loop {
-        let handle = SidecarServer::connect(dir.path());
-        assert_eq!(
-            send(handle, &request("status", "client.status", json!({}))),
-            0
-        );
-        let response = response_for(handle, "status", Duration::from_secs(10));
-        if response["ok"] == true {
-            break handle;
-        }
-        assert_eq!(error_code(&response), "profile_in_use");
-        finish(handle);
-        assert!(
-            started.elapsed() < Duration::from_secs(15),
-            "still locked out"
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    };
+    let handle = connect_when_free(dir.path(), Duration::from_secs(15));
     finish(handle);
     drop(silent);
     assert!(sidecar.stop(dir.path()).success());
@@ -188,25 +191,7 @@ fn clients_that_open_and_close_at_once_and_refused_clients_do_not_break_the_side
         }
     }
     // 直前に閉じた接続を片付けている間は使用中で断られうるが、Sidecar は動き続け、すぐ接続できるようになる。
-    let started = Instant::now();
-    let handle = loop {
-        let handle = SidecarServer::connect(dir.path());
-        assert_eq!(
-            send(handle, &request("alive", "client.status", json!({}))),
-            0
-        );
-        let response = response_for(handle, "alive", Duration::from_secs(10));
-        if response["ok"] == true {
-            break handle;
-        }
-        assert_eq!(error_code(&response), "profile_in_use", "{response}");
-        finish(handle);
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "the sidecar stopped answering"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    };
+    let handle = connect_when_free(dir.path(), Duration::from_secs(5));
     assert_eq!(
         call(handle, "alive-again", "client.status", json!({}))["profile"],
         PROFILE
