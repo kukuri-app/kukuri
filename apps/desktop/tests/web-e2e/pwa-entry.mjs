@@ -110,9 +110,10 @@ export async function installPwa(browser, adb) {
       await nativeTap(adb, attrs => attrs['resource-id'] === 'com.android.chrome:id/positive_button' && /^Install$/i.test(attrs.text), 'app install confirmation');
     }
     await nativeState(adb, 'after Chrome confirmation');
-    // shortcutの場合はlauncherがもう一度確認する。WebAPKの場合はこの確認がない。
+    // shortcutの場合はlauncherがもう一度確認する。WebAPKの場合はこの確認がない。CIのemulatorでは確認が出るまで数秒かかり、
+    // 5秒を超えた回もあるので、出る前にhomeへ移らないよう長めに待つ。
     await nativeTap(adb, attrs => (/^(Add automatically|Add to home screen)$/i.test(attrs.text) && attrs.clickable === 'true') ||
-      /\/(add_button|button1)$/.test(attrs['resource-id']), 'launcher confirmation', 5_000).catch(() => undefined);
+      /\/(add_button|button1)$/.test(attrs['resource-id']), 'launcher confirmation', 30_000).catch(() => undefined);
     await nativeState(adb, 'after launcher confirmation');
     await openPwaFromHome(adb);
     await nativeState(adb, 'after home icon');
