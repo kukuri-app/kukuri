@@ -340,12 +340,13 @@ jobs:
           chmod +x target/debug/web_e2e_fixture
 
       # system image の取得は、壊れた zip（`Error on ZipFile unknown archive`）で失敗することがある。emulator-runner は
-      # 入っている image を取り直さないので、先に間隔を空けて取り直しつきで入れる。
+      # 入っている image を取り直さないので、先に間隔を空けて取り直しつきで入れる。取得は止まったまま進まないこともあるので
+      # （通常は 30〜100 秒）、1 回を 150 秒で打ち切る。
       - name: Install Android system image
         timeout-minutes: 10
         run: |
           for attempt in 1 2 3; do
-            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'system-images;android-35;google_apis;x86_64' > /dev/null && exit 0
+            yes | timeout 150 "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'system-images;android-35;google_apis;x86_64' > /dev/null && exit 0
             echo "::warning::system image install attempt $attempt failed"
             sleep $((attempt * 30))
           done
