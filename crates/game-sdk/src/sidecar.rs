@@ -27,6 +27,8 @@ const MAX_FRAME_BYTES: usize = 64 << 20;
 const ERROR_PIPE_BUSY: i32 = 231;
 /// 使用中の pipe を開き直す回数（5 ms ごと、合わせて 100 ms まで）。
 const PIPE_BUSY_RETRIES: usize = 20;
+/// `profile_in_use` で断られたときに接続し直す間（ADR 0070 §8.2）。
+const PROFILE_IN_USE_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
 /// 接続から hello までの期限。hello を送らない接続が他の client を締め出し続けないようにする。
 const HELLO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -402,46 +404,51 @@ impl SidecarClient {
                 .write(true)
                 .open(&name)
         };
-        let mut opened = open();
-        // Sidecar が接続を受けてから次の pipe を用意するまでの短い間は使用中になる。少しだけ待って開き直す。
-        for _ in 0..PIPE_BUSY_RETRIES {
-            match &opened {
-                Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                    opened = open();
-                }
-                _ => break,
-            }
-        }
-        let Ok(mut pipe) = opened else {
-            return client;
-        };
-        let hello = Op::Hello {
+        let hello = serde_json::to_vec(&Op::Hello {
             abi_version: ABI_VERSION,
             profile: client.profile.clone(),
             profile_dir: profile_dir.to_path_buf(),
             stop,
-        };
-        let accepted = write_sync(
-            &mut pipe,
-            &serde_json::to_vec(&hello).expect("hello encodes"),
-        )
-        .and_then(|()| read_reply(&mut pipe));
-        match accepted {
-            Ok(reply) if reply.status == Status::Ok as i32 => client.pipe = Some(pipe),
-            Ok(reply) if reply.code.as_deref() == Some(error_code::AUTHORIZATION_FAILED) => {
-                client.unavailable = error_code::AUTHORIZATION_FAILED;
+        })
+        .expect("hello encodes");
+        let in_use_until = std::time::Instant::now() + PROFILE_IN_USE_RETRY;
+        loop {
+            let mut opened = open();
+            // Sidecar が接続を受けてから次の pipe を用意するまでの短い間は使用中になる。少しだけ待って開き直す。
+            for _ in 0..PIPE_BUSY_RETRIES {
+                match &opened {
+                    Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        opened = open();
+                    }
+                    _ => break,
+                }
             }
-            // 別の client が接続している。同じ profile の二重の所有と同じ扱い。
-            Ok(reply) if reply.code.as_deref() == Some(error_code::PROFILE_IN_USE) => {
-                client.unavailable = error_code::PROFILE_IN_USE;
+            let Ok(mut pipe) = opened else {
+                return client;
+            };
+            let accepted = write_sync(&mut pipe, &hello).and_then(|()| read_reply(&mut pipe));
+            match accepted {
+                Ok(reply) if reply.status == Status::Ok as i32 => client.pipe = Some(pipe),
+                Ok(reply) if reply.code.as_deref() == Some(error_code::AUTHORIZATION_FAILED) => {
+                    client.unavailable = error_code::AUTHORIZATION_FAILED;
+                }
+                // 別の client が接続している。同じ profile の二重の所有と同じ扱い。ただし前の接続を片付けている短い間も
+                // 断られるので（Stop の直後の Play など）、少しの間は接続し直す。
+                Ok(reply) if reply.code.as_deref() == Some(error_code::PROFILE_IN_USE) => {
+                    client.unavailable = error_code::PROFILE_IN_USE;
+                    if std::time::Instant::now() < in_use_until {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        continue;
+                    }
+                }
+                Ok(reply) if reply.status == Status::AbiMismatch as i32 => {
+                    client.unavailable = error_code::PROTOCOL_MISMATCH;
+                }
+                _ => {}
             }
-            Ok(reply) if reply.status == Status::AbiMismatch as i32 => {
-                client.unavailable = error_code::PROTOCOL_MISMATCH;
-            }
-            _ => {}
+            return client;
         }
-        client
     }
 
     fn failure(&self, request_id: &str, command: &str, code: &str) -> Item {
