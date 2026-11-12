@@ -1496,10 +1496,15 @@ async function lifecycle() {
     const beforeOffline = (await sessionStates(a)).length;
     // chromedriver の Chrome は chromedriver の命令（BiDi の offline では、online の後に WebRTC の session が開き直らなかった）。
     const contexts = [await a.getWindowHandle()];
-    const network = (offline) =>
-      CHROMEDRIVER
+    // Firefox の offline の模擬は同じ runner の相手との WebRTC の UDP を止めないので、その間の交渉も ICE を成立させない（#2075）。
+    const network = async (offline) => {
+      await a.execute((value) => {
+        window.__kukuriOffline = value;
+      }, offline);
+      return CHROMEDRIVER
         ? a.setNetworkConditions({ offline, latency: 0, download_throughput: -1, upload_throughput: -1 })
         : a.emulationSetNetworkConditions({ networkConditions: offline ? { type: 'offline' } : null, contexts });
+    };
     await network(true);
     await earlierSessionsClose(a, beforeOffline);
     await openSettings(a, 'connectivity');

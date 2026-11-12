@@ -89,9 +89,10 @@
   });
 
   // relay fallback の端（driver が置く cookie `kukuri-e2e-without-ice`）と、WebRTC の経路だけの喪失を保つ間（`__kukuriCut` で
-  // DataChannel を閉じてから `released` まで）: 送る SDP と受け取る SDP から ICE の候補を除き、ICE を成立させない。
+  // DataChannel を閉じてから `released` まで）、driver の回線の模擬で offline にしている間（`__kukuriOffline`。Firefox の模擬は
+  // 同じ runner の相手との WebRTC の UDP を止めない。#2075）: 送る SDP と受け取る SDP から ICE の候補を除き、ICE を成立させない。
   const always = document.cookie.split('; ').includes('kukuri-e2e-without-ice=1');
-  const blocked = () => always || (window.__kukuriCut?.done && !window.__kukuriCut.released);
+  const blocked = () => always || window.__kukuriOffline || (window.__kukuriCut?.done && !window.__kukuriCut.released);
   const strip = (description) =>
     description && blocked()
       ? {
