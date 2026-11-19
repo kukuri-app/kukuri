@@ -9,7 +9,10 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
-use iroh_blobs::store::fs::{FsStore, options::Options};
+use iroh_blobs::store::fs::{
+    FsStore,
+    options::{CrashConsistency, Options},
+};
 use iroh_docs::store::{Query, Store as DocsStore};
 use iroh_docs::{Author, AuthorId, Capability, NamespaceId, NamespaceSecret};
 
@@ -133,7 +136,10 @@ impl LegacyStore {
             Ok((store, authors))
         })
         .await??;
-        let blobs = FsStore::load_with_opts(root.join("blobs.db"), Options::new(root))
+        let mut options = Options::new(root);
+        // 新しい store と同じく、起動時の全 entry の走査を起こさない（node.rs の load_persistent）。
+        options.crash_consistency = CrashConsistency::PowerLoss;
+        let blobs = FsStore::load_with_opts(root.join("blobs.db"), options)
             .await
             .with_context(|| format!("failed to load legacy blob store at {}", root.display()))?;
         Ok(Some(Self {

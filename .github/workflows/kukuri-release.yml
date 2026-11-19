@@ -63,10 +63,10 @@ jobs:
           test "$source" = "$WORKFLOW_SOURCE" || { echo 'Select the same workflow ref as the release tag' >&2; exit 1; }
           echo "release_source=$source" >> "$GITHUB_OUTPUT"
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
@@ -118,10 +118,10 @@ jobs:
         with:
           ref: ${{ needs.validate-release-inputs.outputs.release_source }}
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
           components: clippy,rustfmt
 
       - name: Setup pnpm

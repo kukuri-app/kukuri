@@ -33,10 +33,10 @@ use support::{
     TestServer, accept_required_consents, authenticate, integration_test_admin_database_url,
 };
 
-fn dht_builder(testnet: &Testnet) -> DhtBuilder {
+fn dht_builder(bootstrap: &[String]) -> DhtBuilder {
     let mut builder = DhtBuilder::default();
     builder
-        .bootstrap(&testnet.bootstrap)
+        .bootstrap(bootstrap)
         .port(0)
         .public_ip(Ipv4Addr::LOCALHOST);
     builder
@@ -44,13 +44,13 @@ fn dht_builder(testnet: &Testnet) -> DhtBuilder {
 
 /// 住所 record（`addr`）を公開し、`hash` を `index` で告知した保持端末。値を落とすと公開と告知が止まる。
 async fn holder(
-    testnet: &Testnet,
+    bootstrap: &[String],
     index: &PublicBlobIndex,
     addr: TransportAddr,
     hash: &Hash,
 ) -> Result<(DhtAddressLookup, Announcer)> {
     let secret = SecretKey::generate();
-    let dht = dht_builder(testnet).build()?;
+    let dht = dht_builder(bootstrap).build()?;
     let lookup = DhtAddressLookup::builder()
         .dht(dht.clone())
         .secret_key(secret.clone())
@@ -125,8 +125,14 @@ async fn a_holder_with_a_relay_url_is_found_through_the_common_index() -> Result
         eprintln!("skipping blob provider search test; set KUKURI_CN_RUN_INTEGRATION_TESTS=1");
         return Ok(());
     };
-    let testnet = Testnet::new(3).await?;
-    let index_dht = dht_builder(&testnet).build()?;
+    // DHT の各 node は infohash ごとに 1 つの IP の告知を 1 件しか持たない（n0-mainline 0.8）。loopback の 2 台の
+    // 保持端末は別の Testnet で告知し、index・CN・読み手は両方へ bootstrap する。
+    let networks = [Testnet::new(2).await?, Testnet::new(2).await?];
+    let bootstrap: Vec<String> = networks
+        .iter()
+        .flat_map(|network| network.bootstrap.clone())
+        .collect();
+    let index_dht = dht_builder(&bootstrap).build()?;
     let index_addr = SocketAddrV4::new(
         Ipv4Addr::LOCALHOST,
         index_dht.info().await?.local_addr().port(),
@@ -134,7 +140,7 @@ async fn a_holder_with_a_relay_url_is_found_through_the_common_index() -> Result
     let _index_server = Server::new(Limits::for_tests()).attach(index_dht).await?;
     // kukuri の鍵で署名した補助 index の一覧。CN と保持端末は、この鍵だけを設定として共有する。
     let list_key = SigningKey::from_bytes(&[0x16; 32]);
-    dht_builder(&testnet)
+    dht_builder(&bootstrap)
         .build()?
         .put_mutable(ServerList::new(vec![index_addr])?.sign(&list_key, 1)?, None)
         .await?;
@@ -144,17 +150,22 @@ async fn a_holder_with_a_relay_url_is_found_through_the_common_index() -> Result
     let relay_url: RelayUrl = "https://relay.kukuri.test/".parse()?;
     let direct_addr = "127.0.0.1:4433".parse()?;
     let (_relay_lookup, relay_holder) = holder(
-        &testnet,
+        &networks[0].bootstrap,
         &index,
         TransportAddr::Relay(relay_url.clone()),
         &hash,
     )
     .await?;
-    let (_direct_lookup, direct_holder) =
-        holder(&testnet, &index, TransportAddr::Ip(direct_addr), &hash).await?;
+    let (_direct_lookup, direct_holder) = holder(
+        &networks[1].bootstrap,
+        &index,
+        TransportAddr::Ip(direct_addr),
+        &hash,
+    )
+    .await?;
     // 直接の address だけの住所 record も DHT から引ける。候補にしないのは D5 による。
     let reader = DhtAddressLookup::builder()
-        .dht(dht_builder(&testnet).build()?)
+        .dht(dht_builder(&bootstrap).build()?)
         .no_publish()
         .build()?;
     tokio::time::timeout(Duration::from_secs(60), async {
@@ -177,7 +188,8 @@ async fn a_holder_with_a_relay_url_is_found_through_the_common_index() -> Result
     .await
     .context("the direct-only record was not published in time")?;
 
-    let blob_provider_search = Arc::new(BlobProviderSearch::start(&dht_builder(&testnet), index)?);
+    let blob_provider_search =
+        Arc::new(BlobProviderSearch::start(&dht_builder(&bootstrap), index)?);
     let server = TestServer::spawn_with_state(
         &admin_database_url,
         "cn_blob_provider_search",
@@ -246,12 +258,12 @@ async fn requests_are_rejected_bounded_and_released() -> Result<()> {
     let testnet = Testnet::new(2).await?;
     let silent = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let silent_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, silent.local_addr()?.port());
-    let holder = dht_builder(&testnet).build()?;
+    let holder = dht_builder(&testnet.bootstrap).build()?;
     holder
         .announce_peer(infohash_from_blake3(&hash).into(), None)
         .await?;
     let blob_provider_search = Arc::new(BlobProviderSearch::start(
-        &dht_builder(&testnet),
+        &dht_builder(&testnet.bootstrap),
         PublicBlobIndex::Servers(vec![silent_addr]),
     )?);
     let server = TestServer::spawn_with_state(

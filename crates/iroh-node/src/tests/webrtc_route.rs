@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Context as _, Result};
 use futures_util::StreamExt;
 use iroh::{EndpointAddr, RelayUrl, TransportAddr};
-use iroh_gossip::{TopicId, api::Event};
+use iroh_gossip::{Event, TopicId};
 use kukuri_transport::TransportRelayConfig;
 use kukuri_webrtc_transport::{WebRtcConfig, WebRtcTransport, signaling_fixture};
 
@@ -72,7 +72,7 @@ async fn custom_is_active(node: &IrohDocsNode, peer: &IrohDocsNode) -> bool {
         })
 }
 
-async fn next_message(receiver: &mut iroh_gossip::api::GossipReceiver) -> Result<Vec<u8>> {
+async fn next_message(receiver: &mut iroh_gossip::GossipReceiver) -> Result<Vec<u8>> {
     n0_future::time::timeout(WAIT, async {
         loop {
             if let Event::Received(message) = receiver.next().await.context("topic ended")?? {

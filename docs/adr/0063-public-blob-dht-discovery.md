@@ -64,11 +64,13 @@ Accepted（Issue #1632、Scope revision `2026-10-08-r4`）。依存の fork（AC
 
 | fork（固定 rev） | 変更 | 上限・取消 |
 | --- | --- | --- |
-| `n0-mainline`（`7571f18f`、v0.7.1 起点） | 検索の受信先・保持する応答・応答待ちを有限にし、受信先ごとに取り消す | 受信先 64・受信先が保持する応答 16・進行する検索 256・応答待ち 1,024・期限切れを含めて持つ要求 2,048。受信先を落とすとその受信先だけを外し、最後の受信先が無くなった検索を止める。自分の id と put の対象の検索は止めない |
-| `iroh-content-discovery`（`f6e2864a`、b4493ba 起点） | index 要求の呼出しごとの取消、保留の上限、1 回の告知 API（`Announcer`） | 進行表・保留 各 512（超えたら Busy）。取り消した公開は後から届く token で Put を送らない。resolver は照会の queue 64＋1 batch・同時照会 16 |
-| `iroh-address-lookups`（`e2740b75`、0.6.0 起点） | 組み立て済みの DHT を住所の公開・解決へ渡す（`Builder::dht`） | 住所の公開の task が lookup を持つ循環参照を解き、lookup を落とすと自前の node は止まり、渡された node は持ち主が落とすまで動く |
+| `n0-mainline`（`d87e8a2f`、v0.8.0 起点） | 検索の受信先・保持する応答・応答待ちを有限にし、受信先ごとに取り消す | 受信先 64・受信先が保持する応答 16・進行する検索 256・応答待ち 1,024。受信先を落とすとその受信先だけを外し、最後の受信先が無くなった検索を止める。自分の id と put の対象の検索は止めない |
+| `iroh-content-discovery`（`b507e37e`、上流 0.2.0 起点） | index 要求の呼出しごとの取消、保留の上限、1 回の告知 API（`Announcer`） | 進行表・保留 各 512（超えたら Busy）。取り消した公開は後から届く token で Put を送らない。resolver は照会の queue 64＋1 batch・同時照会 16 |
+| `iroh-address-lookups`（`54811a38`、上流 main（0.6.1 の後）起点） | 組み立て済みの DHT を住所の公開・解決へ渡す（`Builder::dht`） | 住所の公開の task が lookup を持つ循環参照を解き、lookup を落とすと自前の node は止まり、渡された node は持ち主が落とすまで動く |
 
 告知の同時数を 2 に絞るのは、上限の計数に入らない put（1 件で近い node 群へ送る）が多数同時に応答待ちになると、2,048 件の表から期限内の要求が消えうるため（AC-1 の監査の記録）。
+
+2026-11-19 に 3 つの fork を上流の最新へ載せ替えた。n0-mainline 0.8.0 は期限切れの要求を cleanup のたびに消す（上流 #47）ので、fork の 2,048 件の表と、その試験を外した（告知の同時数 2 は変えない）。n0-mainline 0.8.0 の security 修正で、DHT の各 node は infohash ごとに 1 つの IP の告知を 1 件だけ持つ（上流 #60）。同じ NAT の後ろの複数の端末が同じ公開 blob を告知すると、各 node には最後の 1 台だけが残り、2 台目以降は見つかりにくい。これを受け入れる（2026-11-19 ユーザー判断）。また 0.8.0 は BEP 44 の put を target 無しで送るので、0.7 系の cn-addr-index は新しい端末の住所の公開・一覧の公開を受け取らない（一般の Mainline の node は受け取る）。本番の cn-addr-index の更新は、本番反映をまとめる別 Issue で行う。
 
 ### 6. 法務
 
@@ -82,7 +84,7 @@ Accepted（Issue #1632、Scope revision `2026-10-08-r4`）。依存の fork（AC
 - 1 検索は `Resolver::resolve_stream` から重複を含めて 16 件まで読み、重複を除いて署名つきの住所 record（同じ DHT の `DhtAddressLookup`、公開はしない）を同時 4 件まで引き、relay URL を持つ候補だけを最大 4 件返す（直接の address だけの候補は返さない）。候補ごとの relay URL は 4 件、直接の address は 8 件まで。期限は `min(budget_ms, 10 秒)` で、過ぎたら集めた分で打ち切り `partial` を立てる。候補が空でも保持端末が無いことの証明ではない。
 - 受付は、進行中の検索が全体 32 件・端末（bearer の endpoint ID、無ければ公開鍵）ごとに 8 件（client の取得の実行枠と同じ）まで。超えた要求は待たせずに 429 `BLOB_PROVIDER_SEARCH_BUSY`（`Retry-After: 5`。取得の次の試行と同じ）。全体 32 件は、1 検索の DHT の検索（保持端末 1・住所 record 最大 4）が DHT の進行する検索の上限（256）に収まる数。期限・応答・HTTP の切断で handler の処理が落ちると、stream・DHT の受信先・補助 index の要求を取り消し、受付を戻す。端末ごとの数の表は、全体の上限と同じ 32 件まで。
 - node は iroh の endpoint を持たず、blob の取得・保存・size の確認をしない（読むのは DHT・補助 index・住所 record だけ）。受け取った hash と見つけた端末の情報は DB・log に保存せず（住所の解決が info で出す見つけた端末の endpoint ID・到達情報は、既定の log の絞り込みで出さない）、検索の処理のメモリの cache（補助 index の照会の結果は 5 分、DHT の問い合わせの記録は件数の上限まで）だけに持つ。一般の native へ探索を依頼せず、`cn-iroh-relay` の責務は変えない。候補は保持・権限の証明ではなく、client は既存の接続と hash の検証で取得する。
-- 補助 index の server は `cn-addr-index`（`udp-addr-index` の `Server` を自分の Mainline DHT の socket に付ける別の process。blob・投稿は持たない）。relay の image に同梱し、compose の profile `addr-index` で起動する。port は DHT と共有の `60125/udp`。保持する record の数（既定 2,000,000）・送信元 IP ごとの record の数（16）・送信元 IP ごとの毎秒の要求数（50。登録と照会）を環境変数で変えられる（record の期限は 1 時間で固定）。record は送信元の address で引くので、送信元を書き換えて転送する edge 構成では提供しない。kukuri が運用する server だけで動かし（D6）、上流の共通の rendezvous には告知しない。その最大 2 台を、fork の `iroh-index-list`（一覧の鍵を持ち、10 分ごとに更新し続ける）で署名つきの一覧として公開する。server の配置と鍵の発行は、本番反映をまとめる別 Issue で行う。
+- 補助 index の server は `cn-addr-index`（`udp-addr-index` の `Server` を自分の Mainline DHT の socket に付ける別の process。blob・投稿は持たない）。relay の image に同梱し、compose の profile `addr-index` で起動する。port は DHT と共有の `60125/udp`。DHT は Client の mode で動かし、DHT の要求には答えない（上流の udp-addr-index と同じ。2026-11-19 ユーザー判断。それまでは server の mode）。保持する record の数（既定 2,000,000）・送信元 IP ごとの record の数（16）・送信元 IP ごとの毎秒の要求数（50。登録と照会）を環境変数で変えられる（record の期限は 1 時間で固定）。record は送信元の address で引くので、送信元を書き換えて転送する edge 構成では提供しない。kukuri が運用する server だけで動かし（D6）、上流の共通の rendezvous には告知しない。その最大 2 台を、fork の `iroh-index-list`（一覧の鍵を持ち、10 分ごとに更新し続ける）で署名つきの一覧として公開する。server の配置と鍵の発行は、本番反映をまとめる別 Issue で行う。
 
 ### 8. Web の取得（AC-6）
 

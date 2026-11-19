@@ -14,13 +14,13 @@ use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointAddr, RelayUrl, Watcher};
 use iroh_blobs::api::Store as BlobStore;
 #[cfg(not(target_family = "wasm"))]
-use iroh_blobs::store::fs::options::Options as BlobStoreOptions;
+use iroh_blobs::store::fs::options::{CrashConsistency, Options as BlobStoreOptions};
 use iroh_blobs::store::mem::MemStore;
 use iroh_docs::actor::SyncHandle;
 use iroh_docs::api::DocsApi;
 use iroh_docs::engine::{DefaultAuthorStorage, Engine, ProtectCallbackHandler};
 use iroh_docs::store::Store as DocsStore;
-use iroh_gossip::net::Gossip;
+use iroh_gossip::Gossip;
 use kukuri_store::ContentCacheStore;
 use kukuri_transport::{
     ConnectMode, DhtDiscoveryOptions, RECEIVE_BINDING_ALPN, ReceiveBindingSlot,
@@ -398,7 +398,10 @@ impl IrohDocsNode {
     ) -> Result<Arc<Self>> {
         std::fs::create_dir_all(root)
             .with_context(|| format!("failed to create docs root {}", root.display()))?;
-        let options = BlobStoreOptions::new(root);
+        let mut options = BlobStoreOptions::new(root);
+        // 取り込みごとに fsync し、OS の停止・電源断の後の起動で全 entry を走査させない
+        // （既定の ProcessCrash は起動の経路に件数に比例する待ちを置く。2026-11-19 ユーザー判断）。
+        options.crash_consistency = CrashConsistency::PowerLoss;
         let store = iroh_blobs::store::fs::FsStore::load_with_opts(root.join("blobs.db"), options)
             .await
             .with_context(|| format!("failed to load blob store at {}", root.display()))?;

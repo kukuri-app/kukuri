@@ -15,7 +15,7 @@ futures-util.workspace = true
 iroh.workspace = true
 iroh-gossip.workspace = true
 # 輻輳制御の BBR3（iroh は noq の型を re-export しない）。
-noq-proto = { version = "1.4.0", default-features = false }
+noq-proto = { version = "1.5.0", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -31,9 +31,9 @@ n0-mainline.workspace = true
 iroh-mainline-address-lookup.workspace = true
 iroh-mainline-endpoint-discovery.workspace = true
 # 計測用の UDP proxy を通す custom transport（#1984）。
-iroh-base = "1.4.1"
+iroh-base = "1.5.0"
 n0-watcher = "1.0.1"
-noq-udp = { version = "1.4.0", default-features = false }
+noq-udp = { version = "1.5.0", default-features = false }
 socket2 = "0.6.5"
 
 [features]
@@ -45,7 +45,9 @@ test-support = []
 [dev-dependencies]
 kukuri-store = { path = "../store", features = ["test-support"] }
 iroh = { workspace = true, features = ["test-utils"] }
-rand = { version = "=0.10.3", features = ["std_rng"] }
+# controlled_gossip の試験が上流の状態機械（`proto`）を直接使う（gossip 0.103 から feature の後ろ）。
+iroh-gossip = { workspace = true, features = ["experimental-proto-internals"] }
+rand = { version = "=0.10.4", features = ["std_rng"] }
 postcard = { version = "=1.1.3", features = ["alloc"] }
 tempfile.workspace = true
 

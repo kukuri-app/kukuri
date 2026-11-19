@@ -59,10 +59,10 @@ jobs:
             [[ "$REQUESTED_SOURCE" =~ ^[0-9a-f]{40}$ ]] && test "$(git rev-parse HEAD)" = "$REQUESTED_SOURCE"
           fi
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
           components: clippy,rustfmt
 
       - name: Install Linux system dependencies

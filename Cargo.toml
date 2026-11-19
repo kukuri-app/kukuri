@@ -56,49 +56,49 @@ bao-tree = { version = "0.17.0", default-features = false, features = ["serde", 
 bech32 = "0.12.0"
 blake3 = "1.8.7"
 chrono = { version = "0.4.45", features = ["serde"] }
-clap = { version = "4.6.7", features = ["derive", "env"] }
+clap = { version = "4.6.8", features = ["derive", "env"] }
 futures-util = "0.3.34"
 hex = "0.4.3"
 hkdf = "0.13.0"
 hmac = "0.13.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "gif", "jpeg", "webp"] }
 # Custom Transport（QUIC over WebRTC DataChannel。ADR 0057）を Endpoint の組立てへ注入する。
-iroh = { version = "1.4.1", features = ["unstable-custom-transports"] }
+iroh = { version = "1.5.0", features = ["unstable-custom-transports"] }
 # 永続 store（fs-store）と rpc は native の節で足す（ADR 0056 §3、ADR 0058）。
 iroh-docs = { version = "0.101.0", default-features = false }
-iroh-blobs = { version = "0.104.1", default-features = false }
-iroh-gossip = "0.102.0"
-iroh-mainline-address-lookup = "0.6.0"
-# #1632: 公開 blob の発見（fork。index 要求の取消・保留の上限と、1 回の告知 API。b4493ba 起点）。
-iroh-mainline-endpoint-discovery = { git = "https://github.com/KingYoSun/iroh-content-discovery", rev = "f6e2864a1d2228a19aa1cb88239ba87eb0068d2e" }
-udp-addr-index = { git = "https://github.com/KingYoSun/iroh-content-discovery", rev = "f6e2864a1d2228a19aa1cb88239ba87eb0068d2e" }
-iroh-relay = { version = "1.4.1", features = ["server"] }
-jsonwebtoken = { version = "11.1.0", features = ["aws_lc_rs"] }
+iroh-blobs = { version = "0.105.0", default-features = false }
+iroh-gossip = "0.103.0"
+iroh-mainline-address-lookup = "0.6.1"
+# #1632: 公開 blob の発見（fork。index 要求の取消・保留の上限と、1 回の告知 API。上流 0.2.0 起点）。
+iroh-mainline-endpoint-discovery = { git = "https://github.com/KingYoSun/iroh-content-discovery", rev = "b507e37eaed6dcd5d0beb25f141f37a52e2e2d50" }
+udp-addr-index = { git = "https://github.com/KingYoSun/iroh-content-discovery", rev = "b507e37eaed6dcd5d0beb25f141f37a52e2e2d50" }
+iroh-relay = { version = "1.5.0", features = ["server"] }
+jsonwebtoken = { version = "12.0.0", features = ["aws_lc_rs"] }
 keyring = { version = "4.2.0", default-features = false }
 libc = "0.2.191"
 # metaverse の空間音声と live の media の搬送（ADR 0067）。native だけで使う。
-# web-transport-iroh 0.8 系は web-transport-trait 0.5 を使い、moq-net 0.3 系（0.4）と組み合わせられない。
-moq-net = "0.3.20"
-hang = "0.21.21"
+# web-transport-iroh 0.8 系は web-transport-trait 0.5 を使い、moq-net 0.3 系（0.3.23 でも 0.4）と組み合わせられない。
+moq-net = "0.3.23"
+hang = "0.21.24"
 web-transport-iroh = { version = "0.7.0", default-features = false, features = ["ring"] }
 # moq-net は poll 型の transport を要求し、web-transport-iroh は async 型だけを実装するため、moq-tokio の変換を使う。
-moq-tokio = { version = "0.19.33", default-features = false, features = ["iroh"] }
+moq-tokio = { version = "0.19.37", default-features = false, features = ["iroh"] }
 # 機器（cpal。Linux は libasound）は desktop-runtime の `audio-devices` feature で Tauri の app だけが有効にする。
-moq-audio = { version = "0.1.20", default-features = false }
-moq-mux = { version = "0.10.21", default-features = false }
+moq-audio = { version = "0.1.23", default-features = false }
+moq-mux = { version = "0.10.24", default-features = false }
 chacha20poly1305 = "0.11.0"
 n0-future = "0.3.2"
-n0-mainline = "0.7.1"
+n0-mainline = "0.8.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "query", "rustls"] }
 rapier3d = { version = "0.36.1", features = ["enhanced-determinism"] }
-redis = { version = "1.8.1", default-features = false, features = ["tokio-comp"] }
+redis = { version = "1.8.2", default-features = false, features = ["tokio-comp"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
 secp256k1 = { version = "0.33.1", features = ["global-context", "rand", "serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_yaml = "0.9.34"
 sha2 = "0.11.1"
-sqlx = { version = "0.9.0", features = ["runtime-tokio", "tls-rustls-ring-webpki", "sqlite", "postgres", "json", "migrate", "chrono"] }
+sqlx = { version = "0.9.1", features = ["runtime-tokio", "tls-rustls-ring-webpki", "sqlite", "postgres", "json", "migrate", "chrono"] }
 thiserror = "2.0.21"
 # 共用 crate は wasm でも build する（ADR 0056 §3）。rt-multi-thread・fs 等は使う crate が native の節で足す。
 tokio = { version = "1.54.1", features = ["macros", "rt", "sync", "time"] }
@@ -110,42 +110,43 @@ tower-http = { version = "0.7.1", features = ["cors", "trace"] }
 tower_governor = "0.8.0"
 ts-rs = "12"
 url = "2.5.8"
-uuid = { version = "1.29.0", features = ["serde", "v4", "v7"] }
+uuid = { version = "1.29.3", features = ["serde", "v4", "v7"] }
 web-time = "1.1.0"
 wiremock = "0.6"
 
 [patch.crates-io]
 # Upstream #114 (open): sync_process_message error must not panic the whole docs actor.
-# fork は上流 main（#117・#118 を含む）に #114 を載せ、iroh-blobs 0.104・iroh-gossip 0.102 へ上げたもの
-# （branch `kukuri/pr114-blobs-0.104-gossip-0.102`。ADR 0058 §1）。上流が同じ内容の版を出したら外す。
+# fork は上流 main（#117・#118 を含む）に #114 を載せ、iroh-blobs 0.105・iroh-gossip 0.103・irpc 1.0 へ上げたもの
+# （branch `kukuri/pr114-blobs-0.105-gossip-0.103`。ADR 0058 §1）。上流が同じ内容の版を出したら外す。
 # fork だけの変更（#2043）: actor の停止時に queue に残った要求を落とす（無いと呼出元が永久に待つ）。
-iroh-docs = { git = "https://github.com/KingYoSun/iroh-docs", rev = "ef767da5e84745ae9e0f64737400c74853af2877" }
+iroh-docs = { git = "https://github.com/KingYoSun/iroh-docs", rev = "7aadd958a4e50d96ea560c5ecdf002a55423985d" }
 # Upstream #4447: release inactive endpoint/relay address mappings.
 # Upstream #4565: Endpoint::add_remote_addrs opens a custom path on a live connection (#1422).
 # fork だけの変更（#1482・#1571・#1654。上流へは PR を出さない）: custom transport が外した local addr の custom path を、
 # 別の path が確立していれば閉じ（無ければ確立を待つ）、その path を選ばず、それだけが残った接続を 3 秒で閉じる。
-# fork の rev は、上流 v1.4.1 に #4447（#1450 で rebase）・#4565 の cherry-pick・#1482 と #1571 と #1654 の変更を載せたもの（branch `kukuri/close-after-another-path-v1.4.1`）。
+# fork の rev は、上流 v1.5.0 に #4447（#1450 で rebase）・#4565 の cherry-pick・#1482 と #1571 と #1654 の変更を載せたもの（branch `kukuri/close-after-another-path-v1.5.0`）。
 # Keep the shared public types on the same source as the endpoint crate.
-iroh = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
-iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
-iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
-iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
+iroh = { git = "https://github.com/KingYoSun/iroh", rev = "84ae449a4160915ea84dd79d00eda41b7047b4d5" }
+iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "84ae449a4160915ea84dd79d00eda41b7047b4d5" }
+iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "84ae449a4160915ea84dd79d00eda41b7047b4d5" }
+iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "84ae449a4160915ea84dd79d00eda41b7047b4d5" }
 
 # #1632（fork だけの変更。上流へは PR を出さない）: 検索の受信先・保持する応答・応答待ちに上限を持たせ、
-# 受信先ごとに取り消せるようにする。v0.7.1 起点。
-n0-mainline = { git = "https://github.com/KingYoSun/n0-mainline", rev = "7571f18f69ef03d9ec97ca8d1171e17c8ce4f0c6" }
-# #1632: 既存の DHT を住所の公開・解決へ渡し、hash の発見と同じ socket を共有する。0.6.0 起点。
-iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-address-lookups", rev = "e2740b75997e9e3d0776f6b80846cafc2681fe29" }
+# 受信先ごとに取り消せるようにする。v0.8.0 起点（上流 0.8.0 が直した期限切れの要求の蓄積の分は外した）。
+n0-mainline = { git = "https://github.com/KingYoSun/n0-mainline", rev = "d87e8a2f3e1b353b1bc8785b56c9ee15b0992855" }
+# #1632: 既存の DHT を住所の公開・解決へ渡し、hash の発見と同じ socket を共有する。上流 main（0.6.1 の後）起点。
+iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-address-lookups", rev = "54811a382d2cda6f085eb6d6c776e7e36c41a52f" }
 # #1805（fork だけの変更。上流へは PR を出さない）: echo cancellation の参照の channel を作った直後に 1 回読み、
 # 再生の mix が canceller へ届くようにする。moq 系の依存は crates.io の同じ版にした。
 # #1879（同じ fork の続き）: moq-tokio を Web（wasm）でも build できるようにし、Web では poll 型への変換
 # （`transport`）だけを含める。moq-mux・moq-audio の時刻を web-time にする（ブラウザには std の時計が無い。
 # native では std と同じ型）。
 # #1944・#1955・#2029 の変更を含む fork を、上流の moq-audio 0.1.20 の release（51e93fc22）へ載せ替えた branch
-# `kukuri/rebase-0.1.20` に固定する（ADR 0067 §7）。
-moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "f48a11c2dc862f032710f088e5e63800f473db82" }
-moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "f48a11c2dc862f032710f088e5e63800f473db82" }
-moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "f48a11c2dc862f032710f088e5e63800f473db82" }
+# `kukuri/rebase-0.1.20` に固定した。2026-11-19 に上流の moq-tokio 0.19.37 の release（49bde3ea0。moq-audio 0.1.23 を含む）
+# へ載せ替えた branch `kukuri/rebase-0.1.23` に固定する（ADR 0067 §7）。
+moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "f5f5a43000d9de16064bf1246d6c3771bfc070db" }
+moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "f5f5a43000d9de16064bf1246d6c3771bfc070db" }
+moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "f5f5a43000d9de16064bf1246d6c3771bfc070db" }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"
