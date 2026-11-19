@@ -80,7 +80,8 @@ fn neologd() -> Result<Dictionary> {
 
 /// 開発と試験の build は、lindera の build の出力を読む。埋め込むと辞書を使う binary が 1 個 1 GB を超え、試験の
 /// binary の数だけ disk を使って CI の runner で足りなくなる。出力の置き場所は
-/// `$LINDERA_BUILD_DICTIONARY_CACHE_DIR/<版>/` か `target/<profile>/build/<crate>-<hash>/out/`。
+/// `$LINDERA_BUILD_DICTIONARY_CACHE_DIR/<版>/` か `target/<profile>/build/<crate>/<hash>/out/`（Rust 1.99 までは
+/// `build/<crate>-<hash>/out/`）。
 #[cfg(debug_assertions)]
 fn neologd() -> Result<Dictionary> {
     static LOADED: std::sync::OnceLock<Dictionary> = std::sync::OnceLock::new();
@@ -100,8 +101,13 @@ fn neologd() -> Result<Dictionary> {
         .filter_map(|root| std::fs::read_dir(root).ok())
         .flatten()
         .flatten()
+        // Rust 1.100 の cargo は build の出力を `build/<crate>/<hash>/out/` に置く（それより前は `<crate>-<hash>`）。
         .flat_map(|entry| {
             let dir = entry.path();
+            let nested = std::fs::read_dir(&dir).into_iter().flatten().flatten();
+            std::iter::once(dir).chain(nested.map(|entry| entry.path()))
+        })
+        .flat_map(|dir| {
             [
                 dir.join("lindera-ipadic-neologd"),
                 dir.join("out/lindera-ipadic-neologd"),
