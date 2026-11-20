@@ -18,6 +18,27 @@ file; automated changelog entries start from the next preview release.
 
 ## [Unreleased]
 
+## [v0.5.4-preview.1] - 2026-11-20
+
+### Fixes
+
+- Sidecar の接続で、前の接続の片付けの間に断られたら 1 秒まで接続し直す ([#2086](https://github.com/kukuri-app/kukuri/pull/2086), [#2087](https://github.com/kukuri-app/kukuri/pull/2087))
+
+### Other
+
+- リリースの版を 0.5.4 にする ([#2092](https://github.com/kukuri-app/kukuri/pull/2092))
+- iroh 1.5.0 ほか依存・toolchain を最新へ更新し、fork を載せ替える ([#2089](https://github.com/kukuri-app/kukuri/pull/2089))
+- PWA の launcher の確認を 30 秒まで待つ (#2080 AC-4) ([#2085](https://github.com/kukuri-app/kukuri/pull/2085))
+- 自分の profile を開いた後、列に focus が移るのを待つ (#2080 AC-2) ([#2084](https://github.com/kukuri-app/kukuri/pull/2084))
+- 移行の途中で経路を落とす前に、WebRTC の経路が張れるのを待つ (#2080 AC-1) ([#2081](https://github.com/kukuri-app/kukuri/pull/2081))
+- Android の system image の取得の 1 回を 150 秒で打ち切る (#2080 AC-5) ([#2083](https://github.com/kukuri-app/kukuri/pull/2083))
+- PWA の画面の要素の読取りの失敗を読み直させる (#2080 AC-3) ([#2082](https://github.com/kukuri-app/kukuri/pull/2082))
+- pwa-ime のキーボードの開き直しで投稿欄そのものを押す (#2075 AC-3) ([#2079](https://github.com/kukuri-app/kukuri/pull/2079))
+- same-account で Account の一覧が読み込まれてから数える (#2075 AC-2) ([#2077](https://github.com/kukuri-app/kukuri/pull/2077))
+- 回線の模擬で offline の間は WebRTC の ICE も成立させない (#2075 AC-1) ([#2078](https://github.com/kukuri-app/kukuri/pull/2078))
+- Sidecar の接続と切断の試験で、断られた接続を待って接続し直す ([#2074](https://github.com/kukuri-app/kukuri/pull/2074), [#2076](https://github.com/kukuri-app/kukuri/pull/2076))
+- v0.5.3-preview.1 の changelog・LP・リリース記録 ([#2073](https://github.com/kukuri-app/kukuri/pull/2073))
+
 ## [v0.5.3-preview.1] - 2026-11-09
 
 ### Fixes
