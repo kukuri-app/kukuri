@@ -14,7 +14,7 @@ microsoft-store = []
 
 [build-dependencies]
 # Keep the Rust crates paired with the unchanged Tauri JS packages during cargo update (#1921).
-tauri-build = { version = "=2.7.4", features = [] }
+tauri-build = { version = "=2.7.6", features = [] }
 
 [dependencies]
 anyhow = "1.0.104"
@@ -25,7 +25,7 @@ kukuri-core = { path = "../../../crates/core" }
 kukuri-desktop-runtime = { path = "../../../crates/desktop-runtime", features = ["audio-devices"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-tauri = { version = "=2.12.5", features = ["tray-icon", "protocol-asset"] }
+tauri = { version = "=2.12.7", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-deep-link = "=2.6.3"
 tauri-plugin-dialog = "=2.8.4"
 tauri-plugin-single-instance = { version = "=2.5.5", features = ["deep-link"] }
@@ -41,7 +41,8 @@ open = { version = "5.4.5", features = ["shellexecute-on-windows"] }
 windows = { version = "0.62.2", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_Globalization", "Win32_Storage_FileSystem"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-notify-rust = "4"
+# 4.19 は Linux で zbus 6 を使い、keyring・ashpd・single-instance と共有する zbus 5 と二重になるため 4.18 系に留める。
+notify-rust = "~4.18.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18.2"
@@ -55,24 +56,24 @@ zbus = "5"
 
 [dev-dependencies]
 minisign-verify = "0.3"
-tauri = { version = "=2.12.5", features = ["test"] }
+tauri = { version = "=2.12.7", features = ["test"] }
 tempfile = "3.27.0"
 
 [patch.crates-io]
 # Keep the standalone Tauri workspace on the same docs error-path fix as the root.
-iroh-docs = { git = "https://github.com/KingYoSun/iroh-docs", rev = "ef767da5e84745ae9e0f64737400c74853af2877" }
+iroh-docs = { git = "https://github.com/KingYoSun/iroh-docs", rev = "7aadd958a4e50d96ea560c5ecdf002a55423985d" }
 # Match the root workspace's inactive address/connection reclamation fixes.
-iroh = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
-iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
-iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
-iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "d479731d85fb33f6e4a24a80026bd6500cfc8fdc" }
+iroh = { git = "https://github.com/KingYoSun/iroh", rev = "84ae449a4160915ea84dd79d00eda41b7047b4d5" }
+iroh-base = { git = "https://github.com/KingYoSun/iroh", rev = "84ae449a4160915ea84dd79d00eda41b7047b4d5" }
+iroh-dns = { git = "https://github.com/KingYoSun/iroh", rev = "84ae449a4160915ea84dd79d00eda41b7047b4d5" }
+iroh-relay = { git = "https://github.com/KingYoSun/iroh", rev = "84ae449a4160915ea84dd79d00eda41b7047b4d5" }
 # Match the root workspace's Mainline forks (#1632).
-n0-mainline = { git = "https://github.com/KingYoSun/n0-mainline", rev = "7571f18f69ef03d9ec97ca8d1171e17c8ce4f0c6" }
-iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-address-lookups", rev = "e2740b75997e9e3d0776f6b80846cafc2681fe29" }
+n0-mainline = { git = "https://github.com/KingYoSun/n0-mainline", rev = "d87e8a2f3e1b353b1bc8785b56c9ee15b0992855" }
+iroh-mainline-address-lookup = { git = "https://github.com/KingYoSun/iroh-address-lookups", rev = "54811a382d2cda6f085eb6d6c776e7e36c41a52f" }
 # Match the root workspace's moq fork (#1805 echo cancellation, #1879 moq-tokio and clocks for wasm).
-moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "f48a11c2dc862f032710f088e5e63800f473db82" }
-moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "f48a11c2dc862f032710f088e5e63800f473db82" }
-moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "f48a11c2dc862f032710f088e5e63800f473db82" }
+moq-audio = { git = "https://github.com/KingYoSun/moq", rev = "f5f5a43000d9de16064bf1246d6c3771bfc070db" }
+moq-tokio = { git = "https://github.com/KingYoSun/moq", rev = "f5f5a43000d9de16064bf1246d6c3771bfc070db" }
+moq-mux = { git = "https://github.com/KingYoSun/moq", rev = "f5f5a43000d9de16064bf1246d6c3771bfc070db" }
 
 # root と同じく、開発用の build でも str0m の再帰が tokio の worker（2 MiB）を溢れないようにする（#1658）。
 [profile.dev.package.str0m]

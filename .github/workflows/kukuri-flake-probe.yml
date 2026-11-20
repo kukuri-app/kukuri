@@ -72,10 +72,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
@@ -105,10 +105,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -149,10 +149,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install

@@ -18,7 +18,7 @@ iroh.workspace = true
 iroh-blobs.workspace = true
 iroh-docs.workspace = true
 iroh-gossip.workspace = true
-irpc = { version = "0.17.0", default-features = false }
+irpc = { version = "1.0.0", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -30,7 +30,6 @@ kukuri-transport = { path = "../transport" }
 kukuri-webrtc-transport = { path = "../webrtc-transport" }
 # media の搬送（ADR 0067）。Web も live を扱う（#1879）。
 moq-net.workspace = true
-hang.workspace = true
 web-transport-iroh.workspace = true
 moq-tokio.workspace = true
 

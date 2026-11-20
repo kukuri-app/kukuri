@@ -20,7 +20,7 @@ async fn join_pair(
     left: &IrohGossipTransport,
     right: &IrohGossipTransport,
     name: &str,
-) -> (iroh_gossip::api::GossipTopic, iroh_gossip::api::GossipTopic) {
+) -> (iroh_gossip::GossipTopic, iroh_gossip::GossipTopic) {
     let topic = topic_to_gossip_id(&TopicId::new(name));
     let mut left_topic = left
         .gossip

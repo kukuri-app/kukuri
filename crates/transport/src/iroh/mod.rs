@@ -29,8 +29,8 @@ use iroh::protocol::Router;
 #[cfg(test)]
 use iroh::tls::CaTlsConfig;
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayConfig, RelayUrl, SecretKey};
-use iroh_gossip::api::{Event as GossipEvent, GossipSender};
 use iroh_gossip::{ALPN as GOSSIP_ALPN, Gossip, TopicId as GossipTopicId};
+use iroh_gossip::{Event as GossipEvent, GossipSender};
 #[cfg(not(target_family = "wasm"))]
 use iroh_mainline_address_lookup::DhtAddressLookup;
 use kukuri_core::{GossipHint, Pubkey, SealedReceiveOfferV1, TopicId};

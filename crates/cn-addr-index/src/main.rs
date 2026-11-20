@@ -7,7 +7,7 @@
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
-use n0_mainline::Dht;
+use n0_mainline::{Dht, Mode};
 use udp_addr_index::{Limits, Server};
 
 /// DHT と index で共有する UDP の port の既定値。
@@ -29,8 +29,9 @@ async fn main() -> Result<()> {
         )?,
         ..defaults
     };
+    // DHT の要求には答えず、index の UDP だけを扱う（上流の udp-addr-index と同じ）。
     let dht = Dht::builder()
-        .server_mode()
+        .mode(Mode::Client)
         .port(env("CN_ADDR_INDEX_PORT", DEFAULT_PORT)?)
         .build()
         .context("failed to bind the address index socket")?;

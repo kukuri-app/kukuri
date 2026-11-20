@@ -62,11 +62,11 @@ impl JwtConfig {
         self.ttl_seconds
     }
 
-    pub(crate) fn encoding_key(&self) -> EncodingKey {
+    pub(crate) fn encoding_key(&self) -> jsonwebtoken::errors::Result<EncodingKey> {
         EncodingKey::from_secret(self.secret.as_bytes())
     }
 
-    pub(crate) fn decoding_key(&self) -> DecodingKey {
+    pub(crate) fn decoding_key(&self) -> jsonwebtoken::errors::Result<DecodingKey> {
         DecodingKey::from_secret(self.secret.as_bytes())
     }
 }

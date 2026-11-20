@@ -2,7 +2,7 @@
 //! caller owns the selected connection, reads, and hard cancellation boundary.
 use super::*;
 use iroh::endpoint::{Connection, RecvStream, SendStream};
-use iroh_gossip::proto::topic::{InEvent, OutEvent};
+use iroh_gossip::proto::topic::InEvent;
 use iroh_gossip::proto::{self, Command};
 use rand::{SeedableRng, rngs::StdRng};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -39,29 +39,50 @@ impl Drop for OwnedConnection {
     }
 }
 
-async fn emit_to_selected_peer(
-    output: Vec<OutEvent<EndpointId>>,
+/// The state writes its output into this collector; the fixture then performs
+/// the I/O on the one selected connection.
+#[derive(Default)]
+struct Output {
+    messages: Vec<(EndpointId, proto::topic::Message<EndpointId>)>,
+    events: Vec<proto::Event<EndpointId>>,
+}
+
+impl proto::topic::IO<EndpointId> for Output {
+    fn send(
+        &mut self,
+        peer: EndpointId,
+        message: impl Into<proto::topic::Message<EndpointId>>,
+    ) -> Option<proto::topic::Message<EndpointId>> {
+        self.messages.push((peer, message.into()));
+        None
+    }
+
+    fn emit(&mut self, event: proto::Event<EndpointId>) {
+        self.events.push(event);
+    }
+
+    // This short handshake/roundtrip does not advance periodic timers.
+    // Timer admission and maintenance remain explicit production work.
+    fn schedule(&mut self, _: Duration, _: impl Into<proto::topic::Timer<EndpointId>>) {}
+
+    fn peer_data(&mut self, _: EndpointId, _: proto::PeerData) {}
+}
+
+async fn handle(
+    state: &mut proto::topic::State<EndpointId, StdRng>,
+    event: InEvent<EndpointId>,
     selected: EndpointId,
     stream: &mut SendStream,
 ) -> Vec<proto::Event<EndpointId>> {
-    let mut events = Vec::new();
-    for event in output {
-        match event {
-            OutEvent::SendMessage(peer, message) => {
-                // Production owner admission will choose destinations before I/O.
-                // This fixture has precisely one authorized peer and no dial loop.
-                assert_eq!(peer, selected, "state proposed an unselected destination");
-                write_frame(stream, &message).await;
-            }
-            OutEvent::EmitEvent(event) => events.push(event),
-            // This short handshake/roundtrip does not advance periodic timers.
-            // Timer admission and maintenance remain explicit production work.
-            OutEvent::ScheduleTimer(_, _) | OutEvent::PeerData(_, _) => {}
-            OutEvent::DisconnectPeer(_) => panic!("unexpected disconnect during roundtrip"),
-            other => panic!("unexpected gossip output during roundtrip: {other:?}"),
-        }
+    let mut output = Output::default();
+    state.handle(event, n0_future::time::Instant::now(), &mut output);
+    for (peer, message) in output.messages {
+        // Production owner admission will choose destinations before I/O.
+        // This fixture has precisely one authorized peer and no dial loop.
+        assert_eq!(peer, selected, "state proposed an unselected destination");
+        write_frame(stream, &message).await;
     }
-    events
+    output.events
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -88,28 +109,29 @@ async fn public_gossip_state_roundtrips_with_native_peer_on_owned_connection() {
         proto::Config::default(),
         StdRng::seed_from_u64(7),
     );
+    let peer = native.endpoint.id();
     timeout(Duration::from_secs(10), async {
         let mut send = connection.0.open_uni().await.unwrap();
         write_frame(&mut send, &StreamHeader { topic_id: topic }).await;
-        let output = state
-            .handle(
-                InEvent::Command(Command::Join(vec![native.endpoint.id()])),
-                n0_future::time::Instant::now(),
-            )
-            .collect();
-        emit_to_selected_peer(output, native.endpoint.id(), &mut send).await;
+        handle(
+            &mut state,
+            InEvent::Command(Command::Join(vec![native.endpoint.id()])),
+            peer,
+            &mut send,
+        )
+        .await;
         let mut recv = connection.0.accept_uni().await.unwrap();
         let header: StreamHeader = read_frame(&mut recv).await;
         assert_eq!(header.topic_id, topic);
         loop {
             let message: proto::topic::Message<EndpointId> = read_frame(&mut recv).await;
-            let output = state
-                .handle(
-                    InEvent::RecvMessage(native.endpoint.id(), message),
-                    n0_future::time::Instant::now(),
-                )
-                .collect();
-            let events = emit_to_selected_peer(output, native.endpoint.id(), &mut send).await;
+            let events = handle(
+                &mut state,
+                InEvent::RecvMessage(native.endpoint.id(), message),
+                peer,
+                &mut send,
+            )
+            .await;
             if events
                 .iter()
                 .any(|event| matches!(event, proto::Event::NeighborUp(_)))
@@ -119,16 +141,16 @@ async fn public_gossip_state_roundtrips_with_native_peer_on_owned_connection() {
         }
         // Native NeighborUp requires the protocol response we just drove.
         native_topic.joined().await.unwrap();
-        let output = state
-            .handle(
-                InEvent::Command(Command::Broadcast(
-                    b"owned to native".to_vec().into(),
-                    proto::Scope::Swarm,
-                )),
-                n0_future::time::Instant::now(),
-            )
-            .collect();
-        emit_to_selected_peer(output, native.endpoint.id(), &mut send).await;
+        handle(
+            &mut state,
+            InEvent::Command(Command::Broadcast(
+                b"owned to native".to_vec().into(),
+                proto::Scope::Swarm,
+            )),
+            peer,
+            &mut send,
+        )
+        .await;
         loop {
             if let GossipEvent::Received(message) = native_topic.next().await.unwrap().unwrap() {
                 assert_eq!(message.content.as_ref(), b"owned to native");
@@ -141,13 +163,13 @@ async fn public_gossip_state_roundtrips_with_native_peer_on_owned_connection() {
             .unwrap();
         loop {
             let message: proto::topic::Message<EndpointId> = read_frame(&mut recv).await;
-            let output = state
-                .handle(
-                    InEvent::RecvMessage(native.endpoint.id(), message),
-                    n0_future::time::Instant::now(),
-                )
-                .collect();
-            let events = emit_to_selected_peer(output, native.endpoint.id(), &mut send).await;
+            let events = handle(
+                &mut state,
+                InEvent::RecvMessage(native.endpoint.id(), message),
+                peer,
+                &mut send,
+            )
+            .await;
             if let Some(proto::Event::Received(message)) = events
                 .iter()
                 .find(|event| matches!(event, proto::Event::Received(_)))
@@ -157,12 +179,11 @@ async fn public_gossip_state_roundtrips_with_native_peer_on_owned_connection() {
             }
         }
         assert!(state.has_active_peers());
-        let _: Vec<_> = state
-            .handle(
-                InEvent::Command(Command::Quit),
-                n0_future::time::Instant::now(),
-            )
-            .collect();
+        state.handle(
+            InEvent::Command(Command::Quit),
+            n0_future::time::Instant::now(),
+            &mut Output::default(),
+        );
         assert!(!state.has_active_peers());
     })
     .await

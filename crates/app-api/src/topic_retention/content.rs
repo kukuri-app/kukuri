@@ -343,17 +343,14 @@ impl AppService {
         // 取る前に日の保護参照を付ける(動画のような大きな blob も、cache の容量の計数の外に置く)。
         self.claim_retained_blob(topic, bucket, asset.hash.as_str())
             .await?;
-        if self
+        let present = self
             .services
             .blob_service
             .local_blob_status(&asset.hash)
             .await?
-            != BlobStatus::Missing
-        {
-            return Ok(true);
-        }
+            != BlobStatus::Missing;
         #[cfg(not(target_family = "wasm"))]
-        {
+        if !present {
             let staging = &self.topic_retention_handles()?.staging;
             tokio::fs::create_dir_all(staging).await?;
             let path = staging.join(asset.hash.as_str());
@@ -363,10 +360,9 @@ impl AppService {
             )
             .await;
             let _ = tokio::fs::remove_file(&path).await;
-            Ok(matches!(fetched, Ok(Ok(Some(_)))))
+            return Ok(matches!(fetched, Ok(Ok(Some(_)))));
         }
-        #[cfg(target_family = "wasm")]
-        Ok(false)
+        Ok(present)
     }
 
     /// 投稿の日と翌日の bucket から、投稿へのリアクションを上限つきで反映し、custom の画像を保持する。戻り値は、画像を

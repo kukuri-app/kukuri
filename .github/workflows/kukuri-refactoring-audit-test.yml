@@ -32,7 +32,7 @@ jobs:
           node-version: '^22.23.4'
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
           components: clippy
       - uses: ./.github/actions/cache-rust
         with:
@@ -49,6 +49,6 @@ jobs:
       - name: Evaluate current repository baseline
         run: cargo run --locked --quiet -p xtask --no-default-features -- refactoring-audit-check
       - name: Workflow lint
-        uses: docker://rhysd/actionlint:1.7.7
+        uses: docker://rhysd/actionlint:1.7.12
         with:
           args: .github/workflows/kukuri-refactoring-audit.yml .github/workflows/kukuri-refactoring-audit-test.yml

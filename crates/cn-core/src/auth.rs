@@ -234,7 +234,7 @@ fn issue_access_token(
         exp: expires_at as usize,
         endpoint_id: endpoint_id.map(str::to_string),
     };
-    let token = encode(&Header::default(), &claims, &jwt_config.encoding_key())?;
+    let token = encode(&Header::default(), &claims, &jwt_config.encoding_key()?)?;
     Ok((token, expires_at))
 }
 
@@ -242,6 +242,6 @@ fn verify_access_token(jwt_config: &JwtConfig, token: &str) -> Result<AccessToke
     ensure_jwt_crypto_provider();
     let mut validation = Validation::new(Algorithm::HS256);
     validation.set_issuer(&[jwt_config.issuer()]);
-    let decoded = decode::<AccessTokenClaims>(token, &jwt_config.decoding_key(), &validation)?;
+    let decoded = decode::<AccessTokenClaims>(token, &jwt_config.decoding_key()?, &validation)?;
     Ok(decoded.claims)
 }

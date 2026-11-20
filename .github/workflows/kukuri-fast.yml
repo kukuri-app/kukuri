@@ -69,10 +69,10 @@ jobs:
       - name: Community-node image pull contract
         run: bash .github/actions/cn-test-images/test.sh
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
           components: clippy,rustfmt
 
       - name: Install Linux system dependencies
@@ -127,10 +127,10 @@ jobs:
       - name: Free disk on a small runner
         uses: ./.github/actions/free-disk
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
@@ -165,10 +165,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
           targets: wasm32-unknown-unknown
           components: clippy
 
@@ -234,10 +234,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
@@ -293,10 +293,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
@@ -358,10 +358,10 @@ jobs:
       - name: Free disk on a small runner
         uses: ./.github/actions/free-disk
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
@@ -397,10 +397,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Install Linux system dependencies
         uses: ./.github/actions/apt-install
@@ -441,10 +441,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
           components: clippy,rustfmt
 
       - name: Setup pnpm
@@ -504,10 +504,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust 1.99
+      - name: Install Rust 1.100
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
